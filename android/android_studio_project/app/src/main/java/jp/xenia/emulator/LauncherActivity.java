@@ -2,6 +2,7 @@ package jp.xenia.emulator;
 
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ContentResolver;
 import android.content.SharedPreferences;
 import android.content.Intent;
 import android.database.Cursor;
@@ -11,6 +12,7 @@ import android.os.Bundle;
 import android.provider.DocumentsContract;
 import android.provider.OpenableColumns;
 import android.text.TextUtils;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
 import android.view.View;
@@ -34,6 +36,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public class LauncherActivity extends Activity {
+    private static final String TAG = "XeniaLauncher";
     private static final String EXTERNAL_STORAGE_PROVIDER =
             "com.android.externalstorage.documents";
     private static final String THOR_XBOX360_DOCUMENT_ID =
@@ -85,6 +88,49 @@ public class LauncherActivity extends Activity {
         refreshRecentGames();
         setLauncherTab(activeLauncherTab);
         focusPrimaryLauncherTarget();
+
+        // Frontend launch (Daijisho / ES-DE / Beacon send ACTION_VIEW with a ROM
+        // URI). Routed through launchGame() rather than straight to
+        // EmulatorActivity so title-ID resolution, GameProfiles and
+        // XeniaOptimizations still apply - a direct emulator launch would
+        // silently drop every per-game fix.
+        //
+        // Deliberately AFTER the library refresh above: launchGame() calls
+        // resolveTitleIdForSaveTools() and rememberLastGame(), which expect
+        // settings to be initialized.
+        maybeLaunchFromFrontendIntent(getIntent());
+    }
+
+    @Override
+    protected void onNewIntent(final Intent intent) {
+        super.onNewIntent(intent);
+        // The launcher is single-task-ish in practice (a frontend re-launch
+        // while it is already up arrives here, not in onCreate).
+        setIntent(intent);
+        maybeLaunchFromFrontendIntent(intent);
+    }
+
+    /** Starts the game named by an ACTION_VIEW intent, if there is one. */
+    private void maybeLaunchFromFrontendIntent(final Intent intent) {
+        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction())) {
+            return;
+        }
+        final Uri uri = intent.getData();
+        if (uri == null) {
+            return;
+        }
+        // Only handle it once - onCreate and a later onNewIntent must not both
+        // fire for the same intent, and a configuration change re-delivers it.
+        intent.setAction(Intent.ACTION_MAIN);
+        // A content:// URI from another app is only readable while the grant
+        // lasts; persist it where the sender allowed it, so a relaunch from the
+        // frontend keeps working. Same helper the file picker path uses - it
+        // already tolerates one-shot-only providers.
+        if (ContentResolver.SCHEME_CONTENT.equals(uri.getScheme())) {
+            persistReadPermission(intent, uri);
+        }
+        Log.i(TAG, "Launching from a frontend intent: " + uri);
+        launchGame(uri);
     }
 
     @Override

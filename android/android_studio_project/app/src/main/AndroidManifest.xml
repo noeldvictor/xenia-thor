@@ -39,6 +39,31 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Frontend launch (Daijisho / ES-DE / Beacon), XenDroid 1c0285b47
+                 in spirit: they send ACTION_VIEW with a ROM URI. This targets
+                 LauncherActivity rather than EmulatorActivity on purpose -
+                 launchGame() is where title-ID resolution, GameProfiles and
+                 XeniaOptimizations are applied, so launching the emulator
+                 directly would silently bypass every per-game fix. -->
+            <intent-filter android:label="@string/app_name">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="file" />
+                <data android:scheme="content" />
+                <data android:mimeType="*/*" />
+                <data android:host="*" />
+                <!-- Xbox 360 containers: disc images, XEX, and the m3u
+                     multi-disc playlists the library already understands. -->
+                <data android:pathPattern=".*\\.iso" />
+                <data android:pathPattern=".*\\.ISO" />
+                <data android:pathPattern=".*\\.xex" />
+                <data android:pathPattern=".*\\.XEX" />
+                <data android:pathPattern=".*\\.m3u" />
+                <data android:pathPattern=".*\\.M3U" />
+                <data android:pathPattern=".*\\.zar" />
+                <data android:pathPattern=".*\\.ZAR" />
+            </intent-filter>
         </activity>
 
         <activity

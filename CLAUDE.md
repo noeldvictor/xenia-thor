@@ -784,8 +784,21 @@ xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer
   already-recorded command, so their upload can be reordered to the submission HEAD and the render pass never
   breaks. Needs: submission-scoped `invalidated_in_submission` tracking + `OnGpuSubmissionOpened` in shared_memory,
   a submission-head deferred command buffer, and routing eligible uploads to it (~162 lines).
-- **Also unported, lower priority:** `83cf6fa0d` (let `disable_context_promotion` also disable VEC128 promotion —
-  a debugging lever), `1c0285b47` (launch directly from a frontend intent — frontend integration).
+- **❌ `83cf6fa0d` REJECTED, NOT APPLICABLE (2026-08-06).** It makes `disable_context_promotion` also turn off
+  `context_promote_vec128`. **We have NEITHER cvar** — both are absent tree-wide. Our `ContextPromotionPass` is
+  added unconditionally (`ppc_translator.cc:207`) and gates on entirely different cvars
+  (`ppc_cross_block_*`, `arm64_context_promotion_*`). Porting it would mean inventing both levers first, which is
+  writing a feature, not taking a fix.
+- **✅ `1c0285b47` ADAPTED AND LANDED (2026-08-06, BUILD SUCCESSFUL) — frontend launch.** Theirs is Kotlin/Compose
+  against XenDroid-only infrastructure (`FrontendLaunch`, `ACTION_LAUNCH_GAME`), so the code does not transfer;
+  the capability does. Ours is an `ACTION_VIEW` intent-filter (file+content schemes, iso/xex/m3u/zar) plus
+  `maybeLaunchFromFrontendIntent()` in `LauncherActivity`.
+  **🔑 THE POINT THAT MATTERS: the filter is on `LauncherActivity`, NOT `EmulatorActivity`.** `launchGame()` is
+  where title-ID resolution, `GameProfiles` and `XeniaOptimizations` are applied, so a frontend launching the
+  emulator directly would **silently bypass every per-game fix** — exactly the stale/skipped-lever class this file
+  keeps warning about. Handles re-launch via `onNewIntent`, consumes the intent once (sets it to `ACTION_MAIN`) so
+  a configuration change cannot double-fire it, and reuses the existing `persistReadPermission()` helper for
+  `content://` grants. **Untested on device** (Thor was offline): needs one launch from Daijishō/ES-DE.
 
 ## 💥 BURNOUT MID-GAMEPLAY FAULT STORM = LLVM WRITING x20 (2026-08-06) — how to tell it from a JIT bug
 **Symptom:** frozen half-drawn frame, `0.0 FPS`, and `UNHANDLED host fault ... re-fault (signal storm)` repeating at
