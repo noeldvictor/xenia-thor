@@ -9503,28 +9503,6 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   return true;
 }
 
-void VulkanCommandProcessor::LogBdNativeSurfaceKeys(const char* context) {
-}
-
-VkImage VulkanCommandProcessor::BdNativeDepthResolveImage(uint32_t dest_base) {
-  // BD native renderer removed - it never serves a depth-resolve image now.
-  // NOTE: this function previously early-returned on
-  // (!gpu_bd_native_depth_resolve || !bd_native_renderer_); that guard was
-  // removed with the rest of the BD path, which left a bare null deref here.
-  (void)dest_base;
-  return VK_NULL_HANDLE;
-}
-
-bool VulkanCommandProcessor::BdNativeSurfaceServes(uint32_t dest_base) {
-  // BD native renderer removed - nothing is served natively, so every
-  // resolve/transfer takes the normal EDRAM path. Called from
-  // vulkan_render_target_cache.cc:2445 and :9842, so it must stay callable.
-  // Its (!gpu_bd_native_aux_rt || !bd_native_renderer_) guard went with the
-  // BD deletion, leaving a null deref that compiled fine.
-  (void)dest_base;
-  return false;
-}
-
 void VulkanCommandProcessor::BdNoteColorConsumer(uint32_t dest_base,
                                                  uint32_t consumer) {
   if ((cvars::gpu_bd_native_color_lifetime_hle <= 0 &&

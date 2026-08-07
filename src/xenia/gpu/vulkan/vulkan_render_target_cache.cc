@@ -214,7 +214,6 @@ DECLARE_bool(gpu_bd_framegraph_depth_shadow);
 DECLARE_bool(gpu_bd_patha_depth_snapshot);
 DECLARE_bool(gpu_bd_depth_xfer_census);
 DECLARE_bool(gpu_bd_native_drop_depth_downscale);
-DECLARE_bool(gpu_bd_native_drop_resolves);
 DECLARE_bool(gpu_bd_native_drop_transfers);
 DECLARE_bool(gpu_bd_native_drop_all_color_xfer);
 DECLARE_bool(gpu_bd_native_drop_all_xfer);
@@ -2440,20 +2439,6 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
   // Unlike the blunt drop-all-base-0 above (which black-screened with NO native
   // replacement), this fires ONLY when native content actually serves the dest =
   // safe. This is what makes the ~110ms EDRAM work redundant.
-  if (!bd_drop_this_resolve && cvars::gpu_bd_native_drop_resolves &&
-      resolve_info.copy_dest_extent_length && !resolve_info.IsCopyingDepth() &&
-      command_processor_.BdNativeSurfaceServes(resolve_info.copy_dest_base)) {
-    bd_drop_this_resolve = true;
-    command_processor_.AddBdNativeResolveDropped();
-    static uint32_t s_bd_native_drop_log = 0;
-    if (s_bd_native_drop_log < 8) {
-      ++s_bd_native_drop_log;
-      XELOGI(
-          "BD REAL-HLE: dropped EDRAM resolve dest={:08X} (native surface serves "
-          "it) — EDRAM work deleted for this surface",
-          resolve_info.copy_dest_base);
-    }
-  }
 
   // Copying.
   bool copied = false;
@@ -6382,7 +6367,6 @@ VulkanRenderTargetCache::GetBdNativeDepthConsumerFramebuffer(
         ckey.base_tiles, ckey.GetPitchTiles(), uint32_t(ckey.msaa_samples),
         uint32_t(ckey.resource_format), base->host_extent.width,
         base->host_extent.height);
-    command_processor_.LogBdNativeSurfaceKeys("depth-consumer");
   }
 
   const ui::vulkan::VulkanDevice* const vulkan_device =
@@ -6493,9 +6477,6 @@ bool VulkanRenderTargetCache::SeedBdNativeDepthConsumer(const Framebuffer* fb) {
   // this consumer's EDRAM identity (logged at construction as "BD DEPTH CONSUMER
   // MATCH": depth base=810 pitchT=9 msaa=k4X + color base=0 pitchT=9 fmt=3,
   // host_extent 360x768). Rate-limited inside LogSurfaceKeys.
-  if (cvars::gpu_bd_depth_xfer_census) {
-    command_processor_.LogBdNativeSurfaceKeys("depth-seed");
-  }
   VulkanRenderTarget& lle_rt =
       *static_cast<VulkanRenderTarget*>(fb->bd_native_depth_lle_rt);
   Framebuffer& mfb = const_cast<Framebuffer&>(*fb);
@@ -9837,9 +9818,6 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       const bool is_depth = dest_rt->key().is_depth;
       const VulkanCommandProcessor::ResolveEdge* edge =
           command_processor_.PersistentResolveEdgeForSrc(dest_rt->key().key);
-      const bool native_served =
-          edge && edge->dest_base &&
-          command_processor_.BdNativeSurfaceServes(edge->dest_base);
       // LEVEL 6: drop the transfer if an L5 native producer alias covers its
       // dest AND every consumer of that dest read native last frame (present /
       // pixel-texture, no NonNative) - the EDRAM copy is then dead weight.
@@ -9861,7 +9839,7 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
       // depth content. Drop EVERYTHING (incl. depth) but emit the barrier below for
       // each -> if the barrier prevents the collapse, this = 30fps + correct.
       const bool drop_all = cvars::gpu_bd_native_drop_all_xfer;
-      if (native_served || drop_color_only || drop_all || l5_served) {
+      if (drop_color_only || drop_all || l5_served) {
         // Count the entries actually removed so the trace can report EXECUTED
         // transfers (requested - dropped) - the real tile-store cost (5.6-sol).
         command_processor_.AddRenderTargetTransfersDropped(

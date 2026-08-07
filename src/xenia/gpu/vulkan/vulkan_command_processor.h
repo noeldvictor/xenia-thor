@@ -1010,10 +1010,6 @@ class VulkanCommandProcessor : public CommandProcessor {
   // field samples native content, so EDRAM transfers for it are dead).
   uint64_t bd_native_aux_redirects_ = 0;
   uint64_t bd_native_tex_served_ = 0;
-  // EDRAM resolves surgically dropped because a native surface serves the dest =
-  // the count of EDRAM->RAM copies DELETED by the real HLE (the payoff metric).
-  uint64_t bd_native_resolves_dropped_ = 0;
-
   // COLOR-ONLY native HLE (gpu_bd_native_color_lifetime_hle, Codex 7-step plan):
   // per-resolve-dest consumer tracking = the safe-drop gate substrate. Which
   // consumer classes read each native-covered color surface THIS frame; a surface
@@ -2016,21 +2012,6 @@ class VulkanCommandProcessor : public CommandProcessor {
   // run DURING/AFTER the field (we present the native RT, so field-surface EDRAM
   // re-aliasing is redundant) while keeping pre-field shadow/texture transfers.
   bool bd_native_field_rendered() const { return bd_native_field_rendered_; }
-  // REAL-HLE (EDRAM deletion): true when a live native surface holds rendered
-  // content for guest address `dest_base` (i.e. the field now SAMPLES that native
-  // image via Brick B, so the EDRAM resolve/transfer that used to carry it is
-  // dead weight and can be surgically dropped). Defined in the .cc (BdNativeRenderer
-  // is incomplete here). Returns false unless gpu_bd_native_aux_rt is active.
-  bool BdNativeSurfaceServes(uint32_t dest_base);
-  // The in-pass DEPTH RESOLVE image (single-sample) for guest address `dest_base`,
-  // or VK_NULL_HANDLE. Defined in the .cc (BdNativeRenderer is incomplete here).
-  // The consumer-redirect half of the depth-transfer deletion; see the .cc comment.
-  VkImage BdNativeDepthResolveImage(uint32_t dest_base);
-  // Diagnostic bridge: dump every live native surface's guest-address key + dims
-  // (BdNativeRenderer is incomplete in this header). Used to establish the
-  // EDRAM-key <-> guest-address correspondence the depth-consumer redirect needs.
-  void LogBdNativeSurfaceKeys(const char* context);
-  void AddBdNativeResolveDropped() { ++bd_native_resolves_dropped_; }
   void AddRenderTargetTransferStats(uint32_t transfer_count,
                                     bool resolve_clear) {
     if (transfer_count) {

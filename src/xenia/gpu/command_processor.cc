@@ -387,17 +387,6 @@ DEFINE_bool(
     "correct. THE candidate final lever for full EDRAM color-transfer deletion.",
     "GPU");
 DEFINE_bool(
-    gpu_bd_native_drop_resolves, false,
-    "BD REAL-HLE EDRAM-deletion probe (default off, needs gpu_bd_native_aux_rt): "
-    "SURGICALLY drop the EDRAM->RAM color resolve when a live native surface serves "
-    "the dest (the field samples native content via Brick B, so the resolve is "
-    "redundant). SEPARATE from gpu_bd_native_aux_rt so native rendering+sampling can "
-    "run WITHOUT the drop (isolation): dropping is only safe once ALL readers of the "
-    "resolved texture (pixel fetches AND the frontbuffer composite/present) sample "
-    "native — else the un-redirected reader goes black. THE payoff lever, but the "
-    "consume side must be complete first.",
-    "GPU");
-DEFINE_bool(
     gpu_bd_native_force_samples1, false,
     "BD native renderer Adreno-crash isolation (default off): force the native RT "
     "to single-sample (drop MSAA + the in-renderpass resolve attachment). The "

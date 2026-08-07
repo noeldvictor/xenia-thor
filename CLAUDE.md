@@ -83,7 +83,25 @@ don't debug from scratch.**
 | 1. render-target-cache BD block | 34 lines - done |
 | 2. the 14 `gpu_bd_native_renderer`-gated blocks in vulkan_command_processor.cc | **431 lines** (13,690 -> 13,259) - done |
 | 3. six more gated blocks in vulkan_command_processor.cc | **55 lines** (13,259 -> 13,204) - done |
-| 4. remaining member uses, hooks, the two files, ~49 cvars | remaining |
+| 4a. the three now-CONSTANT entry points + their callers + orphans | **~4.0 KB** across 4 files - done |
+| 4b. the L4/L5/L6 color-lifetime HLE cluster (305 refs in the RTC) | remaining - **the big one** |
+| 4c. `bd_native_renderer.{cc,h}` (1,511 lines), premake entry, remaining cvars | remaining |
+**Slice 4a:** `BdNativeSurfaceServes` (always `false`), `BdNativeDepthResolveImage`
+(always `VK_NULL_HANDLE`, and it had **zero callers**) and `LogBdNativeSurfaceKeys` (empty body) were deleted
+along with their 2 live call sites, which simplified two conditions in the RTC (a whole drop-resolve `if`, and
+`native_served` out of a 4-way OR). That orphaned `AddBdNativeResolveDropped`, `bd_native_resolves_dropped_` and
+the `gpu_bd_native_drop_resolves` cvar, all removed too. **Note the ordering that made this safe: one of the two
+log call sites WAS the sole body of a `gpu_bd_depth_xfer_census` `if`** - exactly the entry-guard shape that
+caused the null derefs above - so the `if` went with it rather than being left with an empty body.
+**An audit worth repeating before 4b:** a script that walks every `VulkanCommandProcessor::` definition and
+checks each body for an unguarded `bd_native_renderer_->` now reports **exactly one function (`IssueSwap`), and
+it is guarded**. That is the whole-file version of the check that a 60-line regex window got wrong.
+**4b is safe by the same construction as 1-3, and it is CONFIRMED not merely assumed:** `gpu_bd_native_color_
+lifetime_hle` is `DEFINE_int32(..., 0)` AND reads `0` in the live device config, so every L4/L5/L6 path
+(`bd_native_color_*`, `bd_native_depth_*`, `BdL5PublishAlias`/`BdL5LookupAlias`/`BdL5DropSafe`) is unreachable.
+The remaining `gpu_bd_*` cvars that read non-false in the config (`aux_fmt37`, `tex_bind`, `field_convert`,
+`native_rt_width`, ...) are all SUB-options of master gates that are themselves off - do not mistake them for
+live paths.
 **Why this is safe by construction, not by argument:** `gpu_bd_native_renderer` is `DEFINE_bool(..., false)`
 (command_processor.cc:82) and reads false in the live device config, so the entire path was ALREADY dead at
 runtime. Deleting dead code cannot change behaviour - the opposite of the usual GPU risk.
