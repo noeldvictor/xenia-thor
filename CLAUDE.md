@@ -86,6 +86,12 @@ don't debug from scratch.**
 | 4a. the three now-CONSTANT entry points + their callers + orphans | **~4.0 KB** across 4 files - done |
 | 4b. the L4/L5/L6 color-lifetime HLE cluster (305 refs in the RTC) | remaining - **the big one** |
 | 4c. `bd_native_renderer.{cc,h}` (1,511 lines), premake entry, remaining cvars | remaining |
+**✅ DEVICE-VALIDATED 2026-08-07 (4a + the two a64 NaN fixes, one APK).** Gears of War, headless with
+`--es cpu arm64 --ez cpu_backend_llvm true --ez cpu_aot_maximize true`:
+`Turnip Adreno (TM) 740` (correct driver, NOT the Qualcomm blob) - `Title name: Gears of War` reached -
+**0 faults / SIGTRAP / Scudo errors** - **28,776 `LLVMobjload`** (object cache fully warm). Peak 72C in ~30s,
+force-stopped at the thermal limit. **⚠️ That validates BOOT AND RUN, not PIXELS** - 4a is a GPU change whose
+failure mode is wrong output, not a crash, so a screenshot check is still owed.
 **Slice 4a:** `BdNativeSurfaceServes` (always `false`), `BdNativeDepthResolveImage`
 (always `VK_NULL_HANDLE`, and it had **zero callers**) and `LogBdNativeSurfaceKeys` (empty body) were deleted
 along with their 2 live call sites, which simplified two conditions in the RTC (a whole drop-resolve `if`, and
