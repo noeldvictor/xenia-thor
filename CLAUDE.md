@@ -1503,6 +1503,19 @@ Hash" in logcat). Applied in `KernelState::LoadUserModule` before execution. Ski
 - Device persists `files/xenia.config.toml` (overrides compiled cvar defaults; only `--ez/--ei/--es` beat it).
 - **Never fabricate** — every number read from device output THIS turn; unmeasured = say so; cross-run = say
   CONFOUNDED; read the screenshot before asserting a visual.
+- **NEVER let a file-mutating script and `git` share a command with a NEWLINE between them - use `&&`.**
+  On 2026-08-07 I truncated CLAUDE.md and pushed it: the script used `open(path,"w")`, which truncates
+  IMMEDIATELY, then the encode threw before writing a byte, leaving 0 bytes - and `git commit` ran anyway
+  because a newline had separated them, producing a commit whose message described content that did not
+  exist. Three habits that make it structurally impossible:
+  1. **Encode/serialise BEFORE opening the file for write.** `open("w")` destroys the old content before your
+     code can fail. Build the bytes first, then write them.
+  2. **Refuse a result smaller than the original** unless a deletion is genuinely intended, and keep a backup
+     you restore on a short write.
+  3. **Gate `git add` on a size/line-count check** (`[ $(wc -c < f) -gt N ]`). That catches the whole class
+     regardless of cause, which the first two do not.
+  **And read the diffstat before believing a commit.** The bad one said `1 file changed, 1504 deletions(-)`
+  in plain sight.
 - **Targeted `git add` only (never `-A`).** Never commit ISOs/keys/dumps/screenshots/config backups. Work on
   `master`. **Forward-only** (never `git revert`; fix forward). End commits:
   `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
