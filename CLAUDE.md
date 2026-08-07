@@ -1063,6 +1063,36 @@ Beyond "the persisted config overrides the compiled default", there is a second 
   flagging will. The overlay is starved because the UI thread is wedged in the blocking paint (above), so the
   remaining real fixes are exactly the two named there. Do not re-attempt async message plumbing.
 
+## 🔬🔬🔬 THE x86→ARM64 SWEEP: MEMORY ORDERING IS THE BUG CLASS (2026-08-07)
+**x86 is TSO. Stores cannot be reordered with stores, loads cannot be reordered with loads, and almost every
+missing fence is INVISIBLE. ARM64 is weakly ordered, so the same code races. This is where the real x64-shaped
+bugs live — not in instruction selection.** Two found and fixed in one sweep, both by reading rather than testing,
+because a dropped-write or stale-read race is intermittent and a clean run proves nothing.
+- **✅ FIXED `1e6db18f5` — `atomic_exchange` silently dropped writes on POSIX.** It was
+  `__sync_val_compare_and_swap(value, *value, new_value)`: a NON-ATOMIC read of `*value`, then a CAS against that
+  snapshot **with no retry loop**. Another thread writing in between made the CAS fail, store NOTHING, and still
+  return a plausible old value. **The Win32 branch was always correct** (`_InterlockedExchange` is an
+  unconditional swap) — so the x64 path was right and the POSIX path we ship on Android was not. Both call sites
+  are `Processor::RaiseIrql`/`LowerIrql`, the guest interrupt priority level. Now `__atomic_exchange_n(...,
+  __ATOMIC_ACQ_REL)`.
+  **🔑 THE GENERALISABLE LESSON: check the PLATFORM BRANCH NOBODY PROFILES ON.** Upstream develops and benchmarks
+  on Windows/x64; a defect that only exists in the POSIX `#elif` can survive indefinitely there.
+- **✅ FIXED `e5398cac8` — XMA output published without a release fence** (XenDroid `902af401d`, whose own message
+  says *"x86 never shows this (TSO)"*). The guest mixer polls `output_buffer_write_offset` from another thread and
+  reads the PCM behind it; nothing ordered the ring writes against the offset store.
+- **⚠️ OPEN, REAL, BUT DO NOT BLANKET-CHANGE: `base/atomic.h` still uses legacy `__sync_*` builtins** for
+  `atomic_inc`/`dec`/`exchange_add`/`cas` (19 call sites, 12 of them `atomic_cas`). **`__sync_*` are
+  sequentially consistent BY DEFINITION**, so on ARM64 they carry a full `DMB ISH` where acquire/release would do
+  — which partially undercuts the `+lse -mno-outline-atomics` work that premake5.lua records as ~6% on Burnout.
+  **The fix is per-site, not global:** refcount inc/dec can be relaxed-increment + acq_rel-decrement, but a CAS
+  used as a lock needs its ordering argued individually. **Weakening ordering you have not audited is an
+  intermittent race — the single worst failure mode to introduce**, and "it still ran" is not evidence.
+- **WHERE TO KEEP LOOKING (this sweep is not finished):** cross-thread flags that are plain `bool`/`uint32_t`
+  rather than `std::atomic`; `volatile` used as if it implied ordering (it does not — it is not a fence);
+  publish-then-signal pairs where the publish has no release; and double-checked-locking shapes. Grep entry
+  points: `volatile (bool|uint32_t|int32_t)` outside `base/atomic.h` and the MMIO paths, and any `.Store(`/
+  `->Set(` that follows a buffer write on a different thread from its reader.
+
 ## 🧠🧠🧠 ARM64 EMULATOR PERFORMANCE PLAYBOOK (2026-08-06) — read this BEFORE picking a CPU lever
 Distilled from the RPCS3/Whatcookie ARM64 talk (measured on an AYN Odin 2 = OUR SoC) **plus what we then measured
 ourselves**. The principles are what transfer; their specific patches mostly do not (see the parity track below).
