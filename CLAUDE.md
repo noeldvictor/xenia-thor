@@ -1087,6 +1087,18 @@ because a dropped-write or stale-read race is intermittent and a clean run prove
   **The fix is per-site, not global:** refcount inc/dec can be relaxed-increment + acq_rel-decrement, but a CAS
   used as a lock needs its ordering argued individually. **Weakening ordering you have not audited is an
   intermittent race — the single worst failure mode to introduce**, and "it still ran" is not evidence.
+- **✅ CHECKED AND CLEAN — do not re-derive these.** Both looked like textbook races and are not:
+  `AndroidAudioDriver::shutdown_` is a plain `bool` read in the REAL-TIME AAudio callback, but all four accesses
+  (`android_audio_driver.cc:90/110/113/181`) are under `frames_mutex_`, so the mutex supplies the ordering.
+  `AudioSystem::paused_` is a plain `bool` written on the emulator thread (`:430`) and read on the audio worker
+  (`:165`) in a publish-then-signal shape — `paused_ = true; shutdown_event_->Set();` — which on ARM64 would be a
+  classic reordering bug, EXCEPT `Event::Set()` goes through `PosixConditionBase`'s mutex and the waiter
+  re-acquires it, giving a real happens-before edge. The only unsynchronised read is the public `is_paused()`
+  accessor (audio_system.h:63): a data race by the letter of the standard, benign for a bool, **not worth
+  "fixing" blind.**
+  **⇒ The lesson for the rest of the sweep: a plain `bool` shared across threads is a CANDIDATE, not a verdict.
+  Trace whether a mutex or condvar already carries the edge before changing anything** — an unnecessary atomic on
+  a hot flag costs, and a wrong "fix" here is indistinguishable from the bug it claims to fix.
 - **WHERE TO KEEP LOOKING (this sweep is not finished):** cross-thread flags that are plain `bool`/`uint32_t`
   rather than `std::atomic`; `volatile` used as if it implied ordering (it does not — it is not a fence);
   publish-then-signal pairs where the publish has no release; and double-checked-locking shapes. Grep entry
