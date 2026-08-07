@@ -773,6 +773,18 @@ Beyond "the persisted config overrides the compiled default", there is a second 
   `files/xenia.config.toml`, AND whether `XeniaOptimizations` has an entry that a GUI launch will pass.
 
 ## DEVICE-CONFIRMED: `--ez cpu_backend_llvm true` DOES NOT ENABLE LLVM (2026-08-07) - and that explains the heat
+  **STRUCTURAL HAZARD FOUND WHILE CHASING THIS - THE ENTIRE `--ez` ALLOWLIST IS INSIDE ONE GUARD.**
+  `EmulatorActivity.java:139`: `if (intent != null && intent.getBundleExtra(EXTRA_CVARS) == null) {` wraps the
+  **whole** ~750-line allowlist block (every `copyBooleanExtra`/`copyIntExtra`/`copyStringExtra`), closing at
+  :894 with `intent.putExtra(EXTRA_CVARS, launchArguments)`. **So any launch that ALREADY carries an
+  `EXTRA_CVARS` bundle skips every allowlisted extra.** This is the same shape as the object-cache bug this file
+  already records as fixed - `ensureObjectCacheDefaults` was deliberately moved OUT of this block for exactly
+  that reason (see its comment at :898-901) - but everything else is still inside it.
+  **⚠️ HONEST SCOPE: this does NOT explain the headless failure above.** A bare `am start` passes no
+  `EXTRA_CVARS`, so the guard opens and the allowlist does run. The LLVM root cause is still open. But it DOES
+  mean **a GUI launch (which attaches a bundle via `XeniaAndroidSettings.createLaunchArguments`) ignores every
+  `--ez`-style extra**, so the two launch paths do not accept the same configuration - which is worth knowing
+  before debugging any 'the cvar did not apply' symptom on either path.
 **Measured, not inferred.** Gears launched headless with `--ez cpu_backend_llvm true`:
 ```
 objcache hits (LLVMobjload) : 0
