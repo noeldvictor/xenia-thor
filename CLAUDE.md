@@ -488,6 +488,23 @@ Worst to best: **FMV/video** (measures XMA decode + a blit — none of the code 
   race (Burnout) or the field (BD, ~120-135s). Skill: **`xenia-blue-dragon-route-capture`**. A captured route is a
   PREREQUISITE for a CPU measurement, not an optional extra.
 
+## 🧾 XENDROID APU/BASE SWEEP — TRIAGE (2026-08-07). 43 new upstream commits fetched; APU batch triaged.
+**Do the sweep, not just the blocked GPU chain.** The in-pass resolve chain is stuck behind a dynamic-rendering
+prerequisite we do not have, but the 43 commits fetched 2026-08-07 include a 10-commit APU/base batch that is
+completely independent of it — and it is where the CPU/power findings came from.
+| upstream | verdict |
+|---|---|
+| `902af401d` XMA release fence | **✅ PORTED** (`e5398cac8`) — textbook x86-TSO bug, 3 sites, builds clean |
+| `92ca0d563` realtime callback off global mutex | **🔴 CONFIRMED PRESENT HERE, not yet fixed** — see the section below; port WITH the condvar refactor |
+| `2c0ac5847` wake multi-waiters selectively | **⚠️ NOT PORTABLE AS-IS** — ours is worse (one static condvar); see the thundering-herd section |
+| `366f38da8` fill the whole AAudio request | **❌ N/A — already our behaviour.** `FillAudio` loops queued frames + zero-fills on underrun |
+| `6d56383fd` cap gap concealment at one block | **❌ N/A — feature absent.** They ship their own `xe_aaudio_audio_driver.cpp` with `ConcealGap`/`last_block_`; ours is `android_audio_driver.cc` and zero-fills, so there is no overread to cap |
+| `5ada02239` resolve XMA kicks by sequence | not yet triaged — correctness, likely relevant |
+| `bc257ce49` / `d398a8762` audio thread priority | not yet triaged — set-from-inside-thread + verify it took |
+| `6ec67de7b` / `138cb65f0` / `46fcd881f` | instrumentation/counters, take only if chasing the above |
+**⚠️ Their APU tree is heavily diverged** (master/new/old `xma_context_*` split, own AAudio driver), so expect
+"port the idea, not the patch", and expect genuine N/A results — record them so they are not re-checked.
+
 ## 🔊🌩️ THE REAL-TIME AUDIO CALLBACK TAKES THE GLOBAL WAIT MUTEX AND WAKES EVERY GUEST THREAD (2026-08-07)
 **The single most concrete CPU/power finding of the XenDroid sweep, and it needs no device to see. Traced:**
 ```
