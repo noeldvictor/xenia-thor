@@ -1099,6 +1099,15 @@ because a dropped-write or stale-read race is intermittent and a clean run prove
   **⇒ The lesson for the rest of the sweep: a plain `bool` shared across threads is a CANDIDATE, not a verdict.
   Trace whether a mutex or condvar already carries the edge before changing anything** — an unnecessary atomic on
   a hot flag costs, and a wrong "fix" here is indistinguishable from the bug it claims to fix.
+- **🎯 THE ACTUAL SHAPE TO HUNT (refined after checking several false leads).** Plain `std::atomic<T>` with bare
+  `.load()`/`.store()` defaults to **`seq_cst`** and is therefore SAFE on ARM64 — verified on
+  `CommandProcessor::write_ptr_index_` (gpu/command_processor.h:349), which is a genuine cross-thread ring
+  publish and needs no change. **So the bug is almost never "an atomic with weak ordering".** It is:
+  **an ATOMIC offset/pointer/flag that correctly publishes, guarding BULK DATA that is NOT atomic and has no
+  fence.** That is exactly the XMA case — `output_buffer_write_offset` was fine; the PCM ring writes behind it had
+  nothing ordering them. Look for "atomic index + plain buffer", not for atomics in isolation.
+  Secondary shape: raw `__sync_*`/`__atomic_*` with an explicitly chosen ordering (those bypass the safe default),
+  and hand-rolled primitives like the `atomic_exchange` above.
 - **WHERE TO KEEP LOOKING (this sweep is not finished):** cross-thread flags that are plain `bool`/`uint32_t`
   rather than `std::atomic`; `volatile` used as if it implied ordering (it does not — it is not a fence);
   publish-then-signal pairs where the publish has no release; and double-checked-locking shapes. Grep entry
