@@ -1265,9 +1265,17 @@ launch, injected into the GUEST - which is why it works where adb keyevents did 
 hot function changes completely (`sub_825A5768` delta=316,123 vs the title's `sub_822153F0` delta=97,234).
 **⏱️ BUDGET ONE RUN PER COOLDOWN: 38C cold -> 73C at 150s -> 78C just after.** An A/B is two cooldowns, not two
 back-to-back runs - which makes the same-session A/B protocol expensive on this title and worth planning around.
-**⚠️ `--ei gpu_frame_limit_fps 0` DOES NOT UNCAP GEARS** (fps stayed 29.6/28.8 with it set, and the cvar IS
-allowlisted). The documented "run uncapped and read entry_delta" protocol therefore does not work here yet -
-investigate before trusting any CPU A/B on this title.
+**❌ MY OWN NOTE HERE WAS WRONG, CORRECTED SAME DAY - THERE IS NOTHING TO INVESTIGATE.** I recorded
+"`--ei gpu_frame_limit_fps 0` does not uncap Gears (29.6/28.8 fps)" as an open defect. **It is not a defect:
+GEARS OF WAR IS A 30FPS-NATIVE UE3 TITLE**, which this repo already documented at `GameProfiles.java:258`
+("a 30fps-native UE3 title") before I wrote the note. Uncapping the HOST limiter cannot make a guest that
+presents 30 times a second present faster, and the pacing code is plainly correct - `if (frame_limit_fps)` simply
+does not pace when the value is 0, and `gpu_adpf_thermal_throttle` (the only cvar that composes with it) is
+default-off.
+**⇒ The real consequence is the one the protocol already states: FPS IS USELESS AS A CPU METRIC ON A CAPPED
+TITLE, so use `entry_delta`** - which demonstrably discriminates here (1.1M title -> 3.9M gameplay, 3.5x).
+**The lesson is the recurring one:** I filed "unexplained observation" as "suspected defect" without checking
+whether the behaviour was already explained in-tree. One grep of GameProfiles would have answered it.
 **Why keyevents failed, so nobody retries them:** alternating START/B skips the cinematics but B then BACKS OUT
 of the main menu to the title, and A does nothing on the title. Two attempts, ~35C of headroom each, no gameplay.
 
