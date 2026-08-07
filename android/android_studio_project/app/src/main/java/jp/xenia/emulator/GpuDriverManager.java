@@ -57,7 +57,7 @@ public final class GpuDriverManager {
      * together - newer Turnip is where the Adreno performance extensions land,
      * so we track upstream rather than pinning.
      */
-    public static final String BUNDLED_TURNIP_VERSION = "26.3.0-20260803-r7";
+    public static final String BUNDLED_TURNIP_VERSION = "26.3.0-20260807-r11";
 
     /** APK asset path of the bundled adrenotools driver zip. */
     private static final String BUNDLED_ASSET = "drivers/turnip.zip";
