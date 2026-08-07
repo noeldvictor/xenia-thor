@@ -9507,37 +9507,22 @@ void VulkanCommandProcessor::LogBdNativeSurfaceKeys(const char* context) {
 }
 
 VkImage VulkanCommandProcessor::BdNativeDepthResolveImage(uint32_t dest_base) {
-  return bd_native_renderer_->LookupDepthResolveImage(dest_base);
+  // BD native renderer removed - it never serves a depth-resolve image now.
+  // NOTE: this function previously early-returned on
+  // (!gpu_bd_native_depth_resolve || !bd_native_renderer_); that guard was
+  // removed with the rest of the BD path, which left a bare null deref here.
+  (void)dest_base;
+  return VK_NULL_HANDLE;
 }
 
 bool VulkanCommandProcessor::BdNativeSurfaceServes(uint32_t dest_base) {
-  NativeSurface* surface = bd_native_renderer_->FindSurface(dest_base);
-  if (!surface->is_main_scene) {
-    return true;
-  }
-  // Main-scene resolves/transfers are deleted only after two independent facts:
-  // this frame actually produced the resource-keyed image, and the prior
-  // completed frame observed at least one native consumer with no fallback. The
-  // one-frame warmup is necessary because resolve publication precedes present.
-  if (!cvars::gpu_bd_native_mainscene_redirect ||
-      !surface->rendered_this_frame) {
-    return false;
-  }
-  auto current_it = bd_color_consumer_bits_.find(dest_base);
-  if (current_it != bd_color_consumer_bits_.end() &&
-      (current_it->second & kBdConsumerNonNative)) {
-    return false;
-  }
-  auto previous_it = bd_color_consumer_bits_prev_.find(dest_base);
-  if (previous_it == bd_color_consumer_bits_prev_.end()) {
-    return false;
-  }
-  uint32_t previous_bits = previous_it->second;
-  if (previous_bits & kBdConsumerNonNative) {
-    return false;
-  }
-  return (previous_bits & (kBdConsumerPixelTexture | kBdConsumerComposite |
-                           kBdConsumerPresent)) != 0;
+  // BD native renderer removed - nothing is served natively, so every
+  // resolve/transfer takes the normal EDRAM path. Called from
+  // vulkan_render_target_cache.cc:2445 and :9842, so it must stay callable.
+  // Its (!gpu_bd_native_aux_rt || !bd_native_renderer_) guard went with the
+  // BD deletion, leaving a null deref that compiled fine.
+  (void)dest_base;
+  return false;
 }
 
 void VulkanCommandProcessor::BdNoteColorConsumer(uint32_t dest_base,

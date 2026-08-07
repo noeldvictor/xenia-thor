@@ -77,12 +77,13 @@ don't debug from scratch.**
   the floor; our CPU/GPU perf stays on top.
 
 ## 🗑️ DECISION: DELETE THE BD NATIVE RENDERER (user, 2026-08-07: "that fucking project failed")
-**🚧 BD REMOVAL IN PROGRESS - 465 LINES OUT, BUILD GREEN AT EVERY STEP (2026-08-07).**
+**🚧 BD REMOVAL IN PROGRESS - 520 LINES OUT, BUILD GREEN AT EVERY STEP (2026-08-07).**
 | step | result |
 |---|---|
 | 1. render-target-cache BD block | 34 lines - done |
 | 2. the 14 `gpu_bd_native_renderer`-gated blocks in vulkan_command_processor.cc | **431 lines** (13,690 -> 13,259) - done |
-| 3. member uses, hooks, files, ~49 cvars | remaining |
+| 3. six more gated blocks in vulkan_command_processor.cc | **55 lines** (13,259 -> 13,204) - done |
+| 4. remaining member uses, hooks, the two files, ~49 cvars | remaining |
 **Why this is safe by construction, not by argument:** `gpu_bd_native_renderer` is `DEFINE_bool(..., false)`
 (command_processor.cc:82) and reads false in the live device config, so the entire path was ALREADY dead at
 runtime. Deleting dead code cannot change behaviour - the opposite of the usual GPU risk.
@@ -96,6 +97,29 @@ runtime. Deleting dead code cannot change behaviour - the opposite of the usual 
    flagged 5 apparently-unguarded derefs; all 5 turned out guarded (two by a block guard 48 lines up, one by a
    guard phrased `bd_native_renderer_)` rather than `&&`, two by the dead gate). **A short-window regex is not
    sufficient here - read the enclosing block.**
+   **⚠️⚠️ AND THE "ALL 5 WERE FINE" RESULT MADE ME COMPLACENT - STEP 3 THEN CREATED TWO REAL NULL DEREFS.**
+   Deleting the gated blocks also deleted the EARLY-RETURN GUARDS at the top of two whole functions, leaving
+   their bodies dereferencing a permanently-null pointer:
+   ```
+   VkImage ...::BdNativeDepthResolveImage(uint32_t dest_base) {
+     return bd_native_renderer_->LookupDepthResolveImage(dest_base);   // guard deleted
+   }
+   bool ...::BdNativeSurfaceServes(uint32_t dest_base) {
+     NativeSurface* surface = bd_native_renderer_->FindSurface(dest_base);   // guard deleted
+   ```
+   Both had `if (!cvars::gpu_bd_native_* || !bd_native_renderer_) return ...;` as their FIRST statement, which
+   matches the step-2 filter exactly ("every `cvars::` in the condition starts with `gpu_bd_`") - so the
+   mechanical filter is CORRECT for a gated block and WRONG for a function's entry guard. **`BdNativeSurfaceServes`
+   is still called from `vulkan_render_target_cache.cc:2445` and `:9842`, so this was a live crash, not dead code.**
+   Fixed by making both return the not-serving value (`VK_NULL_HANDLE` / `false`) instead of a guard.
+   **🔑 THREE THINGS TO CARRY INTO STEP 4:**
+   - **The filter needs one more condition: never delete a block whose `return`/`{` is the function's own entry
+     guard.** Check what the block PROTECTS, not just what gates it.
+   - **The build proves nothing here.** All of this compiled clean; a null deref is a runtime fault.
+   - **I let `git commit` run before reading the checker's output** - the same newline-instead-of-`&&` mistake
+     the git rules already record from the CLAUDE.md truncation, and the commit message asserted "no unguarded
+     dereferences remain" while the output above it said `[2931, 9510, 9514]`. **Read the tool output before
+     writing the claim, not after.** (2931 was genuinely fine - guarded 89 lines up, outside a 60-line window.)
 **The filter that makes step 2 mechanical:** delete a block only when EVERY `cvars::` in its condition starts
 with `gpu_bd_`. Note this also took a compound gated on `gpu_bd_field_decouple || gpu_bd_native_renderer` -
 in scope (it is BD code) but not master-gated, so it is called out rather than silently included.
