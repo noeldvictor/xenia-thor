@@ -655,6 +655,22 @@ at the DEFAULT ran 240s+ fine. The bug was in the OFF path, not the ON path.**
   moved verbatim, not retyped. Retyping is where the arm went missing, and it type-checks either way because
   `.reg()` on a constant operand compiles fine.
 
+## 🔋 HOW TO ACTUALLY MEASURE WATTS (2026-08-07) - you CANNOT do it over USB
+**The rpcsx-ui-android-thor comparison is stated in POWER (30fps at 3-5W), and power is the one metric our whole
+measurement protocol never covered. It is measurable on this device, but only under one condition.**
+- **Nodes exist:** `/sys/class/power_supply/battery/{current_now,voltage_now,power_now,status}` -
+  `current_now` in uA, `voltage_now` in uV, so watts = `(current_now/1e6) * (voltage_now/1e6)`.
+- **🛑 BUT ADB OVER USB MAKES IT MEANINGLESS.** With the cable in, `status=Charging` and `current_now` is
+  dominated by CHARGE current, not app draw - two consecutive samples on an IDLE device read `+99245uA` then
+  `-261114uA`, i.e. the sign flipped. Any wattage quoted from a USB-attached session is fiction.
+- **The protocol that works:** unplug, use **ADB over wifi** (`adb connect <ip>:5555`), confirm
+  `dumpsys battery` says `USB powered: false` and `status: Discharging`, then take an IDLE baseline for ~60s and
+  the RUNNING draw for ~60s and report the DELTA. Absolute draw includes the panel, wifi and the SoC floor, so
+  only the delta is comparable to another emulator's figure - and their number is a total, so say which you are
+  quoting.
+- **Pair it with the gameplay rule:** a power number from a menu or an attract mode is as worthless as an fps
+  number from one. Measure power in the same real-gameplay scene the CPU protocol already requires.
+
 ## ⚠️ Measurement is the #1 trap
 BD's GPU scene complexity swings ~4×/second → **cross-run fps / gpu_frame_us is CONFOUNDED (worthless)**. Only
 trust: single-run in-place alternating A/B on a GPU-busy frame (`gpu_freeze_ab_alternate_vrs`,
