@@ -79,19 +79,6 @@ DEFINE_bool(gpu_hle_surface_binonce, false,
 
 // --- Blue Dragon FULL native D3D9->Vulkan HLE RENDERER (separate native path) ---
 DEFINE_bool(
-    gpu_bd_native_renderer, false,
-    "Blue Dragon FULL D3D9->Vulkan HLE renderer (the DXVK-for-360 reimagination, "
-    "default off, Vulkan only): a SEPARATE native Vulkan renderer (BdNativeRenderer) "
-    "that captures BD's D3D9 draws at seam 0x82489F40 and renders the whole frame "
-    "into ONE persistent full-surface host RT in a FEW held-open passes with native "
-    "pipelines (VkBuffer vertex-input, Xenos->SPIR-V, hardware ROP blend, depth-"
-    "prepass+early-Z) - BYPASSING xenia's PM4/EDRAM/95-pass LLE back-end (which the "
-    "partial gpu_bd_native_hle KEPT, hence perf-flat). Structure/correctness on "
-    "desktop --gpu=vulkan; super-optimize for Thor Turnip/Adreno TBDR (minimize "
-    "passes=GMEM flushes, GMEM-resident RT). See docs/research/20260705-native-"
-    "vulkan-renderer-plan.md. Brick 1 = the persistent RT + one render pass.",
-    "GPU");
-DEFINE_bool(
     gpu_bd_native_keep_scissor, false,
     "BD tile-fanout fix (5.6-sol 2026-07-11): when true, KEEP GetScissor's already-"
     "correct per-group scissor (it applies PA_SC_WINDOW_OFFSET: left field group -> "
@@ -115,21 +102,6 @@ DEFINE_bool(
     "Turnip-only; needs gpu_bd_native_keep_scissor + customResolve. Default off.",
     "GPU");
 DEFINE_bool(
-    gpu_bd_native_skip_resolves, false,
-    "BD-30 pass-collapse (default off, needs gpu_bd_native_renderer): once the "
-    "native renderer has rendered the field this frame, skip the LLE EDRAM "
-    "resolves that follow (redundant - the native RT is presented, not the "
-    "resolved LLE surface). Drops the bulk of the 79-pass EDRAM overhead. Resolves "
-    "before the field (textures/shadows) are kept.",
-    "GPU");
-DEFINE_uint32(
-    gpu_bd_native_rt_width, 1280,
-    "BD native RT width (default 1280). The bin-once renders BD's field into a "
-    "W-wide region (surface desc W=672); set this to that W so the field content "
-    "FILLS the native RT and the presenter stretches it UV[0,1]->1280 to full "
-    "width (full-scene-in-half -> full-screen). 1280 = no stretch.",
-    "GPU");
-DEFINE_bool(
     gpu_bd_native_whole_frame, false,
     "BD WHOLE-FRAME HLE (default off, needs gpu_bd_native_renderer): the pitch-720 "
     "redirect catches only ~40% of draws (the 2x foliage); ~60% (non-720 1x opaque) "
@@ -138,30 +110,6 @@ DEFINE_bool(
     "to 1x so xenia builds matching 1x pipelines, rendering the WHOLE frame in ONE "
     "native pass and bypassing LLE for the opaque majority too. The direct 11->30fps "
     "lever on the Thor. Drops the foliage 2x MSAA (also cheaper).",
-    "GPU");
-DEFINE_bool(
-    gpu_bd_native_aux_fmt37, true,
-    "BD REAL-HLE: also cover vk-format-37 (RGBA8 opaque/background) aux surfaces "
-    "(default on). Set FALSE to cover vk-97 only — isolates whether format-37 "
-    "surface handling is the DESKTOP x64-backend crash (unblocks PC-primary HLE "
-    "dev). On the Thor keep it on (the opaque needs covering).",
-    "GPU");
-DEFINE_bool(
-    gpu_bd_native_diag_coverage, false,
-    "BD REAL-HLE diagnostic: log the >2048px-wide RTs that black-screen when "
-    "aux-covered, with their dims + whether they have a resolve-edge. Pins the "
-    "consume-side coverage gap. Default off.",
-    "GPU");
-DEFINE_bool(
-    gpu_bd_native_aux_rt, false,
-    "BD REAL-HLE aux render-to-texture (default off, needs gpu_bd_native_renderer): "
-    "redirect a NON-field EDRAM-bound draw into its OWN persistent native surface "
-    "keyed by the resolve-dest guest address (the stable D3D9 resource identity), so "
-    "shadows/reflections/RT-textures render natively and the field SAMPLES those "
-    "images directly (native texture binding) instead of the EDRAM-resolved upload. "
-    "This is the EDRAM-deletion step: with the content native, the 35 ownership-"
-    "transfer passes (~110ms) are no longer load-bearing. DEV/iterate on desktop "
-    "--gpu=vulkan + RenderDoc (dims/format/pass-compat), then Thor-measure.",
     "GPU");
 DEFINE_bool(
     gpu_bd_depth_xfer_census, false,
@@ -176,41 +124,6 @@ DEFINE_bool(
     "serve. Counts every transfer (unlike the capped 40-line BD DEPTH XFER SEEN "
     "log, which samples and rotates out of logcat) and reports on a 4096 "
     "boundary. Field-gated (guest uptime > 135s) so it reflects gameplay.",
-    "GPU");
-DEFINE_bool(
-    gpu_bd_native_depth_resolve, false,
-    "BD native IN-PASS depth resolve (default off, needs gpu_bd_native_renderer). "
-    "Gives each MSAA native surface a single-sample DEPTH resolve target attached "
-    "to its own render pass via VkSubpassDescriptionDepthStencilResolve, so the "
-    "multisampled depth is resolved as part of that pass's existing GMEM tile "
-    "store - no extra render pass and no extra tile round-trip. This is the "
-    "TBDR-correct way to serve BD's MSAA depth conversions: the measured field has "
-    "45 EDRAM ownership transfers of which the color-drop HLE already deletes 30, "
-    "and the remaining 15 are the DEPTH ones (MSAA 1<->2 conversions per the "
-    "RenderDoc census). Note vkCmdResolveImage CANNOT do this - it is color-only - "
-    "and a separate shader resolve pass would re-add the very tile-store cost the "
-    "native renderer exists to delete. Requires depthStencilResolve SAMPLE_ZERO "
-    "(device-confirmed on Turnip: depthModes=0x21; independentResolve=0 so depth "
-    "and stencil use the SAME mode). Allocating + resolving the target alone is "
-    "NOT yet a win - the win comes when the converted-depth CONSUMERS are "
-    "redirected to this image and the matching EDRAM depth transfer is dropped. "
-    "Measure with tools/gpu_ab_analyze.py, watching rt_xfers_dropped rise past 30.",
-    "GPU");
-DEFINE_bool(
-    gpu_bd_native_tex_bind, true,
-    "BD REAL-HLE Brick B (default on, needs gpu_bd_native_aux_rt): bind native "
-    "surfaces to the field's pixel-shader texture fetches. Set FALSE to isolate the "
-    "render-redirect from the texture-bind: if the frame is still black with this "
-    "OFF, the black is render-pass STATE corruption from the redirect; if it renders "
-    "(minus the stolen RTs), the black was wrong-content binding via Brick B.",
-    "GPU");
-DEFINE_uint32(
-    gpu_bd_native_aux_max_width, 800,
-    "BD REAL-HLE aux redirect max surface width (default 800). Only redirect "
-    "intermediate texture RTs up to this width into native surfaces; larger "
-    "(main-scene/frontbuffer) RTs stay on the EDRAM path (their composite/present "
-    "readers aren't redirected, so stealing them black-screens). Raise once the "
-    "consume side covers all readers.",
     "GPU");
 DEFINE_bool(
     gpu_bd_native_mainscene_redirect, false,
@@ -316,20 +229,6 @@ DEFINE_bool(
     "Fail-closed: any signature/state mismatch renders the original 4x guest "
     "pass + transfers. Small visual cost (slightly rougher glow/translucency).",
     "GPU");
-DEFINE_bool(
-    gpu_bd_native_reserve_captured_surfaces, false,
-    "BD full-native HLE substrate (default off): drive BdNativeRenderer's "
-    "resource-keyed AcquireSurface() from the live per-frame draw capture "
-    "(requires gpu_bd_full_native>=1). At frame end, for each DISTINCT "
-    "single-sample color surface seen this frame (keyed by "
-    "base_tiles+pitch+format+msaa, sized from the pitch + max screen-scissor "
-    "extent), ensure a persistent native color+depth VkImage exists - building "
-    "the full resource-keyed native RT set the EDRAM-deletion HLE needs. This "
-    "only ALLOCATES the surfaces (no render redirect yet); MSAA surfaces are "
-    "deferred (AcquireSurface needs a resolve, not yet implemented). Inert until "
-    "enabled; needs on-device validation of the full render redirect that "
-    "consumes these surfaces.",
-    "GPU");
 DEFINE_int32(
     gpu_bd_native_color_lifetime_hle, 0,
     "BD REAL-HLE color-only native surface lifetime (Codex-designed 2026-07-10, "
@@ -358,14 +257,6 @@ DEFINE_bool(
     "Diagnostic A/B to measure whether the bloom deletion alone (cheap blits) is "
     "net-positive vs the field convert's catastrophe. Only affects lifetime_hle>=9.",
     "GPU");
-DEFINE_double(
-    gpu_bd_native_depth_clear, 0.0,
-    "BD REAL-HLE native depth-buffer CLEAR value (default 0.0 = reverse-Z far). The "
-    "field's color pass depth-TESTS against this cleared native depth (the depth "
-    "prepass is not redirected to the native buffer). If BD uses standard-Z (test "
-    "LESS, far=1.0), a 0.0 clear culls the whole field to a strip when EDRAM is "
-    "dropped — set 1.0 to test. THE candidate fix for the depth-cull collapse.",
-    "GPU");
 DEFINE_bool(
     gpu_bd_native_drop_all_xfer, false,
     "BD REAL-HLE drop ALL EDRAM transfers (color AND depth) WITH the sync barrier "
@@ -386,40 +277,10 @@ DEFINE_bool(
     "depth + dropping heavy color (field presents native color) targets 30fps + "
     "correct. THE candidate final lever for full EDRAM color-transfer deletion.",
     "GPU");
-DEFINE_bool(
-    gpu_bd_native_force_samples1, false,
-    "BD native renderer Adreno-crash isolation (default off): force the native RT "
-    "to single-sample (drop MSAA + the in-renderpass resolve attachment). The "
-    "Adreno driver crashes processing the native pass; the MSAA resolve is the top "
-    "suspect. Set true to test whether dropping it stops the driver crash.",
-    "GPU");
-DEFINE_uint32(
-    gpu_bd_native_stretch_width, 0,
-    "BD fill-the-screen stretch (default 0 = off). The bin-once renders BD's field "
-    "into the left W px of the 1280 native RT (BD's field surface is 672 wide and "
-    "BD upscales it in its resolve). Set to that W (672) so the native renderer "
-    "BLITS the rendered region stretched to full width on present - the full field "
-    "fills the screen. Post-composition (unlike the geometry-spreading viewport "
-    "scale). Pairs with the BeginTiling bin-once + gpu_bd_native_renderer.",
-    "GPU");
-DEFINE_double(
-    gpu_bd_native_viewport_scale_x, 1.0,
-    "BD native horizontal viewport stretch (default 1.0 = off). BD's field draws "
-    "use a giant 8192 viewport with NDC-positioned geometry; the bin-once lands it "
-    "in the left ~672 of the 1280 RT. Scale the viewport width by this (1280/672 = "
-    "~1.905) so the same geometry fills the full width. Pairs with the scissor "
-    "widen + gpu_bd_native_renderer + the BeginTiling bin-once.",
-    "GPU");
 DEFINE_int32(
     gpu_bd_renderdoc_capture_frame, 0,
     "If non-zero and running under RenderDoc, trigger a frame capture at this "
     "swap number (e.g. 2000 for a field frame). 0 = off.",
-    "GPU");
-DEFINE_int32(
-    gpu_bd_native_tile_filter, 0,
-    "BD native renderer config-isolation diagnostic: 0=all field draws, "
-    "1=only window-offset-zero draws (config-A), 2=only offset-carrying draws "
-    "(config-B). Screenshots isolate where each tile config renders.",
     "GPU");
 // --- Blue Dragon FULL NATIVE-DRAW HLE (the DXVK/Cemu model), Brick 1 ---
 DEFINE_bool(

@@ -46,30 +46,16 @@
 // the decoupled full-surface RT the native field draws rendered into, instead of
 // BD's resolved guest front buffer.
 DECLARE_bool(gpu_bd_hle_present_decoupled);
-DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_bool(gpu_bd_framegraph_depth);
 DECLARE_bool(gpu_bd_framegraph_depth_shadow);
 DECLARE_bool(gpu_bd_patha_depth_snapshot);
 DECLARE_bool(gpu_bd_native_keep_scissor);
 DECLARE_bool(gpu_bd_field_decouple);
 DECLARE_int32(gpu_bd_native_color_lifetime_hle);
-DECLARE_bool(gpu_bd_native_skip_resolves);
-DECLARE_int32(gpu_bd_native_tile_filter);
-DECLARE_uint32(gpu_bd_native_rt_width);
 DECLARE_bool(gpu_bd_native_whole_frame);
-DECLARE_bool(gpu_bd_native_aux_rt);
-DECLARE_bool(gpu_bd_native_depth_resolve);
-DECLARE_bool(gpu_bd_native_aux_fmt37);
-DECLARE_bool(gpu_bd_native_diag_coverage);
-DECLARE_bool(gpu_bd_native_tex_bind);
-DECLARE_uint32(gpu_bd_native_aux_max_width);
 DECLARE_bool(gpu_bd_native_mainscene_redirect);
-DECLARE_bool(gpu_bd_native_force_samples1);
-DECLARE_uint32(gpu_bd_native_stretch_width);
-DECLARE_double(gpu_bd_native_viewport_scale_x);
 DECLARE_int32(gpu_bd_renderdoc_capture_frame);
 DECLARE_int32(gpu_bd_full_native);
-DECLARE_bool(gpu_bd_native_reserve_captured_surfaces);
 // Per-register HLE hooks in the base CommandProcessor::WriteRegister; the
 // register-write fast path must fall back to per-register while they observe.
 DECLARE_bool(gpu_hle_surface_trace);

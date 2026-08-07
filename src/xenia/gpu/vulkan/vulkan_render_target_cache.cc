@@ -201,7 +201,6 @@ DEFINE_string(
 // BD's emulated per-tile base-0 EDRAM->RAM resolve copy (the ~120ms field GPU
 // fence). 1 = base-0 color copies only; 2 = all color copies (upper bound).
 DECLARE_uint32(gpu_bd_hle_drop_resolve);
-DECLARE_bool(gpu_bd_native_renderer);
 DECLARE_int32(gpu_bd_native_color_lifetime_hle);
 DECLARE_bool(gpu_bd_native_field_convert);
 DECLARE_bool(gpu_bd_native_keep_scissor);
