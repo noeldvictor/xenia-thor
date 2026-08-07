@@ -488,6 +488,28 @@ Worst to best: **FMV/video** (measures XMA decode + a blit — none of the code 
   race (Burnout) or the field (BD, ~120-135s). Skill: **`xenia-blue-dragon-route-capture`**. A captured route is a
   PREREQUISITE for a CPU measurement, not an optional extra.
 
+## 🔊🌩️ THE REAL-TIME AUDIO CALLBACK TAKES THE GLOBAL WAIT MUTEX AND WAKES EVERY GUEST THREAD (2026-08-07)
+**The single most concrete CPU/power finding of the XenDroid sweep, and it needs no device to see. Traced:**
+```
+AAudio DataCallback  (real-time, every few ms)
+  -> AndroidAudioDriver::FillAudio()            android_audio_driver.cc:153, takes frames_mutex_
+    -> ReleaseConsumedFrameLocked()             :186
+      -> semaphore_->Release(1, nullptr)
+        -> lock(PosixConditionBase::mutex_)     threading_posix.cc:360  <- GLOBAL static mutex
+        -> cond_.notify_all()                   threading_posix.cc:363  <- GLOBAL static condvar
+```
+- **Two distinct defects in one path.** (a) **A real-time audio callback must never block on an unbounded lock** —
+  here it waits on the one mutex every guest thread takes for every wait/signal, so any guest thread holding it
+  stalls the audio callback and underruns the stream. (b) it then **notify_all()s the global condvar**, waking
+  every parked guest thread (see the thundering-herd note below) **at audio-callback frequency**.
+- **This is the shape of XenDroid `92ca0d563`** ("Keep the realtime audio callback off the global multi-wait
+  mutex"). Port it WITH the condvar refactor, not before — on our tree the two are the same root cause.
+- **Plausibly relevant to the XMA warnings we actually see** (`XmaContext {}: non-forward input read offset ...
+  stopping decode of this buffer`, xma_context.cc:789, seen throughout a Gears run). **NOT asserted** — that is a
+  decode-side offset guard and this is a callback-side stall; they could be unrelated. Verify before linking them.
+- **Already checked and NOT applicable:** `366f38da8` ("fill the whole AAudio request instead of one guest block
+  per callback") — our `FillAudio` already loops over queued frames and zero-fills on underrun.
+
 ## 🌩️🌩️ ONE GLOBAL CONDVAR WAKES EVERY WAITING GUEST THREAD ON EVERY SIGNAL (found 2026-08-07, NOT fixed)
 **`PosixConditionBase::cond_` and `::mutex_` are `static`** (threading_posix.cc, bottom of the class) — **a SINGLE
 condition variable shared by every event, semaphore, mutant and timer in the emulator.** `WaitMultiple` (:242)
