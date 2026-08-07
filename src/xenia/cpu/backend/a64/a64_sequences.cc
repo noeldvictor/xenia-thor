@@ -5990,11 +5990,17 @@ struct DOT_PRODUCT_3_F32
       int s1 = SrcVReg(e, i.src1, 0);
       int s2 = SrcVReg(e, i.src2, 1);
 
+      // NOTE: the fcvtl2 (HIGH-half) reads MUST come before the fcvtl writes to
+      // v0/v1. SrcVReg returns the SCRATCH index for a constant operand, so s1 can
+      // BE v0 and s2 can BE v1 - and `fcvtl v0.2d, v0.2s` writes 16 bytes, destroying
+      // the original 4 floats. Reading the high half afterwards then saw f64 product
+      // bits instead of the source, giving a wrong dot product whenever an operand
+      // was constant. Allocated sources (v4+) were never affected.
+      e.fcvtl2(VReg(2).d2, VReg(s1).s4);
+      e.fcvtl2(VReg(3).d2, VReg(s2).s4);
       e.fcvtl(VReg(0).d2, VReg(s1).s2);
       e.fcvtl(VReg(1).d2, VReg(s2).s2);
       e.fmul(VReg(0).d2, VReg(0).d2, VReg(1).d2);
-      e.fcvtl2(VReg(2).d2, VReg(s1).s4);
-      e.fcvtl2(VReg(3).d2, VReg(s2).s4);
       e.fmul(VReg(2).d2, VReg(2).d2, VReg(3).d2);
 
       e.faddp(DReg(1), VReg(0).d2);
@@ -6034,12 +6040,17 @@ struct DOT_PRODUCT_3_V128
       int s2 = SrcVReg(e, i.src2, 1);
       int d = i.dest.reg().getIdx();
       // Widen low 2 floats of each source to double.
+      // NOTE: the fcvtl2 (HIGH-half) reads MUST come before the fcvtl writes to
+      // v0/v1. SrcVReg returns the SCRATCH index for a constant operand, so s1 can
+      // BE v0 and s2 can BE v1 - and `fcvtl v0.2d, v0.2s` writes 16 bytes, destroying
+      // the original 4 floats. Reading the high half afterwards then saw f64 product
+      // bits instead of the source, giving a wrong dot product whenever an operand
+      // was constant. Allocated sources (v4+) were never affected.
+      e.fcvtl2(VReg(2).d2, VReg(s1).s4);           // v2 = {s1[2], s1[3]} as f64
+      e.fcvtl2(VReg(3).d2, VReg(s2).s4);           // v3 = {s2[2], s2[3]} as f64
       e.fcvtl(VReg(0).d2, VReg(s1).s2);            // v0 = {s1[0], s1[1]} as f64
       e.fcvtl(VReg(1).d2, VReg(s2).s2);            // v1 = {s2[0], s2[1]} as f64
       e.fmul(VReg(0).d2, VReg(0).d2, VReg(1).d2);  // v0 = {a0*b0, a1*b1}
-      // Widen high 2 floats (elements 2,3) to double.
-      e.fcvtl2(VReg(2).d2, VReg(s1).s4);           // v2 = {s1[2], s1[3]} as f64
-      e.fcvtl2(VReg(3).d2, VReg(s2).s4);           // v3 = {s2[2], s2[3]} as f64
       e.fmul(VReg(2).d2, VReg(2).d2, VReg(3).d2);  // v2 = {a2*b2, a3*b3}
       // Sum: d0 = v0[0] + v0[1] + v2[0] (skip v2[1] = element 3).
       e.faddp(DReg(1), VReg(0).d2);
@@ -6082,11 +6093,17 @@ struct DOT_PRODUCT_4_F32
       int s1 = SrcVReg(e, i.src1, 0);
       int s2 = SrcVReg(e, i.src2, 1);
 
+      // NOTE: the fcvtl2 (HIGH-half) reads MUST come before the fcvtl writes to
+      // v0/v1. SrcVReg returns the SCRATCH index for a constant operand, so s1 can
+      // BE v0 and s2 can BE v1 - and `fcvtl v0.2d, v0.2s` writes 16 bytes, destroying
+      // the original 4 floats. Reading the high half afterwards then saw f64 product
+      // bits instead of the source, giving a wrong dot product whenever an operand
+      // was constant. Allocated sources (v4+) were never affected.
+      e.fcvtl2(VReg(2).d2, VReg(s1).s4);
+      e.fcvtl2(VReg(3).d2, VReg(s2).s4);
       e.fcvtl(VReg(0).d2, VReg(s1).s2);
       e.fcvtl(VReg(1).d2, VReg(s2).s2);
       e.fmul(VReg(0).d2, VReg(0).d2, VReg(1).d2);
-      e.fcvtl2(VReg(2).d2, VReg(s1).s4);
-      e.fcvtl2(VReg(3).d2, VReg(s2).s4);
       e.fmul(VReg(2).d2, VReg(2).d2, VReg(3).d2);
 
       e.fadd(VReg(0).d2, VReg(0).d2, VReg(2).d2);
@@ -6125,12 +6142,17 @@ struct DOT_PRODUCT_4_V128
       int s2 = SrcVReg(e, i.src2, 1);
       int d = i.dest.reg().getIdx();
       // Widen low 2 floats to double, multiply.
+      // NOTE: the fcvtl2 (HIGH-half) reads MUST come before the fcvtl writes to
+      // v0/v1. SrcVReg returns the SCRATCH index for a constant operand, so s1 can
+      // BE v0 and s2 can BE v1 - and `fcvtl v0.2d, v0.2s` writes 16 bytes, destroying
+      // the original 4 floats. Reading the high half afterwards then saw f64 product
+      // bits instead of the source, giving a wrong dot product whenever an operand
+      // was constant. Allocated sources (v4+) were never affected.
+      e.fcvtl2(VReg(2).d2, VReg(s1).s4);
+      e.fcvtl2(VReg(3).d2, VReg(s2).s4);
       e.fcvtl(VReg(0).d2, VReg(s1).s2);
       e.fcvtl(VReg(1).d2, VReg(s2).s2);
       e.fmul(VReg(0).d2, VReg(0).d2, VReg(1).d2);
-      // Widen high 2 floats to double, multiply.
-      e.fcvtl2(VReg(2).d2, VReg(s1).s4);
-      e.fcvtl2(VReg(3).d2, VReg(s2).s4);
       e.fmul(VReg(2).d2, VReg(2).d2, VReg(3).d2);
       // Sum all 4 products: v0 = {a0*b0+a2*b2, a1*b1+a3*b3}
       e.fadd(VReg(0).d2, VReg(0).d2, VReg(2).d2);
