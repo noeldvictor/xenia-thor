@@ -748,6 +748,16 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   records clock_gettime was ~15% of CPU on timing-heavy titles) ✅ VPERM→TBL (a64 emits `tbl`; LLVM emits 2×TBL1 OR'd,
   deliberately — the TBL2 intrinsic needs a consecutive register pair we cannot satisfy) ✅ MIDR_EL1 core
   classification (platform_arm64.cc) ✅ LLVM target features ✅ FEAT_SHA3 detection ✅ `fmax`/`fmin` native in a64.
+  **⚠️ VPERM→TBL IS 3× MORE EXPENSIVE ON LLVM THAN ON a64 — manual-priced 2026-08-07.** a64 emits a real
+  two-table `tbl` (a64_seq_vector.cc:960/1001/1034) = **1 µOP**. LLVM emits **2×TBL1 OR'd = 3 µOPs**
+  (llvm_assembler.cc:2200) because `aarch64.neon.tbl2` needs a CONSECUTIVE register pair we cannot satisfy.
+  **A710 SWOG p52: `ASIMD table lookup, 1 or 2 table regs` = latency 2, throughput 2 — a TWO-table TBL costs
+  EXACTLY the same as a one-table TBL.** So the workaround buys no latency and spends 3× the µOPs on the
+  FP/ASIMD pipe, which is only **2 wide** on the mid-cores (vs 4 integer, 3 load) — and **LLVM is the shipping
+  default**, so that is the path most VPERMs take. (3-table TBL is the costly form: latency 4, throughput 1.)
+  **NOT fixed, NOT sized:** there is no census of how hot VPERM is in a real scene, so measure applicability
+  before fighting LLVM's register allocator (rule 4). The manual only changes this from a guess into a known
+  payoff: 3 µOPs → 1 on the scarce pipe.
   ⚠️ `a64_spin_hint_isb` = **CONFOUNDED / default-off / NO WIN measured** — frame-capped title screen + unequal
   thermal start (53.1°C vs 57.8°C); a refutation it is NOT. Retest in a real race from equal temps.
   ❌ The A510 "two of three share a vector unit" claim is **REFUTED on the Thor** by our own probe (34014db95) —
