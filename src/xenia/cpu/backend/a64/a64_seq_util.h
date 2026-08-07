@@ -568,6 +568,22 @@ inline void PrepareVmxFpSources(A64Emitter& e, const T1& op1, const T2& op2,
 // PPC rule: first NaN by operand position wins; SNaN is quieted (bit 22 set).
 // If neither input was NaN but the op generated NaN (e.g., inf-inf),
 // use the PPC default NaN (0xFFC00000).
+//
+// ⛔⛔ DO NOT DELETE THIS BY ANALOGY WITH FixupVmxMaxMinNan. That one was removed
+// 2026-08-07 as redundant-and-wrong; THIS ONE IS LOAD-BEARING, and the difference
+// is one bit. qemu-a64 measured (tools/qemu/, FPCR = DEFAULT_VMX_FPCR):
+//   PROPAGATED NaN (a NaN input):   ARM 7FC00001 == PPC 7FC00001   <- redundant
+//   GENERATED  NaN (inf + -inf):    ARM 7FC00000 vs PPC FFC00000   <- DIFFERS
+//   GENERATED  NaN (0 * inf):       ARM 7FC00000 vs PPC FFC00000   <- DIFFERS
+// ARM's default NaN is POSITIVE, PPC's is NEGATIVE. So the generated-NaN half of
+// this fixup is a real architectural difference that ARM cannot supply, unlike
+// max/min where ARM already matched the guest in all 8 cases.
+// ⇒ OPTIMISATION AVAILABLE, NOT TAKEN YET: only the GENERATED-NaN half is needed,
+// so the scalar lane-extraction path below (which exists to reproduce operand-
+// position precedence that ARM already implements) could collapse to a branchless
+// vector select - "result is NaN AND neither input was NaN -> 0xFFC00000". Measure
+// applicability first (rule 4): the fast path already skips when no result lane is
+// NaN, so this only pays in code that actually produces NaNs.
 inline void FixupVmxNan_V128(A64Emitter& e, int s1 = 0, int s2 = 1) {
   using namespace Xbyak_aarch64;
   auto& done = e.NewCachedLabel();

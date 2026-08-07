@@ -629,6 +629,23 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   (vA)"*, which is wrong for `(num,NaN)` - the exact comment/code disagreement the experiment ledger flagged.
   **⚠️ NOT device-validated yet** (the Thor was running rpcsx). Correctness is argued from primary sources plus a
   bit-exact differential; the PERF effect is unmeasured and must not be quoted until it is.
+  **⛔⛔ DO NOT GENERALISE THIS TO THE OTHER NaN FIXUP - `FixupVmxNan_V128` IS LOAD-BEARING.** The obvious
+  next thought after the above is "ARM matches PPC on NaN, so delete the NaN fixups". **That is wrong for the
+  ARITHMETIC ops, and the difference is one bit.** Measured the same way
+  (`tools/qemu/vmx_nan_arith_differential.c`, same FPCR):
+  | case | ARM | PPC | |
+  |---|---|---|---|
+  | PROPAGATED NaN (`QNaN + num`, `SNaN + num`, `QNaN * num`) | `7FC00001` | `7FC00001` | redundant half |
+  | GENERATED NaN (`inf + -inf`, `inf - inf`, `0 * inf`) | `7FC00000` | **`FFC00000`** | **DIFFERS - sign bit** |
+  **ARM's default NaN is POSITIVE; PPC's is NEGATIVE.** ARM cannot supply that, so the generated-NaN half is a
+  genuine architectural difference and the fixup must stay. This is exactly why "the port carried an x86
+  workaround" is a HYPOTHESIS TO TEST PER SEQUENCE, not a rule to apply across the backend - two NaN fixups that
+  look identical in kind had opposite verdicts.
+  **↗️ Real optimisation still on the table (not taken, unmeasured):** since only the generated-NaN half is
+  needed, `FixupVmxNan_V128`'s SCALAR lane-extraction path - which exists to reproduce operand-position
+  precedence ARM already implements - could collapse to a branchless vector select ("result is NaN AND neither
+  input was NaN -> `0xFFC00000`"). Rule 4 first: its fast path already skips when no result lane is NaN, so it
+  only pays in code that actually generates NaNs.
   **✅ THE ARM HALF IS NOW SETTLED FROM THE SPEC (2026-08-07), not eyeballed.** `docs/reference/arm/arm-architecture-
   reference-manual-a-profile.pdf`, shared pseudocode `FPMax` (p11115-11116):
   ```
