@@ -1108,6 +1108,20 @@ because a dropped-write or stale-read race is intermittent and a clean run prove
   nothing ordering them. Look for "atomic index + plain buffer", not for atomics in isolation.
   Secondary shape: raw `__sync_*`/`__atomic_*` with an explicitly chosen ordering (those bypass the safe default),
   and hand-rolled primitives like the `atomic_exchange` above.
+- **🔎 NEXT CANDIDATE, TRACED BUT NOT RESOLVED — the GPU register file and `volatile`.**
+  `RegisterFile::values[]` is a plain `uint32_t[kRegisterCount]` (register_file.h:41) and the command processor
+  reaches it through `const_cast<volatile uint32_t&>` at **8 sites** (command_processor.cc:1299, 1301, 1324, 1326,
+  1357, 1404, 1439, 1709). **`volatile` gives neither atomicity nor ordering in C++** — it is not a fence. On x86
+  this works by accident: TSO plus naturally atomic aligned 32-bit access. On ARM64 an aligned 32-bit access is
+  still single-copy atomic, so values will not tear, but **nothing orders those accesses against surrounding
+  ones.**
+  **Do NOT "fix" this yet.** The register writes are almost certainly ordered by the ring-buffer write-pointer
+  publish, which IS a `seq_cst` atomic (`write_ptr_index_`) — i.e. the edge may already exist, exactly like
+  `AudioSystem::paused_` above. **What to do first: establish which THREAD writes each of the 8 sites.** CLAUDE.md
+  already records that `IssueDraw` and `register_file_` are CP-worker-owned, so if all 8 are CP-thread-only this
+  is a non-issue and should be recorded as such. Only if a guest/MMIO thread writes while the CP thread reads is
+  there anything to fix — and then the fix is an acquire/release pair on the existing publish, not sprinkling
+  atomics over the register array.
 - **WHERE TO KEEP LOOKING (this sweep is not finished):** cross-thread flags that are plain `bool`/`uint32_t`
   rather than `std::atomic`; `volatile` used as if it implied ordering (it does not — it is not a fence);
   publish-then-signal pairs where the publish has no release; and double-checked-locking shapes. Grep entry
