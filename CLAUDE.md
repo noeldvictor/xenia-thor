@@ -76,6 +76,31 @@ don't debug from scratch.**
   disc_playlist, user_gamertag, ntreadfile_force_complete, HLE hooks, content manager. Edge stability becomes
   the floor; our CPU/GPU perf stays on top.
 
+## 🗑️ DECISION: DELETE THE BD NATIVE RENDERER (user, 2026-08-07: "that fucking project failed")
+**Agreed and consistent with the evidence** - the archive above records the whole EDRAM/HLE era as superseded by
+the measurement that BD's field is CPU-bound. The renderer is correct but is not the fps lever, and it is now
+pure carrying cost.
+**MEASURED SCOPE (2026-08-07) - this is a session of its own, NOT a delete:**
+```
+bd_native_renderer.cc/.h        1,511 lines
+references across the tree        888 in 16 files
+  of which vulkan_command_processor.cc  278
+gpu_bd_* cvars in gpu_flags.cc      4
+also touches: processor.cc, command_processor.{cc,h}, d3d12_command_processor.cc,
+              vulkan_render_target_cache.{cc,h}, vulkan_command_processor.h
+```
+**⇒ IT IS WORTH DOING FOR A SECOND REASON:** it shrinks the traditional render-pass surface that currently
+blocks the dynamic-rendering prerequisite (~115 API sites, 14 `kColorDrawLayout` uses - several of them BD
+custom-resolve passes). **Delete it FIRST, then port dynamic rendering** - the order matters, because removing
+888 references from a layer you are also replacing is strictly harder than removing them first.
+**SUGGESTED ORDER (each step compiles and is independently revertable):**
+1. Flip every `gpu_bd_*` cvar to a hard `false` and rebuild - proves nothing live depends on the path.
+2. Delete the 278 call sites in `vulkan_command_processor.cc` (the bulk; they are gated blocks).
+3. Delete the render-target-cache and command-processor hooks.
+4. Delete `bd_native_renderer.{cc,h}`, the 4 cvars, and the premake entry.
+**⚠️ Do NOT start this at the tail of a session.** It is the GPU path, where mistakes are wrong pixels rather
+than crashes, and a half-applied delete leaves the tree unbuildable.
+
 ## 📦 THE BD EDRAM / D3D9-HLE ERA IS ARCHIVED — `docs/research/20260807-bd-edram-hle-era-archive.md`
 **Roughly 230 lines of July 2026 GPU narrative moved out of this file.** It was the largest thing loaded into
 every session and it is superseded by the section directly below: BD's field is **CPU-bound**, so the whole
