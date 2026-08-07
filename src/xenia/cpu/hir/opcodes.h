@@ -300,6 +300,25 @@ enum Opcode {
 enum OpcodeFlags {
   OPCODE_FLAG_BRANCH = (1 << 1),
   OPCODE_FLAG_MEMORY = (1 << 2),
+  // ⛔ READ BEFORE WRITING ANY PASS THAT ACTS ON THIS FLAG (2026-08-07).
+  // It is currently DECLARED AND NEVER READ - set on 10 opcodes, consumed by
+  // nothing - so there is no bug today. It is a loaded gun, not a live one.
+  //
+  // THE FLAG IS A LIE FOR FLOAT ELEMENT TYPES. OPCODE_ADD, OPCODE_VECTOR_ADD
+  // and OPCODE_MUL carry it, and vaddfp/vsubfp/vmulfp lower to exactly those
+  // with FLOAT32_TYPE. For floats the operand ORDER IS OBSERVABLE, because both
+  // PPC and ARM propagate the FIRST source NaN by operand position:
+  //   AltiVec PEM 3.2.5.1 "NaN Precedence" - vA's NaN if vA is a NaN, else vB's
+  //   qemu-a64 measured (tools/qemu/):
+  //     fadd(7FC00001, 7FD00002) = 7FC00001
+  //     fadd(7FD00002, 7FC00001) = 7FD00002   <- swapping CHANGES the result
+  //     fmul: identical asymmetry
+  // So a canonicalisation pass of the usual kind ("commutative? then sort the
+  // operands / move the constant to src2 so it folds") would silently corrupt
+  // NaN lanes in VMX float code. No crash - wrong floats.
+  //
+  // If you need such a pass, gate it on the ELEMENT TYPE, not the opcode:
+  // commutative for integer element types, NOT for FLOAT32/FLOAT64.
   OPCODE_FLAG_COMMUNATIVE = (1 << 3),
   OPCODE_FLAG_VOLATILE = (1 << 4),
   OPCODE_FLAG_IGNORE = (1 << 5),
