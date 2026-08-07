@@ -958,6 +958,36 @@ Beyond "the persisted config overrides the compiled default", there is a second 
   the persisted config says false - so the next step is to log all four conjuncts once, not to guess between
   them. **60,606 objects and 15 minutes of compile per launch are riding on one boolean.**
   which separates these two immediately: identical-except-hash means (1); never printed at all means (2).
+  **❌❌❌ ALL OF THE ABOVE IS WRONG. THE CACHE WAS NEVER BROKEN — DEVICE-MEASURED 2026-08-07, GATE LINE READ.**
+  ```
+  LLVMobjcache GATE: object_cache=1 skip_lowering=1 path_set=1 has_end=1 end_gt_start=1
+  ```
+  **All five conjuncts are TRUE.** In the same run: **28,775 `LLVMobjload` hits, exactly 1 MISS**, the whole
+  AOT precompile of **28,478 functions in 9.5 seconds** (17:00:54.497 -> 17:01:04.010), title reached
+  ("Gears of War", hash 1B591620508434A2), **zero faults**. Launch:
+  `--es cpu arm64 --ez cpu_backend_llvm true --ez cpu_aot_maximize true --ez cpu_llvm_target_features_native true`.
+  **⇒ THE DEFECT WAS IN THE MEASUREMENT RECIPE, NOT THE CODE - AND THE "ZERO OF EVERYTHING" SIGNATURE IS WHAT
+  MISLED ME.** The earlier diagnostic run omitted **`--ez cpu_aot_maximize true`**. Trace the structure:
+  - `LLVMAssembler::Assemble` (llvm_assembler.cc:2711) returns to the **a64 fallback at :2720** whenever
+    `cpu_llvm_no_runtime_compiles && processor()->is_aot_runtime_phase()`.
+  - `LowerAndJit` is only called at **:2764**, past that return - and the GATE block, the cache lookup and the
+    MISS diagnostic all live INSIDE `LowerAndJit` (from :2334).
+  - `aot_runtime_phase_` starts **false** and is flipped true by `EnterRuntimePhase()`
+    (processor.cc:1534, called from kernel_state.cc:429) **when the title's main thread launches**.
+  ⇒ The LLVM window is **load-time only**. With no AOT precompile pass, nothing compiles during that window,
+  every later compile is routed to a64 by the safety gate, `LowerAndJit` is never entered, and therefore GATE,
+  MISS and objload are all zero **while the cache is perfectly healthy**. The safety gate was doing its job.
+  **🔑 THE TRANSFERABLE MISTAKE: I read "zero of every diagnostic" as "the thing I am measuring is broken",
+  when it actually meant "the code containing the diagnostics never ran."** A diagnostic that prints nothing
+  cannot distinguish "the gate is false" from "we never reached the gate" - and I had already written that exact
+  distinction into this file one paragraph earlier ("never printed at all means (2)") and then read it the other
+  way. **Before concluding from silence, prove the enclosing function executed** - one unconditional log at
+  function entry, above every early return, would have ended this on the first run.
+  **⇒ THE ~15-MINUTE COMPILE WAS AN a64 AOT PASS, WHICH HAS NO OBJECT CACHE BY CONSTRUCTION** (the directory is
+  `objcache_v2_opt2`, LLVM-only). That is still a real robustness issue - **any launch that lands on a64
+  recompiles ~28k functions from scratch** - but it is NOT a cache bug, and **GUI launches were never affected**
+  (`XeniaAndroidSettings.java:235` sets `cpu=CPU_ARM64`, and `opt_aot_precompile`/`opt_llvm_backend` are both
+  `defaultEnabled=true`). Only headless `am start` runs missing `--es cpu arm64` ever hit the 15-minute path.
   **🔑 AND A CORRECTION TO THE "CHECK THE PERSISTED CONFIG" RULE:** after this run the config STILL read
   `cpu = "any"` and `cpu_backend_llvm = false`, while the log proves LLVM ran. **Launch extras override at
   runtime WITHOUT persisting.** So the config file shows what a launch INHERITS, not what a launch USED - read
@@ -1086,9 +1116,13 @@ is **x86-shaped ASSUMPTIONS in shared, architecture-neutral code**. Those are sc
 **Removing ALL of them is worth low single-digit percentages.** They are correctness-and-tidiness wins, and the
 two fixed ones were real bugs, but they are not where the 8W-vs-3-5W gap lives.
 **🔥 THE MEASURED BIG WINS ARE NOT x86-RELATED AT ALL:**
-1. **The AOT object cache never hits** - 60,606 objects present, 0 loads, so the ENTIRE title recompiles every
-   launch: ~15 min at 261-340% CPU, 40C->68C. **Gated behind one false boolean** (gate logging installed).
-   Fixing this turns a 15-minute startup into seconds. **Biggest available win by an order of magnitude.**
+1. **~~The AOT object cache never hits~~ ❌ RETRACTED 2026-08-07 - THE CACHE WORKS.** Measured with the gate
+   logging: `object_cache=1 skip_lowering=1 path_set=1 has_end=1 end_gt_start=1`, **28,775 objloads / 1 miss,
+   28,478 functions precompiled in 9.5s**, Gears reached, 0 faults. The zeroes came from a run that omitted
+   `--ez cpu_aot_maximize true`, which leaves `LowerAndJit` (and every diagnostic inside it) unreached - see the
+   AOT section for the full trace. **This was NOT the order-of-magnitude win; there was no bug to fix.**
+   What survives: an **a64** AOT pass has no object cache by construction, so a launch that lands on a64 does
+   recompile ~28k functions - but GUI launches always set `cpu=CPU_ARM64`, so only mis-flagged headless runs hit it.
 2. **One guest function called ~21M times/sec** (Burnout's D3D wait predicate), 85% of all guest entries, with
    a fastpath hardcoded to TWO title addresses.
 3. **One global condvar** woken on every signal, waking every parked guest thread - and the real-time audio
@@ -1444,6 +1478,22 @@ upstream commit; take the plain non-suffixed asset = A6xx/A7xx, correct for the 
   **VERIFY EVERY RUN:** the log must say `Loaded Turnip Vulkan driver ... via libadrenotools` and the physical
   device must print as **`Turnip Adreno (TM) 740`**. Plain `Adreno (TM) 740` + `AdrenoVK-0` = the Qualcomm blob and
   every GPU number from that run is invalid.
+  **🛑🛑 RE-READ `pm path` AFTER EVERY INSTALL — THE APK DIRECTORY CHANGES, AND A STALE HOOKS PATH FAILS IN A
+  MISLEADING WAY (2026-08-07).** Android installs each APK under a fresh randomised directory
+  (`/data/app/~~<rand1>==/<pkg>-<rand2>==/`), so a `nativeLibraryDir` captured BEFORE `adb install` points at a
+  directory that no longer exists after it. **The failure does not say "bad path".** It says:
+  ```
+  i> Loaded Turnip Vulkan driver 'libvulkan_freedreno.so' from '.../gpu_drivers/<id>/' via libadrenotools
+  w> No Vulkan physical devices available
+  ```
+  — i.e. it reports the driver as **successfully loaded** and then finds zero physical devices, because
+  libadrenotools needs `libhook_impl.so`/`libmain_hook.so` from that directory to redirect the driver's
+  dependencies. The emulator then sits on a black screen with ~38 log lines, the activity foreground and
+  `Displayed +213ms`, burning no CPU. Reads exactly like a hang or a GPU bug; it is a stale string.
+  **⇒ Derive it in the launch command itself, never hardcode it:**
+  `NATIVE=$(dirname $(adb shell pm path <pkg> | sed 's/^package://' | tr -d '\r'))/lib/arm64`.
+  Note this ALSO invalidates any saved launch script from a previous session - the path in it is dead the moment
+  you reinstall, which is every single time we ship a change.
 - **Upgrades reach existing devices** (fixed 2026-08-03): `ensureBundledDriverInstalled` used to skip whenever ANY
   driver was installed — including the one it had installed itself — so version bumps only ever helped FRESH
   installs. It now tracks the bundle-installed id (`KEY_BUNDLED_GPU_DRIVER_ID`), replaces exactly that package,
