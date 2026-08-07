@@ -1210,11 +1210,33 @@ The individual findings are disposable; these generated them and will generate t
    one (object cache off for EVERY real launch → full recompile every time). **Verify a lever RUNS before
    optimising it** — compiled default, persisted config, GUI registry, and which launch path sets it.
 
-**1. THE HARDWARE MODEL (Snapdragon 8 Gen 2 / Cortex-X3 + A715 + A710 + A510).**
-- **Mid-cores have 3× 128-bit LOAD ports but only 2× arithmetic ports.** The ideal mix is ~0.67 arithmetic
-  instructions per load. **Loads are the abundant resource; arithmetic is the scarce one.** Whatcookie reached that
-  ratio in RPCS3's comparison loop for **+38% mid-core / +21% big-core**. Corollary that bit us: **materialising a
-  constant by loading it can beat computing it** — the opposite of classic advice.
+**1. THE HARDWARE MODEL — NOW FROM THE PRIMARY SOURCE, AND THE OLD SUMMARY WAS HALF WRONG.**
+**📕 THE MANUALS ARE IN-REPO: `docs/reference/arm/cortex-x3-software-optimization-guide.pdf` (66pp) and
+`cortex-a710-software-optimization-guide.pdf` (92pp). READ THEM INSTEAD OF REPEATING FOLKLORE.** They carry the
+per-instruction Exec Latency / Execution Throughput / issue-pipeline tables — the actual answer to "is this
+instruction cheap on this core". Extract text with `pypdf` (installed); the `Read` tool cannot render them (no
+poppler). Section 2.1 is the pipeline, Table 2-1 the pipe→operation map, section 3.x the per-instruction tables.
+**Issue pipelines, quoted from Table 2-1 of each guide:**
+| | Cortex-X3 (prime, 17 pipes) | Cortex-A710 (mid, 13 pipes) |
+|---|---|---|
+| Load (`Load/Store 0/1` + `Load 2`) | **3** | **3** |
+| Integer ALU (`Single-Cycle` + `Single/Multi-Cycle`) | **6** (4 + 2) | **4** (2 + 2) |
+| **FP/ASIMD (vector)** | **4** | **2** |
+| Store data | 2 | 2 |
+| Branch | 2 | 2 |
+- **✅ "3 load ports" is CONFIRMED** on both cores — `Load/Store 0`, `Load/Store 1` and a load-only `Load 2`.
+- **❌ "only 2 arithmetic ports" was WRONG as stated.** The 2 is **FP/ASIMD on the A710**, not arithmetic in
+  general. **Integer ALU is 4 wide on the A710 and 6 wide on the X3 — it is ABUNDANT, not scarce.**
+- **⇒ THE RULE MUST BE SPLIT.** "Spend loads, save arithmetic" is a **VECTOR/NEON** rule: on a mid-core only 2
+  pipes accept ASIMD µOPs against 3 that accept loads, so a NEON-heavy loop starves on the vector pipes.
+  **For INTEGER code the ratio is the other way round** (4-6 integer pipes vs 3 load), so replacing integer ALU
+  work with a load is likely a PESSIMISATION there. Whatcookie's +38%/+21% came from an SPU comparison loop, which
+  is vector code — consistent with this, and not a general licence.
+- **This retro-justifies a result we already measured and could not fully explain:** the `ORR`+`STP` stackpoint
+  packing was INTEGER work, cut 18 insns to 13, and measured SLOWER. With 4 integer pipes and 3 load pipes on the
+  mid-cores, trading three independent stores for one gated store through an integer op was always going to lose.
+- Corollary that still stands, for vector code only: **materialising a constant by loading it can beat computing
+  it** — see the `GetV128ConstLabel` constant pool.
 - **NO SVE/SVE2** (Qualcomm shipped ARMv9 without it). Every SVE idea is N/A. We DO have
   `asimddp i8mm bf16 fphp asimdhp atomics lrcpc ilrcpc sha3`.
 - **`yield` is architecturally a hint and retires as a NOP on all 8 cores.** It is NOT x86 `pause`. `ISB` is the
