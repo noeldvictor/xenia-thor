@@ -1037,6 +1037,29 @@ measures a *subset* of the code you changed.
   what made the `a64_spin_hint_isb` A/B useless). Run **uncapped** (`--ei gpu_frame_limit_fps 0`) and read the
   profiler's `entry_delta` (guest entries/5s) = a direct CPU-throughput measure.
 
+## 🔐 ARM64 CRYPTO EXTENSIONS — HARDWARE IS THERE, WE USE NONE OF IT, BUT COUNT BEFORE BUILDING (2026-08-07)
+**Prompted by RPCS3 using crypto acceleration on ARM64. The Thor has the FULL set** (from `/proc/cpuinfo`):
+`aes crc32 pmull sha1 sha2 sha3 sha512`. **We use software for every one of them:**
+- `third_party/crypto/TinySHA1.hpp` backs the guest-callable `XeCryptSha*` / `XeCryptHmacSha*` exports.
+- `third_party/crypto/rijndael-alg-fst.c` backs XEX decryption (`aes_decrypt_buffer`, xex_module.cc:63) and the
+  guest `XeCryptAes*` exports.
+- `rc4.c`, `sha256.cpp`, `des/` - RC4 has NO hardware equivalent, so it is out of scope regardless.
+**⚠️ AND THE INSTRUCTIONS ARE NOT EVEN ENABLED:** premake5.lua targets `-march=armv8.2-a+lse` with **no `+aes`,
+`+sha2` or `+crypto`**, so the intrinsics would not compile today. That is a one-line prerequisite, but note it
+buys NOTHING on its own - the compiler does not turn a software AES round into `AESE`. It needs intrinsics or a
+dispatching library.
+**⇒ RULE 4 APPLIES HARD HERE. COUNT FIRST.** The cost is dominated by *where* this runs, and we have no data:
+- **XEX AES decrypt is LOAD-TIME**, once per module. Even a 10x speedup saves a fraction of a second against an
+  AOT compile that currently takes minutes - almost certainly noise.
+- **Guest `XeCryptSha*` frequency is UNKNOWN.** Games use it for save integrity, content verification and
+  anti-tamper. It could be once at boot or thousands of times a frame; nothing in this repo measures it.
+  **Add a call counter (one cvar, one run) before writing any intrinsic** - the `rlwinm` census is the model.
+**🔑 THE MORE LIKELY WIN IS NON-CRYPTO USE OF THE CRYPTO EXTENSIONS**, which is what usually pays off in
+emulators: `FEAT_SHA3` gives **EOR3** (3-input XOR) and **BCAX** (XOR-and-not), which is exactly what VMX bitwise
+chains lower to - and `cpu_llvm_target_features_native` already passes `+sha3` so LLVM fuses those automatically
+across all vector code (see the note above that reframes the EOR3 DEAD verdict). `PMULL` is the other one worth
+remembering, for carry-less/GF work. **Neither is about encrypting anything.**
+
 ## ✅✅ MEASURED ARM64 WIN (2026-08-05): the GUEST PROLOG is the hot path — `a64_stackpoint_prolog_fastpath` = +2.04%
 **The a64 profiler (`--ei arm64_speed_profile_interval_ms 5000`) is the tool that found this; use it before guessing
 a CPU lever.** Burnout on Turnip: **~24.4M guest function entries/sec, 85% of them into ONE function**
