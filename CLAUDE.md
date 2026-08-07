@@ -488,6 +488,49 @@ Worst to best: **FMV/video** (measures XMA decode + a blit — none of the code 
   race (Burnout) or the field (BD, ~120-135s). Skill: **`xenia-blue-dragon-route-capture`**. A captured route is a
   PREREQUISITE for a CPU measurement, not an optional extra.
 
+## 🛑🛑🛑 A BARE `am start` DOES NOT TEST WHAT SHIPS — IT RUNS WITHOUT LLVM OR AOT (2026-08-07, user caught it)
+**Every headless `adb shell am start` measurement is taken on the a64 backend with NO AOT precompile, unless you
+pass the CPU flags explicitly.** Verified live: 0 LLVM log lines across a whole session of runs, with
+`cpu_backend_llvm = false`, `cpu_aot_maximize = false`, `cpu_llvm_target_features_native = false` in the persisted
+config. **This is the same class as the "bare `am start` runs the Qualcomm driver" trap, for the CPU** —
+`opt_llvm_backend` and `opt_aot_precompile` are `defaultEnabled=true` in `XeniaOptimizations`, but that registry is
+applied by the **GUI launch path**, and a bare `am start` never touches it, so the persisted `false` wins.
+- **The standing directive says AOT+LLVM is the default for every game.** A headless run that omits them is not
+  measuring the shipping configuration, whatever else it proves.
+- **Pass them explicitly** (all three ARE allowlisted): `--ez cpu_backend_llvm true --ez cpu_aot_maximize true
+  --ez cpu_llvm_target_features_native true`. `cpu_llvm_no_runtime_compiles` is **NOT** allowlisted (it is default
+  true, so this rarely bites, but `--ez` on it silently no-ops).
+- **⚠️ The object cache is LLVM-only:** the directory is `files/objcache/objcache_v2_opt2` (opt2 =
+  `cpu_backend_llvm_opt`). **An a64-only run cannot use it**, so every LLVM-less headless launch recompiles from
+  scratch — plausibly why those runs heat the device fast, though that specific claim is NOT yet measured (a run
+  that appeared to show it turned out never to have reached the foreground; see the discipline note below).
+- **Best practice, from CLAUDE.md's own shipping loop: VERIFY FROM THE IN-APP GUI LAUNCH**, not `--ez`.
+- **⚠️ Android will silently decline a background activity start while the user is on the device.** Two launches
+  produced a live PID with **zero** `xenia` log lines and zero `EmulatorActivity` — the process existed, the
+  emulator never ran, and the temperature reading from it meant nothing. **Before trusting any headless run,
+  confirm it actually rendered** (`screencap`, or a `Title name:` / fps line), not merely that a PID exists.
+
+## 🦾 HOST BUILD IS NOW TUNED FOR THE CORE, NOT GENERIC (2026-08-07, prompted by rpcsx-ui-android-thor)
+**We passed no `-mtune` at all, so the WHOLE emulator — every translation unit, not just JIT-emitted guest code —
+was scheduled for a generic ARM64 pipeline.** Found by comparing against `noeldvictor/rpcsx-ui-android-thor` (a PS3
+emulator on this exact device; the PS3 PPU is PowerPC like the Xenon, so it is a fair comparison), whose README
+specifies `-march=armv8.2-a -mtune=cortex-a715`.
+- **We are AHEAD of them on atomics** (`+lse -mno-outline-atomics`, worth ~6% on Burnout per the note at
+  premake5.lua:270) and were BEHIND on scheduling. Both now set.
+- **⚠️ `-mtune=cortex-a715` DOES NOT COMPILE HERE.** NDK 25 is **clang 14**, which predates Cortex-A715/X3 (LLVM 16)
+  and errors: *"the clang compiler does not support '-mtune=cortex-a715'"*. Tested against this toolchain:
+  **`cortex-a710`, `cortex-x2`, `cortex-a78`, `neoverse-n2` are accepted; `cortex-a715` and `cortex-x3` are not.**
+  Using `cortex-a710` — not a compromise, since the 8 Gen 2 physically contains A710 cores (X3 + 2×A715 + 2×A710 +
+  3×A510) and the A715 is its direct successor. NDK 29 is installed and would allow a715, but that is an STL/ABI
+  change and should not be bundled with a scheduling tweak.
+- **`-mtune` is safe by construction**: it selects the scheduling model and cost heuristics only and cannot change
+  which instructions are legal (unlike `-mcpu`, which also moves the ISA baseline).
+- **🔁 CHANGING premake5.lua IS NOT ENOUGH — REGENERATE:** the flags live in generated `build/*.prj.Android.mk`
+  (50 of them, untracked). `./tools/build/bin/premake5.exe --file=premake5.lua --os=android androidndk` —
+  **`--os=android` is REQUIRED**. Without the regen the gradle build finishes in ~4s having changed nothing, which
+  looks like success. A real flag change forces a ~15min full rebuild; a 4s "BUILD SUCCESSFUL" means it did not take.
+- **UNMEASURED.** Drift here is ~2.8%; this needs a same-session A/B before any win is claimed.
+
 ## 🧪🧪🧪 A DEFAULT-OFF PATH IS NOT A CONTROL — IT IS UNTESTED CODE (device-found 2026-08-07)
 **`--ez a64_three_operand_shifts false` killed Gears in under a second with `Scudo ERROR: misaligned pointer when
 deallocating` (SIGABRT on the Kernel Dispatch thread, `XThread::Create()::$_1` / xthread.cc:541). The same build

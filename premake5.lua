@@ -279,7 +279,29 @@ workspace("xenia")
       -- -march alone leaves the NDK's default -moutline-atomics active (atomics
       -- still routed through __aarch64_*_acq_rel helpers); -mno-outline-atomics
       -- makes the compiler emit the LSE casal/swpal/ldaddal inline.
-      buildoptions({"-march=armv8.2-a+lse", "-mno-outline-atomics"})
+      -- -mtune picks the SCHEDULING MODEL and cost heuristics; it cannot change
+      -- which instructions are legal, so it is safe on every core in this SoC
+      -- (unlike -mcpu, which would also set the ISA baseline). Without it clang
+      -- schedules for a GENERIC ARM64 pipeline, across the whole emulator - not
+      -- just JIT-emitted guest code.
+      -- Why cortex-a710 and not a715: the NDK 25 toolchain is clang 14, which
+      -- predates Cortex-A715/X3 (added in LLVM 16) and REJECTS them outright
+      -- ("the clang compiler does not support '-mtune=cortex-a715'"). a710 is
+      -- not a compromise though - the 8 Gen 2 physically contains A710 cores
+      -- (X3 + 2x A715 + 2x A710 + 3x A510), and the A715 is its direct
+      -- successor with a closely related pipeline. Verified accepted by this
+      -- exact toolchain; cortex-x2 / a78 / neoverse-n2 also work, a715/x3 do
+      -- not. Moving to NDK 29 (already installed) would allow a715, but that is
+      -- an STL/ABI-level change and is not worth bundling in here.
+      -- Prompted by rpcsx-ui-android-thor, which targets this same device with
+      -- -march=armv8.2-a -mtune=cortex-a715.
+      -- UNMEASURED: this is a whole-emulator codegen change and run-to-run
+      -- drift on this device is ~2.8%, so it needs a same-session A/B (equal
+      -- thermal starts, uncapped entry_delta) before any win is claimed. It is
+      -- in because it is low-risk and strictly more informed than generic
+      -- scheduling, NOT because it was measured.
+      buildoptions({"-march=armv8.2-a+lse", "-mno-outline-atomics",
+                    "-mtune=cortex-a710"})
     filter("platforms:Android-x86_64")
       architecture("x86_64")
     filter({})
