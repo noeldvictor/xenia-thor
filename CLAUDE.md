@@ -1096,13 +1096,27 @@ because a dropped-write or stale-read race is intermittent and a clean run prove
 - **✅ FIXED `e5398cac8` — XMA output published without a release fence** (XenDroid `902af401d`, whose own message
   says *"x86 never shows this (TSO)"*). The guest mixer polls `output_buffer_write_offset` from another thread and
   reads the PCM behind it; nothing ordered the ring writes against the offset store.
-- **⚠️ OPEN, REAL, BUT DO NOT BLANKET-CHANGE: `base/atomic.h` still uses legacy `__sync_*` builtins** for
-  `atomic_inc`/`dec`/`exchange_add`/`cas` (19 call sites, 12 of them `atomic_cas`). **`__sync_*` are
-  sequentially consistent BY DEFINITION**, so on ARM64 they carry a full `DMB ISH` where acquire/release would do
-  — which partially undercuts the `+lse -mno-outline-atomics` work that premake5.lua records as ~6% on Burnout.
-  **The fix is per-site, not global:** refcount inc/dec can be relaxed-increment + acq_rel-decrement, but a CAS
-  used as a lock needs its ordering argued individually. **Weakening ordering you have not audited is an
-  intermittent race — the single worst failure mode to introduce**, and "it still ran" is not evidence.
+- **❌❌ DEAD, WITH ASM PROOF — "`__sync_*` costs us a full `DMB ISH` on ARM64" IS FALSE. DO NOT REDO THIS.**
+  I claimed it, implemented the conversion (`__sync_*` → `__atomic_*` with `ACQ_REL` across
+  `atomic_inc`/`dec`/`exchange_add`/`cas`), built it clean — and then checked the emitted assembly instead of
+  shipping the claim. **The two forms are byte-identical, and NEITHER emits a `dmb`:**
+  ```
+  __sync_bool_compare_and_swap  ->  casal   w8, w1, [x2]
+  __atomic ACQ_REL CAS          ->  casal   w8, w1, [x2]
+  __sync_add_and_fetch          ->  ldaddal w8, w8, [x0]
+  __atomic ACQ_REL add          ->  ldaddal w8, w8, [x0]
+  ```
+  (NDK 25 clang 14, `-march=armv8.2-a+lse -mno-outline-atomics -mtune=cortex-a710 -O2`.)
+  **Why:** with FEAT_LSE, clang lowers seq_cst straight onto the acquire-release LSE forms — `casal`/`ldaddal` —
+  which are sufficient for seq_cst on ARM64. The `+lse -mno-outline-atomics` flags we already ship are what buys
+  this; there is no second win hiding behind the builtin choice.
+  **⇒ REVERTED.** The change bought exactly nothing while formally weakening seq_cst to acq_rel — an unjustified
+  reduction in correctness margin for zero measured benefit, which is the specific mistake this file keeps warning
+  about. **The `atomic_exchange` fix (`1e6db18f5`) is unaffected and stays: that one fixed a real dropped write,
+  not an ordering strength.**
+  **🔑 THE TRANSFERABLE BIT: for any "this barrier is too strong" hypothesis, DIFF THE EMITTED ASM FIRST.** It
+  costs one `clang -S` against a 10-line file, and here it turned a plausible, well-argued, already-implemented
+  optimisation into a no-op before it shipped.
 - **✅ CHECKED AND CLEAN — do not re-derive these.** Both looked like textbook races and are not:
   `AndroidAudioDriver::shutdown_` is a plain `bool` read in the REAL-TIME AAudio callback, but all four accesses
   (`android_audio_driver.cc:90/110/113/181`) are under `frames_mutex_`, so the mutex supplies the ordering.
