@@ -470,11 +470,24 @@ static void ShaCensusRecord(uint64_t bytes) {
   if (!cvars::xe_crypt_sha_census) {
     return;
   }
+  // Announce once that the census is live, so an empty result means
+  // "the guest never called it" rather than "the cvar silently did not apply".
+  static std::atomic<bool> announced{false};
+  bool expected = false;
+  if (announced.compare_exchange_strong(expected, true)) {
+    XELOGI("XeCryptSha census ENABLED - first guest SHA-1 call observed");
+  }
   const uint64_t n = sha_census_calls.fetch_add(1, std::memory_order_relaxed) + 1;
   const uint64_t b =
       sha_census_bytes.fetch_add(bytes, std::memory_order_relaxed) + bytes;
-  // Throttled so the census itself cannot dominate what it measures.
-  if ((n & 0xFFF) == 0) {
+  // Log the FIRST call, then a geometric ladder (1, 2, 4, ... ), then every
+  // 4096. Learned by running the first version, which only logged every 4096:
+  // a short run produced ZERO lines, which is indistinguishable from "the cvar
+  // never applied" AND from "called 4000 times". A counter whose silence is
+  // ambiguous is not a measurement. The ladder makes first contact visible
+  // immediately while still bounding the cost at high call rates.
+  const bool ladder = (n & (n - 1)) == 0;  // powers of two
+  if (ladder || (n & 0xFFF) == 0) {
     XELOGI("XeCryptSha census: {} calls, {} bytes ({} avg)", n, b, b / n);
   }
 }
