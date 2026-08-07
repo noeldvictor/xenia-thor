@@ -865,6 +865,11 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0)) {
     if (with_gpu_emulation) {
       XE_UI_VULKAN_FEATURE_2(features_1_3, shaderDemoteToHelperInvocation);
+      // Prerequisite for dynamicRenderingLocalRead - that extension only has
+      // meaning inside a vkCmdBeginRendering scope. Requested here so the
+      // in-pass resolve work can gate on a real capability bit rather than
+      // assuming the device has it.
+      XE_UI_VULKAN_FEATURE_2(features_1_3, dynamicRendering);
     }
   } else {
     if (ext_1_3_EXT_shader_demote_to_helper_invocation) {

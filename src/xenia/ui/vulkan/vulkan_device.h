@@ -167,9 +167,17 @@ class VulkanDevice {
     // VK_EXT_rasterization_order_attachment_access (#464, track #6 EDRAM ROAA -
     // the FSI alternative on Turnip for the EDRAM-in-GMEM render path).
     bool rasterizationOrderColorAttachmentAccess = false;
+    // Vulkan 1.3 core dynamic rendering (vkCmdBeginRendering takes its
+    // attachments inline, no VkRenderPass/VkFramebuffer objects). We do NOT use
+    // it yet - our GPU path is entirely traditional render passes - but it is
+    // the hard prerequisite for dynamicRenderingLocalRead below, which is only
+    // meaningful inside a vkCmdBeginRendering scope. Exposed so the in-pass
+    // resolve work can gate on it instead of assuming it.
+    bool dynamicRendering = false;
     // VK_KHR_dynamic_rendering_local_read: shaders may read the CURRENT colour
     // attachments, which is what allows an on-tile in-pass EDRAM resolve
-    // instead of ending the render pass to copy.
+    // instead of ending the render pass to copy. USELESS WITHOUT
+    // dynamicRendering above - it extends vkCmdBeginRendering.
     bool dynamicRenderingLocalRead = false;
     bool rasterizationOrderDepthAttachmentAccess = false;
     // VK_EXT_multisampled_render_to_single_sampled (BD direct-native: on-tile
