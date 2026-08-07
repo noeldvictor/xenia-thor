@@ -972,6 +972,31 @@ means any run with `cpu_backend_llvm=false` recompiles from scratch by construct
   flagging will. The overlay is starved because the UI thread is wedged in the blocking paint (above), so the
   remaining real fixes are exactly the two named there. Do not re-attempt async message plumbing.
 
+## ⚠️⚠️ THERE IS NO x86/x64 LAYER TO REMOVE - READ THIS BEFORE PLANNING ANY "STRIP OUT x86" WORK
+**Verified in the build 2026-08-07:** `xenia-cpu.prj.Android.mk` contains **0** `x64_` sources, and
+`emulator.cc` selects the backend under `#if XE_ARCH_ARM64`. The x64 backend project exists in the tree but
+**its sources are not compiled into the Android APK.** The pipeline is already **PowerPC guest -> HIR ->
+ARM64 host**, directly. No x86 is emulated, translated through, or executed on the Thor.
+**So "rework the x86/x64 layers out" has no target.** What the phrase actually means here - and it IS real -
+is **x86-shaped ASSUMPTIONS in shared, architecture-neutral code**. Those are scattered idioms, not a layer:
+- `atomic_exchange` implemented as a CAS with no retry (the Win32 branch was correct; POSIX was not) - FIXED
+- XMA output published with no release fence, invisible under x86 TSO - FIXED
+- `FixupVmxMaxMinNan` reproducing x86 `MAXPS` NaN behaviour that **ARM does not need** (PEM p85: PPC and ARM
+  agree, x86 is the outlier) - 6 uOPs/op, still present
+- shifts staged through scratch for x86's 2-operand destructive form - FIXED (`02ae6ec83`)
+- the LLVM 2xTBL1 workaround, 3x uOPs for no latency benefit - still present
+**Removing ALL of them is worth low single-digit percentages.** They are correctness-and-tidiness wins, and the
+two fixed ones were real bugs, but they are not where the 8W-vs-3-5W gap lives.
+**🔥 THE MEASURED BIG WINS ARE NOT x86-RELATED AT ALL:**
+1. **The AOT object cache never hits** - 60,606 objects present, 0 loads, so the ENTIRE title recompiles every
+   launch: ~15 min at 261-340% CPU, 40C->68C. **Gated behind one false boolean** (gate logging installed).
+   Fixing this turns a 15-minute startup into seconds. **Biggest available win by an order of magnitude.**
+2. **One guest function called ~21M times/sec** (Burnout's D3D wait predicate), 85% of all guest entries, with
+   a fastpath hardcoded to TWO title addresses.
+3. **One global condvar** woken on every signal, waking every parked guest thread - and the real-time audio
+   callback takes that same global mutex every few ms.
+**⇒ Spend effort on 1-3, not on hunting for a layer that is not there.**
+
 ## 🔬🔬🔬 THE x86→ARM64 SWEEP: MEMORY ORDERING IS THE BUG CLASS (2026-08-07)
 **x86 is TSO. Stores cannot be reordered with stores, loads cannot be reordered with loads, and almost every
 missing fence is INVISIBLE. ARM64 is weakly ordered, so the same code races. This is where the real x64-shaped
