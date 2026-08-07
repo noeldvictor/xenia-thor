@@ -77,6 +77,29 @@ don't debug from scratch.**
   the floor; our CPU/GPU perf stays on top.
 
 ## 🗑️ DECISION: DELETE THE BD NATIVE RENDERER (user, 2026-08-07: "that fucking project failed")
+**🚧 BD REMOVAL IN PROGRESS - 465 LINES OUT, BUILD GREEN AT EVERY STEP (2026-08-07).**
+| step | result |
+|---|---|
+| 1. render-target-cache BD block | 34 lines - done |
+| 2. the 14 `gpu_bd_native_renderer`-gated blocks in vulkan_command_processor.cc | **431 lines** (13,690 -> 13,259) - done |
+| 3. member uses, hooks, files, ~49 cvars | remaining |
+**Why this is safe by construction, not by argument:** `gpu_bd_native_renderer` is `DEFINE_bool(..., false)`
+(command_processor.cc:82) and reads false in the live device config, so the entire path was ALREADY dead at
+runtime. Deleting dead code cannot change behaviour - the opposite of the usual GPU risk.
+**🔑 TWO THINGS THE REMOVAL REVEALED, both worth knowing before continuing:**
+1. **`bd_native_renderer_` is now NEVER CONSTRUCTED** - its construction lived inside one of the 14 deleted
+   blocks. So the member is permanently null and the remaining 22 uses are all dead. Same for
+   **`bd_native_gate`**, which is declared `= false` and appears at only 3 lines (init + 2 reads): the code that
+   set it true was also deleted, so `if (bd_native_gate)` at ~4831 is unreachable.
+2. **CHECK FOR NULL-DEREF AFTER EACH CUT, NOT AT THE END.** Line ~4833 dereferences `bd_native_renderer_`
+   with no local null check - it is safe ONLY because `bd_native_gate` is now always false. A heuristic scan
+   flagged 5 apparently-unguarded derefs; all 5 turned out guarded (two by a block guard 48 lines up, one by a
+   guard phrased `bd_native_renderer_)` rather than `&&`, two by the dead gate). **A short-window regex is not
+   sufficient here - read the enclosing block.**
+**The filter that makes step 2 mechanical:** delete a block only when EVERY `cvars::` in its condition starts
+with `gpu_bd_`. Note this also took a compound gated on `gpu_bd_field_decouple || gpu_bd_native_renderer` -
+in scope (it is BD code) but not master-gated, so it is called out rather than silently included.
+
 **Agreed and consistent with the evidence** - the archive above records the whole EDRAM/HLE era as superseded by
 the measurement that BD's field is CPU-bound. The renderer is correct but is not the fps lever, and it is now
 pure carrying cost.
