@@ -1245,6 +1245,29 @@ two fixed ones were real bugs, but they are not where the 8W-vs-3-5W gap lives.
    callback takes that same global mutex every few ms.
 **⇒ Spend effort on 1-3, not on hunting for a layer that is not there.**
 
+## 🧨🧨🧨 THE CONSTANT-OPERAND BUG FAMILY — FOUR FOUND, SWEEP NOW COMPLETE (2026-08-07)
+**`SrcVReg` returns the SCRATCH INDEX when an operand is constant** (a64_seq_util.h:271-277): it materialises
+the constant into v0/v1 and returns 0/1. So `s1` can BE v0 and `s2` can BE v1 — and any sequence that later uses
+v0/v1 as a TEMP destroys its own source. Allocated operands (the allocator only hands out v4-v31) are never
+affected, **which is exactly why these survive: the constant path is the one nobody exercises.**
+| sequence | what it did | symptom |
+|---|---|---|
+| `VECTOR_DOT_PRODUCT` f32 fallback ×4 | `fcvtl(v0, s1.low)` then later `fcvtl2(v2, s1.high)` | high half read f64 product bits — **wrong dot product** |
+| `VECTOR_ROTATE_LEFT` ×3 type cases | `movi(v0, 8/16/32)` then `ushl(v0, s1, v0)` | **rotated by the shift amount instead of the value** |
+| `VECTOR_DENORMFLUSH` | `cmeq(v0, v0, 0)` then two more `VReg(s)` reads | sign bits + "original" read out of the **compare mask** |
+| `a64_three_operand_shifts` (earlier) | dropped the `if (i.src1.is_constant)` arm in 7 of 10 sites | heap corruption, Gears dead in <1s |
+**All fixed. None crash — they silently compute the wrong number**, which is why no amount of running found them.
+**✅ SWEEP IS COMPLETE, DO NOT RE-RUN IT.** Detector: flag `sN = SrcVReg(e, op, K)` where `VReg(K)` is written on
+an EARLIER line than a later read of `VReg(sN)`. **Two filters are essential or it is all false positives:**
+(1) **same-line write+read is SAFE** — an instruction reads its sources before writing its destination, so
+`ushr(VReg(0), VReg(s), n)` with `s==0` is fine; (2) the scan window overruns short sequences, so every hit
+needs the enclosing block READ before believing it. After filtering: 3 real bugs, everything else clear.
+**Also swept and CLEAN: `ComputeMemoryAddress`**, which has the identical signature hazard (returns `e.x0` for a
+constant guest address). 3 candidates, all false positives — two matched the word "addr" inside a COMMENT, and
+`add(x0, membase, addr)` with `addr==x0` is same-instruction read-then-write.
+**⇒ THE STANDING RULE: any helper that returns a SCRATCH register for constants creates this hazard for every
+caller.** There are two such helpers (`SrcVReg`, `ComputeMemoryAddress`). If a third is added, sweep it.
+
 ## 🔬🔬🔬 THE x86→ARM64 SWEEP: MEMORY ORDERING IS THE BUG CLASS (2026-08-07)
 **x86 is TSO. Stores cannot be reordered with stores, loads cannot be reordered with loads, and almost every
 missing fence is INVISIBLE. ARM64 is weakly ordered, so the same code races. This is where the real x64-shaped
