@@ -986,7 +986,6 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Persistent totals (logged periodically at swap) to DEFINITIVELY confirm the
   // native path fires - the last log survives logcat rotation.
   uint64_t bd_redirect_total_ = 0;
-  uint64_t bd_present_native_total_ = 0;
   uint64_t bd_swap_total_ = 0;
   uint64_t bd_native_begins_total_ = 0;
   // Stage 0: total guest render-pass begins (all paths) for the pass-collapse gate.
@@ -1109,7 +1108,6 @@ class VulkanCommandProcessor : public CommandProcessor {
   // the source for the swap base to the allowed set. Until learned, substitute
   // nothing at >=5 (present falls back to LLE = correct).
   std::unordered_map<uint32_t, uint32_t> bd_l5_resolve_src_by_dest_;
-  std::unordered_set<uint32_t> bd_l5_allowed_producer_keys_;
   // Publish the producer matching `src_rt_key` under `dest_base` at a resolve.
   // `target_host_format` (5.6-sol path-A) is the fetch's host VkFormat the
   // copy-on-resolve snapshot should convert to (VK_FORMAT_UNDEFINED = no convert).
@@ -1119,7 +1117,6 @@ class VulkanCommandProcessor : public CommandProcessor {
                         uint32_t height, VkFormat target_host_format,
                         float exp_bias_factor, uint32_t swap);
   // Return the native view aliased to `guest_base` for the current epoch, or null.
-  VkImageView BdL5LookupAlias(uint32_t guest_base);
   // True if the transfer whose dest is `dest_base` is safe to DROP: a live L5
   // alias covers it (consumers read native) AND every consumer last frame was
   // native (present / pixel-texture), with no NonNative reader.

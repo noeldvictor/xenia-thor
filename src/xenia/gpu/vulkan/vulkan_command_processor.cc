@@ -3909,114 +3909,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       }
     }
   }
-  // Color-only native HLE step 2 (gpu_bd_native_color_lifetime_hle >= 2): redirect
-  // the present source to the per-surface native COLOR surface for the
-  // frontbuffer's resolve-dest base, when one exists AND its content extent
-  // EXACTLY matches the requested swap extent (5.6-terra: NativeSurface dims are
-  // allocation dims that only grow, so require an exact match; fail-closed to the
-  // LLE swap texture otherwise). NO drops at this level — a pure correctness proof
-  // that present samples native when available, before any transfer/resolve is
-  // deleted. Records the Present consumer (or NonNative on fallback) so the later
-  // drop gate sees present coverage. Mutually exclusive in practice with the
-  // monolithic native present above (that needs whole_frame / bd_native_field_
-  // rendered_; this path is used without it).
-  // LEVEL 5 (generation bridge): present reads the native producer image aliased
-  // to this frontbuffer base for the CURRENT epoch. Fail-closed to LLE otherwise.
-  bool l5_present_served = false;
-  if (cvars::gpu_bd_native_color_lifetime_hle >= 5 && swap_info.valid &&
-      swap_info.guest_base) {
-    // LEARN: the RT key that resolved to THIS presented frontbuffer base is the
-    // frontbuffer producer -> allow substituting only that one (narrow fix).
-    auto src_it = bd_l5_resolve_src_by_dest_.find(swap_info.guest_base);
-    if (src_it != bd_l5_resolve_src_by_dest_.end() && src_it->second) {
-      bd_l5_allowed_producer_keys_.insert(src_it->second);
-    }
-    VkImageView l5_view = BdL5LookupAlias(swap_info.guest_base);
-    const char* l5_result = l5_view != VK_NULL_HANDLE ? "native" : "no_alias";
-    uint32_t l5_alias_src = 0;
-    uint64_t l5_alias_gen = 0;
-    {
-      auto it = bd_l5_alias_by_dest_.find(swap_info.guest_base);
-      if (it != bd_l5_alias_by_dest_.end()) {
-        l5_alias_src = it->second.src_rt_key;
-        l5_alias_gen = it->second.generation;
-      }
-    }
-    if (l5_view != VK_NULL_HANDLE) {
-      swap_texture_view = l5_view;
-      l5_present_served = true;
-      ++bd_present_native_total_;
-      BdNoteColorConsumer(swap_info.guest_base, kBdConsumerPresent);
-    }
-    if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
-      static std::atomic<uint32_t> s_l5_present{0};
-      if (s_l5_present.fetch_add(1) < 40) {
-        XELOGI("L5 PRESENT base={:08X} epoch={} src={:08X} gen={} result={}",
-               swap_info.guest_base, bd_l5_frame_epoch_, l5_alias_src,
-               l5_alias_gen, l5_result);
-      }
-    }
-  }
-  if (!l5_present_served &&
-      (cvars::gpu_bd_native_color_lifetime_hle >= 2 ||
-       cvars::gpu_bd_native_mainscene_redirect) &&
-      bd_native_renderer_ && swap_info.valid && swap_info.guest_base) {
-    NativeSurface* present_surface =
-        bd_native_renderer_->FindSurface(swap_info.guest_base);
-    VkImageView present_native_view =
-        present_surface
-            ? bd_native_renderer_->LookupSampledSurface(swap_info.guest_base)
-            : VK_NULL_HANDLE;
-    VkFormat present_host_format =
-        texture_cache_->GetHostVkFormatForColorFormat(swap_info.format);
-    // FAIL-CLOSED (5.6-sol): the aux path sets rendered_this_frame + SHADER_READ
-    // at PASS SELECTION, before content is written, and LookupSampledSurface
-    // checks only layout — so result=redirect proved allocation/layout/extent, NOT
-    // useful pixels (the first Thor run redirected to a BLACK/stale surface). AND
-    // BD's frontbuffer is DOUBLE-BUFFERED (1CA1C000 / 1CDB4000 alternate); the
-    // one-dest-per-source resolve-edge map is stale, so the CURRENT content may be
-    // in the OTHER base. Immediate stop-black: require rendered_this_frame at
-    // present time (BeginSurfaceFrame resets it AFTER present, so it means
-    // "written since the preceding swap"). If not populated this frame, LEAVE the
-    // LLE swap texture (correct image), record NonNative — native present stays
-    // dormant until a real producer generation lands (the durable fix = surface
-    // generations + current-A/B resolve alias, the next slice).
-    bool present_populated = present_surface && present_surface->rendered_this_frame;
-    bool present_format_exact =
-        present_surface && present_surface->color_format == present_host_format;
-    bool present_exact = present_surface &&
-                         present_native_view != VK_NULL_HANDLE &&
-                         present_populated &&
-                         present_surface->width == swap_info.logical_width &&
-                         present_format_exact &&
-                         present_surface->height == swap_info.logical_height;
-    const char* present_result =
-        !present_surface        ? "no_surface"
-        : present_native_view == VK_NULL_HANDLE ? "not_rendered"
-        : !present_populated    ? "not_populated_current_frame"
-        : present_exact         ? "redirect"
-        : !present_format_exact ? "format_mismatch"
-                                : "extent_mismatch";
-    if (xe::Clock::QueryGuestUptimeMillis() > 135000) {
-      static std::atomic<uint32_t> s_bd_present_log{0};
-      if (s_bd_present_log.fetch_add(1) < 40) {
-        XELOGI("BD COLOR PRESENT: base={:08X} swap={}x{} guest_fmt={} surface={} "
-               "alloc={}x{} result={}",
-               swap_info.guest_base, swap_info.logical_width,
-               swap_info.logical_height, uint32_t(swap_info.format),
-               present_surface ? 1 : 0,
-               present_surface ? present_surface->width : 0,
-               present_surface ? present_surface->height : 0, present_result);
-      }
-    }
-    if (present_exact) {
-      swap_texture_view = present_native_view;
-      ++bd_present_native_total_;
-      BdNoteColorConsumer(swap_info.guest_base, kBdConsumerPresent);
-    } else if (present_surface) {
-      BdNoteColorConsumer(swap_info.guest_base, kBdConsumerNonNative);
-    }
-  }
+  // BD native renderer removed: the L5 generation-bridge present path and the
+  // level-2/mainscene present redirect both lived here. Both were dead - L5 gated
+  // on gpu_bd_native_color_lifetime_hle >= 5 (cvar is 0), the redirect on
+  // bd_native_renderer_, which is never constructed. Present now always uses the
+  // LLE swap texture, which is what shipped anyway.
   bd_native_field_rendered_ = false;  // reset for next frame
   // LEVEL 5: advance the frame epoch AFTER present so this frame's producer ->
   // resolve -> present all share one epoch; next frame's aliases must be
@@ -9561,29 +9458,6 @@ void VulkanCommandProcessor::BdL5PublishAlias(uint32_t dest_base,
              height);
     }
   }
-}
-
-VkImageView VulkanCommandProcessor::BdL5LookupAlias(uint32_t guest_base) {
-  if (cvars::gpu_bd_native_color_lifetime_hle < 5 || !guest_base) {
-    return VK_NULL_HANDLE;
-  }
-  auto it = bd_l5_alias_by_dest_.find(guest_base);
-  if (it == bd_l5_alias_by_dest_.end() ||
-      it->second.view == VK_NULL_HANDLE) {
-    return VK_NULL_HANDLE;
-  }
-  // Serve only aliases published in the CURRENT epoch (the double-buffered
-  // frontbuffer: last frame's other-base entry is stale).
-  if (it->second.frame_epoch != bd_l5_frame_epoch_) {
-    return VK_NULL_HANDLE;
-  }
-  // Prefer the logical-size copy-on-resolve snapshot (present's gamma pass reads
-  // it at the correct size); fall back to the producer RT view.
-  if (it->second.resolved &&
-      it->second.resolved->image != VK_NULL_HANDLE) {
-    return it->second.resolved->identity_view;
-  }
-  return it->second.view;
 }
 
 bool VulkanCommandProcessor::BdL5DropSafe(uint32_t dest_base) {
