@@ -497,7 +497,19 @@ check — `tools/thor_launch.sh` does this automatically now.
 
 ## ⚠️ Never thrash the Thor (hard safety)
 Before ANY launch read `/sys/class/kgsl/kgsl-3d0/temp` (milli-°C) + `gpu_busy_percentage`; launch only if
-temp < 50-55°C. Force-stop `jp.xenia.emulator.github.debug` past ~70°C. Device degrades under heavy firing
+temp < 50-55°C. Force-stop `jp.xenia.emulator.github.debug` past ~70°C.
+- **🔋🔋 CHECK THE BATTERY TOO - the temp+idle checklist MISSES IT, and that gap bit us 2026-08-07.** The user
+  had to interrupt with *"device power is low dont use it again until i approve"* after a session of repeated
+  launches: every one of them passed the documented pre-flight (temp < 55C, no other process, screen awake)
+  because **charge was never part of the check**. An emulator run at 260-340% CPU is one of the heaviest
+  possible drains, and unlike temperature there is no automatic recovery - the device just dies.
+  **Add to pre-flight:** `dumpsys battery | grep -E "level|status|USB powered"`. Do not launch below ~30%
+  unless charging, and say the level out loud when firing so the user can veto.
+  **⚠️ Note the direct conflict with the WATTS protocol below**, which requires running UNPLUGGED on wifi adb
+  to get a meaningful power number. Those runs drain fastest and are exactly the ones that need a charge floor
+  and a stated budget BEFORE starting - not a discovery halfway through.
+  **And when the user says stop using the device, that includes POLLING it** - a cooldown/temperature loop is
+  still adb traffic keeping the device awake. Kill the background task, do not just stop launching. Device degrades under heavy firing
 (boot stalls after ~6 launches). Batch fixes, build once, fire once, fill cooldowns with device-free work.
 **DO NOT reboot the device; never blame it for a result.**
 - **🔀 THE THOR IS SHARED — another Claude Code session may be driving it (user, 2026-08-05).** Before firing, check
