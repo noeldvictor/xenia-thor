@@ -782,26 +782,6 @@ bool VulkanCommandProcessor::SetupContext() {
     return false;
   }
 
-  // Blue Dragon FULL native D3D9->Vulkan HLE renderer (gpu_bd_native_renderer):
-  // instantiate the SEPARATE native path's persistent full-surface RT + one held
-  // render pass (BdNativeRenderer), decoupled from the EDRAM render_target_cache
-  // above. Default-off; failure is non-fatal (LLE stays the fallback). Brick 2b
-  // wires the 0x82489F40 capture -> native pipelines -> this RT.
-  if (cvars::gpu_bd_native_renderer) {
-    bd_native_renderer_ = std::make_unique<BdNativeRenderer>(*this);
-    // Native RT is the full display width (1280). The bin-once renders the field
-    // into the left gpu_bd_native_stretch_width px (BD's field surface is narrower -
-    // 672 - and BD upscales it in its resolve); when that cvar is >0 the native
-    // renderer blits that region STRETCHED to the full width on present, so the
-    // full field FILLS the screen (post-composition, not a geometry-spreading
-    // viewport scale). 0 = present the rendered region as-is (full-scene-in-half).
-    uint32_t native_w = cvars::gpu_bd_native_rt_width ? uint32_t(cvars::gpu_bd_native_rt_width) : 1280u;
-    if (!bd_native_renderer_->Initialize(
-            native_w, 720, uint32_t(cvars::gpu_bd_native_stretch_width))) {
-      XELOGE("BdNativeRenderer: init failed - falling back to LLE");
-      bd_native_renderer_.reset();
-    }
-  }
 
   // Shared memory and EDRAM descriptor set layout.
   // THE EDRAM SOLVE, hybrid form: also expose the EDRAM SSBO descriptor (binding
@@ -3929,36 +3909,6 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       }
     }
   }
-  // Blue Dragon FULL native renderer (gpu_bd_native_renderer): record the one
-  // held-open native pass into this submission (Brick 2a: clears magenta; Brick
-  // 2b records the captured draws) and present its RT directly - proving the
-  // native RT -> pass -> present path end-to-end on Turnip, bypassing EDRAM.
-  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
-      bd_native_renderer_->initialized() && bd_native_field_rendered_) {
-    // The field draws were REDIRECTED into the native RT THIS frame (see
-    // SubmitBarriersAndEnterRenderTargetCacheRenderPass) and left it in
-    // SHADER_READ_ONLY - present it directly (do NOT clear over the draws).
-    // Only when field draws actually rendered (else the native RT is empty =
-    // black on menus/cutscenes).
-    // ADRENO: the native pass has no in-pass resolve (pipeline-compat), so resolve
-    // the MSAA color -> single-sample separately here before present. No-op on
-    // desktop (in-pass resolve) / single-sample.
-    bd_native_renderer_->ResolveMsaa(deferred_command_buffer_);
-    // Fill-the-screen STRETCH: blit the rendered field region to the full display
-    // width (post-composition) so the narrower guest surface fills the frame.
-    // Recorded into the frame's deferred stream (submitted before the gamma pass).
-    if (cvars::gpu_bd_native_stretch_width) {
-      bd_native_renderer_->StretchToPresent(
-          deferred_command_buffer_,
-          uint32_t(cvars::gpu_bd_native_stretch_width),
-          bd_native_renderer_->height());
-    }
-    VkImageView native_view = bd_native_renderer_->present_output_view();
-    if (native_view != VK_NULL_HANDLE) {
-      swap_texture_view = native_view;
-      ++bd_present_native_total_;
-    }
-  }
   // Color-only native HLE step 2 (gpu_bd_native_color_lifetime_hle >= 2): redirect
   // the present source to the per-surface native COLOR surface for the
   // frontbuffer's resolve-dest base, when one exists AND its content extent
@@ -4097,32 +4047,6 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       }
     }
     bd_color_consumer_bits_.clear();
-  }
-  // DEFINITIVE persistent instrumentation: the last log (near capture) survives
-  // logcat rotation and reveals whether the redirect + native present actually
-  // fired over the run (gpu_bd_native_renderer only).
-  // Stage 0 pass-collapse gate: log total guest pass-begins/frame under decouple
-  // (or native_renderer) so the collapse (should DROP vs the LLE baseline) is
-  // visible on desktop without RenderDoc. Increment the swap counter here for
-  // EITHER mode (the native block no longer increments).
-  if (cvars::gpu_bd_field_decouple || cvars::gpu_bd_native_renderer ||
-      cvars::gpu_bd_native_color_lifetime_hle >= 4) {
-    if ((++bd_swap_total_ % 30u) == 0u) {
-      XELOGI("BD PASS-COLLAPSE: swaps={} total_pass_begins={} (begins/frame={})",
-             bd_swap_total_, bd_total_pass_begins_,
-             bd_total_pass_begins_ / bd_swap_total_);
-    }
-  }
-  if (cvars::gpu_bd_native_renderer && (bd_swap_total_ % 30u) == 0u) {
-    XELOGI("BD NATIVE totals: swaps={} redirects={} native_presents={} "
-           "pass_begins={} aux_redirects={} tex_served={} resolves_dropped={} "
-           "surfaces={} (begins/frame={} redirects/frame={})",
-           bd_swap_total_, bd_redirect_total_, bd_present_native_total_,
-           bd_native_begins_total_, bd_native_aux_redirects_,
-           bd_native_tex_served_, bd_native_resolves_dropped_,
-           bd_native_renderer_ ? bd_native_renderer_->surface_count() : 0,
-           bd_native_begins_total_ / (bd_swap_total_ ? bd_swap_total_ : 1),
-           bd_redirect_total_ / (bd_swap_total_ ? bd_swap_total_ : 1));
   }
   if (cvars::gpu_bd_renderdoc_capture_frame != 0 &&
       bd_swap_total_ ==
@@ -4880,32 +4804,6 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // xfer/resolve) = the pass collapse. Gated, default-off. NEXT: tiling window-
   // offset handling + bin-once so both tiles land correctly in the one RT.
   auto bd_rb_surface_info = register_file_->Get<reg::RB_SURFACE_INFO>();
-  // WHOLE-FRAME HLE diagnostic: the redirect catches pitch-720 foliage; the ~800
-  // OPAQUE + other draws still hit LLE EDRAM (the partial-HLE confound). Log the
-  // NON-720 field draws' pitch+msaa to decide the whole-frame architecture: if the
-  // opaque is msaa=0 (1x, like the foliage) the redirect just WIDENS into the same
-  // native pass; if msaa=1 (2x) it needs a SECOND native pass (heterogeneous MSAA).
-  if (cvars::gpu_bd_native_renderer) {
-    uint32_t bd_p = uint32_t(bd_rb_surface_info.surface_pitch);
-    uint32_t bd_m = uint32_t(bd_rb_surface_info.msaa_samples);
-    // Per-frame distribution: count redirected (720) vs non-720 draws by msaa,
-    // logged every 30 swaps so it reflects the FIELD (not boot). Tells the exact
-    // whole-frame HLE scope: how many draws + what MSAA still go to LLE.
-    static std::atomic<uint32_t> s_d720{0}, s_dnz1x{0}, s_dnz2x{0}, s_dnz4x{0};
-    if (bd_p == 720) {
-      s_d720.fetch_add(1);
-    } else if (bd_p >= 256) {
-      if (bd_m == 0) s_dnz1x.fetch_add(1);
-      else if (bd_m == 1) s_dnz2x.fetch_add(1);
-      else s_dnz4x.fetch_add(1);
-    }
-    static std::atomic<uint32_t> s_dist_swap{0};
-    if ((s_dist_swap.fetch_add(1) % 3000u) == 2999u) {
-      XELOGI("BD DRAW DIST (cumulative): pitch720={} non720_1x={} non720_2x={} "
-             "non720_4x={}",
-             s_d720.load(), s_dnz1x.load(), s_dnz2x.load(), s_dnz4x.load());
-    }
-  }
   bool bd_native_gate = false;
   // Whether this pass begins the native CLEAR render pass (2 LOAD_OP_CLEAR
   // attachments = color+depth), so the begin must supply 2 clear values. Missing
@@ -4930,73 +4828,6 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // device-lost; the 1x majority + 2x foliage force to 1x cleanly (samples1-proven).
   bool bd_wf = cvars::gpu_bd_native_whole_frame && uint32_t(bd_vk_format) == 97u &&
                bd_rb_surface_info.msaa_samples != xenos::MsaaSamples::k4X;
-  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
-      bd_native_renderer_->initialized() &&
-      (bd_rb_surface_info.surface_pitch == 720 || bd_wf)) {
-    // The field is k2X (2x MSAA) - MsaaSamples enum: k1X=0, k2X=1, k4X=2. Match
-    // the native RT samples to the field (render-pass compat). Bands when presented
-    // directly are the MSAA - the render pass resolves color to a single-sample
-    // present image (bd_native_renderer_ resolve attachment).
-    // Apply the SAME MSAA clamp the render-target cache uses (rtc.cc:639,
-    // draw_util::ClampForcedMsaaSamples) so the native RT's sample count MATCHES the
-    // clamped EDRAM/pipeline sample count. WITHOUT this, gpu_force_max_msaa_samples=1
-    // clamps EDRAM to 1x but the native RT stays raw-2x => tile/sample desync stripes
-    // (desk_msaa1.png). WITH it, force-1x makes the WHOLE field consistently 1x => no
-    // 2x depth exists => the 23 EDRAM msaa 1x<->2x DEPTH-conversion transfers vanish.
-    xenos::MsaaSamples bd_clamped_msaa =
-        draw_util::ClampForcedMsaaSamples(bd_rb_surface_info.msaa_samples);
-    VkSampleCountFlagBits bd_samples =
-        bd_clamped_msaa == xenos::MsaaSamples::k4X
-            ? VK_SAMPLE_COUNT_4_BIT
-            : (bd_clamped_msaa == xenos::MsaaSamples::k2X
-                   ? VK_SAMPLE_COUNT_2_BIT
-                   : VK_SAMPLE_COUNT_1_BIT);
-    VkFormat bd_depth_vk = render_target_cache_->GetDepthVulkanFormat(
-        register_file_->Get<reg::RB_DEPTH_INFO>().depth_format);
-    // ADRENO-CRASH ISOLATION: the Adreno driver crashes on the native pass; force
-    // single-sample (drops MSAA + the in-renderpass resolve attachment - the top
-    // Adreno/Turnip suspect) to test whether the resolve is the crash.
-    if (cvars::gpu_bd_native_force_samples1) {
-      bd_samples = VK_SAMPLE_COUNT_1_BIT;
-    } else if (bd_wf) {
-      // Whole-frame: force the FOLIAGE's native 2x for ALL field draws (foliage +
-      // opaque) so the 2x foliage pipelines stay native (demoting them to 1x device-
-      // lost); the 1x opaque gets an UPSAMPLED 2x pipeline variant from xenia. One
-      // 2x pass = the whole frame, bypassing LLE for the opaque majority too.
-      bd_samples = VK_SAMPLE_COUNT_2_BIT;
-    }
-    bool bd_fmt_ok = bd_native_renderer_->EnsureColorFormat(
-        bd_vk_format, bd_depth_vk, bd_samples);
-    static std::atomic<uint32_t> s_bd_gate_diag{0};
-    if (s_bd_gate_diag.fetch_add(1) < 64) {
-      // DIMENSIONS: scissor BR (br_x/br_y = the actual field draw extent),
-      // window offset (tile placement), surface pitch/height - to resolve whether
-      // BD's field is 720-wide portrait, 1280-wide tiled, rotated, or a crop.
-      uint32_t scissor_br =
-          register_file_->values[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR];
-      uint32_t scissor_tl =
-          register_file_->values[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_TL];
-      uint32_t win_off =
-          register_file_->values[XE_GPU_REG_PA_SC_WINDOW_OFFSET];
-      XELOGI(
-          "BD NATIVE gate@pitch720: msaa={} vk_format={} fmt_ok={} | DIMS "
-          "pitch={} scissor_tl={:08X} scissor_br={:08X} (br_x={} br_y={}) "
-          "win_off={:08X}",
-          uint32_t(bd_rb_surface_info.msaa_samples), uint32_t(bd_vk_format),
-          bd_fmt_ok, uint32_t(bd_rb_surface_info.surface_pitch), scissor_tl,
-          scissor_br, scissor_br & 0x7FFF, (scissor_br >> 16) & 0x7FFF, win_off);
-    }
-    bd_native_gate = bd_fmt_ok;
-    // Config-isolation diagnostic (gpu_bd_native_tile_filter): 1 = redirect only
-    // win_off==0 draws (config-A), 2 = only win_off!=0 (config-B). Screenshots of
-    // each show WHERE each config lands in the native RT (poor-man's RenderDoc).
-    if (bd_native_gate && cvars::gpu_bd_native_tile_filter != 0) {
-      bool has_wo =
-          register_file_->values[XE_GPU_REG_PA_SC_WINDOW_OFFSET] != 0;
-      if (cvars::gpu_bd_native_tile_filter == 1 && has_wo) bd_native_gate = false;
-      if (cvars::gpu_bd_native_tile_filter == 2 && !has_wo) bd_native_gate = false;
-    }
-  }
   if (bd_native_gate) {
     static VulkanRenderTargetCache::Framebuffer s_bd_native_fb;
     s_bd_native_fb.framebuffer = bd_native_renderer_->framebuffer();
@@ -5020,127 +4851,6 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     static std::atomic<uint32_t> s_bd_redirect_log{0};
     if (s_bd_redirect_log.fetch_add(1) < 3) {
       XELOGI("BD NATIVE renderer: redirected a field draw into the native pass");
-    }
-  }
-  // REAL-HLE aux render-to-texture (gpu_bd_native_aux_rt, default-off): a NON-field
-  // EDRAM-bound draw whose bound color RT has a KNOWN resolve-dest (from the
-  // persistent resolve graph) is redirected into its OWN native surface keyed by
-  // that dest guest address. The surface then holds real rendered content, which
-  // the Brick-B texture redirect binds when the field samples that address — so
-  // the EDRAM ownership-transfer that used to carry it is dead. Mutually exclusive
-  // with the field gate (only fires when !bd_native_gate). DEV on desktop --gpu=
-  // vulkan + RenderDoc (dims/format/pass-compat), gated off = cannot regress.
-  if (!bd_native_gate && cvars::gpu_bd_native_aux_rt &&
-      cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
-      bd_native_renderer_->initialized() && !feedback_merge_active_) {
-    auto bd_ci = register_file_->Get<reg::RB_COLOR_INFO>(
-        reg::RB_COLOR_INFO::rt_register_indices[0]);
-    // Key by the FULL RenderTargetKey of the current draw's color RT (base alone
-    // aliases — BD renders every RT at EDRAM base 0). Matches the src_rt_key the
-    // resolve graph recorded.
-    uint32_t aux_rt_key =
-        render_target_cache_->GetLastUpdateColorRenderTargetKey(0);
-    const ResolveEdge* aux_edge =
-        aux_rt_key ? PersistentResolveEdgeForSrc(aux_rt_key) : nullptr;
-    // Dims: width from the surface pitch; height from the window scissor BR, but
-    // REJECT the reset/sentinel scissor (0x2000=8192 = no real draw extent) and
-    // clamp — else we allocate huge/garbage 360x8192 surfaces (a crash source).
-    uint32_t scissor_br =
-        register_file_->values[XE_GPU_REG_PA_SC_WINDOW_SCISSOR_BR];
-    uint32_t aux_w = uint32_t(bd_rb_surface_info.surface_pitch);
-    uint32_t aux_h = (scissor_br >> 16) & 0x7FFF;
-    uint32_t aux_br_x = scissor_br & 0x7FFF;
-    // ONLY redirect genuine INTERMEDIATE texture RTs (bloom/shadow/reflection mip
-    // chain), which are read solely by pixel-shader fetches (Brick B covers them).
-    // EXCLUDE the main-scene/frontbuffer-sized RTs (>= ~800px): those are read by
-    // the composite/present chain (NOT redirected), so stealing them from EDRAM
-    // black-screens the frame (A/B-proven). This keeps the presented scene on the
-    // intact EDRAM path while the small RTs go native — the largest safe subset
-    // until the consume side covers ALL readers. gpu_bd_native_aux_max_width tunes it.
-    // The explicit main-scene switch admits only a narrow PC-verifiable class:
-    // frontbuffer-sized, 1x, identity-format producer->resolve resources. The
-    // float16->A2B10 field publication remains on EDRAM until custom resolve can
-    // produce the consumer format without an additional publication pass.
-    // Existing aux_max_width behavior is unchanged when the switch is off.
-    uint32_t aux_max_w = cvars::gpu_bd_native_aux_max_width;
-    bool aux_legacy_dims_ok = aux_w >= 16 && aux_w <= aux_max_w &&
-                              aux_h >= 16 && aux_h <= 2048 &&
-                              aux_br_x <= 2048;
-    bool aux_mainscene_shape =
-        cvars::gpu_bd_native_mainscene_redirect && aux_w >= 1024 &&
-        aux_w <= 2048 && aux_h >= 512 && aux_h <= 2048 &&
-        aux_br_x >= 1024 && aux_br_x <= 2048 &&
-        bd_rb_surface_info.msaa_samples == xenos::MsaaSamples::k1X;
-    bool aux_dims_ok = aux_legacy_dims_ok || aux_mainscene_shape;
-    // DIAG (gpu_bd_native_diag_coverage): identify the >2048px-wide RTs that
-    // black-screen when aux-covered — log their dims + whether they have a
-    // resolve-edge (aux_edge). No edge => the composite/present reads them by a
-    // different path than LookupSampledSurface(dest_base) => the consume-side gap.
-    if (cvars::gpu_bd_native_diag_coverage && aux_w > 2048 && aux_h >= 16) {
-      static uint32_t s_diag_n = 0;
-      if (s_diag_n++ < 60) {
-        XELOGI("BD COVERAGE DIAG: wide RT aux_w={} aux_h={} br_x={} key=0x{:08X} "
-               "has_resolve_edge={} dest_base=0x{:08X}",
-               aux_w, aux_h, aux_br_x, aux_rt_key, aux_edge ? 1 : 0,
-               aux_edge ? aux_edge->dest_base : 0u);
-      }
-    }
-    if (aux_edge && aux_edge->dest_base && aux_dims_ok) {
-      VkFormat aux_color =
-          render_target_cache_->GetColorVulkanFormat(bd_ci.color_format);
-      VkFormat aux_depth = render_target_cache_->GetDepthVulkanFormat(
-          register_file_->Get<reg::RB_DEPTH_INFO>().depth_format);
-      // Redirect the field color format (vk 97) AND vk 37 (RGBA8) — the latter is
-      // the OPAQUE/background RT the field samples as a texture; excluding it left
-      // the opaque in EDRAM (its heavy transfer un-droppable + black on wholesale
-      // skip). The earlier vk-37 crash predates the churn + sync-barrier fixes;
-      // re-enabling it (gpu_bd_native_aux_rt gated) tests whether the opaque now
-      // covers → its transfer drops → the fps win. Other formats still excluded.
-      uint32_t aux_fmt = uint32_t(aux_color);
-      VkFormat aux_resolve_dest_format =
-          texture_cache_->GetHostVkFormatForColorFormat(
-              xenos::TextureFormat(aux_edge->dest_texture_format));
-      bool aux_mainscene_identity =
-          aux_mainscene_shape && aux_color == aux_resolve_dest_format;
-      bool aux_format_ok =
-          aux_mainscene_shape
-              ? aux_mainscene_identity
-              : (aux_fmt == 97u ||
-                 (aux_fmt == 37u && cvars::gpu_bd_native_aux_fmt37));
-      NativeSurface* s =
-          (aux_w && aux_h && aux_format_ok)
-              ? bd_native_renderer_->AcquireSurface(
-                    aux_edge->dest_base, aux_w, aux_h, aux_color, aux_depth,
-                    VK_SAMPLE_COUNT_1_BIT)
-              : nullptr;
-      if (s && s->framebuffer != VK_NULL_HANDLE) {
-        s->is_main_scene = aux_mainscene_shape;
-        static VulkanRenderTargetCache::Framebuffer s_bd_aux_fb;
-        s_bd_aux_fb.framebuffer = s->framebuffer;
-        s_bd_aux_fb.host_extent = VkExtent2D{s->width, s->height};
-        s_bd_aux_fb.color_view = s->color_view;
-        // First draw into this surface THIS frame CLEARs (2 clear values); later
-        // draws LOAD so geometry accumulates (mirrors the field two-pass fix).
-        bd_native_clear_pass = !s->rendered_this_frame;
-        render_pass = s->rendered_this_frame ? s->render_pass_load
-                                             : s->render_pass_clear;
-        framebuffer = &s_bd_aux_fb;
-        s->rendered_this_frame = true;
-        // The surface's pass finalLayout leaves color in SHADER_READ; mark it so
-        // LookupSampledSurface serves it to the field's texture fetch.
-        s->color_layout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-        ++bd_native_aux_redirects_;
-        static std::atomic<uint32_t> s_bd_aux_log{0};
-        if (s_bd_aux_log.fetch_add(1) < 8) {
-          XELOGI(
-              "BD AUX native surface: rt_key={:08X} base={:04X} -> dest={:08X} "
-              "{}x{} fmt={} redirected (clear={} main={}) live={}",
-              aux_rt_key, uint32_t(bd_ci.color_base), aux_edge->dest_base, aux_w,
-              aux_h, uint32_t(aux_color), bd_native_clear_pass,
-              s->is_main_scene ? 1 : 0,
-              bd_native_renderer_->surface_count());
-        }
-      }
     }
   }
   bool bd_framegraph_depth_prepared = false;
@@ -5341,13 +5051,6 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // to enable upstream coverage (redirect the composite's field sampler -> drop
   // the field->composite transfer). Narrow ONLY when native_renderer is on.
   bool l5_allowed = true;
-  if (cvars::gpu_bd_native_color_lifetime_hle >= 5 &&
-      cvars::gpu_bd_native_renderer) {
-    uint32_t l5_key = (framebuffer && framebuffer->bd_native_color_lle_rt)
-                          ? framebuffer->bd_native_color_lle_rt->key().key
-                          : 0u;
-    l5_allowed = l5_key && bd_l5_allowed_producer_keys_.count(l5_key) != 0;
-  }
   // BD field DECOUPLING: skip the in-order producer substitution entirely - the
   // field renders NORMALLY to LLE (correct, no interleaved CR/seed-mirror), and the
   // captured field draws are replayed into the producer contiguously at IssueCopy.
@@ -5613,17 +5316,6 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
       retro_depth_begin_pos_ =
           deferred_command_buffer_.command_stream_size_elements();
     }
-  }
-  // BD PERF DIAG: count native-pass BEGINS/frame. Each begin = a TBDR GMEM tile
-  // store/flush (LOAD_OP_LOAD reloads it) - if this is high (many re-begins from
-  // the pass breaking on interleaved non-720 draws) it IS the 95-pass wall = the
-  // GPU-bound confound (not foliage). One held pass would be ~1-2 begins/frame.
-  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
-      bd_native_renderer_->initialized() &&
-      (render_pass_begin_info.renderPass == bd_native_renderer_->render_pass() ||
-       render_pass_begin_info.renderPass ==
-           bd_native_renderer_->render_pass_load())) {
-    ++bd_native_begins_total_;
   }
   // Stage 0 structural gate: count ALL guest render-pass begins/frame so the
   // decouple pass-collapse (should DROP) is measurable on desktop regardless of
@@ -10024,22 +9716,6 @@ bool VulkanCommandProcessor::IssueCopy() {
     ReplayBdFieldBatch();
   }
 
-  // Pass-collapse (BD-30): once the native renderer has rendered the field this
-  // frame, the LLE EDRAM resolves that follow (frontbuffer/composite copies) are
-  // REDUNDANT - we present the native RT, not the resolved LLE surface. Skip them
-  // (23 resolve passes = the bulk of the 79-pass EDRAM overhead). Resolves BEFORE
-  // the field (bd_native_field_rendered_ still false - textures/shadows feeding the
-  // field) are kept. Gated default-off.
-  if (cvars::gpu_bd_native_renderer && cvars::gpu_bd_native_skip_resolves &&
-      bd_native_renderer_ && bd_native_renderer_->initialized() &&
-      bd_native_field_rendered_ &&
-      register_file_->Get<reg::RB_SURFACE_INFO>().surface_pitch == 720) {
-    // Only skip resolves whose SOURCE is the field frontbuffer (pitch 720) - that
-    // is the one made redundant by presenting the native RT. Keep resolves of
-    // other surfaces (shadow/texture render-targets the field SAMPLES) - skipping
-    // those blacked out the textured geometry (the thin-strip break).
-    return true;
-  }
 
   // Lever 2 (vulkan_merge_draws): a resolve/copy depends on prior draws having
   // executed - realize any pending concatenation run first.
@@ -11412,36 +11088,6 @@ void VulkanCommandProcessor::UpdateDynamicState(
     viewport.width = 1.0f;
     viewport.height = 1.0f;
   }
-  // BD native STRETCH: the field draws use a GIANT viewport (8192) with geometry
-  // positioned by NDC; the bin-once renders it into the left ~672 of the 1280 RT.
-  // SCALE the viewport (NOT override - that squished the 8192-calibrated NDC to 0)
-  // so the same geometry lands across the FULL width: scale_x = 1280/672 ~= 1.905.
-  // gpu_bd_native_viewport_scale_x (default 1.0 = off). x scales too (0*s=0 here).
-  if (cvars::gpu_bd_native_viewport_scale_x != 1.0 &&
-      cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
-      bd_native_renderer_->initialized() &&
-      (current_render_pass_ == bd_native_renderer_->render_pass() ||
-       current_render_pass_ == bd_native_renderer_->render_pass_load())) {
-    float sx = float(cvars::gpu_bd_native_viewport_scale_x);
-    viewport.x *= sx;
-    viewport.width *= sx;
-  }
-  // DIAG: log the native-path field draw's viewport + window offset so the tiling
-  // collapse (field -> central strip when transfers dropped) can be resolved on-
-  // device WITHOUT RenderDoc — reveals where each tile's geometry maps (viewport
-  // x/width vs RT width) so the native tile placement can be computed.
-  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
-      bd_native_renderer_->initialized() &&
-      (current_render_pass_ == bd_native_renderer_->render_pass() ||
-       current_render_pass_ == bd_native_renderer_->render_pass_load())) {
-    static std::atomic<uint32_t> s_bd_vp_log{0};
-    if (s_bd_vp_log.fetch_add(1) < 16) {
-      XELOGI("BD NATIVE viewport: x={} w={} y={} h={} RTw={} win_off={:08X}",
-             viewport.x, viewport.width, viewport.y, viewport.height,
-             bd_native_renderer_->width(),
-             register_file_->values[XE_GPU_REG_PA_SC_WINDOW_OFFSET]);
-    }
-  }
   viewport.minDepth = viewport_info.z_min;
   viewport.maxDepth = viewport_info.z_max;
   // NOTE: per-draw viewport override spreads each draw -> half the SCENE. The
@@ -11502,27 +11148,6 @@ void VulkanCommandProcessor::UpdateDynamicState(
     scissor_rect.offset.y = 0;
     scissor_rect.extent.width = 16384;
     scissor_rect.extent.height = 16384;
-  }
-  // BD native renderer: the field's geometry is scissored to a 672-wide EDRAM tile
-  // (the offset maps a full-width viewport into it) - the garbage strip at native
-  // x=672 is the geometry being CLIPPED there. Widen the scissor to the full-
-  // surface native RT so the whole field rasterizes across x=0..1280 (offset
-  // untouched - it's the correct screen transform).
-  // 5.6-sol tile-fanout fix: this override to the FULL native extent DESTROYS
-  // GetScissor's already-correct per-group scissor (it applies PA_SC_WINDOW_OFFSET
-  // -> left group [0,672], right group [608,1280]), letting BOTH field groups leak
-  // full-width and OVERLAP -> stripe. gpu_bd_native_keep_scissor=true KEEPS the
-  // per-group scissor (the fix - render each group into only its region of the
-  // logical RT). Default false = the legacy (striping) override, for A/B.
-  if (cvars::gpu_bd_native_renderer && bd_native_renderer_ &&
-      bd_native_renderer_->initialized() &&
-      !cvars::gpu_bd_native_keep_scissor &&
-      (current_render_pass_ == bd_native_renderer_->render_pass() ||
-       current_render_pass_ == bd_native_renderer_->render_pass_load())) {
-    scissor_rect.offset.x = 0;
-    scissor_rect.offset.y = 0;
-    scissor_rect.extent.width = bd_native_renderer_->width();
-    scissor_rect.extent.height = bd_native_renderer_->height();
   }
   SetScissor(scissor_rect);
 
@@ -13034,62 +12659,6 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
     }
   }
 
-  // REAL-HLE native-surface texture redirect (gpu_bd_native_renderer): when a
-  // pixel fetch samples a guest address that a native render-to-texture surface
-  // owns (keyed by the resolve-dest address = D3D9 resource identity), bind that
-  // NATIVE image directly instead of the EDRAM-resolved upload. This is the
-  // CONSUME half of EDRAM deletion — the field samples the natively-rendered
-  // shadow/reflection image, so the EDRAM ownership-transfer that carried it is
-  // no longer load-bearing. Reuses the same rt_as_texture_views_pixel_ override
-  // array the descriptor-write loop already reads. No-op (LookupSampledSurface
-  // returns null) until Brick C actually renders content into a surface, so this
-  // is safe/non-breaking to land now. Overrides the EDRAM-RT view above when both
-  // match (the native image is the authoritative content).
-  if (cvars::gpu_bd_native_renderer && cvars::gpu_bd_native_tex_bind &&
-      bd_native_renderer_ && pixel_shader && texture_count_pixel &&
-      bd_native_renderer_->surface_count() && !feedback_merge_active_ &&
-      !native_render_path_active_) {
-    for (const VulkanShader::TextureBinding& texture_binding : *textures_pixel) {
-      uint32_t fetch_constant = texture_binding.fetch_constant;
-      uint32_t texture_base_address = 0;
-      VkFormat texture_host_format_unsigned = VK_FORMAT_UNDEFINED;
-      if (!texture_cache_->GetActiveTextureGuestInfo(
-              fetch_constant, &texture_base_address,
-              &texture_host_format_unsigned)) {
-        continue;
-      }
-      NativeSurface* native_surface =
-          bd_native_renderer_->FindSurface(texture_base_address);
-      bool native_format_exact =
-          !native_surface || !native_surface->is_main_scene ||
-          native_surface->color_format == texture_host_format_unsigned;
-      VkImageView native_view =
-          native_format_exact
-              ? bd_native_renderer_->LookupSampledSurface(texture_base_address)
-              : VK_NULL_HANDLE;
-      if (native_view != VK_NULL_HANDLE) {
-        rt_as_texture_views_pixel_[fetch_constant] = native_view;
-        ++rt_served_textures_;
-        ++bd_native_tex_served_;
-        // Color-only native HLE step 1: this native-covered surface was consumed by
-        // a pixel-shader fetch (a composite consumer if this draw is one) and it WAS
-        // native-redirected here => a SAFE consumer for the drop gate.
-        BdNoteColorConsumer(texture_base_address,
-                            current_draw_is_composite_consumer_
-                                ? kBdConsumerComposite
-                                : kBdConsumerPixelTexture);
-      } else if ((cvars::gpu_bd_native_color_lifetime_hle > 0 ||
-                  cvars::gpu_bd_native_mainscene_redirect) &&
-                 native_surface) {
-        // FAIL-CLOSED (5.6-terra review): a native surface EXISTS for this base but
-        // was NOT served to this fetch (fell back to the EDRAM upload) => a
-        // NON-NATIVE consumer. The drop gate MUST see this or it would drop a
-        // transfer whose content this fetch still needs. Recorded so the surface is
-        // marked not-drop-safe this frame.
-        BdNoteColorConsumer(texture_base_address, kBdConsumerNonNative);
-      }
-    }
-  }
 
   // Reuse texture and sampler bindings if not changed since the last draw
   // (vulkan_cache_texture_descriptors). Allocating a transient descriptor set
