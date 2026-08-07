@@ -177,6 +177,30 @@ handshake — none of which exist here, so several plausible-looking commits fix
 **⚠️ Their APU tree is heavily diverged** (master/new/old `xma_context_*` split, own AAudio driver), so expect
 "port the idea, not the patch", and expect genuine N/A results — record them so they are not re-checked.
 
+## 🔊 GEARS AUDIO BUZZING = 8,221 XMA DECODE ABORTS (user-reported + log-confirmed 2026-08-07)
+**User playing Gears reported buzzing audio, 72C and 8W.** Captured from that session's logcat:
+```
+8,221 XmaContext warnings, dominated by:
+  5,002  XmaContext 27: non-forward input read offset
+  2,682  XmaContext 32: non-forward input read offset
+    537  XmaContext 33: non-forward input read offset
+```
+The guard is `xma_context.cc:789` and it ends in **"stopping decode of this buffer"** - so the decoder aborts
+thousands of times per session, leaving gaps in the stream. **That is the buzzing.** It is a decode-side
+read-offset failure, NOT (or not only) a callback-side underrun.
+**⚠️ THIS IS THE SAME WARNING I SAW EARLIER TODAY AND EXPLICITLY DECLINED TO LINK TO THE AUDIO WORK** (see the
+real-time-callback section below, where I wrote 'NOT asserted ... they could be unrelated'). With a user report
+of audible buzzing plus 8,221 aborts in one session, the link is now evidence rather than speculation - but
+note what it means: **the XMA release fence (`e5398cac8`) and the audio-priority fixes (`306a4a68a`,
+`c7205d89d`) are all INSTALLED and the buzzing persists.** So none of them is the cause.
+**⇒ START AT `xma_context.cc:789`, not at the driver.** The condition is an input read offset that fails to
+advance (`offset >= end`), which is a producer/consumer disagreement about the guest's XMA ring - a decode-side
+bug. The still-unfixed callback-takes-the-global-mutex issue below is a real defect and may make it worse under
+load, but it cannot by itself produce a 'non-forward read offset'.
+**8W and 72C are the user's own numbers** and are the first valid power figures we have - USB-attached ADB
+cannot measure this (see the watts section). Against rpcsx's reported 3-5W on the same handheld, that is the
+gap to close, and it is CPU, not GPU.
+
 ## 🔊🌩️ THE REAL-TIME AUDIO CALLBACK TAKES THE GLOBAL WAIT MUTEX AND WAKES EVERY GUEST THREAD (2026-08-07)
 **The single most concrete CPU/power finding of the XenDroid sweep, and it needs no device to see. Traced:**
 ```

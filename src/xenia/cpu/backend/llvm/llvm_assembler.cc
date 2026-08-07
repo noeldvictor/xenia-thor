@@ -2414,6 +2414,28 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   // skips them) so they MISS here and fall through to a fresh IR-build (correct).
   // Serialized by the compile lock above (addObjectFile mutates the shared LLJIT).
   // Gated default-off; needs device validation of warm-load symbol resolution.
+  // Report the four conjuncts ONCE. Device-observed 2026-08-07: 60,606 cached
+  // objects for the right title with matching key cvars, and the miss
+  // diagnostic below never fired - which proves execution never reaches the
+  // lookup, i.e. one of these is false. Guessing between them wasted a run;
+  // printing them costs one line and ends the question.
+  {
+    static std::atomic<bool> gate_reported{false};
+    bool gate_expected = false;
+    if (gate_reported.compare_exchange_strong(gate_expected, true)) {
+      XELOGI(
+          "LLVMobjcache GATE: object_cache={} skip_lowering={} path_set={} "
+          "has_end={} end_gt_start={}",
+          cvars::cpu_llvm_object_cache ? 1 : 0,
+          cvars::cpu_llvm_object_cache_skip_lowering ? 1 : 0,
+          !cvars::cpu_llvm_object_cache_path.empty() ? 1 : 0,
+          function->has_end_address() ? 1 : 0,
+          (function->has_end_address() &&
+           function->end_address() > function->address())
+              ? 1
+              : 0);
+    }
+  }
   if (cvars::cpu_llvm_object_cache && cvars::cpu_llvm_object_cache_skip_lowering &&
       !cvars::cpu_llvm_object_cache_path.empty() &&
       function->has_end_address() &&
