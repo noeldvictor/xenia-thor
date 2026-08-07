@@ -772,6 +772,28 @@ Beyond "the persisted config overrides the compiled default", there is a second 
 - **⇒ WHEN AUDITING A LEVER, CHECK THREE PLACES, NOT ONE:** the compiled default, the persisted
   `files/xenia.config.toml`, AND whether `XeniaOptimizations` has an entry that a GUI launch will pass.
 
+## DEVICE-CONFIRMED: `--ez cpu_backend_llvm true` DOES NOT ENABLE LLVM (2026-08-07) - and that explains the heat
+**Measured, not inferred.** Gears launched headless with `--ez cpu_backend_llvm true`:
+```
+objcache hits (LLVMobjload) : 0
+llvm mentions in logcat     : 0
+A64Backend: ... init lines  : present
+total xenia log lines       : 925   <- logging IS flowing, so 0 is a real zero
+```
+**The a64 backend ran.** So EVERY "LLVM" measurement attempted this session was actually a64, including the
+thermal comparison I drew between them - that comparison is void.
+**⇒ THIS IS THE HEAT.** The AOT precompile therefore runs on a64, and the object cache is **LLVM-only**
+(`objcache_v2_opt2`, keyed on `cpu_backend_llvm_opt`), so an a64 AOT pass **cannot use or populate it by
+construction**. That is a full recompile of the whole title on EVERY launch: ~15 min at 261-340% CPU, 40C->68C
+in 30-40s, and `files/objcache` unchanged afterwards - which is now explained WITHOUT needing the
+"cache not being written" theory.
+**⚠️ ROOT CAUSE NOT YET FOUND.** `cpu_backend_llvm` IS allowlisted in EmulatorActivity, so the extra should
+reach the native side. Candidates not yet eliminated: the persisted `cpu_backend_llvm = false` winning over the
+launch bundle for this particular cvar (the documented precedence says the bundle wins - verify it actually
+does), or the backend being selected before the bundle is applied. **`LLVMobjload` (llvm_assembler.cc:2457) is
+the cheap probe for any future claim about LLVM being active** - it needs no new instrumentation.
+**Do not quote any LLVM-vs-a64 result from this session.**
+
 ## AOT OBJECT CACHE: WHAT IS ESTABLISHED AND THE ONE CHECK THAT SETTLES IT (2026-08-07)
 **Every Gears launch today climbed 40C to 68C in 30-40s and one ran ~15 minutes at 261-340% CPU. That compile
 is upstream of most measurements worth taking on this device** - it dominates startup, it is the heat, and it
