@@ -608,10 +608,27 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   **⇒ ARM's `fmax` ALREADY MATCHES THE GUEST. It is x86 that does not.** So `FixupVmxMaxMinNan` looks like it
   exists to reproduce an X86 workaround that ARM does not need - 6 ASIMD uOPs per op on the 2-wide pipe, plus
   the 2 staging copies, to fix something that may not be broken here.
-  **⚠️ STILL VERIFY BEFORE DELETING** - the qemu-a64 differential, four lane classes. Two details the one-line
-  PEM summary does NOT settle: which QNaN (payload propagation vs a default NaN, and FPCR.DN affects this on
-  ARM), and the both-NaN case where our fixup currently produces `src1|src2` rather than either input. Deleting
-  scaffolding is only safe once those match.
+  **✅✅✅ DONE 2026-08-07 - THE DIFFERENTIAL RAN AND THE ANSWER IS STRONGER THAN "REDUNDANT": THE FIXUP IS
+  WRONG. `a64_vmx_native_fmax_nan` IS NOW DEFAULT TRUE.** Test in-repo at `tools/qemu/fmax_nan_differential.c`
+  (aarch64-linux-gnu-g++ + qemu-aarch64, no device). Both open payload questions are closed:
+  - **The PPC half, verbatim from PEM 3.2.5.1 "NaN Precedence"** (not the one-line p85 summary):
+    *"if the element in register vA is a NaN then the result is that NaN, else if the element in register vB is
+    a NaN then the result is that NaN"*, and *"if the selected source NaN is an SNaN it is converted to the
+    corresponding QNaN"*.
+  - **FPCR.DN is NOT set in our VMX mode**, which is what makes payload propagation the applicable behaviour:
+    `DEFAULT_VMX_FPCR = (1 << 24)` = **FZ only** (a64_backend.h:110). The test sets that exact FPCR and prints
+    it back (`FPCR=01000000 FZ=1 DN=0`); results identical with and without it, since FZ concerns denormals.
+  - **ARM `fmax` matches PPC EXACTLY in all 8 cases**, including the two that were open:
+    `(QNaN1,QNaN2) -> 7FC00001` = vA's NaN as PPC requires, and `(SNaN,num) -> 7FC00001` = quieted as PPC requires.
+  - **Our fixup is wrong in 3 of the 8** - it ORs the inputs on both-NaN lanes, so it FABRICATES payloads
+    (`7FC00001|7FD00002 = 7FD00003`, neither input) and, worst, `(SNaN,SNaN) -> 7F800001` **puts a SIGNALLING
+    NaN into guest state** where the architecture requires a quiet one and ARM had already quieted it.
+  ⇒ **The transliterated x86 workaround actively VIOLATED the PPC rule it existed to reproduce.** Deleting it is
+  a correctness fix that happens to also save 6 ASIMD uOPs/op on the 2-wide pipe. `fmin` was clean in all 8.
+  Also corrected: the comments at `a64_sequences.cc:4721/4860` claimed *"if either input is NaN, result = src1
+  (vA)"*, which is wrong for `(num,NaN)` - the exact comment/code disagreement the experiment ledger flagged.
+  **⚠️ NOT device-validated yet** (the Thor was running rpcsx). Correctness is argued from primary sources plus a
+  bit-exact differential; the PERF effect is unmeasured and must not be quoted until it is.
   **✅ THE ARM HALF IS NOW SETTLED FROM THE SPEC (2026-08-07), not eyeballed.** `docs/reference/arm/arm-architecture-
   reference-manual-a-profile.pdf`, shared pseudocode `FPMax` (p11115-11116):
   ```
@@ -1127,8 +1144,9 @@ ARM64 host**, directly. No x86 is emulated, translated through, or executed on t
 is **x86-shaped ASSUMPTIONS in shared, architecture-neutral code**. Those are scattered idioms, not a layer:
 - `atomic_exchange` implemented as a CAS with no retry (the Win32 branch was correct; POSIX was not) - FIXED
 - XMA output published with no release fence, invisible under x86 TSO - FIXED
-- `FixupVmxMaxMinNan` reproducing x86 `MAXPS` NaN behaviour that **ARM does not need** (PEM p85: PPC and ARM
-  agree, x86 is the outlier) - 6 uOPs/op, still present
+- `FixupVmxMaxMinNan` reproducing x86 `MAXPS` NaN behaviour that **ARM does not need** - **FIXED 2026-08-07,
+  and it was a CORRECTNESS BUG, not just 6 wasted uOPs/op**: on `(SNaN,SNaN)` the fixup emitted a SIGNALLING
+  NaN where PPC requires a quiet one. qemu differential + PEM 3.2.5.1; `a64_vmx_native_fmax_nan` now default on
 - shifts staged through scratch for x86's 2-operand destructive form - FIXED (`02ae6ec83`)
 - the LLVM 2xTBL1 workaround, 3x uOPs for no latency benefit - still present
 **Removing ALL of them is worth low single-digit percentages.** They are correctness-and-tidiness wins, and the

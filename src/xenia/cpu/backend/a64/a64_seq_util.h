@@ -481,11 +481,25 @@ inline void AuditV128DenormalIfAny(A64Emitter& e, int vreg,
 // workaround for a disagreement that does not exist here - 6 ASIMD uOPs per op on
 // the FP/ASIMD pipe, which is only 2-wide on the mid-cores (A710/A715 Table 2-1).
 //
-// DEFAULT OFF. Two things the one-line PEM summary does NOT settle, and both are
-// payload-level: which QNaN is produced (propagated payload vs FPCR.DN default
-// NaN), and the both-NaN case, where this fixup currently yields src1|src2 -
-// which matches NEITHER architecture. Flip only after the qemu-a64 differential
-// over the four lane classes: (NaN,num) (num,NaN) (NaN,NaN) (num,num).
+// ✅ SETTLED 2026-08-07 - DEFAULT IS NOW ON (a64_vmx_native_fmax_nan=true), i.e.
+// this whole function early-returns and ARM's own fmax/fmin supplies the result.
+// It is a CORRECTNESS FIX, not just a uOP saving. Evidence, both halves primary:
+//   PEM 3.2.5.1 "NaN Precedence" (docs/reference/ppc/) states the guest rule:
+//     "if the element in register vA is a NaN then the result is that NaN
+//      else if the element in register vB is a NaN then the result is that NaN"
+//     "if the selected source NaN is an SNaN it is converted to the
+//      corresponding QNaN"
+//   qemu-a64 differential, 8 cases, bit-exact - ARM fmax matches that EXACTLY:
+//     (QNaN1,QNaN2) -> 7FC00001  = vA's NaN, as PPC requires
+//     (SNaN ,num  ) -> 7FC00001  = quieted,  as PPC requires
+//   ...while THIS FIXUP is wrong in 3 of the 8, because src1|src2 fabricates a
+//   payload that is not either input:
+//     (QNaN1,QNaN2) -> 7FD00003  fabricated
+//     (SNaN ,QNaN2) -> 7FD00003  fabricated
+//     (SNaN ,SNaN ) -> 7F800001  A SIGNALLING NaN - the architecture requires a
+//                                quiet one, and ARM had already quieted it.
+// So the transliterated x86 workaround actively VIOLATED the PPC rule it existed
+// to reproduce. Repro: scratchpad fmax_diff.c, aarch64-linux-gnu-g++ + qemu-aarch64.
 inline void FixupVmxMaxMinNan(A64Emitter& e, int s1 = 0, int s2 = 1) {
   if (cvars::a64_vmx_native_fmax_nan) {
     // ARM's own fmax/fmin NaN behaviour is left in place - see above.

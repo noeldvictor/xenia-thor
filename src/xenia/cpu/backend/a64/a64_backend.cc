@@ -139,18 +139,22 @@ DEFINE_bool(
     "a64");
 
 DEFINE_bool(
-    a64_vmx_native_fmax_nan, false,
+    a64_vmx_native_fmax_nan, true,
     "ARM64: skip FixupVmxMaxMinNan and let the hardware fmax/fmin supply the NaN "
-    "result. MANUAL-BACKED: AltiVec PEM p85 states PPC vmaxfp/vminfp produce QNaN "
-    "for ANY NaN operand, and Arm ARM p11115 shows FPMax calls FPProcessNaNs "
-    "BEFORE the compare - so ARM already matches the guest. x86 MAXPS is the "
-    "outlier (returns src2 on NaN), which is why the x64 backend needed a fixup; "
-    "ours was transliterated from it and kept a workaround for a disagreement that "
-    "does not exist on ARM. Saves 6 ASIMD uOPs per vmaxfp/vminfp on the FP/ASIMD "
-    "pipe, which is only 2-wide on the A710/A715 mid-cores. DEFAULT OFF pending the "
-    "qemu-a64 differential - the PEM summary does not settle the NaN PAYLOAD "
-    "(propagated vs FPCR.DN default NaN) nor the both-NaN lane, where the current "
-    "fixup yields src1|src2 and matches NEITHER architecture.",
+    "result. DEFAULT ON since 2026-08-07: this is a CORRECTNESS FIX that also "
+    "removes 6 ASIMD uOPs per vmaxfp/vminfp from the FP/ASIMD pipe (only 2-wide on "
+    "the A710/A715 mid-cores). Settled from primary sources on BOTH sides plus a "
+    "bit-exact qemu-a64 differential over 8 NaN cases. AltiVec PEM 3.2.5.1 'NaN "
+    "Precedence' gives the guest rule verbatim: the result is vA's NaN if vA is a "
+    "NaN, else vB's, and a selected SNaN 'is converted to the corresponding QNaN'. "
+    "ARM fmax reproduced that EXACTLY in all 8 cases, including (QNaN1,QNaN2) -> "
+    "vA's NaN 0x7FC00001 and SNaN 0x7F800001 -> quieted 0x7FC00001. The FIXUP, by "
+    "contrast, is WRONG in 3 of the 8: it ORs the two inputs on both-NaN lanes, "
+    "producing a fabricated payload (0x7FC00001|0x7FD00002 = 0x7FD00003) and - the "
+    "real bug - turning (SNaN,SNaN) back into a SIGNALLING NaN 0x7F800001 where the "
+    "architecture requires a quiet one. So the fixup violated the very PPC rule it "
+    "was transliterated from x86 MAXPS to satisfy. Set FALSE to restore the old "
+    "(incorrect) x64-shaped behaviour for bisection only.",
     "a64");
 
 DEFINE_bool(

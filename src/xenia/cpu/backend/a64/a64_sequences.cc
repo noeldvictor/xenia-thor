@@ -4718,7 +4718,11 @@ struct MAX_V128 : Sequence<MAX_V128, I<OPCODE_MAX, V128Op, V128Op, V128Op>> {
       int s1, s2;
       PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
       e.fmax(VReg(2).s4, VReg(s1).s4, VReg(s2).s4);
-      // PPC vmaxfp: if either input is NaN, result = src1 (vA).
+      // PPC vmaxfp NaN rule (PEM 3.2.5.1 'NaN Precedence'): the result is
+      // vA's NaN if vA is a NaN, ELSE vB's NaN - not always vA, which is
+      // what this comment used to claim. An SNaN so selected is converted
+      // to the corresponding QNaN. ARM fmax/fmin implement exactly this
+      // (qemu-verified, 8 cases), so the fixup below is skipped by default.
       FixupVmxMaxMinNan(e, s1, s2);
       if (!e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs)) {
         FlushDenormals_V128(e, 2, 0, 1);
@@ -4857,7 +4861,11 @@ struct MIN_V128 : Sequence<MIN_V128, I<OPCODE_MIN, V128Op, V128Op, V128Op>> {
       int s1, s2;
       PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
       e.fmin(VReg(2).s4, VReg(s1).s4, VReg(s2).s4);
-      // PPC vminfp: if either input is NaN, result = src1 (vA).
+      // PPC vminfp NaN rule (PEM 3.2.5.1 'NaN Precedence'): the result is
+      // vA's NaN if vA is a NaN, ELSE vB's NaN - not always vA, which is
+      // what this comment used to claim. An SNaN so selected is converted
+      // to the corresponding QNaN. ARM fmax/fmin implement exactly this
+      // (qemu-verified, 8 cases), so the fixup below is skipped by default.
       FixupVmxMaxMinNan(e, s1, s2);
       if (!e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs)) {
         FlushDenormals_V128(e, 2, 0, 1);
