@@ -36,6 +36,18 @@ extern "C" {
 // Credits for most of this code goes to:
 // https://github.com/koolkdev/libertyv/blob/master/libav_wrapper/xma2dec.c
 
+DEFINE_bool(
+    apu_xma_nonforward_skip_packet, true,
+    "On a non-forward XMA input read offset, step to the NEXT packet and keep "
+    "decoding instead of abandoning the buffer. Default ON: the old behaviour "
+    "left input_buffer_read_offset unchanged, so the guest re-kicked the "
+    "decoder into the identical computation forever - a livelock, device-"
+    "measured at 13,534 IDENTICAL fires in one ~5 minute Gears run, audible as "
+    "continuous buzzing. This path only runs where the decoder previously gave "
+    "up on the whole buffer, so it cannot make working audio worse. Set false "
+    "to restore the give-up behaviour for bisection.",
+    "APU");
+
 DEFINE_bool(xma_trace_context_state, false,
             "Trace high-frequency XMA context state transitions.", "APU");
 DEFINE_bool(xma_fast_silence, false,
@@ -820,6 +832,44 @@ void XmaContext::Decode(XMA_CONTEXT_DATA* data) {
               "packet_idx={} packet_count={} frame_idx={} split_len={}",
               id(), uint32_t(data->input_buffer_read_offset), offset, packet_idx,
               current_input_packet_count, frame_idx, split_frame_len_);
+        }
+        // ROOT CAUSE, from that diagnostic on a 2026-08-07 Gears run: every
+        // one of 13,534 fires was IDENTICAL -
+        //   read_off=0xA2B58A offset=0xA28239 packet_idx=650 frame_idx=5
+        // 650 * kBitsPerPacket = 0xA28000, so `offset` is 569 bits into packet
+        // 650 - that packet's FIRST frame - while read_off is already 13,706
+        // bits into the same packet. GetNextFrame() returned 0 (ran off the end
+        // of the packet) while frame_idx + 1 < frame_count, so the packet-skip
+        // branch above never ran, packet_idx stayed at 650, and the
+        // `offset == 0` branch recomputed from the CURRENT packet's start -
+        // backwards. Its comment ("Next packet but we already skipped to it")
+        // is simply false in that case.
+        //
+        // Breaking here left input_buffer_read_offset UNCHANGED, so the game
+        // re-kicked us into the identical computation forever: a LIVELOCK, not
+        // an occasional glitch, which is why it is audible as continuous
+        // buzzing rather than a click.
+        //
+        // Recovery: step to the next packet and continue. This code only runs
+        // where the previous version gave up on the whole buffer, so it cannot
+        // make working audio worse - it can only convert a permanent stall into
+        // one skipped packet. If even the next packet is not ahead, fall back
+        // to the old give-up behaviour.
+        if (cvars::apu_xma_nonforward_skip_packet) {
+          uint32_t recover_idx = packet_idx + 1;
+          if (recover_idx < current_input_packet_count) {
+            uint8_t* recover_packet =
+                current_input_buffer + recover_idx * kBytesPerPacket;
+            uint32_t recover_offset =
+                xma::GetPacketFrameOffset(recover_packet) +
+                recover_idx * kBitsPerPacket;
+            if (recover_offset > data->input_buffer_read_offset) {
+              packet_idx = recover_idx;
+              packet = current_input_buffer + packet_idx * kBytesPerPacket;
+              data->input_buffer_read_offset = recover_offset;
+              continue;
+            }
+          }
         }
         XELOGW(
             "XmaContext {}: non-forward input read offset (0x{:X} >= 0x{:X}); "
