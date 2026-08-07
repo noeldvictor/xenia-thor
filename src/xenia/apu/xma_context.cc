@@ -804,6 +804,23 @@ void XmaContext::Decode(XMA_CONTEXT_DATA* data) {
         // exits (break) instead - strictly safer than aborting; the game
         // re-kicks the decoder with a fresh buffer. Only reached when the old
         // assert would have fired, so working audio is byte-for-byte unaffected.
+        // The mitigation above assumed this is RARE. It is not: a user Gears
+        // session logged 8,221 of these across 3 contexts, i.e. continuous
+        // audio dropout (audible as buzzing) rather than an occasional glitch.
+        // So dump the packet-walk state on the first few fires - the offset is
+        // recomputed as GetPacketFrameOffset(packet) + packet_idx *
+        // kBitsPerPacket just above, and the question is whether packet_idx is
+        // stuck, wrapping, or running past the buffer (note the unvalidated
+        // "TODO buffer bounds check" directly above). Capped so the diagnostic
+        // cannot itself become the dropout.
+        static std::atomic<uint32_t> nonfwd_detail{0};
+        if (nonfwd_detail.fetch_add(1, std::memory_order_relaxed) < 8) {
+          XELOGW(
+              "XmaContext {}: non-forward DETAIL read_off=0x{:X} offset=0x{:X} "
+              "packet_idx={} packet_count={} frame_idx={} split_len={}",
+              id(), uint32_t(data->input_buffer_read_offset), offset, packet_idx,
+              current_input_packet_count, frame_idx, split_frame_len_);
+        }
         XELOGW(
             "XmaContext {}: non-forward input read offset (0x{:X} >= 0x{:X}); "
             "stopping decode of this buffer",
