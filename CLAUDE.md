@@ -499,9 +499,14 @@ completely independent of it — and it is where the CPU/power findings came fro
 | `2c0ac5847` wake multi-waiters selectively | **⚠️ NOT PORTABLE AS-IS** — ours is worse (one static condvar); see the thundering-herd section |
 | `366f38da8` fill the whole AAudio request | **❌ N/A — already our behaviour.** `FillAudio` loops queued frames + zero-fills on underrun |
 | `6d56383fd` cap gap concealment at one block | **❌ N/A — feature absent.** They ship their own `xe_aaudio_audio_driver.cpp` with `ConcealGap`/`last_block_`; ours is `android_audio_driver.cc` and zero-fills, so there is no overread to cap |
-| `5ada02239` resolve XMA kicks by sequence | not yet triaged — correctness, likely relevant |
-| `bc257ce49` / `d398a8762` audio thread priority | not yet triaged — set-from-inside-thread + verify it took |
+| `5ada02239` resolve XMA kicks by sequence | **❌ N/A — mechanism absent.** We have no `SignalWorkDone`, `work_completion_event_` or kick handshake at all (0 hits across xma_context.{h,cc} + xma_decoder.cc); it fixes a race in synchronisation THEY built |
+| `bc257ce49` audio worker priority | **✅ PORTED** (`306a4a68a`) — set from inside the thread; XThread overwrites anything set at the creation site |
+| `d398a8762` verify the nice took | **✅ PORTED** (`c7205d89d`) — reads back with `getpriority()`; matters here because our `set_priority` already EPERMs on Android |
 | `6ec67de7b` / `138cb65f0` / `46fcd881f` | instrumentation/counters, take only if chasing the above |
+**BATCH COMPLETE — every APU commit has a verdict: 3 ported, 3 N/A, 1 not-portable-as-is, 1 confirmed-present-but-
+needs-the-condvar-refactor, 3 counters left. The N/A results are the ones worth keeping: their APU tree carries a
+master/new/old/fake `xma_context` split, its own `xe_aaudio_audio_driver.cpp` with gap concealment, and a kick
+handshake — none of which exist here, so several plausible-looking commits fix bugs we cannot have.**
 **⚠️ Their APU tree is heavily diverged** (master/new/old `xma_context_*` split, own AAudio driver), so expect
 "port the idea, not the patch", and expect genuine N/A results — record them so they are not re-checked.
 
