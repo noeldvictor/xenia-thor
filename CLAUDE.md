@@ -772,6 +772,30 @@ Beyond "the persisted config overrides the compiled default", there is a second 
 - **⇒ WHEN AUDITING A LEVER, CHECK THREE PLACES, NOT ONE:** the compiled default, the persisted
   `files/xenia.config.toml`, AND whether `XeniaOptimizations` has an entry that a GUI launch will pass.
 
+## AOT OBJECT CACHE: WHAT IS ESTABLISHED AND THE ONE CHECK THAT SETTLES IT (2026-08-07)
+**Every Gears launch today climbed 40C to 68C in 30-40s and one ran ~15 minutes at 261-340% CPU. That compile
+is upstream of most measurements worth taking on this device** - it dominates startup, it is the heat, and it
+makes any short run unrepresentative. Worth resolving before more micro-optimisation.
+**Established by reading (facts):**
+- The cache fast path needs THREE things together (llvm_assembler.cc:2417): `cpu_llvm_object_cache` AND
+  `cpu_llvm_object_cache_skip_lowering` AND a non-empty `cpu_llvm_object_cache_path`.
+- **All three compiled defaults are OFF/empty** (llvm_backend.cc:197/216), and **the persisted device config has
+  all three off/empty too**. `XeniaOptimizations` has **zero** references to any of them.
+- `EmulatorActivity.ensureObjectCacheDefaults()` sets all three, runs unconditionally before `super.onCreate()`,
+  and its early-return cannot be tripped accidentally - `copyBooleanExtra` only inserts a key when the extra is
+  actually present (EmulatorActivity.java:1643). So on a launch that does not name these cvars, it SHOULD enable
+  them.
+**NOT established - and I nearly asserted it:** that the cache is not being written. `files/objcache` stayed at
+exactly 264M across a 15-minute compile, which reads as "nothing was written" but is EQUALLY consistent with
+"the cache was already complete for this title, so there was nothing new to write". Those imply opposite
+actions. **Do not conclude from the size alone.**
+**THE ONE CHECK THAT SETTLES IT:** launch and grep our own log for the cache-hit/miss path in
+`llvm_assembler.cc` around :2417-2443 (add a counter there if none logs). A run that is recompiling everything
+and a run that is loading 264M of objects look completely different in the log, and identical on disk.
+**Also worth knowing:** the directory is `objcache_v2_opt2` - `v2` is `kLlvmObjectCacheVersion` and `opt2` is
+`cpu_backend_llvm_opt`, so **it is an LLVM-only cache**. An a64-backend AOT pass cannot use it at all, which
+means any run with `cpu_backend_llvm=false` recompiles from scratch by construction, cache or no cache.
+
 ## 🐌 "XENIA ISN'T RESPONDING" DURING LAUNCH = THE AOT COMPILE, NOT A HANG (2026-08-06)
 **Diagnosed live: ~85 functions/sec, GPU 1%, 41°C — all CPU, nothing rendering yet.** Do not force-close it.
 - **The UI thread blocks >5s in `Presenter::PaintFromUIThread`** while the emulator thread compiles, so Android
