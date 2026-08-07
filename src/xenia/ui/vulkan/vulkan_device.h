@@ -314,6 +314,8 @@ class VulkanDevice {
 #include "xenia/ui/vulkan/functions/device_ext_extended_dynamic_state3.inc"
     // VK_KHR_pipeline_executable_properties
 #include "xenia/ui/vulkan/functions/device_khr_pipeline_executable_properties.inc"
+    // Vulkan 1.3 core dynamic rendering - the prerequisite for local read below.
+#include "xenia/ui/vulkan/functions/device_1_3_dynamic_rendering.inc"
     // VK_KHR_dynamic_rendering_local_read (#233) - in-pass EDRAM resolves.
 #include "xenia/ui/vulkan/functions/device_khr_dynamic_rendering_local_read.inc"
 #undef XE_UI_VULKAN_FUNCTION_PROMOTED

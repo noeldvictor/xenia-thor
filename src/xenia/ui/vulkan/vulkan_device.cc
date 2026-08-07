@@ -1194,6 +1194,13 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
   if (device->extensions_.ext_KHR_pipeline_executable_properties) {
 #include "xenia/ui/vulkan/functions/device_khr_pipeline_executable_properties.inc"
   }
+  // Core in 1.3, so gate on the API version rather than an extension. The Thor
+  // reports 1.3+ (Turnip advertises 1.4), so this loads in practice; the guard
+  // is here so a hypothetical 1.2 device fails to find the symbol rather than
+  // taking a null function pointer into a render pass.
+  if (properties.apiVersion >= VK_MAKE_API_VERSION(0, 1, 3, 0)) {
+#include "xenia/ui/vulkan/functions/device_1_3_dynamic_rendering.inc"
+  }
   if (device->extensions_.ext_1_4_KHR_dynamic_rendering_local_read) {
 #include "xenia/ui/vulkan/functions/device_khr_dynamic_rendering_local_read.inc"
   }
