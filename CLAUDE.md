@@ -784,6 +784,23 @@ Beyond "the persisted config overrides the compiled default", there is a second 
   **So `--ez cpu_backend_llvm true` ALONE does nothing. You must ALSO pass `--es cpu arm64`.**
   **⚠️ MY ERROR, NOT A CODE DEFECT — correcting what I implied above.** `XeniaAndroidSettings.java:235` DOES
   `putString("cpu", CPU_ARM64)`, so **GUI launches reach the LLVM branch correctly** and the standing AOT+LLVM
+  **✅ RECIPE VERIFIED ON DEVICE (2026-08-07).** Adding `--es cpu arm64` took llvm log lines from 0 to 2:
+  ```
+  LLVMBackend: AOT object cache enabled at '.../files/objcache/objcache_v2_opt2'
+  LLVMBackend: ORCv2 LLJIT initialized; LLVM lowers what it can, a64 the rest.
+  ```
+  So the backend AND `ensureObjectCacheDefaults` both work correctly - the cache is enabled at the right path.
+  **⚠️ BUT `LLVMobjload` STAYED AT 0 AGAINST A 264MB CACHE.** The cache exists, is enabled, and never hits.
+  **Leading hypothesis (NOT yet confirmed): the cache KEY changed.** llvm_assembler.cc:2434 keys each object on
+  `g<addr>_<codehash>_o<opt>r<residency>w<writeback>a<abi>` - i.e. `cpu_backend_llvm_opt`,
+  `cpu_backend_llvm_context_residency`, `..._residency_writeback` and `..._residency_abi`. **If ANY of those
+  differ from the run that built the cache, every lookup misses and the whole title recompiles** - which is
+  exactly the observed 15min / 40C->68C / cache-unchanged behaviour. Next step: log the computed key on a miss
+  and diff it against a filename already in `objcache_v2_opt2`.
+  **🔑 AND A CORRECTION TO THE "CHECK THE PERSISTED CONFIG" RULE:** after this run the config STILL read
+  `cpu = "any"` and `cpu_backend_llvm = false`, while the log proves LLVM ran. **Launch extras override at
+  runtime WITHOUT persisting.** So the config file shows what a launch INHERITS, not what a launch USED - read
+  the log to know what actually ran.
   directive is honoured there. Only my headless `am start` runs were affected, because I never passed `cpu`.
   The persisted config carries `cpu = "any"`, which is what a bare launch inherits.
   **⇒ THE HEADLESS RECIPE NEEDS THREE FLAGS, NOT ONE:**
