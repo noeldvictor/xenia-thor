@@ -9894,40 +9894,6 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     }
   }
 
-  // BD DEPTH-XFER DIAGNOSTIC: log the src/dst RT keys of every DEPTH ownership
-  // transfer (the ~67ms tile-reinterpreting wall) so the next build knows EXACTLY
-  // which aliased depth surfaces to convert to per-surface native RTs (the
-  // resource-keyed coverage that deletes EDRAM). Gated on the native renderer,
-  // capped, one-shot — harmless.
-  if (cvars::gpu_bd_native_renderer && render_target_transfers &&
-      render_target_transfers != kNoTransfers) {
-    static std::atomic<uint32_t> s_bd_dxfer_log{0};
-    for (uint32_t i = 0; i < render_target_count; ++i) {
-      RenderTarget* drt = render_targets[i];
-      if (!drt || !drt->key().is_depth) {
-        continue;
-      }
-      for (const Transfer& t : render_target_transfers[i]) {
-        if (!t.source || t.source == drt) {
-          continue;
-        }
-        if (s_bd_dxfer_log.fetch_add(1) < 40) {
-          RenderTargetKey sk =
-              static_cast<VulkanRenderTarget*>(t.source)->key();
-          RenderTargetKey dk = drt->key();
-          XELOGI(
-              "BD DEPTH XFER: src(base={} pitchT={} msaa={} fmt={}) -> "
-              "dst(base={} pitchT={} msaa={} fmt={}) samelayout={}",
-              sk.base_tiles, sk.GetPitchTiles(), uint32_t(sk.msaa_samples),
-              uint32_t(sk.resource_format), dk.base_tiles, dk.GetPitchTiles(),
-              uint32_t(dk.msaa_samples), uint32_t(dk.resource_format),
-              (sk.base_tiles == dk.base_tiles &&
-               sk.GetPitchTiles() == dk.GetPitchTiles() &&
-               sk.msaa_samples == dk.msaa_samples));
-        }
-      }
-    }
-  }
 
   // BD DEPTH-DOWNSCALE DROP (gpu_bd_native_drop_depth_downscale): drop ONLY the
   // per-transfer DEPTH ownership transfers whose src/dst pitch DIFFERS (the 720->400
