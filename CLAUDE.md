@@ -815,6 +815,17 @@ Beyond "the persisted config overrides the compiled default", there is a second 
      `cpu_llvm_object_cache_skip_lowering`. The 'AOT object cache enabled' log line proves only the FIRST;
      `skip_lowering` is a separate flag and the persisted config has it false.
   **The miss diagnostic added in this commit prints the wanted key next to a real filename from the directory**,
+  **✅ ANSWERED (2026-08-07): THE GATE SHORT-CIRCUITS - IT IS NOT THE CODE HASH.** Ran the miss diagnostic:
+  **`LLVMobjcache MISS` printed ZERO times** in a 50s Gears run with `--es cpu arm64 --ez cpu_backend_llvm true`.
+  The diagnostic sits on the `!exists()` branch, so zero lines means execution **never reaches the lookup at
+  all** - candidate (1), a differing `code_hash`, is eliminated, because a hash mismatch would have PRINTED.
+  **⇒ One of the four conjuncts at llvm_assembler.cc:2417 is false:**
+  `cpu_llvm_object_cache` / `cpu_llvm_object_cache_skip_lowering` / non-empty `..._path` /
+  `function->has_end_address() && end_address() > address()`.
+  The 'AOT object cache enabled at ...' log line proves the 1st and 3rd are fine, **so it is
+  `skip_lowering` or `has_end_address()`.** Note `ensureObjectCacheDefaults` DOES set `skip_lowering` true, and
+  the persisted config says false - so the next step is to log all four conjuncts once, not to guess between
+  them. **60,606 objects and 15 minutes of compile per launch are riding on one boolean.**
   which separates these two immediately: identical-except-hash means (1); never printed at all means (2).
   **🔑 AND A CORRECTION TO THE "CHECK THE PERSISTED CONFIG" RULE:** after this run the config STILL read
   `cpu = "any"` and `cpu_backend_llvm = false`, while the log proves LLVM ran. **Launch extras override at
