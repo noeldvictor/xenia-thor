@@ -9,6 +9,7 @@
 
 #include "xenia/apu/xma_context.h"
 
+#include <atomic>
 #include <algorithm>
 #include <cstring>
 
@@ -138,6 +139,12 @@ bool XmaContext::Work() {
   } else {
     Decode(&data);
   }
+  // The guest mixer polls output_buffer_write_offset from ANOTHER thread and
+  // then reads the PCM behind it. Publish the ring writes before the offset:
+  // on a weakly ordered CPU the new offset can otherwise become visible ahead
+  // of the samples and the game mixes stale audio. x86 never shows this (TSO),
+  // which is why the code was written without it. XenDroid 902af401d.
+  std::atomic_thread_fence(std::memory_order_release);
   data.Store(context_ptr);
   return true;
 }
@@ -156,6 +163,12 @@ void XmaContext::Enable() {
                  kBitsPerPacket);
   }
 
+  // The guest mixer polls output_buffer_write_offset from ANOTHER thread and
+  // then reads the PCM behind it. Publish the ring writes before the offset:
+  // on a weakly ordered CPU the new offset can otherwise become visible ahead
+  // of the samples and the game mixes stale audio. x86 never shows this (TSO),
+  // which is why the code was written without it. XenDroid 902af401d.
+  std::atomic_thread_fence(std::memory_order_release);
   data.Store(context_ptr);
 
   set_is_enabled(true);
@@ -188,6 +201,12 @@ void XmaContext::Clear() {
   data.output_buffer_read_offset = 0;
   data.output_buffer_write_offset = 0;
 
+  // The guest mixer polls output_buffer_write_offset from ANOTHER thread and
+  // then reads the PCM behind it. Publish the ring writes before the offset:
+  // on a weakly ordered CPU the new offset can otherwise become visible ahead
+  // of the samples and the game mixes stale audio. x86 never shows this (TSO),
+  // which is why the code was written without it. XenDroid 902af401d.
+  std::atomic_thread_fence(std::memory_order_release);
   data.Store(context_ptr);
 }
 
