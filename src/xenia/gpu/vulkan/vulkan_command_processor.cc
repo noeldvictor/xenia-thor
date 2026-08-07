@@ -275,6 +275,7 @@ VulkanCommandProcessor::VulkanCommandProcessor(
                                graphics_system->provider())
                                ->vulkan_device()),
       deferred_command_buffer_(*this),
+      deferred_setup_command_buffer_(*this, 64 * 1024),
       prepass_command_buffer_(*this),
       bd_field_command_buffer_(*this),
       transient_descriptor_allocator_uniform_buffer_(
@@ -1828,6 +1829,7 @@ void VulkanCommandProcessor::ShutdownContext() {
   sparse_memory_binds_.clear();
 
   deferred_command_buffer_.Reset();
+  deferred_setup_command_buffer_.Reset();
   // BD input-attachment merge: the captured producer BeginRenderPass position is
   // a command_stream_ index, invalid after a Reset (a stale index -> out-of-bounds
   // patch -> heap corruption). Invalidate it together with the stream.
@@ -10636,6 +10638,10 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     // the end of the submission (when async pipeline object creation requests
     // are fulfilled).
     deferred_command_buffer_.Reset();
+    deferred_setup_command_buffer_.Reset();
+    if (shared_memory_) {
+      shared_memory_->OnGpuSubmissionOpened();
+    }
 
     // Reset cached state of the command buffer.
     // BD input-attachment merge: invalidate the captured producer position (a
@@ -10998,6 +11004,21 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
     // Fold this submission's recorded draw count into the host_draws=
     // accumulator before the next BeginSubmission resets the stat.
     host_draws_recorded_accum_ += deferred_command_buffer_.record_stats().draws;
+    // Replay hoisted shared-memory uploads first, then make them visible to
+    // everything the main deferred buffer is about to record.
+    if (!deferred_setup_command_buffer_.empty()) {
+      deferred_setup_command_buffer_.Execute(command_buffer.buffer);
+      VkMemoryBarrier setup_barrier;
+      setup_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+      setup_barrier.pNext = nullptr;
+      setup_barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+      setup_barrier.dstAccessMask =
+          VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+      dfn.vkCmdPipelineBarrier(
+          command_buffer.buffer, VK_PIPELINE_STAGE_TRANSFER_BIT,
+          VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 1, &setup_barrier, 0, nullptr,
+          0, nullptr);
+    }
     deferred_command_buffer_.Execute(command_buffer.buffer);
     if (gpu_timestamp_pool_ != VK_NULL_HANDLE) {
       dfn.vkCmdWriteTimestamp(command_buffer.buffer,

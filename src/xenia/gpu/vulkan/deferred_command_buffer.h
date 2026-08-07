@@ -32,6 +32,9 @@ class DeferredCommandBuffer {
 
   void Reset();
   void Execute(VkCommandBuffer command_buffer);
+  // Upstream XenDroid tests a scalar command_stream_size_; our fork keeps the
+  // stream in a vector, so this is the equivalent test. Reset() clears it.
+  bool empty() const { return command_stream_.empty(); }
 
   // Monotonic recorded-command cursor (grows by one WriteCommand per recorded
   // command). Used by the draw-concatenation lever (vulkan_merge_draws): if this

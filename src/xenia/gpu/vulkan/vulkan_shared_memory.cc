@@ -30,6 +30,21 @@ DEFINE_bool(vulkan_sparse_shared_memory, true,
             "allows graphics debuggers that don't support sparse binding to "
             "work.",
             "Vulkan");
+
+// XenDroid port (904374971). NOTE: upstream ships this DEFAULT-ON; it is
+// default-OFF here pending an on-device check, per the standing rule that a
+// lever stays off until it has been validated on the Thor. Two default-on
+// "looks equivalent by construction" GPU levers caused visible regressions on
+// 2026-08-06 (the VRS/fp10/MSAA quality set, then
+// arm64_offset_memory_address_fastpath), and reordering uploads relative to a
+// render pass fails as WRONG PIXELS rather than as a crash. Flip to true once
+// a title has been checked with it on.
+DEFINE_bool(vulkan_hoist_shmem_uploads, false,
+            "Record shared-memory uploads whose pages were not invalidated "
+            "since the current submission opened at the start of the "
+            "submission's command buffer instead of breaking the current "
+            "render pass (expensive on tile-based GPUs).",
+            "Vulkan");
 DEFINE_bool(
     gpu_uma_direct_shared_memory, false,
     "Unified-memory optimization for integrated GPUs (e.g. mobile Adreno on "
@@ -688,17 +703,42 @@ bool VulkanSharedMemory::UploadRanges(
   if (buffer_host_visible_) {
     return UploadRangesDirect(upload_page_ranges);
   }
-  // upload_page_ranges are sorted, use them to determine the range for the
-  // ordering barrier.
-  Use(Usage::kTransferDestination,
-      std::make_pair(
-          upload_page_ranges.front().first << page_size_log2(),
-          (upload_page_ranges.back().first + upload_page_ranges.back().second -
-           upload_page_ranges.front().first)
-              << page_size_log2()));
-  command_processor_.SubmitBarriers(true);
+  // Copies of pages never invalidated while this submission was recording
+  // can't have been read by an already-recorded command, so they can execute
+  // at the head of the submission's command buffer without breaking the
+  // current render pass (a pass break is a GMEM store+reload on a TBDR).
+  bool hoist = cvars::vulkan_hoist_shmem_uploads &&
+               !AnyPageInvalidatedSinceSubmissionOpen(
+                   upload_page_ranges.data(),
+                   uint32_t(upload_page_ranges.size()));
+
+  if (!hoist) {
+    // upload_page_ranges are sorted, use them to determine the range for the
+    // ordering barrier.
+    Use(Usage::kTransferDestination,
+        std::make_pair(
+            upload_page_ranges.front().first << page_size_log2(),
+            (upload_page_ranges.back().first +
+             upload_page_ranges.back().second -
+             upload_page_ranges.front().first)
+                << page_size_log2()));
+    command_processor_.SubmitBarriers(true);
+  }
   DeferredCommandBuffer& command_buffer =
-      command_processor_.deferred_command_buffer();
+      hoist ? command_processor_.deferred_setup_command_buffer()
+            : command_processor_.deferred_command_buffer();
+  if (hoist && command_buffer.empty()) {
+    // Once per submission: order the head copies after shared-memory writes
+    // from previous submissions.
+    VkMemoryBarrier barrier;
+    barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    barrier.pNext = nullptr;
+    barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+    barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+    command_buffer.CmdVkPipelineBarrier(VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                                        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 1,
+                                        &barrier, 0, nullptr, 0, nullptr);
+  }
   uint64_t submission_current = command_processor_.GetCurrentSubmission();
   bool successful = true;
   upload_regions_.clear();

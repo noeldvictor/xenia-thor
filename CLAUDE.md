@@ -768,6 +768,17 @@ xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer
   one day (VRS/fp10/MSAA quality levers, then `arm64_offset_memory_address_fastpath`) — wrong pixels, not a crash.
   A gradle build compiles it, but compiling proves nothing about a resolve path. Land it default-off, with
   `c13b9be1f`'s rejection counter in the same commit, and validate on-device before flipping.
+- **✅ `904374971` IS FULLY PORTED (2026-08-06, BUILD SUCCESSFUL) — but `vulkan_hoist_shmem_uploads` is DEFAULT-OFF
+  and NEEDS ONE DEVICE CHECK.** Upstream ships it ON; it is off here per the standing rule, because reordering an
+  upload relative to a render pass fails as WRONG PIXELS, not a crash — the same failure mode as the two
+  regressions of 2026-08-06. **Flip it to true after checking one title with `--ez vulkan_hoist_shmem_uploads
+  true`.** It is independent of the blocked dynamic-rendering track (grep of the upstream commit for
+  BeginRendering/local_read = 0 hits).
+  Two more of our-fork-differs-from-theirs, both caught by the compiler: **we have no `command_stream_size_`
+  scalar** (our `DeferredCommandBuffer` keeps a `command_stream_` vector, so `empty()` tests
+  `command_stream_.empty()`), and **we have no `VkFrameSyncStats`**, so that commit's public accessor for it was
+  skipped as XenDroid-specific instrumentation. Our `UploadRanges` also takes a vector rather than pointer+count
+  and has no debug markers, so the hoist branch was adapted rather than copied.
 - **⭐ STANDALONE, NOT part of that chain — take it independently:** `904374971` hoist shared-memory uploads out of
   render passes. Pages never invalidated **since the current GPU submission opened** cannot have been read by an
   already-recorded command, so their upload can be reordered to the submission HEAD and the render pass never
