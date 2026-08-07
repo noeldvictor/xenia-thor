@@ -4,10 +4,20 @@ Primary-source microarchitecture data for the cores in the Thor's QCS8550, kept
 in-repo so optimisation claims can be checked against the manual instead of
 against folklore.
 
-| file | core | role in the 8 Gen 2 | pages |
+| file | what | role | pages |
 |---|---|---|---|
-| `cortex-x3-software-optimization-guide.pdf` | Cortex-X3 | 1x prime (cpu7, 3.19GHz) | 66 |
-| `cortex-a710-software-optimization-guide.pdf` | Cortex-A710 | 2x mid | 92 |
+| `arm-architecture-reference-manual-a-profile.pdf` | **Arm ARM, DDI 0487H.a** | the architecture itself - every instruction's exact semantics | **11,530** |
+| `cortex-x3-software-optimization-guide.pdf` | Cortex-X3 SWOG | 1x prime (cpu7, 3.19GHz) | 66 |
+| `cortex-a710-software-optimization-guide.pdf` | Cortex-A710 SWOG | 2x mid | 92 |
+
+**Use the right one.** The Arm ARM (66MB, 11.5k pages) is the ARCHITECTURE: what an
+instruction is *defined* to do - exact semantics, flag effects, NaN handling,
+memory-ordering rules. Reach for it on correctness questions (e.g. "does ARM
+`FMAX` propagate NaN the way PPC `vmaxfp` does?" - see the FixupVmxMaxMinNan note
+in CLAUDE.md, which is exactly this kind of question and is still open).
+The SWOGs are the MICROARCHITECTURE: how fast it is on *these* cores - latency,
+throughput, which issue pipe. Reach for those on performance questions. Neither
+answers the other's question.
 
 The 8 Gen 2 is 1x X3 + 2x A715 + 2x A710 + 3x A510. The **A715 and A510 guides
 are not here**: Arm publishes them only through developer.arm.com's JS portal
