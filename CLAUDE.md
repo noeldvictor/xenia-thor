@@ -488,6 +488,22 @@ Worst to best: **FMV/video** (measures XMA decode + a blit — none of the code 
   race (Burnout) or the field (BD, ~120-135s). Skill: **`xenia-blue-dragon-route-capture`**. A captured route is a
   PREREQUISITE for a CPU measurement, not an optional extra.
 
+## 🪤 GEARS SIGTRAP IN JIT CODE AT GUEST 0x8227EE6C (new signature, 2026-08-07, unresolved)
+**Seen twice.** Gears of War reaches `Displayed ... +212ms`, then ~3s later:
+`Fatal signal 5 (SIGTRAP), code 1 (TRAP_BRKPT), fault addr 0x2a000025c, tid "Main XThread"`, with
+`#00 pc 0x25c /dev/ashmem/xenia_code_cache_...` — i.e. **a `brk` OUR OWN JIT emitted**, not a host library fault.
+- **Registers rule out the known suspects:** `x20 = 0x77a004ee40` (guest context **VALID**, so this is NOT the
+  LLVM-writes-x20 bug documented above, whose signature is `x20_ctx=0`), `x21 = 0x100000000` (membase valid).
+  `x0 = 0x8227ee70` and `x23 = 0x8227ee6c` are **guest addresses inside Gears' code range** (82170000-82B00000,
+  Module Hash 1B591620508434A2).
+- **Read the guest site before theorising:** `--es disassemble_function_filter 8227EE6C`. A PPC `tw`/`twi` is a
+  real guest trap instruction, and Burnout's D3D wait helper is already known to `tw` when its timeout expires —
+  so this may be the GUEST deliberately trapping (e.g. a GPU-completion timeout) rather than a codegen defect.
+  Do not assume it is our bug until that disassembly says so.
+- **Not attributed to the `-mtune=cortex-a710` build:** an earlier launch of that same APK reached
+  `Title name: Gears of War` and ran 300s. Intermittent. If it needs bisecting, the cheap arm is
+  `--ez cpu_backend_llvm false`, per the LLVM/a64 discriminator above.
+
 ## 🛑🛑🛑 A BARE `am start` DOES NOT TEST WHAT SHIPS — IT RUNS WITHOUT LLVM OR AOT (2026-08-07, user caught it)
 **Every headless `adb shell am start` measurement is taken on the a64 backend with NO AOT precompile, unless you
 pass the CPU flags explicitly.** Verified live: 0 LLVM log lines across a whole session of runs, with
