@@ -1145,6 +1145,7 @@ because a dropped-write or stale-read race is intermittent and a clean run prove
   is a non-issue and should be recorded as such. Only if a guest/MMIO thread writes while the CP thread reads is
   there anything to fix — and then the fix is an acquire/release pair on the existing publish, not sprinkling
   atomics over the register array.
+- **✅ ALSO CHECKED AND CLEAN:** `SharedMemory::system_page_flags_` (the valid / valid_and_gpu_written / invalidated_in_submission bitmaps) is written by the memory-watch path and read by the GPU thread, which is the exact shape to suspect - but every access (shared_memory.cc:311, 378, 463, 485) sits under `global_critical_region_.Acquire()`, so the lock carries the edge. **Running tally of this sweep: 2 fixed, 4 cleared by tracing, 1 confirmed-and-scoped, 1 open perf item.** The 4:2 ratio of clearances to fixes is the point - most candidates already have an edge, and finding it is cheaper than adding a redundant one.
 - **WHERE TO KEEP LOOKING (this sweep is not finished):** cross-thread flags that are plain `bool`/`uint32_t`
   rather than `std::atomic`; `volatile` used as if it implied ordering (it does not — it is not a fence);
   publish-then-signal pairs where the publish has no release; and double-checked-locking shapes. Grep entry
