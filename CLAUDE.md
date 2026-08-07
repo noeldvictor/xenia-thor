@@ -658,8 +658,37 @@ xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer
 - **❌ REJECTED, not applicable:** `428008f0e` cached-band process pinning. XenDroid runs the emulator in a separate
   `:emu` process and binds it to a `MainAliveService` with `BIND_IMPORTANT` so lmkd stops reaping the launcher. **We
   already run in the main process**, so there is no cached-band launcher to protect.
-- **🚧 IN PROGRESS — THE BIG ONE: in-pass EDRAM resolves (16 of the 27 commits).** Step 1 landed and is
-  device-verified: `dynamic_rendering_local_read=true` on Turnip 26.3.0.
+- **🛑🛑🛑 STOP — THE IN-PASS RESOLVE CHAIN HAS AN UNLISTED PREREQUISITE WE DO NOT HAVE: DYNAMIC RENDERING.**
+  **Discovered 2026-08-06 while porting `a0aec42ae`; it rescopes this entire track and supersedes the 16-commit
+  plan below.** `VK_KHR_dynamic_rendering_local_read` is an extension *to* `vkCmdBeginRendering` — it lets a
+  fragment shader read the CURRENT attachment on-tile via `VkRenderingInputAttachmentIndexInfoKHR`. **It has no
+  meaning inside a traditional `vkCmdBeginRenderPass`.** And measured in our tree:
+  - **We have ZERO dynamic rendering.** No `vulkan_dynamic_rendering` cvar anywhere, and **zero
+    `vkCmdBeginRendering` call sites**. We use traditional render passes in 9 places
+    (`vulkan_command_processor.cc` ×5, `vulkan_render_target_cache.cc` ×2, `bd_native_renderer.cc`,
+    `deferred_command_buffer.cc`).
+  - **XenDroid uses dynamic rendering** (`CmdVkBeginRendering` in their command processor + deferred buffer), and
+    their `vulkan_dynamic_rendering` cvar traces back to **`38e2332e7`, a tree-RENAME commit** — i.e. it is
+    long-standing xenia-edge/Canary infrastructure that **predates the 27-commit sweep entirely**. It is not one of
+    the 16; it is a foundation their fork always had. **This is the master-vs-Canary gap again, exactly as the
+    directive above describes.**
+  - **Concrete blast radius:** `VulkanRenderTarget::kColorDrawLayout` is used in **14 places in our fork versus 1
+    in theirs** — BD custom-resolve passes, producer/resolve subpass refs, explicit `initialLayout`/`finalLayout`
+    pairs. All of that is traditional-render-pass machinery that the local-read model replaces rather than extends.
+  - **⚠️ QUALIFY THE STEP-1 CLAIM:** `7c38a62b3` was recorded as "device-verified", and the *extension and feature
+    bits* genuinely are enabled on Turnip 26.3.0 — but **we enabled a capability we cannot structurally use yet**,
+    and we took only its device half. Its render-target-cache half (+28 .cc / +45 .h — `local_read_attachments_`,
+    `color_draw_stage_mask_/access_mask_/layout_`, the `vulkan_in_pass_resolve` default-off cvar, and a
+    static→instance `GetDrawUsage` refactor) was **never ported**, which is why `a0aec42ae`'s Initialize block
+    references members that do not exist here. Good news if it is resumed: we have only **ONE** caller of the
+    static `GetDrawUsage` form (`vulkan_render_target_cache.cc:2962`), so that refactor is cheap.
+  - **⇒ THE REAL ORDER IS: port dynamic rendering FIRST (a large, separate track), then step 1's RTC half, then
+    the chain below.** Do not start `a0aec42ae`'s two logic blocks until dynamic rendering exists — they cannot
+    work without it, and compiling is not the same as functioning.
+  - **Already landed and still valid, just blocked behind this:** `e4de1497f` (shaders, bytecode byte-identical)
+    and `470e505bf` (declarations + local-read command + function pointer, no callers, behaviour-neutral).
+- **🚧 THE CHAIN ITSELF (blocked on the above): in-pass EDRAM resolves (16 of the 27 commits).** Step 1's device
+  half landed: `dynamic_rendering_local_read=true` on Turnip 26.3.0.
   **Why it is the biggest GPU win available:** xenia's EDRAM resolve ENDS the render pass, copies, and begins a new
   one. On a TBDR every pass begin is a GMEM store+reload — which our own pass budget already fingered (61 passes in
   a BD field frame, **45 of them single-draw**). `local_read` reads the CURRENT attachment on-tile so the pass never
