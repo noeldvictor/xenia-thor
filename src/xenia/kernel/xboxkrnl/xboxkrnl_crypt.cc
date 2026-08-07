@@ -8,8 +8,10 @@
 */
 
 #include <algorithm>
+#include <atomic>
 #include <tuple>
 
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
 #include "xenia/kernel/kernel_state.h"
@@ -23,6 +25,13 @@
 #include "third_party/crypto/des/descbc.h"
 #include "third_party/crypto/sha256.cpp"
 #include "third_party/crypto/sha256.h"
+
+DEFINE_bool(xe_crypt_sha_census, false,
+            "Count guest XeCryptSha calls and bytes hashed. Diagnostic only - "
+            "sizes whether a hardware SHA-1 (FEAT_SHA1, present on the Thor) is "
+            "worth building before writing any intrinsics. Throttled to one log "
+            "line per 4096 calls.",
+            "Kernel");
 #include "xenia/kernel/xboxkrnl/xecrypt_rsa.h"
 
 extern "C" {
@@ -447,8 +456,32 @@ void XeCryptShaInit_entry(pointer_t<XECRYPT_SHA_STATE> sha_state) {
 }
 DECLARE_XBOXKRNL_EXPORT1(XeCryptShaInit, kNone, kImplemented);
 
+// Guest SHA-1 census. The Thor has FEAT_SHA1/SHA2 in hardware and we run
+// TinySHA1 in software, but NOTHING in this tree measures how often the guest
+// actually calls it - it could be once at boot or thousands of times a frame,
+// and games use it for save integrity, content verification and anti-tamper.
+// Per the "measure applicability BEFORE building" rule, this counter costs one
+// cvar and one run; a hardware-SHA implementation costs days and would need
+// +sha2 added to -march first. Counts CALLS and BYTES, since a million tiny
+// hashes and a few huge ones argue for very different things.
+static std::atomic<uint64_t> sha_census_calls{0};
+static std::atomic<uint64_t> sha_census_bytes{0};
+static void ShaCensusRecord(uint64_t bytes) {
+  if (!cvars::xe_crypt_sha_census) {
+    return;
+  }
+  const uint64_t n = sha_census_calls.fetch_add(1, std::memory_order_relaxed) + 1;
+  const uint64_t b =
+      sha_census_bytes.fetch_add(bytes, std::memory_order_relaxed) + bytes;
+  // Throttled so the census itself cannot dominate what it measures.
+  if ((n & 0xFFF) == 0) {
+    XELOGI("XeCryptSha census: {} calls, {} bytes ({} avg)", n, b, b / n);
+  }
+}
+
 void XeCryptShaUpdate_entry(pointer_t<XECRYPT_SHA_STATE> sha_state,
                             lpvoid_t input, dword_t input_size) {
+  ShaCensusRecord(input_size);
   sha1::SHA1 sha;
   InitSha1(&sha, sha_state);
 

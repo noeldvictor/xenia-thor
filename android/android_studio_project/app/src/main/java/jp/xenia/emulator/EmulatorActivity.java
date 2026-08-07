@@ -859,6 +859,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_fold_cmp_immediates");
             // XenDroid 904374971 port - default-off pending the on-device check.
             copyBooleanExtra(intent, launchArguments, "vulkan_hoist_shmem_uploads");
+            // Sizes whether hardware SHA-1 is worth building (rule 4: count first).
+            copyBooleanExtra(intent, launchArguments, "xe_crypt_sha_census");
             copyBooleanExtra(intent, launchArguments, "arm64_offset_memory_address_fastpath");
             copyBooleanExtra(intent, launchArguments, "xam_input_trace");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_file_io_trace");
