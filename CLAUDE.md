@@ -1245,6 +1245,27 @@ two fixed ones were real bugs, but they are not where the 8W-vs-3-5W gap lives.
    callback takes that same global mutex every few ms.
 **⇒ Spend effort on 1-3, not on hunting for a layer that is not there.**
 
+## ✅✅✅ PIXEL-VALIDATED 2026-08-07: BD REMOVAL (~2,511 LINES) + 6 CPU FIXES, GEARS, SCREENSHOTTED
+**One APK carrying every change of the session. Gears of War, Turnip, `--es cpu arm64 --ez cpu_backend_llvm true
+--ez cpu_aot_maximize true`. Screenshots READ, not inferred from file size:**
+| checked | result |
+|---|---|
+| title screen | correct - crisp logo, clean "PRESS START", correct background |
+| opening cinematic (complex 3D city) | correct - geometry, lighting, crisp subtitles |
+| combat cinematic | correct - character models, muzzle-flash particles |
+| **MAIN MENU** | **correct - NO SMEARING** (see the attribution note below) |
+| faults / SIGTRAP / Scudo | **0** across the whole run |
+| AOT gate | `object_cache=1 skip_lowering=1 path_set=1 has_end=1 end_gt_start=1`, 28,776 objloads |
+| thermals | 35C cold start -> 73C, force-stopped at the limit |
+**⚠️ ATTRIBUTION NOT ESTABLISHED FOR THE MENU.** The 2026-08-06 report was menu entries rendering as horizontal
+white/black smears; they render correctly now. **That is an OBSERVATION, not a fix I can claim.** Many changes
+landed between the report and this run - the whole BD removal, six CPU correctness fixes, and work from other
+sessions - and no bisect was done. Do NOT record the menu bug as "fixed by X" without one.
+**🔊 THE XMA BUZZING IS NOT FIXED AND IS WORSE THAN RECORDED: 13,534 `non-forward input read offset` warnings in
+a ~5 MINUTE run** (the user's whole session was 8,221). Same guard at `xma_context.cc:789`. The release fence and
+the audio-priority ports are all installed and this is unaffected by them, exactly as the section below predicts.
+**This is now the largest un-fixed defect with a confirmed user-visible symptom.**
+
 ## 🧨🧨🧨 THE CONSTANT-OPERAND BUG FAMILY — FOUR FOUND, SWEEP NOW COMPLETE (2026-08-07)
 **`SrcVReg` returns the SCRATCH INDEX when an operand is constant** (a64_seq_util.h:271-277): it materialises
 the constant into v0/v1 and returns 0/1. So `s1` can BE v0 and `s2` can BE v1 — and any sequence that later uses
