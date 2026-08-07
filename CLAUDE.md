@@ -997,6 +997,32 @@ means any run with `cpu_backend_llvm=false` recompiles from scratch by construct
   flagging will. The overlay is starved because the UI thread is wedged in the blocking paint (above), so the
   remaining real fixes are exactly the two named there. Do not re-attempt async message plumbing.
 
+## 🎯🎯🎯 THE REAL DIAGNOSIS (user, 2026-08-07): THE a64 BACKEND IS A TRANSLITERATION OF THE x64 BACKEND
+**"When we ported code we probably ported x64 to arm, but we should have reimagined major functions - PowerPC
+to x64 to ported ARM has a ton of inefficiency." This is correct, and it is a sharper framing than the
+"scattered idioms" one above. Today's findings are evidence FOR it, not against it.**
+**The path that produced our code was `PPC -> (x64 lowering) -> transliterated to ARM64`.** Each x64 sequence
+was rewritten instruction-for-instruction into ARM64 rather than asking *how should PPC lower to ARM64*. The
+tell is that every defect found today sits in `a64_sequences.cc` / `a64_seq_util.h` and mirrors an x64
+structure that has no reason to exist on ARM:
+| what we emitted | why x64 needed it | ARM64 reality |
+|---|---|---|
+| shifts staged через scratch + `mov` | x86 shifts are DESTRUCTIVE and take the count in `cl` | `LSLV` is 3-operand, reads both sources first - **3 insns -> 1** (fixed, `02ae6ec83`) |
+| `PrepareVmxFpSources` copies BOTH operands | SSE is 2-operand destructive, must stage | NEON is non-destructive - **2 wasted ASIMD uOPs on the 2-wide pipe, x9 sequences** |
+| `FixupVmxMaxMinNan`, 6 uOPs | x86 `MAXPS` returns src2 on NaN, which **disagrees with PPC** | **ARM `FMAX` propagates NaN and ALREADY MATCHES PPC** (PEM p85 + Arm ARM p11115) - the fixup emulates a workaround for a problem ARM does not have |
+| `// dest may alias src2` staging | real hazard in 2-operand form | **cannot occur** on a 3-operand ISA |
+**The `FixupVmxMaxMinNan` row is the purest case:** PPC->x64 genuinely needed a NaN fixup because x86 disagrees
+with PPC. PPC->ARM64 needs NONE, because ARM agrees with PPC. The port carried the workaround anyway, and it
+costs 6 uOPs per op on the scarcest pipe. **That is not an idiom that leaked - that is a whole function that
+should have been deleted rather than translated.**
+**⇒ THE METHOD THIS IMPLIES:** for each hot sequence, do NOT read `x64_sequences.cc` and translate. Read the
+**guest** semantics in `docs/reference/ppc/` and the **host** capability in `docs/reference/arm/`, and lower
+directly. Where those two agree, the x64 scaffolding is pure waste. **Both manuals are in-repo precisely so this
+is checkable rather than guessable** - and note that the two biggest finds of the session came from reading them
+AGAINST each other, not from reading our code.
+**⚠️ Still measure applicability first (rule 4).** "Reimagine every sequence" is unbounded; the profiler says
+per-CALL overhead and a 21M/sec guest busy-wait dominate, so start with sequences that are actually hot.
+
 ## ⚠️⚠️ THERE IS NO x86/x64 LAYER TO REMOVE - READ THIS BEFORE PLANNING ANY "STRIP OUT x86" WORK
 **Verified in the build 2026-08-07:** `xenia-cpu.prj.Android.mk` contains **0** `x64_` sources, and
 `emulator.cc` selects the backend under `#if XE_ARCH_ARM64`. The x64 backend project exists in the tree but
