@@ -905,8 +905,18 @@ logs and hits `tw` (trap).
 technique mapped to VERIFIED locations in our tree with a verdict, ordered by breadth-per-risk. Headlines: `EOR3`/
 `BCAX` are detected (`kA64EmitSHA3`) with **zero consumers** and need a HIR pass, NOT a sequence peephole (by the
 time `XOR_V128` emits, the inner XOR is already allocated); constant materialisation via `MOVZ`+`MOVK` chains burns
-the scarce arithmetic ports where a literal load would use an idle one; byte-swapping (`rev`, 65 sites) is our
-single biggest arithmetic-port line item. **And two that do NOT apply, recorded so they stop being re-proposed:
+the scarce arithmetic ports where a literal load would use an idle one.
+**❌ BYTE-SWAP ELISION IS DEAD — ALREADY IMPLEMENTED, DO NOT BUILD IT (checked 2026-08-06).** This file used to
+call `rev` "our single biggest arithmetic-port line item" and list it as open. It is not open. Both available
+optimisations already exist in HIR, which is exactly where rule 3 says they belong:
+`SimplificationPass::CheckByteSwap` (simplification_pass.cc:292/345) folds the `BYTE_SWAP(BYTE_SWAP(x)) == x`
+identity into an assign, and `memory_sequence_combination_pass.cc` folds a swap into the load/store's
+`LOAD_STORE_BYTE_SWAP` flag so the `REV` is never emitted separately at all. The actual count is **43 emission
+sites** (a64_seq_memory.cc 27, a64_seq_vector.cc 12, a64_sequences.cc 4), not 65, and what remains is the
+IRREDUCIBLE endian conversion at the memory boundary — ARM64 has no `MOVBE`, so a genuine big-endian guest access
+costs a `REV` and there is no instruction to fold it into. **The only unharvested crumb:** `CheckByteSwap`'s own
+comment says it matches within a basic block only, so a cross-block double swap is missed — and the comment also
+says that is rare. Not worth a pass. **And two that do NOT apply, recorded so they stop being re-proposed:
 `UDOT` and the `ABD`/`ABA` trick have no hot fixed-length-comparison site in our tree** (ours are GPU-side or
 load-time), unlike RPCS3's SPU block compare where that trick earned its +38%.
 **Applied so far: `A64Emitter::EmitCmpImm32`** — one place implementing "fold the constant into the compare",
