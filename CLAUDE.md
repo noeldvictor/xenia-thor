@@ -766,10 +766,24 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   NUMBER while ARM `fmax` gives NaN — and our fixup only rewrites lanes where BOTH are NaN, so that lane class may
   be silently wrong today. The both-NaN lane is also suspicious: the fixup produces `src1|src2`, where PPC would
   give `b`.
-  **⛔ This is reasoning from the ISA manuals, and the last line of the old note applies with full force — do NOT
-  eyeball it, and do NOT change the sequence on the strength of this paragraph.** Build the qemu-a64 differential
-  first, with these four lane classes as the test vectors: (NaN, num), (num, NaN), (NaN, NaN), (num, num), for
-  both `vmaxfp` and `vminfp`. If the hypothesis holds, the work is a FIX and the instruction count may go UP. ABD/ABA 3-input mid-core trick (#4, the real differentiator — nobody else has it); EOR3/BCAX
+  **✅ THE ARM HALF IS NOW SETTLED FROM THE SPEC (2026-08-07), not eyeballed.** `docs/reference/arm/arm-architecture-
+  reference-manual-a-profile.pdf`, shared pseudocode `FPMax` (p11115-11116):
+  ```
+  (done,result) = FPProcessNaNs(type1, type2, op1, op2, fpcr, altfp, TRUE);
+  if !done then  ... value1 > value2 ...
+  ```
+  `FPProcessNaNs` returns `done=TRUE` and the propagated NaN, so **`FMAX` PROPAGATES NaN**. The neighbouring
+  `FPMaxNum` (= the `FMAXNM` instruction) instead tests `type1_nan`/`type2_nan` explicitly and implements IEEE
+  maxNum. **So the two really are different instructions with different NaN behaviour, and we emit `fmax`.**
+  ⇒ For `src1 = NaN, src2 = number`: PPC `vmaxfp` and x86 `MAXPS` both yield the NUMBER; ARM `fmax` yields NaN.
+  **Our `FixupVmxMaxMinNan` only rewrites the BOTH-NaN lane, so that class is unhandled.**
+  **⚠️ STILL OPEN — THE PPC HALF.** The `vmaxfp` semantics above (`(a>b) ? a : b`, `>` false for NaN, hence `b`)
+  are asserted from the AltiVec definition and are NOT confirmed from a PowerPC manual in this repo. **Confirm
+  that before changing the sequence.** Then build the qemu-a64 differential with the four lane classes as vectors —
+  (NaN, num), (num, NaN), (NaN, NaN), (num, num) — for both `vmaxfp` and `vminfp`. If it holds, this is a FIX and
+  the instruction count may go UP.
+  **This is what the manuals are for:** the question was unanswerable by measurement (a NaN lane is rare in real
+  content and a clean run proves nothing) and took one pseudocode lookup once the Arm ARM was in-repo. ABD/ABA 3-input mid-core trick (#4, the real differentiator — nobody else has it); EOR3/BCAX
   codegen consumers (#5, detection landed but nothing reads it); UDOT byte-sum (#7).
 - **Items the FIRST mining pass missed — LLVM-on-ARM codegen workarounds (from the transcript, 2026-08-05):** LLVM
   scalarizes some vector ops on ARM (fix = write the IR idiomatically to match the x86 shape; `CMTST` is a fused
