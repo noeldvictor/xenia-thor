@@ -73,11 +73,31 @@ inline int32_t atomic_dec(volatile int32_t* value) {
   return __sync_sub_and_fetch(value, 1);
 }
 
+// An exchange must be UNCONDITIONAL. This was previously a single
+// __sync_val_compare_and_swap(value, *value, new_value): it read *value
+// non-atomically, then CAS'd against that snapshot with NO retry loop. If any
+// other thread wrote in between, the CAS failed, NOTHING WAS STORED, and the
+// caller still got a plausible-looking old value back - a silently dropped
+// write.
+//
+// The Win32 branch above never had this: _InterlockedExchange is a true
+// unconditional swap. So the x64/Windows path was correct while the POSIX path
+// we actually ship on Android was not. The race exists on any architecture, but
+// ARM64 widens the window considerably - weaker ordering, deeper OoO, and real
+// contention across big.LITTLE clusters rather than a uniform x86 TSO machine.
+//
+// Both call sites are Processor::RaiseIrql / LowerIrql, i.e. the guest
+// interrupt priority level, where a dropped write leaves the guest kernel with
+// the wrong masking state.
+//
+// __atomic_exchange_n is unconditional and cannot fail. ACQ_REL because these
+// are used as lock-like transitions: the raise must not let later accesses hoist
+// above it, and the lower must not let earlier accesses sink below it.
 inline int32_t atomic_exchange(int32_t new_value, volatile int32_t* value) {
-  return __sync_val_compare_and_swap(value, *value, new_value);
+  return __atomic_exchange_n(value, new_value, __ATOMIC_ACQ_REL);
 }
 inline int64_t atomic_exchange(int64_t new_value, volatile int64_t* value) {
-  return __sync_val_compare_and_swap(value, *value, new_value);
+  return __atomic_exchange_n(value, new_value, __ATOMIC_ACQ_REL);
 }
 
 inline int32_t atomic_exchange_add(int32_t amount, volatile int32_t* value) {
