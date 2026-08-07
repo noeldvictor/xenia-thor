@@ -867,6 +867,17 @@ xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer
   - **⇒ THE REAL ORDER IS: port dynamic rendering FIRST (a large, separate track), then step 1's RTC half, then
     the chain below.** Do not start `a0aec42ae`'s two logic blocks until dynamic rendering exists — they cannot
     work without it, and compiling is not the same as functioning.
+  - **📏 THE PREREQUISITE, SIZED (2026-08-07) — so "blocked" is a cost, not a hand-wave.** Our traditional
+    render-pass surface across `src/xenia/gpu/vulkan`: **9** `CmdVkBeginRenderPass` + **16** `CmdVkEndRenderPass`,
+    **18** `vkCreateRenderPass`, **10** `VkRenderPassCreateInfo`, **15** `VkSubpassDescription`, **13**
+    `vkCreateFramebuffer`, **34** `VkFramebuffer` — roughly **115 direct API sites**, plus **243 `render_pass`
+    references inside the 12,708-line `vulkan_render_target_cache.cc` alone.
+    **Dynamic rendering deletes the render-pass/framebuffer/subpass objects entirely** (`vkCmdBeginRendering`
+    takes attachments inline), so this is not additive — it replaces a layer that our BD native renderer, custom
+    resolve passes and ROAA path are all built on. That is why it is a track and not a patch: ~115 call sites is
+    tractable, but every one of them is load-bearing for a fork whose GPU work is its main divergence from
+    upstream. **Sequence it as its own multi-session unit with its own cvar and rollback, never bundled with the
+    resolve chain it unblocks.**
   - **Already landed and still valid, just blocked behind this:** `e4de1497f` (shaders, bytecode byte-identical)
     and `470e505bf` (declarations + local-read command + function pointer, no callers, behaviour-neutral).
 - **🚧 THE CHAIN ITSELF (blocked on the above): in-pass EDRAM resolves (16 of the 27 commits).** Step 1's device
