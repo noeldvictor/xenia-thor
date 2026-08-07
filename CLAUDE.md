@@ -867,6 +867,16 @@ xenia-edge (Canary-derived) and our GPU has diverged heavily (BD native renderer
   - **⇒ THE REAL ORDER IS: port dynamic rendering FIRST (a large, separate track), then step 1's RTC half, then
     the chain below.** Do not start `a0aec42ae`'s two logic blocks until dynamic rendering exists — they cannot
     work without it, and compiling is not the same as functioning.
+  - **✅ STEP 0 OF THE PREREQUISITE IS DONE (`7fcc4b8c1`): `dynamicRendering` is now REQUESTED and EXPOSED.**
+    It is Vulkan 1.3 core and we already read `features_1_3.supported.dynamicRendering` — but only to print it in
+    a log line. **So step 1 (`7c38a62b3`) enabled `dynamicRenderingLocalRead` while the feature it EXTENDS was
+    never requested.** Now it is a real `Properties` bit, so the resolve work gates on a capability instead of an
+    assumption. Additive, no callers, zero behaviour change, ~115 render-pass sites untouched.
+  - **➡️ THE NEXT ADDITIVE SLICE (still no layer swap):** `CmdVkBeginRendering(const VkRenderingInfo*)` +
+    `CmdVkEndRendering()` in `deferred_command_buffer.{h,cc}`. **The work is the SERIALIZER, not the call** —
+    `VkRenderingInfo` is variable-length (`pColorAttachments` array + optional depth/stencil), so it must be
+    flattened into the command stream the way `CmdVkPipelineBarrier` already flattens its three barrier arrays.
+    **Copy that function's shape**; do not hand-roll a new pattern. Still zero callers afterwards.
   - **📏 THE PREREQUISITE, SIZED (2026-08-07) — so "blocked" is a cost, not a hand-wave.** Our traditional
     render-pass surface across `src/xenia/gpu/vulkan`: **9** `CmdVkBeginRenderPass` + **16** `CmdVkEndRenderPass`,
     **18** `vkCreateRenderPass`, **10** `VkRenderPassCreateInfo`, **15** `VkSubpassDescription`, **13**
