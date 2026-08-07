@@ -84,8 +84,18 @@ don't debug from scratch.**
 | 2. the 14 `gpu_bd_native_renderer`-gated blocks in vulkan_command_processor.cc | **431 lines** (13,690 -> 13,259) - done |
 | 3. six more gated blocks in vulkan_command_processor.cc | **55 lines** (13,259 -> 13,204) - done |
 | 4a. the three now-CONSTANT entry points + their callers + orphans | **~4.0 KB** across 4 files - done |
-| 4b. the L4/L5/L6 color-lifetime HLE cluster (305 refs in the RTC) | remaining - **the big one** |
-| 4c. `bd_native_renderer.{cc,h}` (1,511 lines), premake entry, remaining cvars | remaining |
+| 4b. the dead L5 present path in `IssueSwap` | **134 lines** - done, build-green |
+| 4c. last cmd-processor block + **`bd_native_renderer.{cc,h}` DELETED (1,511 lines)** | done, build-green |
+| 4d. the L4/L6 cluster still in the RTC, and the ~49 `gpu_bd_` cvars | remaining |
+**🎉 `bd_native_renderer.{cc,h}` ARE GONE (2026-08-07).** `BdNativeRenderer` no longer exists outside two cvar
+DESCRIPTION STRINGS in command_processor.cc; `NativeSurface` references in `vulkan_command_processor.cc` are
+**zero**; the member, the forward declaration and the `#include` are removed.
+**🔁 DELETING SOURCES REQUIRES THE PREMAKE REGEN, same as changing flags.** `src/xenia/gpu/vulkan/premake5.lua`
+uses `local_platform_files()`, which GLOBS the directory - so there was no premake entry to edit - but the
+GENERATED `build/xenia-gpu-vulkan.prj.Android.mk` names each file explicitly and still listed the deleted ones.
+`./tools/build/bin/premake5.exe --file=premake5.lua --os=android androidndk` (the `--os=android` is required)
+drops them. Without it the build fails on missing sources, which at least fails loudly - unlike the flag case,
+where a stale .mk silently builds the old flags.
 **✅ DEVICE-VALIDATED 2026-08-07 (4a + the two a64 NaN fixes, one APK).** Gears of War, headless with
 `--es cpu arm64 --ez cpu_backend_llvm true --ez cpu_aot_maximize true`:
 `Turnip Adreno (TM) 740` (correct driver, NOT the Qualcomm blob) - `Title name: Gears of War` reached -

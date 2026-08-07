@@ -34,7 +34,6 @@
 #include "xenia/gpu/shader.h"
 #include "xenia/gpu/spirv_shader_translator.h"
 #include "xenia/gpu/vulkan/vulkan_pipeline_cache.h"
-#include "xenia/gpu/vulkan/bd_native_renderer.h"
 #include "xenia/gpu/vulkan/vulkan_render_target_cache.h"
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 #include "xenia/gpu/vulkan/vulkan_shared_memory.h"
@@ -2832,122 +2831,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     dump_surfaces("color", color_surface_draws);
     dump_surfaces("depth", depth_surface_draws);
 
-    // Structural native-RT wiring (gpu_bd_native_reserve_captured_surfaces):
-    // drive BdNativeRenderer's resource-keyed AcquireSurface from the captured
-    // distinct surfaces, building the full native RT set the EDRAM-deletion HLE
-    // needs. Single-sample only (AcquireSurface defers MSAA until it has a
-    // resolve). This ALLOCATES the surfaces (grows-never-shrinks, so stable
-    // across frames); it does NOT redirect rendering into them yet - that
-    // consumer redirect is the device-validated next step.
-    if (cvars::gpu_bd_native_reserve_captured_surfaces && bd_native_renderer_ &&
-        bd_native_renderer_->initialized()) {
-      auto samples_of = [](uint32_t msaa) -> VkSampleCountFlagBits {
-        switch (msaa) {
-          case 1:
-            return VK_SAMPLE_COUNT_2_BIT;
-          case 2:
-            return VK_SAMPLE_COUNT_4_BIT;
-          default:
-            return VK_SAMPLE_COUNT_1_BIT;
-        }
-      };
-      uint32_t reserved = 0, reserved_msaa = 0, paired = 0, failed = 0;
-      for (const auto& [packed_key, draws] : color_surface_draws) {
-        const uint32_t pitch = uint32_t((packed_key >> 16) & 0xFFFF);
-        const uint32_t format = uint32_t((packed_key >> 8) & 0xFF);
-        const uint32_t msaa = uint32_t(packed_key & 0xFF);
-        const VkSampleCountFlagBits samples = samples_of(msaa);
-        auto height_it = color_surface_height.find(packed_key);
-        const uint32_t height =
-            height_it != color_surface_height.end() ? height_it->second : 0u;
-        if (!pitch || !height) {
-          ++failed;
-          continue;
-        }
-        // Fold the 64-bit identity into a non-zero 32-bit resource key
-        // (AcquireSurface rejects key==0). Distinct surfaces stay distinct.
-        // Namespace color keys into the low half (MSB clear) so they never
-        // collide with depth-only keys (MSB set) in the shared surface registry.
-        uint32_t key =
-            (uint32_t(packed_key) ^ uint32_t(packed_key >> 32)) & 0x7FFFFFFFu;
-        if (!key) {
-          key = 1u;
-        }
-        const VkFormat color_vk = render_target_cache_->GetColorVulkanFormat(
-            xenos::ColorRenderTargetFormat(format));
-        // Pair with the real depth format this color is drawn against; fall
-        // back to AcquireSurface's D24S8 default (UNDEFINED) for an unpaired
-        // color surface (e.g. a color-only composite pass).
-        VkFormat depth_vk = VK_FORMAT_UNDEFINED;
-        auto pair_it = color_to_depth.find(packed_key);
-        if (pair_it != color_to_depth.end()) {
-          const uint32_t depth_format =
-              uint32_t((pair_it->second >> 8) & 0xFF);
-          depth_vk = render_target_cache_->GetDepthVulkanFormat(
-              xenos::DepthRenderTargetFormat(depth_format));
-          ++paired;
-        }
-        NativeSurface* surface = bd_native_renderer_->AcquireSurface(
-            key, pitch, height, color_vk, depth_vk, samples);
-        if (surface) {
-          ++reserved;
-          if (msaa != 0) {
-            ++reserved_msaa;
-          }
-        } else {
-          ++failed;
-        }
-      }
-
-      // Depth-only surfaces (prepass / shadow): reserve those NOT already
-      // covered as some color surface's paired depth (those live in the color
-      // pair's depth image). Depth-only keys are namespaced into the high half.
-      std::unordered_set<uint64_t> paired_depths;
-      paired_depths.reserve(color_to_depth.size());
-      for (const auto& [color_k, depth_k] : color_to_depth) {
-        paired_depths.insert(depth_k);
-      }
-      uint32_t d_reserved = 0, d_reserved_msaa = 0, d_skip_paired = 0,
-               d_failed = 0;
-      for (uint64_t dk : depth_only_surfaces) {
-        if (paired_depths.count(dk)) {
-          ++d_skip_paired;
-          continue;
-        }
-        const uint32_t pitch = uint32_t((dk >> 16) & 0xFFFF);
-        const uint32_t format = uint32_t((dk >> 8) & 0xFF);
-        const uint32_t msaa = uint32_t(dk & 0xFF);
-        const VkSampleCountFlagBits samples = samples_of(msaa);
-        auto dh_it = depth_surface_height.find(dk);
-        const uint32_t height =
-            dh_it != depth_surface_height.end() ? dh_it->second : 0u;
-        if (!pitch || !height) {
-          ++d_failed;
-          continue;
-        }
-        uint32_t key = (uint32_t(dk) ^ uint32_t(dk >> 32)) | 0x80000000u;
-        const VkFormat depth_vk = render_target_cache_->GetDepthVulkanFormat(
-            xenos::DepthRenderTargetFormat(format));
-        NativeSurface* s = bd_native_renderer_->AcquireDepthOnlySurface(
-            key, pitch, height, depth_vk, samples);
-        if (s) {
-          ++d_reserved;
-          if (msaa != 0) {
-            ++d_reserved_msaa;
-          }
-        } else {
-          ++d_failed;
-        }
-      }
-
-      XELOGI(
-          "BD NATIVE RESERVE: color reserved={} (msaa={} paired_depth={}) "
-          "failed={} of {}; depth_only reserved={} (msaa={}) skip_paired={} "
-          "failed={} of {}; pair_conflicts={}",
-          reserved, reserved_msaa, paired, failed, color_surface_draws.size(),
-          d_reserved, d_reserved_msaa, d_skip_paired, d_failed,
-          depth_only_surfaces.size(), color_depth_pair_conflicts);
-    }
+    // BD native renderer removed: the surface-reservation block lived here,
+    // gated on gpu_bd_native_reserve_captured_surfaces && bd_native_renderer_.
+    // It only ALLOCATED native surfaces (never redirected rendering into them),
+    // and bd_native_renderer_ has been never-constructed since removal step 2.
     bd_native_frame_.clear();
   }
 
