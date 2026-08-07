@@ -86,7 +86,7 @@ DEFINE_bool(
     "it to the full native extent. The override was the failed 'widen the scissor, "
     "ignore the offset' approach that STRIPED (both groups leak full-width + overlap). "
     "Keeping the per-group scissor renders each group into only its region -> no "
-    "stripe (if both groups are caught). Needs gpu_bd_native_renderer. Default off "
+    "stripe (if both groups are caught). Needed the BD native renderer, DELETED 2026-08-07 - inert now. Default off "
     "(legacy override) for A/B. PC-verify via screenshot (no stripe).",
     "GPU");
 DEFINE_bool(
@@ -103,7 +103,7 @@ DEFINE_bool(
     "GPU");
 DEFINE_bool(
     gpu_bd_native_whole_frame, false,
-    "BD WHOLE-FRAME HLE (default off, needs gpu_bd_native_renderer): the pitch-720 "
+    "BD WHOLE-FRAME HLE (default off; needed the BD native renderer, DELETED 2026-08-07 - inert now): the pitch-720 "
     "redirect catches only ~40% of draws (the 2x foliage); ~60% (non-720 1x opaque) "
     "still hits LLE EDRAM = the perf confound (measured). This catches ALL field-"
     "format (A2B10G10R10) draws - foliage AND opaque - and forces the native pass "
@@ -118,7 +118,7 @@ DEFINE_bool(
     "in MSAA sample count, in pitch, in both, or in neither. Answers the one "
     "question that gates the depth-transfer deletion: an MSAA-only difference is "
     "exactly what a SAMPLE_ZERO in-pass depth-resolve attachment "
-    "(gpu_bd_native_depth_resolve) produces, while a PITCH difference is a "
+    "(the removed gpu_bd_native_depth_resolve) produced, while a PITCH difference is a "
     "resolution downscale needing a different mechanism - so msaa_only+both is the "
     "share of the ~15 still-executing transfers that the resolve can actually "
     "serve. Counts every transfer (unlike the capped 40-line BD DEPTH XFER SEEN "
@@ -128,7 +128,7 @@ DEFINE_bool(
 DEFINE_bool(
     gpu_bd_native_mainscene_redirect, false,
     "BD REAL-HLE main-scene native redirect (default off, needs "
-    "gpu_bd_native_renderer + gpu_bd_native_aux_rt): extend resource-keyed native "
+    "the removed BD native renderer + aux-RT levers - inert now): extend resource-keyed native "
     "surface production, Brick-B/composite sampling, and present to 1x, "
     "identity-format frontbuffer-sized color RTs. With the existing native "
     "drop-resolves/drop-transfers switches, their EDRAM publication chain is "
@@ -139,7 +139,7 @@ DEFINE_bool(
 DEFINE_bool(
     gpu_bd_native_drop_transfers, false,
     "BD REAL-HLE surgical EDRAM-transfer deletion (default off, needs "
-    "gpu_bd_native_aux_rt): drop ONLY the EDRAM ownership transfers whose dest RT "
+    "the removed gpu_bd_native_aux_rt - inert now): drop ONLY the EDRAM ownership transfers whose dest RT "
     "resolves to a guest address a native surface already serves (dead weight — the "
     "field samples native content there). Keeps transfers for RTs not covered "
     "natively, so it does NOT black the main scene like the blunt "
@@ -169,7 +169,7 @@ DEFINE_bool(
     "attachment via a graphics pipeline) so the ~30ms EDRAM depth-conversion GAP is "
     "eliminated while depth stays correct. Same-layout depth transfers keep the existing "
     "path. THOR-GATED: desktop cannot validate depth (immediate-mode differs from TBDR) — "
-    "correctness must be Thor-verified. Default off; needs gpu_bd_native_renderer.",
+    "correctness must be Thor-verified. Needed the BD native renderer, DELETED 2026-08-07 - inert now.",
     "GPU");
 DEFINE_bool(
     gpu_bd_native_depth_handoff, false,
@@ -270,7 +270,7 @@ DEFINE_bool(
 DEFINE_bool(
     gpu_bd_native_drop_all_color_xfer, false,
     "BD REAL-HLE aggressive color-transfer deletion (default off, needs "
-    "gpu_bd_native_drop_transfers + gpu_bd_native_aux_rt): drop ALL non-depth EDRAM "
+    "gpu_bd_native_drop_transfers + the removed gpu_bd_native_aux_rt - inert now): drop ALL non-depth EDRAM "
     "ownership transfers (the ~97ms wall) while KEEPING depth transfers. The blunt "
     "gpu_skip_edram_transfers dropped depth too -> broke the field's depth test -> "
     "geometry depth-fails -> collapse to a strip (Thor) / crash (desktop). Keeping "

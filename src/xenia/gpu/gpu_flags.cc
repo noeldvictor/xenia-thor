@@ -1251,7 +1251,7 @@ DEFINE_bool(
     "field's EDRAM which is REDUNDANT (we present the native RT, not the LLE "
     "surface), and they are the pass-breaks / GMEM store-reload that dominate the "
     "frame. Pre-field shadow/texture transfers (which the field samples) are "
-    "KEPT. Mirrors gpu_bd_native_skip_resolves. If this blacks the field, the "
+    "KEPT. Mirrored the removed gpu_bd_native_skip_resolves. If this blacks the field, the "
     "during-field transfers feed it (=> need full-HLE native RT-texture passes). "
     "Gated, default off.",
     "GPU");

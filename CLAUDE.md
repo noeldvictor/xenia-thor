@@ -86,7 +86,24 @@ don't debug from scratch.**
 | 4a. the three now-CONSTANT entry points + their callers + orphans | **~4.0 KB** across 4 files - done |
 | 4b. the dead L5 present path in `IssueSwap` | **134 lines** - done, build-green |
 | 4c. last cmd-processor block + **`bd_native_renderer.{cc,h}` DELETED (1,511 lines)** | done, build-green |
-| 4d. the L4/L6 cluster still in the RTC, and the ~49 `gpu_bd_` cvars | remaining |
+| 4d. the 15 `gpu_bd_` cvars with no reader left | **154 lines** - done, build-green |
+| 4e. the L4/L6 colour-lifetime cluster in the RTC | **STOPPED - needs the device**, see below |
+**Running total: ~2,511 lines.** `gpu_bd_native_renderer` - the master gate this whole removal was justified
+against - no longer exists, because after 4c nothing read it. The 15 orphans were found by COUNTING `cvars::`
+readers per cvar across every .cc/.h, not by eye; 33 of the 48 are still live and were left alone. Checked the
+`--ez` allowlist first: none of the 15 appear in `EmulatorActivity` or anywhere under `android/`.
+**🛑 4e IS DELIBERATELY NOT DONE, AND THE REASON MATTERS.** 4b/4c were self-contained dead BLOCKS with clean
+boundaries; the L4/L6 gates are **19 sites interleaved with live rendering code** inside `CreateRenderTarget`,
+the transfer paths and the resolve paths - in `vulkan_render_target_cache.cc`, the file where our fork diverges
+most from upstream. Build-green-but-unvalidated was a defensible trade for a self-contained block; for an
+interleaved cut in the GPU path, where the failure mode is WRONG PIXELS, it is not. **Do 4e with the device
+free**, in sub-slices, screenshotting each.
+**🔎 A FOLLOW-ON NOBODY HAS CHASED: SEVERAL STILL-"LIVE" `gpu_bd_` CVARS ARE NOW INERT.** Their own descriptions
+say they *"need gpu_bd_native_renderer"* - which no longer exists - so they still have `cvars::` readers but
+their effect path is gone. That makes them the next removal candidates, and it means "has a reader" is NOT
+sufficient evidence a lever does anything. Candidates visible from the help text alone: `gpu_bd_whole_frame`,
+`gpu_bd_native_drop_transfers`, and the aux-RT-dependent transfer levers. **Trace each before deleting** - the
+15 above were safe because they had zero readers, which is a much stronger fact than "looks inert".
 **🎉 `bd_native_renderer.{cc,h}` ARE GONE (2026-08-07).** `BdNativeRenderer` no longer exists outside two cvar
 DESCRIPTION STRINGS in command_processor.cc; `NativeSurface` references in `vulkan_command_processor.cc` are
 **zero**; the member, the forward declaration and the `#include` are removed.

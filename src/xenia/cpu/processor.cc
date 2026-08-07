@@ -138,7 +138,7 @@ DEFINE_uint32(cpu_hle_bin_once_full_width, 0,
               "resolve target (rect1) is the FULL 1280-wide field. Set to the full "
               "display width (e.g. 1280) so the bin-once quad tiles the whole field "
               "and ALL draws render full-width (not clipped to the left tile). 0=off "
-              "(use surface desc). Pairs with gpu_bd_native_renderer.",
+              "(use surface desc). Paired with the BD native renderer, which was DELETED 2026-08-07 - inert now.",
               "CPU");
 // GPU D3D9-HLE FLATTEN-AT-RECORDER (2026-07-05 RE): BD's universal per-draw
 // recorder Function_824895C8 fans a draw out PER TILE internally - for a bin
