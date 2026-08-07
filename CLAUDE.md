@@ -488,6 +488,31 @@ Worst to best: **FMV/video** (measures XMA decode + a blit — none of the code 
   race (Burnout) or the field (BD, ~120-135s). Skill: **`xenia-blue-dragon-route-capture`**. A captured route is a
   PREREQUISITE for a CPU measurement, not an optional extra.
 
+## 📊 THE AOT PROGRESS BAR IS PROVABLY FROZEN — COMPILE IS FINE, THE BAR IS NOT (2026-08-07)
+**User reported it three times ("no bar movement"); now confirmed with evidence that does not depend on logging.**
+Gears with `--ez cpu_aot_maximize true`: the overlay renders correctly ("Compiling game code… / Starting…", with
+the ANR-warning text), and **three screenshots minutes apart are BYTE-IDENTICAL (same MD5, 62373 bytes)** while
+`top` shows the process at **261-340% CPU and 16+ minutes of CPU time**. So the compile is genuinely running and
+the bar genuinely never advances. It is NOT a hang.
+- **⚠️ TWO WRONG DIAGNOSES I MADE FIRST — do not repeat them.** (a) "`opt_aot_precompile` never sets
+  `cpu_precompile_guest_functions`" — **FALSE**, `xex_module.cc:1416` ORs it with `cpu_aot_maximize`, so the GUI
+  wiring is correct. (b) "there are no `AOT precompile progress:` lines" — **UNSAFE**: that run had
+  `--es disassemble_function_filter` on, which flooded logcat with **12,488** `Filtered function dump` lines and
+  evicted everything older than ~2 minutes. The emitter exists and matches the parser exactly
+  (`xex_module.cc:1548` prints `"AOT precompile progress: {} / ~{} functions"`, throttled to every 256 fns via
+  `(done & 0xFF) == 0`; `EmulatorActivity.java:1132` parses that exact string).
+- **⇒ THE REMAINING QUESTION IS EMITTER-vs-WATCHER, and it needs ONE CLEAN RUN with no disassembly filter.**
+  Strong candidate: the overlay's watcher is its own `logcat --pid=<self> -T 0 -s xenia:*` child process, so ANY
+  high-volume xenia logging can starve it — which also means the bar may break for reasons unrelated to AOT
+  whenever logging is heavy.
+- **🔥 SEPARATE AND ARGUABLY BIGGER: the AOT pass wrote NOTHING to the object cache.** 15 minutes of compiling at
+  261-340% CPU left `files/objcache` at exactly 264M, unchanged. The cache directory is `objcache_v2_opt2` — an
+  **LLVM** object cache (opt2 = `cpu_backend_llvm_opt`) — so an a64-backend AOT pass has no persistent store and
+  **recompiles the entire game on every launch**. The overlay's own text admits it: *"This runs once per launch."*
+  That is the real cost: ~15min of 3-core compile and 42->67C of heat, discarded, every single launch. **If AOT is
+  to be the default per the standing directive, it needs a cache on the a64 path too — or LLVM must actually be
+  on.** Not yet investigated; recorded because it explains both the startup time and the thermals.
+
 ## 🪤 GEARS SIGTRAP IN JIT CODE AT GUEST 0x8227EE6C (new signature, 2026-08-07, unresolved)
 **Seen twice.** Gears of War reaches `Displayed ... +212ms`, then ~3s later:
 `Fatal signal 5 (SIGTRAP), code 1 (TRAP_BRKPT), fault addr 0x2a000025c, tid "Main XThread"`, with
