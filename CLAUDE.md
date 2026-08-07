@@ -1108,7 +1108,30 @@ because a dropped-write or stale-read race is intermittent and a clean run prove
   nothing ordering them. Look for "atomic index + plain buffer", not for atomics in isolation.
   Secondary shape: raw `__sync_*`/`__atomic_*` with an explicitly chosen ordering (those bypass the safe default),
   and hand-rolled primitives like the `atomic_exchange` above.
-- **🔎 NEXT CANDIDATE, TRACED BUT NOT RESOLVED — the GPU register file and `volatile`.**
+- **🔴 CONFIRMED RACE (traced 2026-08-07, NOT yet fixed): the GPU register file is written by the GUEST thread and
+  read by the CP thread, with no ordering on either side.**
+  - **Writer — GUEST thread:** `GraphicsSystem::WriteRegister` ends in `register_file_.values[r] = value;`
+    (graphics_system.cc:364), a **plain non-atomic, non-volatile store**. It is reached from
+    `WriteRegisterThunk(void* ppc_context, ...)`, i.e. an MMIO handler on the guest CPU thread — the comment at
+    graphics_system.cc:319 says "(guest thread)" outright.
+  - **Reader — CP WORKER thread:** `CommandProcessor` holds a POINTER TO THE SAME OBJECT
+    (`command_processor.cc:971`: `register_file_(graphics_system_->register_file())`) and reads it through
+    `const_cast<volatile uint32_t&>` at 8 sites. **`volatile` is not a fence** — it forbids compiler caching, and
+    guarantees nothing about hardware ordering.
+  - **Why x86 never showed it:** TSO plus naturally atomic aligned 32-bit access. On ARM64 the value still will
+    not tear, but the CP thread can observe these register writes **stale or reordered** relative to whatever the
+    guest did around them.
+  - **⚠️ SCOPE HONESTLY: this is the DIRECT-MMIO register path, not the main one.** Most register state reaches
+    the CP inside PM4 packets that the CP thread itself decodes (no cross-thread hazard), and the important
+    handoff — `CP_RB_WPTR` — is correctly routed through `UpdateWritePointer` into the `seq_cst`
+    `write_ptr_index_`. So this is a narrow window, not a constant corruption source, which is consistent with it
+    never having been chased.
+  - **The fix is a release/acquire PAIR on the existing boundary, not atomics sprinkled over the array.** Making
+    `values[]` `std::atomic` would tax every register access in the PM4 decode path — the hot one — to close a
+    hazard that exists only at the MMIO boundary. Prefer: release store on the guest side write, acquire on the
+    CP side's first read after a wake. **Measure before changing** (rule 4) — and note a wrong weakening here is
+    an intermittent GPU-state bug, i.e. wrong pixels, the worst thing to debug.
+- **🔎 PRIOR NOTE, now superseded by the confirmation above — kept for the reasoning:**
   `RegisterFile::values[]` is a plain `uint32_t[kRegisterCount]` (register_file.h:41) and the command processor
   reaches it through `const_cast<volatile uint32_t&>` at **8 sites** (command_processor.cc:1299, 1301, 1324, 1326,
   1357, 1404, 1439, 1709). **`volatile` gives neither atomicity nor ordering in C++** — it is not a fence. On x86
