@@ -1256,7 +1256,22 @@ shed it. **So "46->72C in 30s" was never a gameplay figure; it is mostly the com
 **⇒ THE NEXT THERMAL MEASUREMENT MUST START AFTER THE COMPILE SETTLES**, not at launch, or it measures the
 precompile and calls it gameplay. Take a steady-state baseline once `AOT precompile progress` stops, THEN drive
 into a scene.
-**🚧 REACHING GEARS CAMPAIGN GAMEPLAY IS AN UNSOLVED NAVIGATION PROBLEM - and it burns the thermal budget.**
+**✅ SOLVED SAME DAY - GEARS GAMEPLAY ROUTE, device-verified: `scratch/thor-debug/gears_gameplay_route.sh`.**
+`--es hid nop --es hid_nop_button_sequence 'start@40000:1200;start@47000:1200;start@53000:1200;start@59000:1200;
+start@65000:1200;start@71000:1200;a@79000:1200;a@86000:1200;a@93000:1200;a@100000:1200;a@107000:1200;a@114000:1200'`
+lands in the **Act 1 prison corridor at ~125-150s**. Format is `buttons@delay_ms:hold_ms`, delays ABSOLUTE from
+launch, injected into the GUEST - which is why it works where adb keyevents did not.
+**Proof it is gameplay and not a menu:** `entry_delta` **3.6-3.9M per 5s vs ~1.1M at the title (3.5x)**, and the
+hot function changes completely (`sub_825A5768` delta=316,123 vs the title's `sub_822153F0` delta=97,234).
+**⏱️ BUDGET ONE RUN PER COOLDOWN: 38C cold -> 73C at 150s -> 78C just after.** An A/B is two cooldowns, not two
+back-to-back runs - which makes the same-session A/B protocol expensive on this title and worth planning around.
+**⚠️ `--ei gpu_frame_limit_fps 0` DOES NOT UNCAP GEARS** (fps stayed 29.6/28.8 with it set, and the cvar IS
+allowlisted). The documented "run uncapped and read entry_delta" protocol therefore does not work here yet -
+investigate before trusting any CPU A/B on this title.
+**Why keyevents failed, so nobody retries them:** alternating START/B skips the cinematics but B then BACKS OUT
+of the main menu to the title, and A does nothing on the title. Two attempts, ~35C of headroom each, no gameplay.
+
+**🚧 (superseded) REACHING GEARS CAMPAIGN GAMEPLAY WAS AN UNSOLVED NAVIGATION PROBLEM.**
 Two attempts failed: alternating START/B skips the cinematics but then B BACKS OUT of the main menu to the title,
 and plain A presses do nothing on the title. Each attempt costs ~2 minutes and ~35C of headroom, so this is not
 something to brute-force. **Capture a route first** (`--es hid nop --es hid_nop_button_sequence`, skill
