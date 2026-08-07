@@ -1245,6 +1245,29 @@ two fixed ones were real bugs, but they are not where the 8W-vs-3-5W gap lives.
    callback takes that same global mutex every few ms.
 **⇒ Spend effort on 1-3, not on hunting for a layer that is not there.**
 
+## 🌡️ THERMAL DECOMPOSITION 2026-08-07: THE STARTUP HEAT IS THE AOT COMPILE, NOT THE GUEST
+**Measured, and it reframes the watts question.** Gears reaches **70-72C from a 36C cold start in ~2 minutes**
+of TITLE SCREEN, cinematics and MENUS - no gameplay at all. But the profiler over that same window shows the
+guest barely running: **`entry_delta` ~1.1M per 5s** (Burnout attract, for scale, is ~122-128M/5s - a hundredfold
+more), 4,004 functions, top function `sub_822153F0` at delta=97,234.
+**⇒ Guest execution CANNOT be what heats the device at the title screen.** The plausible source is the ~9.5s AOT
+precompile at load, which runs at 261-340% CPU, plus the GPU holding 30fps - and the panel never gets a chance to
+shed it. **So "46->72C in 30s" was never a gameplay figure; it is mostly the compile.**
+**⇒ THE NEXT THERMAL MEASUREMENT MUST START AFTER THE COMPILE SETTLES**, not at launch, or it measures the
+precompile and calls it gameplay. Take a steady-state baseline once `AOT precompile progress` stops, THEN drive
+into a scene.
+**🚧 REACHING GEARS CAMPAIGN GAMEPLAY IS AN UNSOLVED NAVIGATION PROBLEM - and it burns the thermal budget.**
+Two attempts failed: alternating START/B skips the cinematics but then B BACKS OUT of the main menu to the title,
+and plain A presses do nothing on the title. Each attempt costs ~2 minutes and ~35C of headroom, so this is not
+something to brute-force. **Capture a route first** (`--es hid nop --es hid_nop_button_sequence`, skill
+`xenia-blue-dragon-route-capture`) - a Gears route does not exist yet and is a prerequisite for ANY gameplay-tier
+CPU or power number on this title.
+**🔌 WATTS ARE STILL UNMEASURABLE AND THE REASON IS CONFIRMED FRESH.** `dumpsys battery` reported `status: 2`
+(Charging) with USB attached, and five consecutive `current_now` samples on an IDLE device flipped sign:
+`-36988, +225591, +165897, +224859, -16846 uA`. Any wattage from a plugged-in session is fiction, exactly as the
+watts section says. **adb-over-wifi is now configured (`192.168.1.33:5555`)** so the measurement can be taken the
+moment the cable comes out - that is the only remaining blocker for a real 3-5W comparison.
+
 ## ✅✅✅ PIXEL-VALIDATED 2026-08-07: BD REMOVAL (~2,511 LINES) + 6 CPU FIXES, GEARS, SCREENSHOTTED
 **One APK carrying every change of the session. Gears of War, Turnip, `--es cpu arm64 --ez cpu_backend_llvm true
 --ez cpu_aot_maximize true`. Screenshots READ, not inferred from file size:**
