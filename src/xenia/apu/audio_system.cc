@@ -16,6 +16,8 @@
 #include "xenia/base/byte_stream.h"
 #if XE_PLATFORM_ANDROID
 #include <sys/resource.h>
+#include <atomic>
+#include <cstring>
 #include <cerrno>
 #endif
 
@@ -96,29 +98,53 @@ X_STATUS AudioSystem::Setup(kernel::KernelState* kernel_state) {
   return X_STATUS_SUCCESS;
 }
 
+#if XE_PLATFORM_ANDROID
+// Raise the CALLING thread's nice level and say what actually happened.
+//
+// Why this exists at all: the audio worker feeds a real-time AAudio callback,
+// but our threading_posix set_priority() goes through pthread_setschedparam,
+// which the comment at threading_posix.cc:703 records as failing with EPERM for
+// guest threads on Android - so this thread otherwise gets NO effective
+// priority. setpriority() is the interface that works for nice values, and
+// PRIO_PROCESS with pid 0 applies to the CALLING TASK on Linux (this thread),
+// which is exactly why it must run inside the thread body.
+//
+// Reports the first failure rather than dropping it: an app that is not allowed
+// to renice would otherwise look like it had succeeded. Reads the value back
+// with getpriority() instead of assuming the request took - same discipline as
+// "verify a lever actually runs" elsewhere in this tree. Both logs fire once so
+// a denied renice cannot spam. Failure is never fatal: the driver still works,
+// just with less headroom against underruns.
+static void ApplyAudioThreadPriority(const char* what) {
+  static constexpr int kNice = -12;
+  errno = 0;
+  if (setpriority(PRIO_PROCESS, 0, kNice) != 0) {
+    static std::atomic<bool> reported{false};
+    bool expected = false;
+    if (reported.compare_exchange_strong(expected, true)) {
+      XELOGW("{}: setpriority({}) failed: errno {} ({})", what, kNice, errno,
+             std::strerror(errno));
+    }
+    return;
+  }
+  const int applied = getpriority(PRIO_PROCESS, 0);
+  static std::atomic<bool> logged{false};
+  bool expected = false;
+  if (logged.compare_exchange_strong(expected, true)) {
+    XELOGI("{}: nice set to {}", what, applied);
+  }
+}
+#endif
+
 void AudioSystem::WorkerThreadMain() {
   // Initialize driver and ringbuffer.
   Initialize();
 
 #if XE_PLATFORM_ANDROID
-  // Raise the audio worker's nice level, and do it from INSIDE the thread:
-  // XThread applies its own priority after Create(), so anything set at the
-  // creation site is overwritten. XenDroid bc257ce49 makes the same point.
-  //
-  // It matters more here than upstream: our threading_posix set_priority goes
-  // through pthread_setschedparam, which the comment at threading_posix.cc:703
-  // records as failing with EPERM for guest threads on Android - so this worker
-  // currently gets NO effective priority at all while it is the thread feeding
-  // a real-time AAudio callback. setpriority() is the API that does work for
-  // nice values, and PRIO_PROCESS with pid 0 applies to the CALLING TASK on
-  // Linux, i.e. this thread rather than the process.
-  //
-  // Failure is deliberately ignored: a denied nice request must not take the
-  // audio system down, and the driver still runs (just more underrun-prone).
-  if (setpriority(PRIO_PROCESS, 0, -12) != 0) {
-    XELOGW("AudioSystem: could not raise audio worker priority (errno {})",
-           errno);
-  }
+  // Set here, not at the creation site: XThread applies its own priority after
+  // Create(), so anything set there is overwritten. XenDroid bc257ce49 +
+  // d398a8762.
+  ApplyAudioThreadPriority("AudioSystem worker");
 #endif
 
   // Main run loop.
