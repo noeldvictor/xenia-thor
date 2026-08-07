@@ -5566,7 +5566,10 @@ struct MUL_ADD_V128
       e.ChangeFpcrMode(FPCRMode::Vmx);
       int d = i.dest.reg().getIdx();
       int s1, s2;
-      PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);  // s1=v0, s2=v1
+      // NOT necessarily v0/v1: with a64_vmx_fp_no_operand_copy these come back
+      // as the ALLOCATED registers (v4+). Everything below must go through
+      // s1/s2 - assuming v0/v1 here is what broke the non-fastpath FMA sequence.
+      PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
       int s3 = SrcVReg(e, i.src3, 3);
       if (s3 != 3) {
         e.mov(VReg(3).b16, VReg(s3).b16);
