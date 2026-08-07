@@ -488,6 +488,27 @@ Worst to best: **FMV/video** (measures XMA decode + a blit — none of the code 
   race (Burnout) or the field (BD, ~120-135s). Skill: **`xenia-blue-dragon-route-capture`**. A captured route is a
   PREREQUISITE for a CPU measurement, not an optional extra.
 
+## 🌩️🌩️ ONE GLOBAL CONDVAR WAKES EVERY WAITING GUEST THREAD ON EVERY SIGNAL (found 2026-08-07, NOT fixed)
+**`PosixConditionBase::cond_` and `::mutex_` are `static`** (threading_posix.cc, bottom of the class) — **a SINGLE
+condition variable shared by every event, semaphore, mutant and timer in the emulator.** `WaitMultiple` (:242)
+parks on that shared condvar with a predicate over its handles, and **all 9 `cond_.notify_all()` sites** (:322,
+:363, :373, :397, :429, :839, …) therefore wake **every** parked thread — each of which re-evaluates handles it
+has no interest in, finds nothing, and parks again. A classic thundering herd, paid on every guest signal.
+- **Why it matters here specifically:** wasted wakeups are wasted CPU and therefore wasted WATTS, which is the
+  open question raised by `noeldvictor/rpcsx-ui-android-thor` doing PS3 emulation at 30fps / 3-5W on this same
+  device. It is also pure overhead — no guest work is being done in those wakeups.
+- **XenDroid hit the same class and fixed a MILDER version:** `2c0ac5847` gates their `PokeMultiWaiters()` behind
+  an atomic `multi_wait_refs_` counter, registered by a scoped `MultiWaitRegistration` over the handles being
+  waited on, so a signal only pokes the shared condvar when some parked WaitMultiple is actually watching that
+  object. **Their fix is NOT directly portable** — they have per-object condvars plus a separate multi-wait poke;
+  we have one static condvar doing both jobs, so the same counter would gate nothing.
+- **⚠️ DO NOT PATCH THIS CASUALLY.** It is core threading used by every guest wait, the existing code carries a
+  `TODO(bwrsandman, Triang3l)` about a known deadlock hazard (issue #1677) if a thread is suspended between
+  locking and waiting, and a mistake here is a hang rather than a wrong pixel. The real fix is per-object condvars
+  with a gated shared poke (XenDroid's shape), which is a refactor, not a patch.
+- **Measure before building** (rule 4): count wakeups vs. useful wakeups on the shared condvar under a real
+  gameplay scene first. If the ratio is near 1 this is theoretical; the shape of the code says it will not be.
+
 ## 📊 THE AOT PROGRESS BAR IS PROVABLY FROZEN — COMPILE IS FINE, THE BAR IS NOT (2026-08-07)
 **User reported it three times ("no bar movement"); now confirmed with evidence that does not depend on logging.**
 Gears with `--ez cpu_aot_maximize true`: the overlay renders correctly ("Compiling game code… / Starting…", with
