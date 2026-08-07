@@ -4022,11 +4022,6 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // resolve -> present all share one epoch; next frame's aliases must be
   // republished (stale double-buffer entries fail the epoch check).
   ++bd_l5_frame_epoch_;
-  // REAL-HLE aux surfaces: reset per-frame render flags so each surface's first
-  // draw next frame re-CLEARs it (BD re-primes its RTs every frame).
-  if (cvars::gpu_bd_native_aux_rt && bd_native_renderer_) {
-    bd_native_renderer_->BeginSurfaceFrame();
-  }
   // Color-only native HLE step 1: at the frame boundary, snapshot this frame's
   // per-surface color-consumer bits as the STABLE prior-frame view the drop gate
   // reads next frame, then clear for the new frame. Log in the field (uptime>135s,
@@ -4828,31 +4823,6 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // device-lost; the 1x majority + 2x foliage force to 1x cleanly (samples1-proven).
   bool bd_wf = cvars::gpu_bd_native_whole_frame && uint32_t(bd_vk_format) == 97u &&
                bd_rb_surface_info.msaa_samples != xenos::MsaaSamples::k4X;
-  if (bd_native_gate) {
-    static VulkanRenderTargetCache::Framebuffer s_bd_native_fb;
-    s_bd_native_fb.framebuffer = bd_native_renderer_->framebuffer();
-    s_bd_native_fb.host_extent = VkExtent2D{bd_native_renderer_->width(),
-                                            bd_native_renderer_->height()};
-    s_bd_native_fb.color_view = bd_native_renderer_->color_view();
-    // First field draw of the frame CLEARs the native RT; all subsequent
-    // (including re-begins after non-720 draws break the pass) LOAD it so the
-    // geometry ACCUMULATES instead of being wiped (the black-render fix).
-    bd_native_clear_pass = !bd_native_field_rendered_;
-    render_pass = bd_native_field_rendered_
-                      ? bd_native_renderer_->render_pass_load()
-                      : bd_native_renderer_->render_pass();
-    framebuffer = &s_bd_native_fb;
-    bd_native_field_rendered_ = true;
-    // Offset-ignore is DEAD (3 variants tried: global, scoped-by-scissor_tl - all
-    // break identically, shifting the main scene). The window-offset/tiling
-    // coordinate interaction is beyond blind resolution; the right-region placement
-    // needs RenderDoc. The native RT renders the field's clean region correctly.
-    ++bd_redirect_total_;
-    static std::atomic<uint32_t> s_bd_redirect_log{0};
-    if (s_bd_redirect_log.fetch_add(1) < 3) {
-      XELOGI("BD NATIVE renderer: redirected a field draw into the native pass");
-    }
-  }
   bool bd_framegraph_depth_prepared = false;
   bool bd_framegraph_depth_fusion_ready = false;
   VkRect2D bd_framegraph_depth_consumer_render_area = {};
@@ -9534,39 +9504,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
 }
 
 void VulkanCommandProcessor::LogBdNativeSurfaceKeys(const char* context) {
-  if (bd_native_renderer_) {
-    bd_native_renderer_->LogSurfaceKeys(context);
-  }
 }
 
 VkImage VulkanCommandProcessor::BdNativeDepthResolveImage(uint32_t dest_base) {
-  // Consumer-redirect half of the depth work. Mirrors BdNativeSurfaceServes, but
-  // for the single-sample DEPTH RESOLVE image produced in-pass by
-  // VkSubpassDescriptionDepthStencilResolve (gpu_bd_native_depth_resolve).
-  // WHY it matters: the device census (n=8192) says 66.7% of BD's surviving depth
-  // ownership transfers are PURE MSAA sample-count conversions, and a SAMPLE_ZERO
-  // resolve produces exactly that content natively - so a consumer served from
-  // this image no longer depends on the EDRAM destination, which is the
-  // precondition for dropping the transfer that produced it.
-  // Fail-closed: VK_NULL_HANDLE whenever the feature is off, the renderer is
-  // absent, or the surface has not rendered THIS frame (LookupDepthResolveImage
-  // enforces the current-frame rule - a stale depth generation is the
-  // temporal-snapshot hazard that collapses BD's field on Turnip).
-  if (!cvars::gpu_bd_native_depth_resolve || !bd_native_renderer_) {
-    return VK_NULL_HANDLE;
-  }
   return bd_native_renderer_->LookupDepthResolveImage(dest_base);
 }
 
 bool VulkanCommandProcessor::BdNativeSurfaceServes(uint32_t dest_base) {
-  if (!cvars::gpu_bd_native_aux_rt || !bd_native_renderer_) {
-    return false;
-  }
   NativeSurface* surface = bd_native_renderer_->FindSurface(dest_base);
-  if (!surface ||
-      bd_native_renderer_->LookupSampledSurface(dest_base) == VK_NULL_HANDLE) {
-    return false;
-  }
   if (!surface->is_main_scene) {
     return true;
   }
