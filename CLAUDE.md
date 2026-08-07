@@ -557,6 +557,24 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   sequences, not just max/min. Only 2 pipes accept ASIMD uOPs on the mid-cores, so this is the scarce
   resource going to bookkeeping.
   **=> This makes two existing items far more valuable than they looked, AND THEY ARE THE SAME JOB:**
+  **🐞 BEFORE ENABLING `a64_vmx_fp_no_operand_copy`, KNOW THAT ITS ON-PATH WAS BROKEN UNTIL 2026-08-07.**
+  Found by reading, not running - an audit of all 9 `PrepareVmxFpSources` call sites. At the VMX FMA sequence
+  (`a64_sequences.cc` ~5792) the code called `PrepareVmxFpSources` and then did
+  `e.str(QReg(0), ...)` / `e.str(QReg(1), ...)` to stash "the sources" for `FixupVmxNan_V128_Fma`. **But
+  `PrepareVmxFpSources` only writes v0/v1 on its COPY path** - with the no-copy lever ON it returns the
+  ALLOCATED registers (v4+) and never touches v0/v1, which at that point still hold denormal-flush temporaries
+  from the s3 flush just above. So the FMA NaN fixup decided propagation from GARBAGE. The same block's `fmla`
+  already used `VReg(s1)/VReg(s2)`, so the sequence was internally inconsistent. Fixed to `QReg(s1)/QReg(s2)`,
+  which is byte-identical on the copy path (there s1==0, s2==1).
+  **⇒ THIS IS THE `a64_three_operand_shifts` LESSON AGAIN, IN THE OTHER DIRECTION:** that was a default-off
+  lever whose OFF path was untested; this is a default-off lever whose ON path was untested. **Any lever that
+  has never executed is unvalidated code in whichever direction nobody runs.** Had the "saves 6 uOPs" framing
+  been acted on without the audit, the result would have been subtle FMA float corruption - no crash.
+  **⚠️ STILL DEFAULT-OFF.** This fix removes a real blocker but is NOT a substitute for the lever's own
+  validation; a register-allocation change cannot be checked by a C-level qemu test, so it needs an emitter-level
+  differential or a device run. One false positive to note for whoever does the audit next: a 60-line scan also
+  flags the site at ~5657, but that block `return`s and the `str(QReg(0))` below it belongs to a SEPARATE
+  fallback that stages into v0/v1 explicitly. Read the enclosing block.
   (a) `a64_vmx_fp_no_operand_copy` (default-off, awaiting the qemu-a64 differential) removes 2 of the 8 across
   all 9 sequences; (b) `FixupVmxMaxMinNan` is 6 of the 8 **and is probably WRONG anyway** - the ARM half is
   spec-confirmed above (`fmax` propagates NaN where PPC `vmaxfp` and x86 `MAXPS` return the number, and the

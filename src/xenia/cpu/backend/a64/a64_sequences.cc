@@ -5787,12 +5787,19 @@ struct MUL_SUB_V128
             Xbyak_aarch64::ptr(
                 e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) + 32));
 
-      // Flush s1/s2 → v0/v1, save for NaN fixup.
+      // Flush s1/s2, save for NaN fixup.
       int s1, s2;
       PrepareVmxFpSources(e, i.src1, i.src2, s1, s2);
-      e.str(QReg(0), Xbyak_aarch64::ptr(e.sp, static_cast<int32_t>(
-                                                  StackLayout::GUEST_SCRATCH)));
-      e.str(QReg(1),
+      // MUST save s1/s2, NOT v0/v1. PrepareVmxFpSources only stages into v0/v1
+      // on its COPY path; with a64_vmx_fp_no_operand_copy it returns the
+      // ALLOCATED registers (v4+) and never writes v0/v1 - which at this point
+      // still hold denormal-flush temporaries from the s3 flush above. Saving
+      // v0/v1 then fed FixupVmxNan_V128_Fma garbage instead of the sources, so
+      // the FMA NaN propagation decision was made on the wrong values.
+      // Identical to the old code on the copy path, where s1==0 and s2==1.
+      e.str(QReg(s1), Xbyak_aarch64::ptr(e.sp, static_cast<int32_t>(
+                                                   StackLayout::GUEST_SCRATCH)));
+      e.str(QReg(s2),
             Xbyak_aarch64::ptr(
                 e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) + 16));
 
