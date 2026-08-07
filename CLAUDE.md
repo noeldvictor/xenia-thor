@@ -503,6 +503,25 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   NUMBER while ARM `fmax` gives NaN — and our fixup only rewrites lanes where BOTH are NaN, so that lane class may
   be silently wrong today. The both-NaN lane is also suspicious: the fixup produces `src1|src2`, where PPC would
   give `b`.
+  **✅✅ RESOLVED - AND MY PPC CLAIM WAS BACKWARDS. PEM p85 SETTLES IT** (`docs/reference/ppc/`):
+  ```
+  max(NaN,x) -> QNaN   where x = any value
+  min(NaN,x) -> QNaN   where x = any value
+  ```
+  **PPC `vmaxfp` PROPAGATES NaN.** I had asserted from memory that it was `(a>b)?a:b` and therefore returned the
+  NUMBER - that was wrong, which is precisely why the note said to confirm it from a manual first.
+  | `max(NaN, number)` | result |
+  |---|---|
+  | PPC `vmaxfp` (PEM p85) | **QNaN** |
+  | ARM `FMAX` (Arm ARM p11115) | **QNaN** - AGREES |
+  | x86 `MAXPS` | the number - DISAGREES |
+  **⇒ ARM's `fmax` ALREADY MATCHES THE GUEST. It is x86 that does not.** So `FixupVmxMaxMinNan` looks like it
+  exists to reproduce an X86 workaround that ARM does not need - 6 ASIMD uOPs per op on the 2-wide pipe, plus
+  the 2 staging copies, to fix something that may not be broken here.
+  **⚠️ STILL VERIFY BEFORE DELETING** - the qemu-a64 differential, four lane classes. Two details the one-line
+  PEM summary does NOT settle: which QNaN (payload propagation vs a default NaN, and FPCR.DN affects this on
+  ARM), and the both-NaN case where our fixup currently produces `src1|src2` rather than either input. Deleting
+  scaffolding is only safe once those match.
   **✅ THE ARM HALF IS NOW SETTLED FROM THE SPEC (2026-08-07), not eyeballed.** `docs/reference/arm/arm-architecture-
   reference-manual-a-profile.pdf`, shared pseudocode `FPMax` (p11115-11116):
   ```
