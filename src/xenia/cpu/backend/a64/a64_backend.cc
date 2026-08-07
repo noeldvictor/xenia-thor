@@ -139,6 +139,21 @@ DEFINE_bool(
     "a64");
 
 DEFINE_bool(
+    a64_vmx_native_fmax_nan, false,
+    "ARM64: skip FixupVmxMaxMinNan and let the hardware fmax/fmin supply the NaN "
+    "result. MANUAL-BACKED: AltiVec PEM p85 states PPC vmaxfp/vminfp produce QNaN "
+    "for ANY NaN operand, and Arm ARM p11115 shows FPMax calls FPProcessNaNs "
+    "BEFORE the compare - so ARM already matches the guest. x86 MAXPS is the "
+    "outlier (returns src2 on NaN), which is why the x64 backend needed a fixup; "
+    "ours was transliterated from it and kept a workaround for a disagreement that "
+    "does not exist on ARM. Saves 6 ASIMD uOPs per vmaxfp/vminfp on the FP/ASIMD "
+    "pipe, which is only 2-wide on the A710/A715 mid-cores. DEFAULT OFF pending the "
+    "qemu-a64 differential - the PEM summary does not settle the NaN PAYLOAD "
+    "(propagated vs FPCR.DN default NaN) nor the both-NaN lane, where the current "
+    "fixup yields src1|src2 and matches NEITHER architecture.",
+    "a64");
+
+DEFINE_bool(
     a64_three_operand_shifts, true,
     "Emit ARM64's three-operand variable shifts (LSLV/LSRV/ASRV/RORV) directly "
     "instead of the x86-shaped staging sequence: mov the count to a scratch, mov "

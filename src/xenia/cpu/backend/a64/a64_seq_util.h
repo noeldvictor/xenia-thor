@@ -38,6 +38,8 @@ DECLARE_bool(a64_v128_const_pool);
 DECLARE_bool(a64_vmx_fp_no_operand_copy);
 DECLARE_bool(arm64_use_flat_membase);
 
+DECLARE_bool(a64_vmx_native_fmax_nan);
+
 namespace xe {
 namespace cpu {
 namespace backend {
@@ -469,7 +471,26 @@ inline void AuditV128DenormalIfAny(A64Emitter& e, int vreg,
 // lanes. We replicate that: use src1|src2 only for lanes where BOTH are NaN.
 // Expects: v0=flushed src1, v1=flushed src2, v2=hardware fmax/fmin result.
 // Modifies v2 in place. Clobbers v0, v1, v3.
+// MANUAL-BACKED SHORTCUT (2026-08-07): ARM `fmax`/`fmin` ALREADY match the guest
+// on NaN, so this entire fixup is x64 scaffolding that PPC->ARM64 never needed.
+//   AltiVec PEM p85:  max(NaN,x) -> QNaN   for ANY x   (docs/reference/ppc/)
+//   Arm ARM p11115:   FPMax calls FPProcessNaNs FIRST and returns the propagated
+//                     NaN before the compare - i.e. FMAX propagates. (docs/reference/arm/)
+// x86 `MAXPS` is the OUTLIER: it returns src2 on NaN, which disagrees with PPC, so
+// the x64 backend needed a fixup. Ours was transliterated from it and kept the
+// workaround for a disagreement that does not exist here - 6 ASIMD uOPs per op on
+// the FP/ASIMD pipe, which is only 2-wide on the mid-cores (A710/A715 Table 2-1).
+//
+// DEFAULT OFF. Two things the one-line PEM summary does NOT settle, and both are
+// payload-level: which QNaN is produced (propagated payload vs FPCR.DN default
+// NaN), and the both-NaN case, where this fixup currently yields src1|src2 -
+// which matches NEITHER architecture. Flip only after the qemu-a64 differential
+// over the four lane classes: (NaN,num) (num,NaN) (NaN,NaN) (num,num).
 inline void FixupVmxMaxMinNan(A64Emitter& e, int s1 = 0, int s2 = 1) {
+  if (cvars::a64_vmx_native_fmax_nan) {
+    // ARM's own fmax/fmin NaN behaviour is left in place - see above.
+    return;
+  }
   // s1/s2 are the source registers. They default to the v0/v1 scratch pair for
   // callers that still stage their operands there; when the no-copy path in
   // PrepareVmxFpSources is active they are the ALLOCATED registers instead.
