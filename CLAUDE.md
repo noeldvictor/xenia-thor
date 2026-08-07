@@ -197,6 +197,22 @@ note what it means: **the XMA release fence (`e5398cac8`) and the audio-priority
 advance (`offset >= end`), which is a producer/consumer disagreement about the guest's XMA ring - a decode-side
 bug. The still-unfixed callback-takes-the-global-mutex issue below is a real defect and may make it worse under
 load, but it cannot by itself produce a 'non-forward read offset'.
+**🔑 WE TRADED A CRASH FOR BUZZING, AND THE MITIGATION'S CORE ASSUMPTION IS WRONG.** The guard came from
+`b5afa11e3` ("don't SIGABRT on a non-forward XMA input read offset"). It replaced an `assert_true` that was
+**SIGABRTing the whole emulator, device-observed killing Gears ~85s in**. Its comment reasons: *"Only reached
+when the old assert would have fired, so working audio is byte-for-byte unaffected."*
+- **That reasoning is sound but rests on the case being RARE.** The user's session fired it **8,221 times**
+  across 3 contexts. At that rate it is not an edge case, it is the steady state - so the mitigation is
+  converting a crash into continuous audio dropout, which is exactly what buzzing is.
+- **⇒ The ROOT CAUSE was never fixed, only made non-fatal.** The real bug is whatever makes the recomputed
+  frame offset fail to advance past `input_buffer_read_offset` - a producer/consumer disagreement about the
+  guest's XMA packet stream. `b5afa11e3` is the right call for stability and should STAY; it just is not a fix.
+- **Where to start:** the offset is recomputed as `GetPacketFrameOffset(packet) + packet_idx * kBitsPerPacket`
+  just above the guard. Log `packet_idx`, `current_input_packet_count`, `input_buffer_read_offset` and the
+  computed `offset` on the first N fires and see whether `packet_idx` is stuck, wrapping, or running past the
+  buffer - the `// TODO buffer bounds check` sitting immediately above the guard is a strong hint nobody has
+  validated that path.
+- **⚠️ Do NOT 'fix' it by loosening the guard back toward the assert** - that restores the crash.
 **8W and 72C are the user's own numbers** and are the first valid power figures we have - USB-attached ADB
 cannot measure this (see the watts section). Against rpcsx's reported 3-5W on the same handheld, that is the
 gap to close, and it is CPU, not GPU.
