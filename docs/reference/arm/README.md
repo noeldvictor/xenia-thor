@@ -8,7 +8,16 @@ against folklore.
 |---|---|---|---|
 | `arm-architecture-reference-manual-a-profile.pdf` | **Arm ARM, DDI 0487H.a** | the architecture itself - every instruction's exact semantics | **11,530** |
 | `cortex-x3-software-optimization-guide.pdf` | Cortex-X3 SWOG | 1x prime (cpu7, 3.19GHz) | 66 |
+| `cortex-a715-software-optimization-guide.pdf` | Cortex-A715 SWOG | 2x mid | 73 |
 | `cortex-a710-software-optimization-guide.pdf` | Cortex-A710 SWOG | 2x mid | 92 |
+| `cortex-a510-software-optimization-guide.pdf` | Cortex-A510 SWOG | 3x little | 54 |
+
+**Complete set - all four core types in the QCS8550 are covered.** The A715 and
+A510 guides are not served as direct PDFs; they come from developer.arm.com's
+JS-rendered portal, and the static IDs were extracted with Playwright:
+A715 = `6419bb9a8df5201251be08c3`, A510 = `61c2fb9eb691546d37bd2c05`, under
+`https://documentation-service.arm.com/static/<id>`. If a newer revision is
+needed, re-run that rather than hunting mirrors.
 
 **Use the right one.** The Arm ARM (66MB, 11.5k pages) is the ARCHITECTURE: what an
 instruction is *defined* to do - exact semantics, flag effects, NaN handling,
@@ -19,11 +28,14 @@ The SWOGs are the MICROARCHITECTURE: how fast it is on *these* cores - latency,
 throughput, which issue pipe. Reach for those on performance questions. Neither
 answers the other's question.
 
-The 8 Gen 2 is 1x X3 + 2x A715 + 2x A710 + 3x A510. The **A715 and A510 guides
-are not here**: Arm publishes them only through developer.arm.com's JS portal
-(`PJDOC-466751330-556347` for the A715), which does not serve a direct PDF. The
-A710 is the closest available proxy for the A715 - same generation, same 13-pipe
-layout - but do not quote A710 latencies as A715 fact.
+The 8 Gen 2 is 1x X3 + 2x A715 + 2x A710 + 3x A510.
+
+**Verified, not assumed:** the A715 was initially treated as "same as A710", and
+checking its Table 2-1 confirms that for the pipeline layout - Load/Store 0/1 plus
+a load-only Load 2 (3 load pipes), Integer Single-Cycle 0/1 plus Single/Multi 0/1
+(4 integer pipes), and FP/ASIMD 0/1 (2 vector pipes, which on the A715 also serve
+as Vector Store data). So the mid-core model in CLAUDE.md holds for both. Per
+instruction latencies may still differ - quote each guide for its own core.
 
 ## What they are good for
 
