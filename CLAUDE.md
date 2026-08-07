@@ -773,6 +773,24 @@ Beyond "the persisted config overrides the compiled default", there is a second 
   `files/xenia.config.toml`, AND whether `XeniaOptimizations` has an entry that a GUI launch will pass.
 
 ## DEVICE-CONFIRMED: `--ez cpu_backend_llvm true` DOES NOT ENABLE LLVM (2026-08-07) - and that explains the heat
+  **✅ ROOT CAUSE: `cpu` DEFAULTS TO "any", AND THE "any" BRANCH NEVER CONSULTS `cpu_backend_llvm`.**
+  `DEFINE_string(cpu, "any", ...)` (cpu_flags.cc:12), and emulator.cc has two branches:
+  ```
+  if (cvars::cpu == "arm64") {   // the ONLY branch that tests cpu_backend_llvm
+      if (cvars::cpu_backend_llvm && LLVMBackend::IsAvailable()) { LLVM } else { a64 }
+  }
+  if (cvars::cpu == "any")   { backend.reset(new Arm64Backend()); }   // never tests it
+  ```
+  **So `--ez cpu_backend_llvm true` ALONE does nothing. You must ALSO pass `--es cpu arm64`.**
+  **⚠️ MY ERROR, NOT A CODE DEFECT — correcting what I implied above.** `XeniaAndroidSettings.java:235` DOES
+  `putString("cpu", CPU_ARM64)`, so **GUI launches reach the LLVM branch correctly** and the standing AOT+LLVM
+  directive is honoured there. Only my headless `am start` runs were affected, because I never passed `cpu`.
+  The persisted config carries `cpu = "any"`, which is what a bare launch inherits.
+  **⇒ THE HEADLESS RECIPE NEEDS THREE FLAGS, NOT ONE:**
+  `--es cpu arm64 --ez cpu_backend_llvm true --ez cpu_aot_maximize true`. Verify with `LLVMobjload` in the log
+  (llvm_assembler.cc:2457) — zero of those with LLVM supposedly on means you are still running a64.
+  `XE_LLVM_BACKEND_ENABLED=1` IS set for Android-ARM64 (checked in the generated .mk), so `IsAvailable()` is not
+  the blocker.
   **STRUCTURAL HAZARD FOUND WHILE CHASING THIS - THE ENTIRE `--ez` ALLOWLIST IS INSIDE ONE GUARD.**
   `EmulatorActivity.java:139`: `if (intent != null && intent.getBundleExtra(EXTRA_CVARS) == null) {` wraps the
   **whole** ~750-line allowlist block (every `copyBooleanExtra`/`copyIntExtra`/`copyStringExtra`), closing at
