@@ -569,9 +569,24 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   thermal start (53.1°C vs 57.8°C); a refutation it is NOT. Retest in a real race from equal temps.
   ❌ The A510 "two of three share a vector unit" claim is **REFUTED on the Thor** by our own probe (34014db95) —
   do not re-plumb thread affinity around it.
-  **OPEN:** vmaxfp/vminfp `FixupVmxMaxMinNan` removal (#2 — 6 extra insns on every VMX float max/min; ARM `fmax` NaN
-  semantics may already match VMX, but this is correctness-critical, verify with the qemu-a64 differential, do NOT
-  eyeball it); ABD/ABA 3-input mid-core trick (#4, the real differentiator — nobody else has it); EOR3/BCAX
+  **OPEN — AND IT MAY BE A CORRECTNESS BUG, NOT AN OPTIMISATION (analysis 2026-08-06, NOT yet verified):**
+  vmaxfp/vminfp `FixupVmxMaxMinNan` (#2). The framing "6 extra insns we can probably delete" is likely WRONG at
+  both ends. What was established by reading (facts, checkable):
+  - **Our x64 `MAX_V128` is a plain `vmaxps(dest, src1, src2)` with NO NaN fixup whatsoever**
+    (x64_sequences.cc:507). ⇒ **The comment in `a64_seq_util.h:468` — "x64 uses maxps(a,b)|maxps(b,a)" — is
+    factually wrong about our own tree**, and the a64 fixup is built to replicate something x64 does not do.
+  - x86 `MAXPS(a,b)` returns **src2** whenever a comparison involves NaN. PPC `vmaxfp` is
+    `(a > b) ? a : b`, and `>` is false for NaN, so it ALSO yields **b**. **They agree — which is exactly why the
+    x64 backend needs no fixup.**
+  - ARM `FMAX` **propagates** NaN (it is `FMAXNM` that implements IEEE maxNum and returns the non-NaN operand).
+  ⇒ **Hypothesis to TEST, do not act on it yet:** for `src1 = NaN, src2 = number`, PPC and x86 both give the
+  NUMBER while ARM `fmax` gives NaN — and our fixup only rewrites lanes where BOTH are NaN, so that lane class may
+  be silently wrong today. The both-NaN lane is also suspicious: the fixup produces `src1|src2`, where PPC would
+  give `b`.
+  **⛔ This is reasoning from the ISA manuals, and the last line of the old note applies with full force — do NOT
+  eyeball it, and do NOT change the sequence on the strength of this paragraph.** Build the qemu-a64 differential
+  first, with these four lane classes as the test vectors: (NaN, num), (num, NaN), (NaN, NaN), (num, num), for
+  both `vmaxfp` and `vminfp`. If the hypothesis holds, the work is a FIX and the instruction count may go UP. ABD/ABA 3-input mid-core trick (#4, the real differentiator — nobody else has it); EOR3/BCAX
   codegen consumers (#5, detection landed but nothing reads it); UDOT byte-sum (#7).
 - **Items the FIRST mining pass missed — LLVM-on-ARM codegen workarounds (from the transcript, 2026-08-05):** LLVM
   scalarizes some vector ops on ARM (fix = write the IR idiomatically to match the x86 shape; `CMTST` is a fused
