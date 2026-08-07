@@ -1,5 +1,23 @@
 # CLAUDE.md — xenia-thor (Xbox 360 emulator on the AYN Thor)
 
+## 🧭 WHAT ARE YOU ABOUT TO DO? — read the matching section BEFORE starting
+This file is long because most of it is things that were tried and DIED WITH DATA. The index exists so you read
+the two sections that apply instead of skimming all of it. **Every line below cost device time or a bad commit.**
+
+| about to... | read first | why |
+|---|---|---|
+| **benchmark anything** | `NEVER BENCHMARK A MOVIE`, `Measurement is the #1 trap` | attract mode invalidated a whole day; drift here is ~2.8%, larger than most wins |
+| **trust a measurement** | `CHECK THE PERSISTED DEVICE CONFIG`, `A BARE am start DOES NOT TEST WHAT SHIPS` | a stale `xenia.config.toml` cost 2.88%; headless launches run WITHOUT LLVM/AOT |
+| **A/B a cvar** | `A DEFAULT-OFF PATH IS NOT A CONTROL` | the off-branch may be untested code; ours crashed in 1s and would have inverted the conclusion |
+| **pick a CPU lever** | `ARM64 PERFORMANCE PLAYBOOK` (the five rules), `docs/reference/arm/` | the port model was wrong until checked against the manual; measure applicability before building |
+| **claim an instruction is too slow/strong** | `docs/reference/arm/` + diff the emitted asm | one `clang -S` killed an implemented `__sync_*` optimisation that was a pure no-op |
+| **touch GPU / EDRAM / render passes** | `THE BD EDRAM / D3D9-HLE ERA IS ARCHIVED`, `BD FIELD IS CPU-BOUND` | that entire era optimised the wrong processor; the archive lists what is already dead |
+| **port from XenDroid** | `XENDROID IS THE BAR`, `XENDROID UPSTREAM PORT TRACK`, `APU/BASE SWEEP TRIAGE` | their tree is heavily diverged - port the idea, not the patch, and expect genuine N/A results |
+| **fire the device** | `Never thrash the Thor`, `BLACK SCREEN? CHECK THE DISPLAY`, `TURNIP IS MANDATORY` | thermal limits are real; a sleeping panel looks exactly like a rendering bug; a bare launch uses the WRONG driver |
+| **chase a crash** | `BURNOUT ... LLVM WRITING x20`, `GEARS SIGTRAP`, `Android fault diagnosis` (memory) | decode the instruction before blaming a subsystem; x20/x21 state is the discriminator |
+| **hunt x86-shaped bugs** | `THE x86→ARM64 SWEEP: MEMORY ORDERING IS THE BUG CLASS` | TSO hides missing fences; look for an atomic index guarding a plain buffer, and check the POSIX `#elif` nobody profiles |
+| **edit this file with a script** | `Config + git rules` | I truncated it to 0 bytes and pushed it once - encode before opening, gate `git add` on size |
+
 ## Goal
 Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740). **Blue Dragon → 30fps @ 720p
 full foliage; Burnout/Gears/Lost Odyssey/Banjo → 30-60.** Ship every win as a cvar-gated, per-game
