@@ -488,6 +488,24 @@ Worst to best: **FMV/video** (measures XMA decode + a blit — none of the code 
   race (Burnout) or the field (BD, ~120-135s). Skill: **`xenia-blue-dragon-route-capture`**. A captured route is a
   PREREQUISITE for a CPU measurement, not an optional extra.
 
+## 🧪🧪🧪 A DEFAULT-OFF PATH IS NOT A CONTROL — IT IS UNTESTED CODE (device-found 2026-08-07)
+**`--ez a64_three_operand_shifts false` killed Gears in under a second with `Scudo ERROR: misaligned pointer when
+deallocating` (SIGABRT on the Kernel Dispatch thread, `XThread::Create()::$_1` / xthread.cc:541). The same build
+at the DEFAULT ran 240s+ fine. The bug was in the OFF path, not the ON path.**
+- **Cause:** `baacdeaed` added the isolation cvar so the shift rewrite could be disabled without an APK rollback,
+  and in **7 of 10** gated sites the `if (i.src1.is_constant)` arm was dropped from the off branch. With a constant
+  src1 it calls `i.src1.reg()` on a constant operand and never loads the constant into dest, so it shifts stale
+  register contents into guest state → heap corruption. Fixed in `862410c32` (3 sites were already correct).
+- **🔑 THE LESSON, which nearly cost the whole experiment:** the Gears CPU-vs-GPU isolation run had been queued for
+  most of a session. Run without noticing this, the arm under test dies in a second and the natural reading —
+  *"disabling the shifts breaks it, so the shifts are load-bearing"* — is **exactly backwards**. **A branch that
+  has never once executed is not a control; using it as one tests the branch, not the hypothesis.** Before trusting
+  any `--ez <lever> false` result, confirm the off path has actually run at least once, or read it as carefully as
+  the on path. This generalises to every isolation cvar in this repo.
+- **Corollary for how these get written:** when adding an isolation cvar, the off branch must be the ORIGINAL code
+  moved verbatim, not retyped. Retyping is where the arm went missing, and it type-checks either way because
+  `.reg()` on a constant operand compiles fine.
+
 ## ⚠️ Measurement is the #1 trap
 BD's GPU scene complexity swings ~4×/second → **cross-run fps / gpu_frame_us is CONFOUNDED (worthless)**. Only
 trust: single-run in-place alternating A/B on a GPU-busy frame (`gpu_freeze_ab_alternate_vrs`,
