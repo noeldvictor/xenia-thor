@@ -2444,6 +2444,34 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
          std::to_string(cvars::cpu_backend_llvm_opt)) /
         (std::string(keybuf) + ".o");
     std::error_code fs_ec;
+    // Cache-miss diagnostic. A populated objcache that never hits means the KEY
+    // moved, not that the cache is broken - and the key encodes four cvars
+    // (opt / residency / writeback / abi) plus a code hash, so a single changed
+    // default silently invalidates the entire directory and every launch
+    // recompiles the whole title. Device-observed 2026-08-07: 264MB present,
+    // zero hits. Logs the computed key ONCE alongside a filename that actually
+    // exists, so the differing field is visible by inspection rather than by
+    // guessing which cvar changed.
+    if (!std::filesystem::exists(opath, fs_ec)) {
+      static std::atomic<bool> miss_reported{false};
+      bool expected = false;
+      if (miss_reported.compare_exchange_strong(expected, true)) {
+        std::string sample = "(cache dir empty or unreadable)";
+        std::error_code it_ec;
+        std::filesystem::directory_iterator it(opath.parent_path(), it_ec);
+        if (!it_ec) {
+          for (const auto& e : it) {
+            sample = e.path().filename().string();
+            break;
+          }
+        }
+        XELOGW(
+            "LLVMobjcache MISS: want='{}' but dir has e.g. '{}' (dir='{}') - if "
+            "only the o/r/w/a suffix differs, a cvar changed since the cache was "
+            "built and EVERY lookup will miss",
+            opath.filename().string(), sample, opath.parent_path().string());
+      }
+    }
     if (std::filesystem::exists(opath, fs_ec)) {
       auto buf = llvm::MemoryBuffer::getFile(opath.string());
       if (buf) {

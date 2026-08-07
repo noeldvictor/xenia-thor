@@ -797,6 +797,25 @@ Beyond "the persisted config overrides the compiled default", there is a second 
   differ from the run that built the cache, every lookup misses and the whole title recompiles** - which is
   exactly the observed 15min / 40C->68C / cache-unchanged behaviour. Next step: log the computed key on a miss
   and diff it against a filename already in `objcache_v2_opt2`.
+  **📊 60,606 CACHED OBJECTS, 54,705 OF THEM GEARS', ALL KEY CVARS MATCH - AND STILL ZERO HITS.**
+  Inspected the cache directly (no device run needed - the filenames carry the key):
+  ```
+  objects in objcache_v2_opt2 : 60,606
+  addresses in Gears range    : 54,705   (82170000-82B00000)   <- RIGHT GAME
+  suffixes present            : o2r0w0a0  (all 60,606)
+  live cvars                  : opt=2, residency=false, writeback=false, abi=false  <- ALL MATCH
+  ```
+  **⇒ TWO PLAUSIBLE EXPLANATIONS ARE NOW DEAD.** It is NOT a cache built from a different title (the
+  addresses are Gears'), and it is NOT a changed key cvar (all four match the `o2r0w0a0` suffix).
+  **REMAINING CANDIDATES, in order of suspicion:**
+  1. **The `code_hash` differs.** The key includes FNV-1a over the guest function's BYTES read via
+     `TranslateVirtual`. Anything that changes those bytes between runs - an applied `.patch.toml`, in-place
+     decryption, a different module base - changes every hash and misses everything.
+  2. **The load path is gated off at runtime.** llvm_assembler.cc:2417 needs `cpu_llvm_object_cache` AND
+     `cpu_llvm_object_cache_skip_lowering`. The 'AOT object cache enabled' log line proves only the FIRST;
+     `skip_lowering` is a separate flag and the persisted config has it false.
+  **The miss diagnostic added in this commit prints the wanted key next to a real filename from the directory**,
+  which separates these two immediately: identical-except-hash means (1); never printed at all means (2).
   **🔑 AND A CORRECTION TO THE "CHECK THE PERSISTED CONFIG" RULE:** after this run the config STILL read
   `cpu = "any"` and `cpu_backend_llvm = false`, while the log proves LLVM ran. **Launch extras override at
   runtime WITHOUT persisting.** So the config file shows what a launch INHERITS, not what a launch USED - read
