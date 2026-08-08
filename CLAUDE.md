@@ -1524,6 +1524,30 @@ MOV Xd,#0    MOV Xd,XZR    MOV Wd,#0    MOV Wd,WZR    MOV Hd,WZR
 `a64_vmx_fp_no_operand_copy` - if the X3 renamed our `mov v0.16b, v4.16b` staging copies away, that lever would
 buy nothing on the core the main guest thread now runs on. It does not: only zeroing forms are eliminated. **The
 lever keeps its value on the X3.** Recorded because the opposite is a very natural assumption.
+**⚠️ CORRECTION TO THE PARAGRAPH ABOVE - THE A715 SAYS SOMETHING DIFFERENT, AND IT IS CORE-DEPENDENT.**
+The A715 guide's equivalent section is titled "Zero Latency **Instructions**" (not MOVs) and its list is far
+broader (`cortex-a715-...pdf` §4.12, pdf-p64):
+```
+MOV Wd,Wn    MOV Xd,Xn    FMOV Sd,Sn    FMOV Dd,Dn    MOV Vd,Vn (vector)
+MOVI Dd,#0   MOVI Vd.2D,#0   MOV Zd.D,Zn.D   PTRUE  PFALSE  SETFFR   + the zeroing forms
+```
+with the caveat *"may not be executed with zero latency under certain conditions"*.
+**`MOV Vd, Vn` (vector register-to-register) is EXACTLY what `PrepareVmxFpSources` emits for its staging
+copies** - and it is zero-latency on the A715 while the X3's documented list contains only zeroing forms.
+| core | reg-to-reg vector MOV | source |
+|---|---|---|
+| Cortex-X3 | **not listed** as zero-latency | x3 SWOG §4.12 (Issue 4.0) |
+| Cortex-A715 | **zero-latency** (with conditions) | a715 SWOG §4.12 (Issue 5.0) |
+| Cortex-A710 | no zero-latency section at all | a710 SWOG |
+**⇒ THE VALUE OF `a64_vmx_fp_no_operand_copy` IS CORE-DEPENDENT, and the affinity fix decides which core runs
+the hot thread.** On an A715 the staging copies it removes are largely free already; on the X3 - where review #4
+now routes guest CPU 0 - they are not, per that core's manual. **These two changes interact, and an A/B of the
+no-copy lever will give different answers depending on the affinity arm it is run under.** Measure them in the
+same arm, and prefer the arm the shipping default uses.
+**Do NOT over-read the X3 omission**: the X3 guide is Issue 4.0 and the A715 guide Issue 5.0, so the X3 may
+simply not document an elimination it performs. What is certain is what each manual states; treat "the X3 does
+not eliminate vector MOVs" as UNCONFIRMED rather than established.
+
 **§4.11 Instruction fusion - the X3 fuses these ADJACENT pairs into one operation:**
 `AESE+AESMC`, `AESD+AESIMC`, `CMP/CMN (imm) + B.cond`, `CMP/CMN (reg) + B.cond`, `TST (imm/reg) + B.cond`,
 `BICS (reg) + B.cond`, `NOP + Any`. *"These instruction pairs must be adjacent to each other in program code"*,
