@@ -1252,10 +1252,38 @@ void XThread::SetActiveCpu(uint8_t cpu_index) {
       // guest CPU 0 the prime core.
       uint64_t host_mask = uint64_t(1) << cpu_index;
       if (ThorTopology::IsThorBuild()) {
-        // guest 0 -> X3 prime (cpu7), guest 1..5 -> cpu3..6 round-robin.
-        static constexpr int kGuestToHostCore[6] = {7, 3, 4, 5, 6, 3};
-        const int host_core = kGuestToHostCore[cpu_index < 6 ? cpu_index : 0];
-        host_mask = uint64_t(1) << host_core;
+        // Build the big-core list from MIDR_EL1 rather than hardcoding it.
+        // platform_arm64.h says exactly why: "our thor_topology.h masks were
+        // hardcoded from the AYN Thor's known layout; this measures it instead,
+        // so a wrong assumption is caught rather than silently mis-pinning
+        // threads" - which is the failure mode a fixed {7,3,4,5,6} table has.
+        // Order matters: prime first so guest CPU 0 (conventionally the 360's
+        // main game thread) lands on the fastest core, then the newer perf
+        // tier, then the older mid tier. The little cluster is never included.
+        uint64_t ordered[16];
+        size_t n = 0;
+#if XE_ARCH_ARM64
+        const xe::arm64::CoreClasses& cc = xe::arm64::GetCoreClasses();
+        for (uint64_t cls : {cc.prime, cc.perf, cc.legacy}) {
+          for (int c = 0; c < 64 && n < countof(ordered); ++c) {
+            if (cls & (uint64_t(1) << c)) {
+              ordered[n++] = uint64_t(1) << c;
+            }
+          }
+        }
+#endif  // XE_ARCH_ARM64
+        if (!n) {
+          // MIDR unreadable - fall back to the static big-core cluster. Still
+          // strictly better than the 1:1 map, which put guest 0-2 on the A510s.
+          for (int c = 0; c < 64 && n < countof(ordered); ++c) {
+            if (ThorTopology::BigCoreMask() & (uint64_t(1) << c)) {
+              ordered[n++] = uint64_t(1) << c;
+            }
+          }
+        }
+        if (n) {
+          host_mask = ordered[cpu_index % n];
+        }
       }
       thread_->set_affinity_mask(host_mask);
     }
