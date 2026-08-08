@@ -1623,6 +1623,19 @@ memory**, so the only tool available is a dataflow pass that a single call defea
 it, is NOT more cross-block DSE — it is keeping a CR field in host NZCV between a compare and the branch that
 consumes it, which is a backend/HIR representation change, not a pass.** That is a real piece of work and it
 should not be started without first counting how many compare→branch pairs are actually adjacent.
+**✅✅ AND HERE IS WHY THE ZERO IS THE RIGHT ANSWER, NOT A BROKEN PASS — THE PIPELINE ALREADY DOES IT:**
+1. `UpdateCR` emits 3 compares + 3 context stores. **Looks** like eager materialisation.
+2. **`ContextPromotionPass` STRIPS DEAD CONTEXT STORES WITHIN THE BLOCK, AND IT IS ON BY DEFAULT** — the cvar
+   is `store_all_context_values = false` ("Don't strip dead context stores to aid in debugging"), i.e. the
+   default behaviour IS stripping. A `cmpw` + `beq` pair keeps only the EQ store; LT/GT are reaped.
+3. The a64 backend then emits the `CMP` **adjacent** to its `B.cond`, which **fuses on the X3** (SWOG §4.11,
+   already verified clean in review #8).
+4. Cross-block DSE therefore finds nothing left: within-block DCE already took the easy ones, and calls mark
+   the rest live.
+**⇒ THE EAGER-FLAG COST IS ALREADY OPTIMISED AWAY BY THE EXISTING PIPELINE. Rosetta's lazy-flags technique has
+NO HEADROOM HERE.** The HIR looks naive and the emitted code is not — which is the whole reason this had to be
+measured rather than read. **Do not "fix" `UpdateCR` to emit fewer comparisons on the strength of reading it.**
+
 **⚠️ DO NOT ENABLE `ppc_cross_block_dead_flag_elim`** on this evidence: it costs a backward dataflow over every
 function's blocks (iters=4 here) and removes nothing. `ppc_cross_block_dead_gpr_elim` is the same machinery for
 GPR slots and is **unmeasured** — it may fare better, since GPR stores are far more numerous than flag stores,
