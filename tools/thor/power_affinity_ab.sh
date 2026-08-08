@@ -153,3 +153,85 @@ census
 echo
 say "SUMMARY (arm A needs the pre-759e2b59d build - see header):"
 cat /tmp/thor_ab.txt
+
+# ---------------------------------------------------------------------------
+# LEVER ARMS ADDED 2026-08-07. Same preflight/cooldown/power path as above, so
+# they inherit the wifi/Discharging refusal and the 72C guard.
+#
+# The three levers below touch DISJOINT files and share no state (checked:
+# threading_posix.cc / a64_emitter+backend / xex_module.cc), so unlike the three
+# a64 FP levers - where a64_fpcr_single_mode SILENTLY disables
+# a64_vmx_fp_no_operand_copy - these do not confound each other. One at a time
+# is still preferred for attribution, which is how they are run here.
+# ---------------------------------------------------------------------------
+
+# The AOT precompile core policy CANNOT be judged by entry_delta: the compile is
+# joined before the guest runs, so it does not change guest throughput at all.
+# Its two axes are TIME-TO-TITLE (which it makes worse) and the TEMPERATURE
+# GAMEPLAY STARTS AT (which it should make better). A policy that loads slower
+# and still starts hot is a straight loss, so both are printed.
+precompile_arm() {            # $1 = label, $2 = policy value
+  local label="$1" policy="$2"
+  cooldown || return 1
+  local t0; t0=$("$ADB" -s "$DEV" shell cat /sys/class/kgsl/kgsl-3d0/temp | tr -d '\r')
+  local nat; nat=$(native_dir)
+  "$ADB" -s "$DEV" shell am force-stop $PKG; "$ADB" -s "$DEV" logcat -c
+  local start_ms; start_ms=$(date +%s%3N)
+  "$ADB" -s "$DEV" shell "am start -n $PKG/jp.xenia.emulator.EmulatorActivity \
+    --es target '$GAME' --es cpu arm64 --ez cpu_backend_llvm true \
+    --ez cpu_aot_maximize true --ez cpu_llvm_target_features_native true \
+    --ei cpu_precompile_worker_core_policy $policy \
+    --es gpu_vulkan_driver turnip \
+    --es gpu_vulkan_driver_path '/data/data/$PKG/files/gpu_drivers/$DRV/' \
+    --es gpu_vulkan_driver_lib libvulkan_freedreno.so \
+    --es gpu_vulkan_driver_hooks_path '$nat'" >/dev/null 2>&1
+  say "precompile arm $label (policy=$policy) - waiting for title..."
+  local title_ms="n/a" peak=0
+  for i in $(seq 1 60); do
+    local t; t=$("$ADB" -s "$DEV" shell cat /sys/class/kgsl/kgsl-3d0/temp 2>/dev/null | tr -d '\r')
+    [ -n "$t" ] && [ "$t" -gt "$peak" ] && peak=$t
+    if [ "$title_ms" = "n/a" ] && "$ADB" -s "$DEV" shell "logcat -d -s xenia:*" 2>/dev/null \
+         | grep -q "Title name:"; then
+      title_ms=$(( $(date +%s%3N) - start_ms ))
+      # THIS is the number that matters: the temperature gameplay would begin at.
+      local tt; tt=$("$ADB" -s "$DEV" shell cat /sys/class/kgsl/kgsl-3d0/temp | tr -d '\r')
+      say "  title reached at ${title_ms}ms, temp $((tt/1000))C"
+      break
+    fi
+    sleep 2
+  done
+  # Confirm the policy actually took rather than assuming the cvar applied.
+  local pinned; pinned=$("$ADB" -s "$DEV" shell "logcat -d -s xenia:*" 2>/dev/null \
+    | grep -c "Precompile worker:" )
+  "$ADB" -s "$DEV" shell am force-stop $PKG
+  printf '%-12s policy=%s start=%sC peak_at_title=%sC time_to_title=%sms warn_lines=%s\n' \
+    "$label" "$policy" "$((t0/1000))" "$((peak/1000))" "$title_ms" "$pinned" \
+    | tee -a /tmp/thor_ab.txt
+}
+
+say "=== arm D: per-object condvars (thundering herd) ==="
+# Device-free result: 42.7-45.1% fewer wasted wakeups (tools/qemu/condvar_herd_equiv.c,
+# 3/3 PASS). Wasted wakeups keep cores out of deep idle, so this is a WATTS arm -
+# expect it in idle_w/run_w and temperature, NOT necessarily in entry_delta.
+run_arm "D-condvar" "--ez threading_per_object_condvar true"
+
+say "=== arms F/G: AOT precompile core policy (the STARTUP heat) ==="
+precompile_arm "F-default" 0
+precompile_arm "G-little"  1
+precompile_arm "H-midtier" 2
+
+echo
+say "SUMMARY (all arms):"
+cat /tmp/thor_ab.txt
+cat <<'NOTE'
+
+NOT RUN HERE, AND DELIBERATELY SO:
+  arm E - arm64_guest_spin_throttle_functions. Gears has NO dominant busy-wait
+  (its top guest fn is ~13% of entries; Burnout's is 85%), so measuring the
+  throttle on Gears would produce a confident FLAT that means nothing. It must
+  be run on BURNOUT, in a real race and not attract, as:
+      --es arm64_guest_spin_throttle_functions 8238CD28
+  Do NOT list a function that already has a hand-emitted fastpath (Blue Dragon's
+  8246B408): it would deschedule twice, once here and once in the fastpath's own
+  yield stride.
+NOTE
