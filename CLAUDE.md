@@ -1595,6 +1595,39 @@ frequency-dependent bug when the code moves architectures.** Grep for magic cons
 spin loops. We are clean on the clock path; the guest-side wait predicates (BD 5000ms, Burnout 2000ms) are in
 GUEST milliseconds derived through CNTFRQ, so they are also unaffected.
 
+## 🧪❌ ROSETTA'S LAZY-FLAGS IDEA: THE LEVER ALREADY EXISTED, AND IT IS **INERT** (device-measured 2026-08-08)
+**The last unaudited Rosetta item was lazy flag materialisation — its analogue here is the PPC condition
+register. Chased it, and the answer is a clean measured negative.**
+**What we do today (`PPCHIRBuilder::UpdateCR`, ppc_hir_builder.cc:500):** every `cmp` and every `Rc=1`
+instruction **eagerly computes THREE comparisons (LT, GT, EQ) and does THREE `StoreContext` byte writes.** That
+is textbook eager-flag materialisation — the thing Rosetta exists to avoid — where ARM64 wants `cmp` + `b.cond`,
+two instructions that **fuse on the X3** (SWOG §4.11).
+**The fix was ALREADY BUILT AND DEFAULT-OFF:** `ppc_cross_block_dead_flag_elim` (+ `_audit`), described in its
+own help as removing CR/XER stores that are dead across all successor paths. Allowlisted, `false` on device.
+**❌ IT REMOVES NOTHING. Audit output, Gears, full AOT:**
+```
+CrossBlockFlagDSE: blocks=34 iters=4 stores_seen=121 removed=0
+CrossBlockFlagDSE: blocks=35 iters=4 stores_seen=128 removed=0
+```
+**121-128 flag stores seen per function, ZERO removed.** entry_delta was 1.07M (base) vs 1.10M (on) — noise, and
+the cold starts differed 36C vs 40C, so the direction is not readable either. **The audit counter is the real
+evidence; the timing is not.**
+**🔑 WHY IT FINDS NOTHING, and this is the transferable part:** the pass conservatively marks **all** flag
+slots live at **calls, returns and context barriers** (its own help says so). Guest code here is
+**call-dense** — Burnout runs ~24M guest entries/sec, Gears' profile is distributed across many functions — so
+a call appears before any flag store can be proven dead on every successor path. **Call density defeats
+cross-block flag DSE.**
+**⇒ THE CONTRAST WITH ROSETTA IS THE LESSON.** Rosetta gets lazy flags because it keeps them in **host NZCV**
+across straight-line code and only materialises on a real read. Our flags round-trip through **PPCContext
+memory**, so the only tool available is a dataflow pass that a single call defeats. **The win, if anyone wants
+it, is NOT more cross-block DSE — it is keeping a CR field in host NZCV between a compare and the branch that
+consumes it, which is a backend/HIR representation change, not a pass.** That is a real piece of work and it
+should not be started without first counting how many compare→branch pairs are actually adjacent.
+**⚠️ DO NOT ENABLE `ppc_cross_block_dead_flag_elim`** on this evidence: it costs a backward dataflow over every
+function's blocks (iters=4 here) and removes nothing. `ppc_cross_block_dead_gpr_elim` is the same machinery for
+GPR slots and is **unmeasured** — it may fare better, since GPR stores are far more numerous than flag stores,
+but assume nothing: run it with its own `_audit` first.
+
 ## 🍎 APPLE ROSETTA x64->ARM: WHAT TRANSFERS, AND THE ONE THING IT TELLS US WE ARE DOING WRONG (2026-08-08)
 **User asked to "swipe stuff from Apple's Rosetta x64 to arm approach". Audited its five load-bearing techniques
 against our tree. THE HEADLINE IS AN INVERSION, and it reframes the whole memory-ordering question.**
