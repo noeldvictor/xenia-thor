@@ -1467,6 +1467,46 @@ register. If most guest functions keep <=28 vectors live, this is theoretical; i
 the dominant cost on the vector path and would reframe the whole VMX effort (which so far has been about
 shaving 2-6 uOPs per op - irrelevant next to a 6-cycle spill on every operand).
 
+## 📕📕📕 MANUAL REVIEW #3: THE GUEST'S REGISTER FILE BECAME A 2 KB MEMORY BLOCK - THAT IS THE REAL PORT COST
+**This is what reviews #1 and #2 add up to, and it is the sharpest way to state the whole problem.**
+
+**On real hardware the Xenon's registers are IN THE REGISTER FILE** - 32 GPR + 32 FPR + **128 VMX**, zero cache
+cost, 2-cycle access. Quoted: Hot Chips 17 pdf-p5 *"128 128-bit vector registers per thread"*, *"L1 Caches: 32K
+2-way I$ / 32K 4-way D$"*, *"Shared 1MB L2 cache, 8-way set associative"*; IEEE Micro 2006 pdf-p2 *"The shared L2
+allows fine-grained, dynamic allocation of cache lines between the six threads"* and *"The write-through data
+cache does not allocate cache lines on writes"*.
+
+**In our port those registers are a STRUCT IN MEMORY.** From `ppc_context.h` (its own offset comments):
+```
+r[32]    @ 0x020    256 B
+f[32]    @ 0x120    256 B
+v[128]   @ 0x220   2048 B   <-- the VMX file
+...                          PPCContext continues past 0xA20 = 2592 B
+```
+**The guest's 128 vector registers are 2 KB of memory = 32 cache lines, per guest thread.** We hold 28 of them in
+real registers (review #2); the other 100 live in that block and are reached with `LDR`/`STR`.
+
+**⇒ THE STRUCTURAL COST OF THE PORT, stated precisely:** on Xenon, VMX register access was a register-file read.
+Here, most of it is a **6-cycle L1 load** (A710 SWOG Tbl 3-30) against a **2 KB working set that competes for L1
+with the guest's actual data** - on a guest whose own L1D was only 32 KB and whose L2 was 1 MB shared six ways,
+i.e. code already written to be cache-frugal. We added 2 KB of pseudo-register traffic per thread to a workload
+that was tuned for a small cache.
+**This reframes every micro-optimisation in this file.** Shaving 2-6 ASIMD uOPs off a VMX sequence (the NaN
+fixups, the staging copies) is real but second-order next to whether the operands were in registers at all.
+**⚠️ MEASUREMENT, NOT REWRITE, IS THE NEXT STEP** (rule 4). The census that settles reviews #1-#3 together:
+per translated guest function, (a) peak live V128 values, (b) count of `PPCContext.v[]` loads/stores emitted vs
+allocated-register accesses, (c) same for `r[]`. If the hot functions sit under 28 live vectors this is
+theoretical; if they run 40+, context traffic is the dominant cost on the vector path and the fix is a
+register-allocation/caching strategy, not more peephole work.
+**📕 WHAT THE MANUALS CANNOT TELL US, and why the "Qualcomm chipset manual" hunt is a dead end:** the Arm SWOGs
+are OPTIMISATION guides - they give per-instruction latency/throughput/pipe, which is exactly what we need for
+codegen - but they deliberately do NOT give cache SIZES, because those are chosen by the SoC integrator.
+Qualcomm does not publish a CPU TRM for the SM8550 (only a product brief and datasheets), and it does not matter:
+**the 8 Gen 2 uses STOCK Arm cores (X3/A715/A710/A510), not custom Kryo**, so the four Arm SWOGs in
+`docs/reference/arm/` ARE the authoritative microarchitecture manuals for this chip. The "huge manual" is the
+**Arm ARM (DDI 0487H.a, 11,530 pages)**, already in-repo. Read L1/L2 sizes off the DEVICE
+(`/sys/devices/system/cpu/cpu*/cache/`) instead of hunting a document that is not published.
+
 ## 🧨🧨🧨 THE CONSTANT-OPERAND BUG FAMILY — FOUR FOUND, SWEEP NOW COMPLETE (2026-08-07)
 **`SrcVReg` returns the SCRATCH INDEX when an operand is constant** (a64_seq_util.h:271-277): it materialises
 the constant into v0/v1 and returns 0/1. So `s1` can BE v0 and `s2` can BE v1 — and any sequence that later uses
