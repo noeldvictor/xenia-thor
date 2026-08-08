@@ -1416,6 +1416,24 @@ Guarded by `ThorTopology::IsThorBuild()`. `thor_guest_thread_affinity_mask` alre
   BETTER than a hard pin here**: the scheduler can react to thermals, a pin cannot. Hard-pinning the CP thread
   would repeat the mistake above in the other direction.
 - `xthread.cc:1235` is the explicit `thor_guest_thread_affinity_mask` path, opt-in.
+**⚠️⚠️ A CAVEAT ON MY OWN FIX, WHICH THE A/B MUST SETTLE: `guest 0 -> cpu7` OPTIMISES SPEED, AND THE GOAL IS
+ALSO POWER.** The X3 prime is the highest-PERFORMANCE core in the SoC and also the highest-POWER one. The stated
+target is rpcs3-like behaviour - **5W and 50C** - not maximum framerate.
+- **Race-to-idle favours the big core** for bursty work: finish sooner, drop to idle, spend less total energy.
+- **But the guest main thread is not bursty** - it is a ~100%-duty thread for the whole session. For a sustained
+  full-duty load the mid cores (A715) usually win on perf/watt, because the prime core's last few hundred MHz
+  cost disproportionate voltage.
+⇒ **So the fix is unambiguously right about NOT using the A510s, and genuinely uncertain about X3 vs A715 for
+guest 0.** The A/B should therefore be THREE arms, not two, and must read thermals and power - not just
+`entry_delta`:
+| arm | mapping |
+|---|---|
+| A (before) | 1:1 - guest 0-2 on A510 littles |
+| B (now) | guest 0 -> cpu7 X3, guest 1-5 -> cpu3-6 |
+| C (worth testing) | guest 0 -> cpu3 A715, guest 1-5 -> cpu4-7 - keeps the hot thread on the efficient tier |
+**If C wins on watts at similar fps, C is the right default for this project's actual goal.** Do not conclude
+from `entry_delta` alone; that metric cannot see power, and the whole point of this goal is that we are already
+fast enough in bursts and too hot overall.
 **⚠️ NEEDS ONE A/B**: same route, thermals + `entry_delta`, old mapping vs new. One-commit revert if it regresses.
 
 ## 📕📕📕 MANUAL-DERIVED ARCHITECTURE REVIEW #1: THE REGISTER ALLOCATOR HAS ONE CLASS, AND IT IS THE SMALL ONE
