@@ -1265,6 +1265,29 @@ opening regardless of how fast the JIT is.
 (`entry_delta` 3.5x the title, different hot set) - but **the scene it reaches STALLS, so it is NOT a valid
 benchmark scene** and no fps or throughput number from it means anything yet. "Route solved, gameplay
 measurement unblocked" was half right: navigation is solved, measurement is not.
+**🔬 WAIT-TRACE DONE 2026-08-07 - THE FIVE EVENTS ARE NEVER TOUCHED BY GUEST CODE AT ALL.**
+Ran `--ez xboxkrnl_event_trace true --ei xboxkrnl_event_trace_budget 6000` plus the wait trace with
+`--ei xboxkrnl_thread_wait_trace_after_ms 110000` (delay matters - see the budget trap below). Stall reproduced,
+**6,003 event-trace lines captured**, and the five handles the stalled threads are parked on are:
+```
+F8000010   F8000018   F800004C   F80000FC   F8000104
+```
+**Every one of them appears ZERO times in the whole trace** - not set, not reset, not pulsed, not mentioned.
+The trace covers `KeSetEvent` / `NtSetEvent` / `KeResetEvent` / `NtClearEvent`, so **no guest code ever operates
+on these events**, yet five threads block on them for 30/60/90s.
+**⇒ THE MISSING SIGNAL IS KERNEL-SIDE, NOT GUEST-SIDE.** Something our HLE owes them - an I/O completion, a
+timer, an APC, or an XAM callback - never fires. That is the same shape as the Lost Odyssey stall and squarely
+in the territory the Edge kernel port targets. **Next: find who CREATES these handles** (NtCreateEvent /
+ObCreateObject trace, or a breakpoint on the handle value) - the creator identifies the subsystem that owes the
+signal, which is the actual fix site.
+**🪤 BUDGET TRAP THAT COST A RUN: `xboxkrnl_event_trace_budget` DEFAULTS TO 160.** The first trace attempt
+emitted exactly 161 lines, all consumed during boot, and showed nothing about the stall - it looked like the
+trace "didn't work". It worked fine; it ran out. Raise the budget AND use
+`xboxkrnl_thread_wait_trace_after_ms` to push the window onto the event you care about. (Note the event trace has
+a budget but NO `after_ms`; only the wait trace has one.)
+**Also: all the trace knobs ARE allowlisted** (`..._budget`, `..._after_ms`, `..._guest_tids`,
+`..._objects`), so no rebuild is needed to tune them.
+
 **Next step is a wait-trace, not a perf run:** `--xboxkrnl_thread_wait_trace=true --xboxkrnl_event_trace=true`
 (the LO workflow in the Edge-port section) to find which event is created-and-waited-but-never-set.
 
