@@ -683,7 +683,37 @@ measurement protocol never covered. It is measurable on this device, but only un
 - **Pair it with the gameplay rule:** a power number from a menu or an attract mode is as worthless as an fps
   number from one. Measure power in the same real-gameplay scene the CPU protocol already requires.
 
-## 🚨🚨🚨 THE BURNOUT `entry_delta` BASELINE IN THIS FILE IS **9x HIGHER THAN ANYTHING REPRODUCIBLE TODAY** (2026-08-08)
+## 🚨🚨🚨 **`entry_delta` IS BLIND TO THE LLVM BACKEND — THE PROJECT'S CPU A/B METRIC DOES NOT MEASURE THE SHIPPING CONFIG** (2026-08-08)
+**ROOT-CAUSED. This is the single most important finding of the day: it invalidates the CPU A/B protocol used
+throughout this file, including every "FLAT" verdict recorded on 2026-08-08.**
+The guest-entry counter is incremented by **`EmitAtomicIncrement64(current_guest_function_entry_count_)` at
+`a64_emitter.cc:4104` — in the a64 EMITTER.** The LLVM backend has **ZERO** references to `entry_count` or
+`speed_profile` (`llvm_assembler.cc`, `llvm_backend.cc`).
+⇒ **`entry_delta` counts ONLY a64-compiled functions. Under `cpu_backend_llvm=true` the LLVM-compiled majority
+is INVISIBLE, and what you are reading is the small a64 FALLBACK slice.**
+**This explains the 9x mystery below exactly, with no regression involved:**
+| | |
+|---|---|
+| documented baseline (a64 backend era, profiler saw everything) | **122-128M / 5s** (≈ 24.4M entries/sec) |
+| measured today with `--ez cpu_backend_llvm true` | **~14M / 5s** — the a64 fallback subset only |
+**⚠️ AND IT COLLIDES WITH THE STANDING DIRECTIVE.** This file mandates **AOT + LLVM as the default for every
+game**, and simultaneously prescribes `entry_delta` as *the* CPU-throughput metric ("fps is the WRONG metric for
+CPU work … read the profiler's `entry_delta`"). **Those two rules are incompatible: the prescribed metric cannot
+see the prescribed backend.** Any lever A/B'd with LLVM on and judged by `entry_delta` was scored on a
+non-representative slice of guest execution — which is the most likely reason so many of them read FLAT.
+**✅ WHAT TO DO INSTEAD (pick per lever):**
+- **a64 codegen levers** → A/B with **`--ez cpu_backend_llvm false`**, so `entry_delta` is complete and the
+  metric matches the code under test. This is valid TODAY with no new code.
+- **LLVM levers** (`cpu_backend_llvm_*`, residency/writeback/abi) → `entry_delta` is structurally useless. Either
+  add the same atomic increment to the LLVM function prolog, or use a whole-system metric (frame time on an
+  uncapped title, or wall-clock to a fixed in-game checkpoint).
+- **Never mix**: an `entry_delta` number is only comparable to another taken on the SAME backend.
+**⇒ RE-READ THE 2026-08-08 VERDICTS ACCORDINGLY.** GPR DSE (+0.8%) and LLVM residency (+0.7%) were both scored
+with LLVM on, i.e. **on the fallback slice** — they are UNMEASURED, not refuted. The structural verdicts
+(store-buffer absorption, CR stores already stripped in-block, eieio at 4 sites, timer frequency already scaled,
+RSB already balanced) rest on reasoning and code reading, and are unaffected.
+
+## 📉 (superseded by the section above, kept for the trail) THE BURNOUT `entry_delta` BASELINE LOOKED **9x HIGH** (2026-08-08)
 **This invalidates the sensitivity assumption behind every "FLAT" verdict recorded on 2026-08-08, and it may be
 a real regression. It needs resolving BEFORE any more CPU levers are measured.**
 This file states the Burnout attract baseline as **~122-128M `entry_delta` per 5s** (used to define what
