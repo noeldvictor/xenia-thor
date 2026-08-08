@@ -1486,6 +1486,31 @@ clustered (cacheable) or spread across the whole 2 KB block (review #3).
 teaching the allocator that `vec_set` can host a spilled integer, which is shared-code surgery (it would affect
 x64 too, where the same trick works via `MOVQ`), not an a64-local peephole. **Scope it accordingly.**
 
+## 📕 MANUAL REVIEW #7 - SINGLE-WORD LANE WRITES COST A 3-CYCLE DISPATCH STALL (A710 4.1/4.2)
+**Completes the §4 sweep, and it prices the FixupVmxNan_V128 rewrite that was previously "unmeasurable".**
+**§4.2 Dispatch stall, verbatim:**
+> *"In the event of a V-pipeline uOP containing **more than 1 quad-word register source, a portion or all of
+> which was previously written as one or multiple single words**, that uOP will **stall in dispatch for three
+> cycles**. This stall occurs only on the first such instance, and subsequent consumers of the same register
+> will not experience this stall."*
+**`FixupVmxNan_V128` is exactly that pattern.** Its slow path writes lanes one at a time -
+`e.ins(VReg(2).s4[lane], e.w0)` for lane 0..3 - and v2 is then consumed as a full quad-word by the code after
+it. Single-word writes feeding a multi-Q-source consumer = **3-cycle dispatch stall**, on top of the scalar
+`umov`/`cmp`/branch chain and the stack spills the function already pays.
+⇒ **This is the justification the earlier note lacked.** CLAUDE.md previously recorded the branchless rewrite
+("result is NaN AND neither input was NaN -> 0xFFC00000", ~8 vector ops, no branch, no lane writes) as an
+optimisation that could not be justified without measuring how often NaNs occur. **The dispatch stall is a
+structural cost of the LANE-WRITE SHAPE, independent of NaN frequency** - and a branchless vector select never
+writes a single word at all, so it avoids the stall by construction. The rewrite is now manual-justified.
+**§4.1 Dispatch constraints, for the record:** the A710 dispatches up to 5 MOPs / 10 uOPs per cycle, but with
+per-pipe caps - **at most 2 uOPs to V0 and 2 to V1**. So even ignoring execution width, no more than 4 vector
+uOPs can DISPATCH per cycle on a mid core, which reinforces reviews #2/#3: vector-heavy emitted sequences are
+constrained at dispatch as well as at issue.
+**✅ §4 IS NOW FULLY READ** (4.1 dispatch constraints, 4.2 dispatch stall, 4.3 GPR/VPR spills, 4.4 memory
+routines, 4.5 load/store alignment, 4.7 region forwarding, 4.8 branch alignment, 4.9 FPCR self-synchronisation,
+4.10 special register access, 4.11 register forwarding hazards). **§4 produced every actionable finding of this
+review; the instruction tables only priced things already suspected.** Read §4 first next time.
+
 ## ⚠️⚠️ THE THREE NEW a64 LEVERS ARE NOT INDEPENDENT - MEASURE THEM SEPARATELY
 **Found by reading, before wasting a device run on it.** `a64_fpcr_single_mode` **silently disables**
 `a64_vmx_fp_no_operand_copy`: turning off FPCR.FZ makes the software denormal flush mandatory
