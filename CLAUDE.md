@@ -1327,7 +1327,7 @@ shed it. **So "46->72C in 30s" was never a gameplay figure; it is mostly the com
 **⇒ THE NEXT THERMAL MEASUREMENT MUST START AFTER THE COMPILE SETTLES**, not at launch, or it measures the
 precompile and calls it gameplay. Take a steady-state baseline once `AOT precompile progress` stops, THEN drive
 into a scene.
-**✅ SOLVED SAME DAY - GEARS GAMEPLAY ROUTE, device-verified: `scratch/thor-debug/gears_gameplay_route.sh`.**
+**✅ SOLVED SAME DAY - GEARS GAMEPLAY ROUTE, device-verified: `tools/thor/gears_gameplay_route.sh`.**
 `--es hid nop --es hid_nop_button_sequence 'start@40000:1200;start@47000:1200;start@53000:1200;start@59000:1200;
 start@65000:1200;start@71000:1200;a@79000:1200;a@86000:1200;a@93000:1200;a@100000:1200;a@107000:1200;a@114000:1200'`
 lands in the **Act 1 prison corridor at ~125-150s**. Format is `buttons@delay_ms:hold_ms`, delays ABSOLUTE from
