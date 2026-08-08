@@ -1383,6 +1383,41 @@ a ~5 MINUTE run** (the user's whole session was 8,221). Same guard at `xma_conte
 the audio-priority ports are all installed and this is unaffected by them, exactly as the section below predicts.
 **This is now the largest un-fixed defect with a confirmed user-visible symptom.**
 
+## 🔥🔥🔥 MANUAL REVIEW #4 - **THE MAIN GUEST THREAD WAS HARD-PINNED TO A 2.0GHz LITTLE CORE** (FIXED)
+**The best lead on the power/heat gap in the whole review, and the purest example of the x86->ARM64 port
+diagnosis. Fixed 2026-08-07, NOT yet device-validated.**
+`XThread::SetActiveCpu` default path was `thread_->set_affinity_mask(uint64_t(1) << cpu_index)` - guest CPU N to
+host CPU N. **On homogeneous x86 that is correct and obvious. This SoC is big.LITTLE** (`thor_topology.h`):
+```
+kLittleMask = 0x07   cpu0-2 = 3x Cortex-A510 @2.0GHz
+kBigMask    = 0xF8   cpu3-6 = 2x A715 + 2x A710 @2.8GHz
+kPrimeCore  = 7      Cortex-X3 @3.19GHz
+```
+| guest CPU | got pinned to | which is |
+|---|---|---|
+| **0** (on the 360, conventionally the **MAIN GAME THREAD**) | cpu0 | **A510 @2.0GHz** |
+| 1, 2 | cpu1, cpu2 | **A510 @2.0GHz** |
+| 3, 4, 5 | cpu3, 4, 5 | A715 / A710 |
+| - | **cpu7, the X3 @3.19GHz** | **NEVER GIVEN GUEST WORK** |
+**⇒ Half the guest CPUs were on little cores and the fastest core in the chip was idle of guest work.**
+**🔑 AND IT IS A HARD PIN, NOT A PREFERENCE - THAT IS WHAT MAKES IT BAD.** `set_affinity_mask` is
+`sched_setaffinity`, so this did not merely *suggest* a little core, it **forbade Android's EAS scheduler from
+ever migrating the main guest thread to a big one.** The OS could not fix it.
+**Why it is a POWER bug and not only a speed bug:** a little core at max voltage grinding the hot thread, big
+cores idle, every frame taking longer, is strictly worse energy than the same work raced to idle on a big core.
+This is the shape of "too much power and heat for how slow".
+**FIX (`759e2b59d`):** remap the six guest CPUs onto the big cluster, preserving the distribution the game asked
+for so threads it deliberately separated stay separated - `guest 0 -> cpu7 (prime)`, `guest 1..5 -> cpu3..6`.
+Guarded by `ThorTopology::IsThorBuild()`. `thor_guest_thread_affinity_mask` already existed as a workaround but
+**defaults to 0**, so the 1:1 map is what shipped.
+**✅ FULL HARD-PIN AUDIT DONE - the other two are FINE, do not "fix" them:**
+- `command_processor.cc:874` pins the CP worker **only when `thor_gpu_thread_affinity_cpu >= 0`, default -1**,
+  so it FLOATS - and we ship `gpu_adpf_performance_hints` ON, which tells the OS to boost it. **Float + ADPF is
+  BETTER than a hard pin here**: the scheduler can react to thermals, a pin cannot. Hard-pinning the CP thread
+  would repeat the mistake above in the other direction.
+- `xthread.cc:1235` is the explicit `thor_guest_thread_affinity_mask` path, opt-in.
+**⚠️ NEEDS ONE A/B**: same route, thermals + `entry_delta`, old mapping vs new. One-commit revert if it regresses.
+
 ## 📕📕📕 MANUAL-DERIVED ARCHITECTURE REVIEW #1: THE REGISTER ALLOCATOR HAS ONE CLASS, AND IT IS THE SMALL ONE
 **User directive 2026-08-07: "still way too much power and heat for how slow... rethink major pieces from
 xbox360 straight to ARM64. USE THE FUCKING MANUALS." This section is manual-first: every number below is quoted
