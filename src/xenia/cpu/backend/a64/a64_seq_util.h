@@ -546,6 +546,12 @@ inline void PrepareVmxFpSources(A64Emitter& e, const T1& op1, const T2& op2,
   // With a64_fpcr_single_mode we never set FPCR.FZ, so the hardware is not
   // flushing denormal inputs no matter what kA64FZFlushesInputs probed -
   // the software path MUST run or VMX denormal semantics change.
+  // ⚠️ LEVER INTERACTION - a64_fpcr_single_mode SILENTLY DISABLES
+  // a64_vmx_fp_no_operand_copy. Turning off FPCR.FZ makes the software
+  // denormal flush mandatory, and the no-copy fast path below requires
+  // !flush_needed because the flush is destructive. So an A/B that enables
+  // BOTH measures single_mode only, and would wrongly conclude no_operand_
+  // copy is worthless. Measure them SEPARATELY.
   const bool flush_needed =
       cvars::a64_fpcr_single_mode ||
       !e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs);

@@ -1481,6 +1481,22 @@ clustered (cacheable) or spread across the whole 2 KB block (review #3).
 teaching the allocator that `vec_set` can host a spilled integer, which is shared-code surgery (it would affect
 x64 too, where the same trick works via `MOVQ`), not an a64-local peephole. **Scope it accordingly.**
 
+## ⚠️⚠️ THE THREE NEW a64 LEVERS ARE NOT INDEPENDENT - MEASURE THEM SEPARATELY
+**Found by reading, before wasting a device run on it.** `a64_fpcr_single_mode` **silently disables**
+`a64_vmx_fp_no_operand_copy`: turning off FPCR.FZ makes the software denormal flush mandatory
+(`flush_needed = true`), and the no-copy fast path in `PrepareVmxFpSources` is gated on `!flush_needed` because
+the flush is destructive. **Enable both and you measure single_mode alone, then wrongly conclude the no-copy
+lever is worthless.**
+| lever | default | interacts with |
+|---|---|---|
+| `a64_fpcr_single_mode` | off | **disables** `a64_vmx_fp_no_operand_copy` |
+| `a64_vmx_fp_no_operand_copy` | off | inert while `a64_fpcr_single_mode` is on |
+| `a64_spill_gprs_to_vector` (0-8) | 0 | shrinks the vector set, so it makes `set=vec` pressure WORSE - read the census with it OFF first |
+**⇒ A/B protocol for these three: one at a time, from equal thermal starts.** The tempting "enable everything
+and see" run cannot attribute anything, and two of the three actively fight each other.
+This is the same shape as the standing rule that a `--ez` A/B must pass the FULL validated set or it is
+confounded - except here the confound is between the NEW levers, not against the baseline.
+
 ## 🚨🚨🚨 MANUAL REVIEW #6 - **EVERY FPCR MODE SWITCH IS A PIPELINE BARRIER, AND WE SWITCH CONSTANTLY**
 **The single biggest CPU finding of the manual review, and a textbook guest/host mismatch.**
 `cortex-a710-software-optimization-guide.pdf` **Table 4-3, "Special-purpose register write accesses"**:
