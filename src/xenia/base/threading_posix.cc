@@ -11,6 +11,7 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/chrono_steady_cast.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/threading_timer_queue.h"
@@ -49,6 +50,18 @@
 #else
 #define XE_HAS_SIGEV_THREAD_ID 0
 #endif
+
+DEFINE_bool(
+    threading_per_object_condvar, false,
+    "Give each event/semaphore/mutant/timer its own condition variable for "
+    "single-object waits, instead of parking every waiter on one process-wide "
+    "condvar. With the shared condvar, EVERY signal wakes EVERY parked guest "
+    "thread; each one re-evaluates a handle it has no interest in and parks "
+    "again. Those wakeups do no guest work and stop cores reaching deep idle, "
+    "which is watts. WaitMultiple still uses the shared condvar, but signals "
+    "now only poke it while a multi-wait is actually registered. UNVALIDATED "
+    "ON DEVICE - a mistake here is a hang, not a wrong pixel.",
+    "Threading");
 
 namespace xe {
 namespace threading {
@@ -224,11 +237,15 @@ class PosixConditionBase {
     if (predicate()) {
       executed = true;
     } else {
+      // Latched once (see PerObjectCondvars) so a waiter and a signaler can
+      // never disagree about which condvar this object uses - that would be a
+      // lost wakeup, i.e. a hang.
+      std::condition_variable& cv = PerObjectCondvars() ? local_cond_ : cond_;
       if (timeout == std::chrono::milliseconds::max()) {
-        cond_.wait(lock, predicate);
+        cv.wait(lock, predicate);
         executed = true;  // Did not time out;
       } else {
-        executed = cond_.wait_for(lock, timeout, predicate);
+        executed = cv.wait_for(lock, timeout, predicate);
       }
     }
     if (executed) {
@@ -262,6 +279,13 @@ class PosixConditionBase {
     // if the thread is suspended between locking and waiting
     std::unique_lock<std::mutex> lock(PosixConditionBase::mutex_);
 
+    // Declared AFTER the lock, so it is destroyed BEFORE the lock is released.
+    // Registering under mutex_ is what makes the gate race-free: a signaler
+    // holds the same mutex when it reads the count, so either it sees us
+    // registered (and pokes the shared condvar), or it has not yet changed the
+    // state we re-test below before parking. Either way no wakeup is lost.
+    MultiWaitRegistration multi_wait_registration;
+
     bool wait_success = true;
     // If the timeout is infinite, wait without timeout.
     // The predicate will be checked before beginning the wait
@@ -292,15 +316,61 @@ class PosixConditionBase {
 
   virtual void* native_handle() const { return cond_.native_handle(); }
 
+  // Read the cvar EXACTLY ONCE, on first use. Waiters and signalers must agree
+  // on which condvar an object uses for the whole life of the process; if the
+  // value could change between a park and the signal that should wake it, the
+  // wakeup goes to a condvar nobody is on and the thread never wakes.
+  static bool PerObjectCondvars() {
+    static const bool kEnabled = cvars::threading_per_object_condvar;
+    return kEnabled;
+  }
+
+  // Wake everything that could be waiting on THIS object. Caller must hold
+  // mutex_, exactly as the bare cond_.notify_all() calls this replaces did.
+  void NotifyWaiters() {
+    if (!PerObjectCondvars()) {
+      // Legacy behaviour: single waiters are parked on the shared condvar, so
+      // it is the only one that can wake them.
+      cond_.notify_all();
+      return;
+    }
+    local_cond_.notify_all();
+    // Only WaitMultiple parks on the shared condvar now, and only while
+    // registered. With no multi-wait outstanding this notify is pure waste -
+    // and it is the wasted wakeup that this whole change exists to remove.
+    if (multi_wait_refs_.load(std::memory_order_relaxed) != 0) {
+      cond_.notify_all();
+    }
+  }
+
  protected:
   inline virtual bool signaled() const = 0;
   inline virtual void post_execution() = 0;
+
+  // Scoped ++/-- on multi_wait_refs_. Must be constructed and destroyed under
+  // mutex_ (see the use site in WaitMultiple).
+  struct MultiWaitRegistration {
+    MultiWaitRegistration() {
+      multi_wait_refs_.fetch_add(1, std::memory_order_relaxed);
+    }
+    ~MultiWaitRegistration() {
+      multi_wait_refs_.fetch_sub(1, std::memory_order_relaxed);
+    }
+  };
+
+  // Per-object condvar for single-object waits. Still protected by the shared
+  // mutex_, so all existing locking order (and the issue #1677 hazard noted in
+  // WaitMultiple) is unchanged - the ONLY thing that differs is which condvar
+  // a single waiter parks on.
+  std::condition_variable local_cond_;
+  static std::atomic<uint32_t> multi_wait_refs_;
   static std::condition_variable cond_;
   static std::mutex mutex_;
 };
 
 std::condition_variable PosixConditionBase::cond_;
 std::mutex PosixConditionBase::mutex_;
+std::atomic<uint32_t> PosixConditionBase::multi_wait_refs_{0};
 
 // There really is no native POSIX handle for a single wait/signal construct
 // pthreads is at a lower level with more handles for such a mechanism.
@@ -319,7 +389,7 @@ class PosixCondition<Event> : public PosixConditionBase {
   bool Signal() override {
     auto lock = std::unique_lock<std::mutex>(mutex_);
     signal_ = true;
-    cond_.notify_all();
+    NotifyWaiters();
     return true;
   }
 
@@ -360,7 +430,7 @@ class PosixCondition<Semaphore> : public PosixConditionBase {
       auto lock = std::unique_lock<std::mutex>(mutex_);
       if (out_previous_count) *out_previous_count = count_;
       count_ += release_count;
-      cond_.notify_all();
+      NotifyWaiters();
       return true;
     }
     return false;
@@ -370,7 +440,7 @@ class PosixCondition<Semaphore> : public PosixConditionBase {
   inline bool signaled() const override { return count_ > 0; }
   inline void post_execution() override {
     count_--;
-    cond_.notify_all();
+    NotifyWaiters();
   }
   uint32_t count_;
   const uint32_t maximum_count_;
@@ -394,7 +464,7 @@ class PosixCondition<Mutant> : public PosixConditionBase {
       --count_;
       // Free to be acquired by another thread
       if (count_ == 0) {
-        cond_.notify_all();
+        NotifyWaiters();
       }
       return true;
     }
@@ -426,7 +496,7 @@ class PosixCondition<Timer> : public PosixConditionBase {
   bool Signal() override {
     std::lock_guard<std::mutex> lock(mutex_);
     signal_ = true;
-    cond_.notify_all();
+    NotifyWaiters();
     return true;
   }
 
@@ -836,7 +906,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
 
       exit_code_ = exit_code;
       signaled_ = true;
-      cond_.notify_all();
+      NotifyWaiters();
     }
     if (is_current_thread) {
       pthread_exit(reinterpret_cast<void*>(exit_code));
@@ -1253,7 +1323,9 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
   std::unique_lock<std::mutex> lock(mutex_);
   thread->handle_.exit_code_ = 0;
   thread->handle_.signaled_ = true;
-  cond_.notify_all();
+  // Static start routine: mutex_ resolves because it is static, but the wake
+  // must name the object whose waiters are being woken.
+  thread->handle_.NotifyWaiters();
 
   current_thread_ = nullptr;
   return nullptr;
