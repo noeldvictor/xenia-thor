@@ -24,6 +24,55 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **read a CPU manual** | `docs/reference/arm/README.md`, and §4 "Special considerations" of the SWOGs FIRST | §4 is where the actionable advice is - the instruction tables only price things you already suspect |
 | **edit this file with a script** | `Config + git rules` | I truncated it to 0 bytes and pushed it once - encode before opening, gate `git add` on size |
 
+## 🚨🚨🚨 TOP PRIORITY (user, 2026-08-08): **POWERPC/GPU → ARM64 DIRECTLY. KILL THE x86-SHAPED MIDDLE.**
+*"make sure it's our top priority to remove powerpc to x64/x86 to arm64 shit — we want emulate powerpc/gpu to
+arm64"* — this now outranks the individual lever hunts below.
+**⚠️ READ `THERE IS NO x86/x64 LAYER TO REMOVE` FIRST: there is no x86 code being executed or translated
+through.** 0 `x64_` sources compile into the APK. **What IS real is x86-SHAPED STRUCTURE** — decisions that only
+made sense for a 16-register, 2-operand, TSO host, carried into the ARM64 port. That is the removal target, and
+these are the confirmed instances, ranked by how structural they are:
+| x86-shaped structure | why it existed | status |
+|---|---|---|
+| **7 allocatable GPRs / 28 vectors, everything else spilled to a 2 KB `PPCContext` block** | x64 had 16 GPRs and the port copied the budget shape | **THE BIG ONE — reviews #1/#2/#3, unfixed** |
+| per-block context spill/reload at every boundary | register allocator is block-scoped | **12,942 dead stores removed by `ppc_cross_block_dead_gpr_elim`, see below** |
+| `PrepareVmxFpSources` staging copies | SSE is 2-operand destructive | lever exists, default-off |
+| `FixupVmxMaxMinNan` | x86 `MAXPS` disagrees with PPC; **ARM agrees** | ✅ deleted (was a correctness bug too) |
+| shifts staged through scratch | x86 shifts are destructive, count in `cl` | ✅ fixed (`02ae6ec83`) |
+| **eager CR materialisation** | — | ❌ **already optimised away by the pipeline; measured, no headroom** |
+**✅✅ MEASURED 2026-08-08 — `ppc_cross_block_dead_gpr_elim` ACTUALLY WORKS (unlike its flag sibling):**
+```
+CrossBlockGprDSE over a full Gears AOT: 33,287 audited functions, 12,942 dead GPR stores REMOVED
+(the flag variant, same machinery: 0 removed)
+```
+**This is the x86-shaped per-block context spill, being deleted.** `entry_delta` at the title was 1.07M vs a
+1.07M baseline — **unchanged, but the title screen is a weak CPU benchmark**, so read that as UNMEASURED, not as
+"no win". Bit-exact by construction (removes only stores dead on every successor path; calls/returns/traps force
+all GPRs live). **Needs a real gameplay A/B before flipping the default — but it is the first lever in this whole
+sweep that demonstrably does work.**
+
+## 🌟🌟🌟 THE REFERENCE THE USER POINTS AT: **UNLEASHED RECOMPILED / XenonRecomp** (2026-08-08, NOT yet studied in depth)
+*"the sonic unleashed recomp from 360 shows miracle tech"* — correct, and it is the purest form of what the
+priority above is asking for. **`XenonRecomp` STATICALLY recompiles an Xbox 360 PPC executable into C++ SOURCE,
+which is then compiled by clang into a NATIVE binary** (companion `XenosRecomp` does Xenos shader bytecode →
+HLSL). Same lineage as N64Recomp. **There is no JIT, no guest→host dispatch, and no runtime translation at all.**
+**🔑 WHY IT MATTERS TO US SPECIFICALLY — it dissolves the exact costs this file keeps measuring:**
+| our cost | what static recomp does to it |
+|---|---|
+| ~12s AOT compile every launch, **+14C before gameplay** | **gone** — compilation happened on the developer's machine |
+| 7 GPRs / 28 vectors, 2 KB context block (reviews #1-#3) | **gone** — clang allocates registers across the WHOLE function with all 31 GPRs / 32 vectors |
+| per-call prolog paid ~24M times/sec | **gone** — they are real native calls |
+| per-block context spill/reload | **gone** — ordinary C++ locals, SSA'd by the native compiler |
+**⚠️ AND THE HONEST LIMIT, so nobody proposes replacing the emulator with it:** it is **PER-TITLE**, needs the
+game's binary statically analysed plus hand-written HLE for the OS/GPU surface, and does not generalise to "run
+any 360 disc". **We are a general emulator; they are a port of one game.** Those are different products.
+**⇒ WHAT IS ACTUALLY TRANSFERABLE, and it is a lot:** their model is *"lower a whole function to a form a real
+optimising compiler can register-allocate across"*. **We already have the machinery for that — the LLVM AOT
+backend** — but ours lowers HIR that was shaped by a block-scoped allocator with a 7-GPR budget, so it hands
+clang code that has already been pessimised. **The question worth answering next: how much of reviews #1-#3
+disappears if the LLVM path stops modelling the a64 register budget and lets LLVM see whole-function values?**
+That is the highest-leverage open question in the tree and it is squarely on the user's stated priority.
+**STATUS: NOT STUDIED IN DEPTH. Not cloned, not read.** Do that before making any claim about their codegen.
+
 ## Goal
 Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740). **Blue Dragon → 30fps @ 720p
 full foliage; Burnout/Gears/Lost Odyssey/Banjo → 30-60.** Ship every win as a cvar-gated, per-game
