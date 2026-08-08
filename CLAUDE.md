@@ -44,7 +44,29 @@ these are the confirmed instances, ranked by how structural they are:
 CrossBlockGprDSE over a full Gears AOT: 33,287 audited functions, 12,942 dead GPR stores REMOVED
 (the flag variant, same machinery: 0 removed)
 ```
-**This is the x86-shaped per-block context spill, being deleted.** `entry_delta` at the title was 1.07M vs a
+**This is the x86-shaped per-block context spill, being deleted.**
+**❌❌ BUT IT BUYS NOTHING MEASURABLE — A/B'd ON BURNOUT, UNCAPPED, EQUAL THERMAL STARTS (2026-08-08):**
+| arm | entry_delta avg | cold | end |
+|---|---|---|---|
+| base | **12.3M** | 39C | 61C |
+| `ppc_cross_block_dead_gpr_elim` | **12.4M** | 40C | 61C |
+**+0.8%, inside noise** (per-window spread 10.6-14.1M, ~30%), and **identical end temperature**. 12,942 dead
+stores removed, zero measurable effect.
+**⚠️ CAVEAT ON MY OWN RUN: `entry_delta` was ~12M, but this file's Burnout ATTRACT baseline is 122-128M/5s —
+10x higher. So the run sat on the TITLE SCREEN and never reached attract.** Title-tier evidence, weaker than
+intended. It does NOT refute a gameplay win; it does show the change is not large enough to surface where a
++2.88% (`rlwinm`) previously did on the same title and protocol.
+**🔑 WHY THIS IS THE EXPECTED RESULT, and it closes a loop with a lesson already in this file:** dead stores
+to `PPCContext` are **independent stores absorbed by the store buffer**. They were never on the critical path,
+so deleting them frees nothing. This is precisely the `ORR`+`STP` result inverted — that experiment measured
+SLOWER after *reducing* instruction count, because it serialised independent stores through arithmetic. **On
+this core, stores are cheap and plentiful (2 store pipes + a store buffer); removing them is not a win, and
+adding dependencies to avoid them is a loss.** Instruction count is not the objective.
+**⇒ DO NOT FLIP THE DEFAULT** on the strength of "12,942 stores removed". The removal count is real and the
+throughput effect is not. If anyone retries this, do it in a genuine gameplay scene — but expect the same, for
+the store-buffer reason above.
+
+ `entry_delta` at the title was 1.07M vs a
 1.07M baseline — **unchanged, but the title screen is a weak CPU benchmark**, so read that as UNMEASURED, not as
 "no win". Bit-exact by construction (removes only stores dead on every successor path; calls/returns/traps force
 all GPRs live). **Needs a real gameplay A/B before flipping the default — but it is the first lever in this whole
