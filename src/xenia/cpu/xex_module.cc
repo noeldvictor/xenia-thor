@@ -16,6 +16,7 @@
 
 #include "xenia/base/byte_order.h"
 #include "xenia/base/cvar.h"
+#include "xenia/base/thor_topology.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
@@ -31,6 +32,80 @@
 #include "third_party/crypto/rijndael-alg-fst.c"
 #include "third_party/crypto/rijndael-alg-fst.h"
 #include "third_party/pe/pe_image.h"
+
+#if XE_PLATFORM_ANDROID
+#include <sched.h>
+#include <sys/resource.h>
+#endif
+
+DEFINE_int32(
+    cpu_precompile_worker_core_policy, 0,
+    "Thor POWER: which cores the AOT precompile workers run on. 0 = leave it "
+    "to the OS (current behaviour). 1 = the A510 little cluster. 2 = the "
+    "mid-core worker mask (cpu3-6, leaving the X3 alone). Also renices the "
+    "workers to background so EAS stops treating them as urgent.\n"
+    "WHY THIS IS A POWER LEVER: the precompile is the STARTUP HEAT - "
+    "device-measured 261-340% CPU and 40C->68C before any gameplay. It is "
+    "throughput-bound and latency-insensitive (it sits behind a progress bar "
+    "and is joined before the guest runs), which is the exact profile where "
+    "the efficient cores win on perf/watt. Racing it on big cores buys a "
+    "shorter progress bar and spends the entire thermal budget before the "
+    "game starts.\n"
+    "TRADE-OFF, MEASURE IT: pinning to the little cluster makes the compile "
+    "take LONGER in wall-clock. The bet is that starting gameplay at a much "
+    "lower temperature is worth a slower load. UNVALIDATED - default 0.",
+    "CPU");
+
+namespace {
+
+// Cores the precompile workers are confined to, or 0 for "OS decides".
+uint64_t PrecompileWorkerCoreMask() {
+  if (!xe::ThorTopology::IsThorBuild()) {
+    return 0;
+  }
+  switch (cvars::cpu_precompile_worker_core_policy) {
+    case 1:
+      return xe::ThorTopology::LittleCoreMask();
+    case 2:
+      return xe::ThorTopology::WorkerCoreMask();
+    default:
+      return 0;
+  }
+}
+
+uint32_t PrecompileWorkerCoreCount() {
+  return static_cast<uint32_t>(xe::bit_count(PrecompileWorkerCoreMask()));
+}
+
+// Applied from INSIDE each worker, not at the creation site - the same reason
+// XenDroid's bc257ce49 moved audio priority inside the thread.
+void ApplyPrecompileWorkerCorePolicy() {
+#if XE_PLATFORM_ANDROID
+  uint64_t mask = PrecompileWorkerCoreMask();
+  if (!mask) {
+    return;
+  }
+  cpu_set_t set;
+  CPU_ZERO(&set);
+  for (int c = 0; c < 64; ++c) {
+    if (mask & (uint64_t(1) << c)) {
+      CPU_SET(c, &set);
+    }
+  }
+  if (sched_setaffinity(0, sizeof(set), &set) != 0) {
+    XELOGW("Precompile worker: sched_setaffinity(0x{:X}) failed", mask);
+  }
+  // Renice to background. Lowering priority is permitted where RAISING it
+  // EPERMs on Android, and it is the half that matters here: it stops EAS
+  // treating a CPU-saturating compile as urgent and boosting for it.
+  if (setpriority(PRIO_PROCESS, 0, 10) != 0) {
+    XELOGW("Precompile worker: setpriority(nice 10) failed");
+  }
+#endif
+}
+
+}  // namespace
+
 
 DEFINE_bool(
     log_import_thunks, false,
@@ -1433,11 +1508,19 @@ void XexModule::PrecompileGuestFunctions() {
   if (requested > 0) {
     worker_count = static_cast<uint32_t>(requested);
   } else {
+    // NOTE: hardware_concurrency() is 8 here and counts the three 2.0GHz A510
+    // littles as equal to the 3.19GHz X3 - the same homogeneous assumption that
+    // made XThread::SetActiveCpu pin the main guest thread to a little core.
     unsigned hw = std::thread::hardware_concurrency();
     worker_count = hw > 3 ? hw - 2 : 1;
   }
   if (worker_count > 6) {
     worker_count = 6;
+  }
+  // Do not oversubscribe a cluster we are about to pin to: 6 workers on 3 A510s
+  // just adds context switches to the same throughput.
+  if (uint32_t pinned = PrecompileWorkerCoreCount()) {
+    worker_count = std::min(worker_count, pinned);
   }
 
   precompile_stop_.store(false, std::memory_order_relaxed);
@@ -1511,6 +1594,7 @@ void XexModule::PrecompileGuestFunctions() {
   for (uint32_t t = 0; t < worker_count; ++t) {
     precompile_threads_.emplace_back([this, deadline, &compiled, &active]() {
       xe::threading::set_name("PrecompileJIT");
+      ApplyPrecompileWorkerCorePolicy();
       int empty_rounds = 0;
       while (!precompile_stop_.load(std::memory_order_relaxed)) {
         if (std::chrono::steady_clock::now() >= deadline) {

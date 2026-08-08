@@ -864,6 +864,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_fpcr_single_mode");
             copyBooleanExtra(intent, launchArguments, "a64_vmx_nan_fixup_branchless");
             copyBooleanExtra(intent, launchArguments, "a64_fold_cmp_immediates");
+            // 0=OS, 1=A510 littles, 2=cpu3-6. The AOT precompile is the startup
+            // heat (261-340% CPU, 40C->68C) and is latency-insensitive.
+            copyIntExtra(intent, launchArguments, "cpu_precompile_worker_core_policy");
             // Deschedules known guest busy-waits so the core can reach idle.
             // Semantics-preserving: the real guest body still runs.
             copyStringExtra(intent, launchArguments, "arm64_guest_spin_throttle_functions");
