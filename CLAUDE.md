@@ -93,6 +93,26 @@ backend** — but ours lowers HIR that was shaped by a block-scoped allocator wi
 clang code that has already been pessimised. **The question worth answering next: how much of reviews #1-#3
 disappears if the LLVM path stops modelling the a64 register budget and lets LLVM see whole-function values?**
 That is the highest-leverage open question in the tree and it is squarely on the user's stated priority.
+**🚨🚨 AND THE XenonRecomp IDEA IS ALREADY IMPLEMENTED HERE, DEFAULT-OFF, UNMEASURED — FOUND 2026-08-08.**
+Before cloning anything, grep first: the LLVM backend already carries the whole-function residency work, and one
+of the cvars **cites XenonRecomp by name**:
+| cvar | what it does | default |
+|---|---|---|
+| `cpu_backend_llvm_context_residency` | promote LOAD/STORE_CONTEXT to entry-block **allocas that mem2reg lifts into host registers** instead of ctx+offset memory | **off** |
+| `cpu_backend_llvm_residency_writeback` | STORE_CONTEXT writes only the alloca; flush to context **only at call/return barriers**. Its help calls it *"the #1 LLVM perf lever (guest thread is memory-bound)"* | **off** |
+| `cpu_backend_llvm_residency_abi` | *"XenonRecomp **non_volatile_as_local** / Box64 CALLRET class, the #1 lever toward big CPU speedups"* — don't reload PPC callee-saved regs (r14-r31, f14-f31, v14-v31 **and v64-v127**) after a guest call | **off** |
+**This is reviews #1-#3, the user's "PPC → ARM64 direct" priority, and the Sonic-Unleashed technique — the same
+thing from three directions — and it is sitting behind three default-off booleans.** The residency help even
+records the device-confirmed diagnosis: *"the IR has ~99 ctx memory ops + 1 alloca = NO register residency"*,
+i.e. **clang currently never sees guest state in registers at all**, which is exactly why the 7-GPR HIR budget
+(review #1) is not the whole story — on the LLVM path the guest registers are not even candidates for host
+registers.
+**⚠️ MEASURING THESE CHANGES THE OBJECT-CACHE KEY.** The cache dir is keyed `…o<opt>r<residency>w<writeback>
+a<abi>`, so every cached object is `o2r0w0a0` today. **Turning residency on invalidates the entire 60k-object
+cache and forces a full recompile**, so the first run of each arm is slow and hot — budget for it and do not
+mistake it for the lever being expensive at runtime.
+**All three are allowlisted.** Measurement in progress; record the result here rather than re-deriving.
+
 **STATUS: NOT STUDIED IN DEPTH. Not cloned, not read.** Do that before making any claim about their codegen.
 
 ## Goal
