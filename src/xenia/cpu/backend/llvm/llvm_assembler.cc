@@ -65,6 +65,18 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #endif  // XE_LLVM_BACKEND_ENABLED
 
+DEFINE_bool(
+    cpu_llvm_guest_entry_census, false,
+    "Count guest-function entries through LLVM-COMPILED code, so a CPU A/B run "
+    "in the SHIPPING config (cpu_backend_llvm=true) can see the guest at all. "
+    "The a64 profiler's entry_delta is emitted by A64Emitter and therefore "
+    "counts ONLY a64-compiled functions - device-proven, same title and scene, "
+    "one flag: LLVM on = peak 14.1M/5s, LLVM off = peak 130.6M/5s (9.3x). Every "
+    "lever A/B'd with LLVM on was scored on ~11% of guest execution. Emits one "
+    "relaxed atomic increment per guest function entry, so it is NOT free - "
+    "measurement only, never ship it on.",
+    "CPU");
+
 DECLARE_bool(cpu_llvm_no_runtime_compiles);
 DECLARE_int32(cpu_backend_llvm_opt);
 DECLARE_string(cpu_backend_llvm_range_lo);
@@ -166,6 +178,29 @@ namespace xe {
 namespace cpu {
 namespace backend {
 namespace llvm_backend {
+
+// Total guest-function entries through LLVM-COMPILED code.
+//
+// WHY THIS EXISTS (2026-08-08): the a64 profiler's entry counter is emitted by
+// A64Emitter (a64_emitter.cc:4104) into a per-A64Function slot, so it counts
+// ONLY a64-compiled functions. Under the shipping config (cpu_backend_llvm=true)
+// the LLVM-compiled majority was invisible, and `entry_delta` reported the small
+// a64 FALLBACK slice. Device-proven on one flag, same title and scene:
+//     cpu_backend_llvm true  -> peak  14.1M / 5s
+//     cpu_backend_llvm false -> peak 130.6M / 5s   (9.3x)
+// So every CPU lever A/B'd in the shipping config was scored on ~11% of guest
+// execution, which is why so many read FLAT.
+//
+// A per-function counter would mean moving profile_entry_count_ down to
+// GuestFunction AND retyping the A64Function*-keyed speed_profile_functions_
+// registry. An A/B does not need per-function attribution - it needs a complete
+// TOTAL - so this is one global counter instead of that surgery.
+std::atomic<uint64_t> g_llvm_guest_entry_count{0};
+
+uint64_t LlvmGuestEntryCount() {
+  return g_llvm_guest_entry_count.load(std::memory_order_relaxed);
+}
+
 
 using namespace xe::cpu::hir;
 
@@ -700,6 +735,18 @@ static llvm::Value* ReadReg(llvm::IRBuilder<>& b, llvm::Module* mod,
 bool Lowerer::Run(HIRBuilder* builder) {
   auto* entry = llvm::BasicBlock::Create(ctx_, "entry", fn_);
   b_.SetInsertPoint(entry);
+  if (cvars::cpu_llvm_guest_entry_census) {
+    // Relaxed: a monotonic counter read from another thread needs no ordering,
+    // and this is on EVERY guest function entry - the hottest path there is.
+    auto* i64 = llvm::Type::getInt64Ty(ctx_);
+    auto* slot = b_.CreateIntToPtr(
+        llvm::ConstantInt::get(i64,
+                               reinterpret_cast<uint64_t>(&g_llvm_guest_entry_count)),
+        b_.getPtrTy());
+    b_.CreateAtomicRMW(llvm::AtomicRMWInst::Add, slot,
+                       llvm::ConstantInt::get(i64, 1), llvm::MaybeAlign(8),
+                       llvm::AtomicOrdering::Monotonic);
+  }
   ctx_ptr_ = b_.CreateIntToPtr(ReadReg(b_, mod_, "x20"), b_.getPtrTy(), "ctx");
   membase_ =
       b_.CreateIntToPtr(ReadReg(b_, mod_, "x21"), b_.getPtrTy(), "membase");

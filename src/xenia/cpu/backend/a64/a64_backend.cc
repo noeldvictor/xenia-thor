@@ -66,6 +66,7 @@
 #include "xenia/cpu/xex_module.h"
 
 DECLARE_uint32(cpu_watch_guest_write_page);
+DECLARE_bool(cpu_llvm_guest_entry_census);
 DECLARE_bool(a64_inline_kf_lower_irql_apc_guard);
 DECLARE_bool(a64_kf_lower_irql_apc_guard_audit);
 DECLARE_uint32(a64_kf_lower_irql_apc_guard_native_poll_interval);
@@ -895,6 +896,16 @@ DEFINE_bool(
     "Thor ARM64 speed lane: count A64 RtlLeaveCriticalSection recursive, "
     "final-unlock, restore-to-native, and native fallback paths.",
     "a64");
+
+namespace xe {
+namespace cpu {
+namespace backend {
+namespace llvm_backend {
+uint64_t LlvmGuestEntryCount();
+}
+}
+}
+}
 
 namespace xe {
 namespace cpu {
@@ -2330,6 +2341,18 @@ void A64Backend::LogSpeedProfile() {
       g2h.first, direct.second, direct.first, indirect.second, indirect.first,
       extern_calls.second, extern_calls.first, resolves.second, resolves.first,
       resolve_misses.second, resolve_misses.first);
+
+  // entry_delta above counts ONLY a64-compiled functions (the increment is
+  // emitted by A64Emitter). Under cpu_backend_llvm=true the LLVM-compiled
+  // majority is invisible, so print its counter alongside or the number is a
+  // fallback-slice reading that looks like whole-guest throughput.
+  if (cvars::cpu_llvm_guest_entry_census) {
+    static uint64_t last_llvm_entries = 0;
+    uint64_t now_llvm = xe::cpu::backend::llvm_backend::LlvmGuestEntryCount();
+    XELOGW("LLVM guest entries: total={} delta={}", now_llvm,
+           now_llvm - last_llvm_entries);
+    last_llvm_entries = now_llvm;
+  }
 
   if (cvars::a64_rtl_leave_fastpath_audit) {
     auto recursive_inline =

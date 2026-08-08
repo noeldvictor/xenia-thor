@@ -867,6 +867,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             // Counts eieio/sync translation sites - rule 4 before weakening
             // eieio to a store-only barrier (dmb ishst).
             copyBooleanExtra(intent, launchArguments, "cpu_ppc_barrier_census");
+            // entry_delta is a64-only; this makes the guest visible under LLVM.
+            copyBooleanExtra(intent, launchArguments, "cpu_llvm_guest_entry_census");
             // 0=OS, 1=A510 littles, 2=cpu3-6. The AOT precompile is the startup
             // heat (261-340% CPU, 40C->68C) and is latency-insensitive.
             copyIntExtra(intent, launchArguments, "cpu_precompile_worker_core_policy");
