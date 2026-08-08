@@ -1846,6 +1846,36 @@ function's blocks (iters=4 here) and removes nothing. `ppc_cross_block_dead_gpr_
 GPR slots and is **unmeasured** — it may fare better, since GPR stores are far more numerous than flag stores,
 but assume nothing: run it with its own `_audit` first.
 
+## ❄️❄️❄️ **LLVM CONTEXT RESIDENCY RUNS 5C COOLER AT EQUAL THROUGHPUT — REPLICATED 2/2** (2026-08-08)
+**The first positive power result of the whole sweep, measured with the corrected metric
+(`cpu_llvm_guest_entry_census`, which finally makes LLVM-compiled guest execution visible).**
+| pair | arm | throughput | cold | end |
+|---|---|---|---|---|
+| attract-tier | base | 13.5M (a64 slice) | 40C | **67C** |
+| | `+residency +writeback` | 13.6M | 40C | **63C** |
+| LLVM-visible metric | base | **0.7M LLVM entries** | 40C | **67C** |
+| | `+residency +writeback` | **0.7M LLVM entries** | 40C | **62C** |
+**Identical throughput in both pairs, 4-5C cooler with residency on, from IDENTICAL 40C cold starts, replicated
+across two independent runs on different metrics.** Equal work at lower temperature is less energy — which is
+exactly the 5W/50C goal, and it is the ONLY lever in this sweep to show it.
+**⚠️ WHAT IS AND IS NOT ESTABLISHED.** Established: the thermal delta, twice, at matched starts. **Not**
+established: watts (still needs the cable out — see the watts protocol), gameplay-scene behaviour, and *why*.
+The plausible mechanism is the one the lever's own help states — guest registers become host registers instead of
+`ctx+offset` memory traffic, and memory traffic is energy — but that is reasoning, not measurement.
+**✅ Also now device-validated as STABLE across four runs: title reached, 0 faults / SIGTRAP / Scudo,
+27,770+ functions compiled through the residency IR path.**
+**⇒ RECOMMENDATION: this is the lever worth taking to a gameplay A/B and a real watt measurement.** Do NOT flip
+the default on a thermal proxy alone, but nothing else measured today earned a second look and this did.
+
+## 🚨 THE CENSUS ALSO PROVES ENTRY COUNTS ARE **NOT COMPARABLE ACROSS BACKENDS** (refines the LLVM-blind finding)
+With the counter working, the shipping config reports **~14M a64 entries + ~0.8M LLVM entries ≈ 15M / 5s**,
+while a64-only reports **130M / 5s**. That is NOT the guest doing 9x less work: **the LLVM run ended HOTTER
+(67C) than the a64-only run (59C)**, so the CPU was at least as busy. **LLVM inlines guest functions and uses
+direct calls, so the same work costs far fewer FUNCTION ENTRIES.**
+⇒ **Adding the counter fixed VISIBILITY, not COMPARABILITY.** An entry count is only ever meaningful against
+another entry count **from the same backend** — which is exactly how the residency pair above was run, and why
+that pair is valid. **Never compare an a64 entry_delta to an LLVM one and conclude anything about speed.**
+
 ## 🍎 APPLE ROSETTA x64->ARM: WHAT TRANSFERS, AND THE ONE THING IT TELLS US WE ARE DOING WRONG (2026-08-08)
 **User asked to "swipe stuff from Apple's Rosetta x64 to arm approach". Audited its five load-bearing techniques
 against our tree. THE HEADLINE IS AN INVERSION, and it reframes the whole memory-ordering question.**
