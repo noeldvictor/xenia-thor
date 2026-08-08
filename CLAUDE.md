@@ -427,6 +427,20 @@ the algorithm and stresses it under WSL g++ (8 objects, 16 single-waiters, 2 mul
 reported both modes "losing" hundreds. **Setting an already-set auto-reset event is a no-op, so signals
 legitimately coalesce** — raw signal count is not a liveness invariant. Corrected to count state-CHANGING
 signals, which closes exactly. *A stress test that fails on BOTH arms is usually measuring itself.*
+**🧪 LIFETIME HAZARD THE STRESS TEST STRUCTURALLY COULD NOT SEE — CHECKED, AND IT IS CLOSED.**
+`std::condition_variable`'s destructor requires **no waiters**. The old `cond_` was **static**, so it outlived
+every object; `local_cond_` is a **member**, so destroying an event while a thread is parked on it would be UB —
+and worse than the old failure mode, because the old shared condvar would at least still wake the orphan, where a
+destroyed per-object condvar can leave it parked **forever**. The distilled harness cannot model this: its objects
+outlive every thread by construction.
+**Why it cannot happen here:** the waiter holds a **strong reference for the whole wait**. `NtWaitForSingleObject
+Ex` does `auto object = object_table()->LookupObject<XObject>(handle)` and keeps that `object_ref` in scope across
+`object->Wait(...)` (xboxkrnl_threading.cc:1516-1523); the multi-wait path holds `object_ref<XObject> objects[64]`
+the same way (:1565, :1610). `object_ref` retains on construction and releases on destruction (xobject.h:375/383,
+412). So a concurrent `NtClose` drops only the HANDLE's reference — the XObject, the `xe::threading::Event` it
+owns, and therefore `local_cond_`, all stay alive until the waiter returns.
+**⇒ If anyone ever adds a wait path that parks WITHOUT holding an `object_ref`, this becomes a hang.** That is
+the invariant to preserve, and it is worth re-checking before enabling the lever.
 **⚠️ UNMEASURED: any watt or temperature figure, and the real-world ratio.** The scenario keeps a multi-wait
 registered almost continuously so the gate rarely closes; the 44% comes entirely from single waiters no longer
 being woken. **Whether guest multi-waits are that persistent is unknown** — if they are rarer than in the test,
