@@ -1563,6 +1563,46 @@ from `entry_delta` alone; that metric cannot see power, and the whole point of t
 fast enough in bursts and too hot overall.
 **⚠️ NEEDS ONE A/B**: same route, thermals + `entry_delta`, old mapping vs new. One-commit revert if it regresses.
 
+## 🍎 APPLE ROSETTA x64->ARM: WHAT TRANSFERS, AND THE ONE THING IT TELLS US WE ARE DOING WRONG (2026-08-08)
+**User asked to "swipe stuff from Apple's Rosetta x64 to arm approach". Audited its five load-bearing techniques
+against our tree. THE HEADLINE IS AN INVERSION, and it reframes the whole memory-ordering question.**
+**🔑 ROSETTA'S HARDEST PROBLEM IS ONE WE DO NOT HAVE — AND WE HAVE BEEN PAYING FOR IT ANYWAY.**
+Rosetta translates **x86 (TSO, strongly ordered) -> ARM64 (weakly ordered)**, so it must ADD ordering everywhere,
+and Apple added a **hardware TSO mode** (an ACTLR bit) purely to make that affordable. Snapdragon has no such
+mode — **and we do not need one.** Our guest is **PowerPC, which is WEAKER than ARM64**. So the translation
+direction is reversed: Rosetta must add fences; **we should be REMOVING them.** Every barrier we emit that the
+guest did not require is pure loss, and unlike Rosetta we have no hardware crutch to hide it.
+| Rosetta technique | our tree | verdict |
+|---|---|---|
+| Hardware TSO mode | N/A (Apple silicon only) | **Not needed — PPC is weaker than ARM64, not stronger** |
+| Barrier mapping | ONE lowering: `OPCODE_MEMORY_BARRIER` -> **`dmb ISH`** (a64_seq_memory.cc:357) | **over-fenced in one place, see below** |
+| Return-address prediction (keep the RSB balanced) | **already correct** | calls emit `blr` (pushes RSB), epilog reloads x30 and emits `ret` (pops), bare `br` only on TAIL calls. **Nothing to do** |
+| Lazy flag materialisation (avoid computing EFLAGS) | analogue is PPC **CR/XER** | **UNAUDITED — the open item** |
+| AOT translation cache | `objcache_v2_opt2` | have it; device-measured 28,776 objloads, cache warm |
+**✅ `lwsync` WEAKENING IS ALREADY DEAD AND THE EXISTING NOTE IS RIGHT.** ppc_emit_memory.cc:28 records it:
+*"lwsync requires store-store ordering that ARM64 'dmb ishld' does not provide, so weakening it would be a
+correctness bug."* I derived the same conclusion independently before finding the comment — `dmb ishld` gives
+LL+LS, `dmb ishst` gives SS, and lwsync needs LL+LS+SS, which only `dmb ish` covers. **Do not reopen it.**
+**⚠️ BUT THAT NOTE DOES NOT COVER `eieio`, AND `eieio` IS GENUINELY OVER-FENCED.** `InstrEmit_eieio`
+(ppc_emit_memory.cc:751) emits the same full `MemoryBarrier()` -> `dmb ish`. **`eieio` orders STORES, not loads**
+— for cacheable memory it is store-store only — which is exactly what **`dmb ishst`** provides, and `ishst` does
+not wait on outstanding loads the way a full `ish` does. Xbox 360 titles use `eieio` around GPU command-buffer
+writes, so it is plausibly hot.
+**🛑 RULE 4 BEFORE BUILDING IT: COUNT `eieio` FIRST.** No census exists. This is exactly the shape that has
+burned this repo (`EOR3`: 0 of 1 fusable; the per-draw FNV chain: perfect target, dead code). A separate
+`OPCODE_MEMORY_BARRIER_STORE` + `dmb ishst` is a real change to the HIR opcode set, so it must not be built on
+"plausibly hot".
+**Also noted, NOT a bug:** `InstrEmit_isync` is `f.Nop()` (:761). That is defensible for an emulator — `isync` is
+context-synchronising for instruction fetch, which our JIT handles through its own code-cache invalidation rather
+than guest-visible ordering. Recorded so nobody "fixes" it into an `isb` and pays for it every occurrence.
+**📕 THE MANUAL HUNT IS SETTLED, AND NO PLAYWRIGHT IS NEEDED — 12 PDFs ARE IN-REPO** (verified 2026-08-08):
+Arm ARM A-profile (**69 MB** — this IS the "huge manual" from the video), Cortex-**X3/A715/A710/A510** SWOGs,
+AltiVec PEM + API, **Power ISA 2.07**, PowerPC User ISA Book 1, and three Xbox 360 architecture papers
+(Hot Chips 17, IEEE Micro 2006, CIS501). **There is no Qualcomm SM8550 CPU TRM to fetch** — Qualcomm publishes
+only a product brief, and it would not help: the 8 Gen 2 uses **stock Arm cores**, so the four Cortex SWOGs ARE
+the authoritative microarchitecture manuals for this chip. Cache sizes come from the DEVICE
+(`/sys/devices/system/cpu/cpu*/cache/`), not from a document.
+
 ## 📉📉📉 FIRST REAL DEVICE MEASUREMENTS OF THE POWER WORK (2026-08-08) — AND THE PRECOMPILE LEVER IS **REFUTED**
 **Device released by the user; Gears, Turnip Adreno (TM) 740 confirmed, `--es cpu arm64 --ez cpu_backend_llvm
 true --ez cpu_aot_maximize true`, 28,776 `LLVMobjload` (cache warm). Every number below read off the device.**
