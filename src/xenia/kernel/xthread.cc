@@ -1235,7 +1235,29 @@ void XThread::SetActiveCpu(uint8_t cpu_index) {
       thread_->set_affinity_mask(mask);
     } else if (!cvars::ignore_thread_affinities && thread_ &&
                is_guest_thread()) {
-      thread_->set_affinity_mask(uint64_t(1) << cpu_index);
+      // ⛔ DO NOT pin guest CPU N to host cpu N on this SoC. That 1:1 mapping is
+      // an x86 assumption: on a homogeneous desktop CPU every core is the same,
+      // so `1 << cpu_index` is fine. The Snapdragon 8 Gen 2 is big.LITTLE
+      // (thor_topology.h): cpu0-2 are A510 @2.0GHz, cpu3-6 are A715/A710
+      // @2.8GHz, cpu7 is the X3 prime @3.19GHz. The 1:1 map therefore pinned
+      // guest CPUs 0/1/2 - and on the 360 guest hardware thread 0 is
+      // conventionally the MAIN GAME THREAD - onto the three little cores,
+      // while the fastest core in the chip was never given guest work at all.
+      // That is slow AND power-hostile: a little core at max voltage doing the
+      // hot thread's work, big cores idle, everything taking longer.
+      //
+      // Remap the 6 guest CPUs onto the big cluster instead, preserving the
+      // DISTRIBUTION the guest asked for (so threads that the game separated
+      // stay separated) while keeping all of them off the A510s, and giving
+      // guest CPU 0 the prime core.
+      uint64_t host_mask = uint64_t(1) << cpu_index;
+      if (ThorTopology::IsThorBuild()) {
+        // guest 0 -> X3 prime (cpu7), guest 1..5 -> cpu3..6 round-robin.
+        static constexpr int kGuestToHostCore[6] = {7, 3, 4, 5, 6, 3};
+        const int host_core = kGuestToHostCore[cpu_index < 6 ? cpu_index : 0];
+        host_mask = uint64_t(1) << host_core;
+      }
+      thread_->set_affinity_mask(host_mask);
     }
   } else {
     // there no good reason why we need to log this... we don't perfectly
