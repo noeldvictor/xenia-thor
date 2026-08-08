@@ -2268,6 +2268,7 @@ bool ParsePpcThreadFieldLeafHelper(xe::Memory* memory,
 }  // namespace
 
 DECLARE_uint32(a64_spill_gprs_to_vector);
+DECLARE_bool(a64_fpcr_switch_census);
 
 namespace xe {
 namespace cpu {
@@ -2399,6 +2400,7 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   trace_data_ = &function->trace_data();
 
   current_guest_function_ = function->address();
+  fpcr_switches_this_function_ = 0;
   vmx_touched_lo_ = 0;
   vmx_touched_hi_ = 0;
   auto a64_function = static_cast<A64Function*>(function);
@@ -2675,6 +2677,22 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   // Emplace the code into the code cache.
   // VMX pressure census: the function has finished emitting, so the bitset
   // now holds every guest vector register it touched.
+  if (cvars::a64_fpcr_switch_census) {
+    static std::atomic<uint64_t> fns{0}, sw{0}, worst{0};
+    const uint64_t s = fpcr_switches_this_function_;
+    sw.fetch_add(s, std::memory_order_relaxed);
+    uint64_t w = worst.load(std::memory_order_relaxed);
+    while (s > w && !worst.compare_exchange_weak(w, s,
+                                                 std::memory_order_relaxed)) {
+    }
+    const uint64_t n = fns.fetch_add(1, std::memory_order_relaxed) + 1;
+    if ((n & 0xFFF) == 0) {
+      XELOGI(
+          "FPCRswitch after {} fns: {} emitted msr-FPCR barriers total "
+          "({:.2f}/fn), worst single fn {}",
+          n, sw.load(), double(sw.load()) / double(n), worst.load());
+    }
+  }
   if (cvars::a64_vmx_pressure_census) {
     const uint32_t distinct =
         uint32_t(xe::bit_count(vmx_touched_lo_) + xe::bit_count(vmx_touched_hi_));
@@ -6236,6 +6254,13 @@ bool A64Emitter::ChangeFpcrMode(FPCRMode new_mode, bool already_set) {
                                            A64BackendContext, fpcr_fpu))));
     }
     msr(3, 3, 4, 4, 0, x0);  // msr FPCR, x0
+    // A710 SWOG Table 4-3: an FPCR write is Non-Speculative AND In-Order,
+    // and note 2 says a write PREDICTED TO CHANGE the control fields
+    // "will introduce a barrier which prevents subsequent instructions
+    // from executing". Our two modes differ (VMX sets FZ, FPU does not),
+    // so EVERY transition takes that barrier on a 13-wide OoO core.
+    // Count them per function so the cost is measurable.
+    ++fpcr_switches_this_function_;
   }
   return true;
 }

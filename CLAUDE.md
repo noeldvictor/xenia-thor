@@ -1481,6 +1481,46 @@ clustered (cacheable) or spread across the whole 2 KB block (review #3).
 teaching the allocator that `vec_set` can host a spilled integer, which is shared-code surgery (it would affect
 x64 too, where the same trick works via `MOVQ`), not an a64-local peephole. **Scope it accordingly.**
 
+## 🚨🚨🚨 MANUAL REVIEW #6 - **EVERY FPCR MODE SWITCH IS A PIPELINE BARRIER, AND WE SWITCH CONSTANTLY**
+**The single biggest CPU finding of the manual review, and a textbook guest/host mismatch.**
+`cortex-a710-software-optimization-guide.pdf` **Table 4-3, "Special-purpose register write accesses"**:
+| Register Write | Non-Speculative | In-Order | Flush Side-Effect |
+|---|---|---|---|
+| **FPCR** | **Yes** | **Yes** | **Maybe** |
+> **Note 2:** *"If the FPCR/FPSCR write is predicted to change the control field values, **it will introduce a
+> barrier which prevents subsequent instructions from executing**. If the FPCR/FPSCR write is predicted to not
+> change the control field values, it will execute without a barrier but **trigger a flush if the values
+> change**."*
+And §4.10 explains why: *"most special-purpose registers are **not renamed**"* - so unlike NZCV and SP (note 1:
+"fully renamed"), FPCR cannot be speculated around.
+**WE WRITE IT ON EVERY SCALAR-FP <-> VMX TRANSITION.** `A64Emitter::ChangeFpcrMode` (a64_emitter.cc:6222) emits
+`msr FPCR, x0`, loading `fpcr_vmx` or `fpcr_fpu` from the backend context. Those two values DIFFER -
+`DEFAULT_VMX_FPCR = (1 << 24)` (FZ set) vs `DEFAULT_FPU_FPCR = 0` - so **every transition is the
+"predicted to change" case: a full barrier on a 13-wide out-of-order core (17-wide on the X3).**
+**🔑 THE ROOT CAUSE IS A CLEAN PPC->ARM64 MISMATCH, not a coding mistake:**
+| | scalar FP mode | vector FP mode |
+|---|---|---|
+| **Xenon (guest)** | `FPSCR` | `VSCR.NJ` - **a SEPARATE register** |
+| **ARM64 (host)** | `FPCR` | `FPCR` - **the SAME register** |
+The guest can run scalar FP in IEEE mode and VMX in flush-to-zero mode SIMULTANEOUSLY, because they are
+different registers. On ARM64 there is one FPCR, so we emulate the guest's two modes by SWITCHING it - and the
+manual says each switch is a barrier. **A machine with 32 FPRs and 128 VMX registers interleaves these two
+worlds constantly**, so this is not an edge case.
+**⚠️ COST NOT YET MEASURED - `a64_fpcr_switch_census` ADDED (default off, allowlisted).** It counts emitted
+`msr FPCR` barriers per compiled function and reports total, per-function average and worst function every 4096
+functions. The existing tracking (`if (fpcr_mode_ == new_mode) return false`) already suppresses redundant
+switches WITHIN a block, so the census measures what actually survives that.
+**⇒ IF THE COUNT IS HIGH, THE FIXES ARE ARCHITECTURAL AND WORTH REAL WORK:**
+1. **Find a single FPCR value that serves both** - if the FZ difference can be handled another way (software
+   denormal flush on the rarer path, which `PrepareVmxFpSources` ALREADY has via `kA64FZFlushesInputs`), the
+   barrier disappears entirely.
+2. **Batch by mode** - schedule VMX and scalar FP work into runs at the HIR level so transitions per function
+   drop, rather than alternating.
+3. **Hoist the mode out of the function** - if a function is entirely one mode, set FPCR once at entry.
+**This is exactly the class the user asked for: it exists ONLY because the port maps a two-register guest model
+onto a one-register host, and nothing about the x64 backend would have surfaced it** (x86 has MXCSR, one
+register too, but the x64 backend handles denormals differently and never took this shape).
+
 ## 📕🔧 MANUAL REVIEW #5 - **ARM TELLS US TO SPILL GPRs INTO VECTOR REGISTERS, AND WE SPILL TO MEMORY**
 **The most directly actionable thing in the SWOGs, and it needs no census to justify - the manual states the
 principle outright.** `cortex-a710-software-optimization-guide.pdf` **§4.3 "Optimizing general-purpose register

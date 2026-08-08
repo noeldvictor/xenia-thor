@@ -281,6 +281,7 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   XexModule* guest_module_ = nullptr;
   uint64_t feature_flags_ = 0;
   uint32_t current_guest_function_ = 0;
+  uint64_t fpcr_switches_this_function_ = 0;
   uint64_t vmx_touched_lo_ = 0;
   uint64_t vmx_touched_hi_ = 0;
   A64Function* current_a64_function_ = nullptr;

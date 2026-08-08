@@ -860,6 +860,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_vmx_fp_no_operand_copy");
             copyBooleanExtra(intent, launchArguments, "a64_vmx_pressure_census");
             copyIntExtra(intent, launchArguments, "a64_spill_gprs_to_vector");
+            copyBooleanExtra(intent, launchArguments, "a64_fpcr_switch_census");
             copyBooleanExtra(intent, launchArguments, "a64_fold_cmp_immediates");
             // XenDroid 904374971 port - default-off pending the on-device check.
             copyBooleanExtra(intent, launchArguments, "vulkan_hoist_shmem_uploads");

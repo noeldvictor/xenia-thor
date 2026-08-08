@@ -138,6 +138,18 @@ DEFINE_bool(
     "crash.",
     "a64");
 
+DEFINE_bool(
+    a64_fpcr_switch_census, false,
+    "Census (diagnostic only): count emitted msr-FPCR mode switches per "
+    "compiled function. A710 SWOG Table 4-3 lists an FPCR write as "
+    "Non-Speculative AND In-Order, and note 2 says a write predicted to "
+    "change the control fields introduces a BARRIER preventing subsequent "
+    "instructions from executing. Our VMX mode sets FZ and our FPU mode "
+    "does not, so every transition takes that barrier. The guest has TWO "
+    "independent FP mode registers (VSCR.NJ for VMX, FPSCR for scalar) and "
+    "ARM64 has ONE, which is why we thrash it at all.",
+    "a64");
+
 DEFINE_uint32(
     a64_spill_gprs_to_vector, 0,
     "ARM64: redirect the first N integer spill slots from the stack into "
