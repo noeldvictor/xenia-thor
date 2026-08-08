@@ -864,6 +864,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_fpcr_single_mode");
             copyBooleanExtra(intent, launchArguments, "a64_vmx_nan_fixup_branchless");
             copyBooleanExtra(intent, launchArguments, "a64_fold_cmp_immediates");
+            // Stops every guest signal waking every parked guest thread.
+            // Default-off: a mistake here is a hang, not a wrong pixel.
+            copyBooleanExtra(intent, launchArguments, "threading_per_object_condvar");
             // XenDroid 904374971 port - default-off pending the on-device check.
             copyBooleanExtra(intent, launchArguments, "vulkan_hoist_shmem_uploads");
             // Sizes whether hardware SHA-1 is worth building (rule 4: count first).

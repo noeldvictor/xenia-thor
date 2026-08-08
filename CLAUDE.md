@@ -16,7 +16,8 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **fire the device** | `Never thrash the Thor`, `BLACK SCREEN? CHECK THE DISPLAY`, `TURNIP IS MANDATORY` | thermal limits are real; a sleeping panel looks exactly like a rendering bug; a bare launch uses the WRONG driver |
 | **chase a crash** | `BURNOUT ... LLVM WRITING x20`, `GEARS SIGTRAP`, `Android fault diagnosis` (memory) | decode the instruction before blaming a subsystem; x20/x21 state is the discriminator |
 | **hunt x86-shaped bugs** | `THE x86→ARM64 SWEEP: MEMORY ORDERING IS THE BUG CLASS` | TSO hides missing fences; look for an atomic index guarding a plain buffer, and check the POSIX `#elif` nobody profiles |
-| **work on POWER / HEAT / watts** | `MANUAL REVIEW #4` (little-core pin), `#6` (FPCR barriers), `HOW TO ACTUALLY MEASURE WATTS` | the main guest thread was HARD-PINNED to a 2.0GHz A510 while the X3 idled; watts are unmeasurable over USB |
+| **work on POWER / HEAT / watts** | `MANUAL REVIEW #4` (little-core pin), `#6` (FPCR barriers), `ONE GLOBAL CONDVAR`, `HOW TO ACTUALLY MEASURE WATTS` | the main guest thread was HARD-PINNED to a 2.0GHz A510 while the X3 idled; every guest signal woke every parked thread; watts are unmeasurable over USB |
+| **conclude a spin loop is burning watts** | `ONE GLOBAL CONDVAR` (the swept-and-clean list) | swept 2026-08-07: the `MaybeYield` sites in `xobject.cc`/`guest_scheduler.cc`/`NtYieldExecution` are all CLEAN - one-shot yields or deliberate parks, not spins. Do not re-derive |
 | **touch the register allocator** | `MANUAL REVIEW #1`, `#2`, `#3`, `#5`, `THE MEASUREMENT ... ALREADY EXISTED` | 32 guest GPRs into 7, 128 guest vectors into 28; Arm says spill GPRs to VECTOR regs, we spill to memory; and the census you want already exists |
 | **touch FP / VMX / FPCR** | `MANUAL REVIEW #6`, `THE THREE NEW a64 LEVERS ARE NOT INDEPENDENT` | every FPCR mode switch is a PIPELINE BARRIER (Table 4-3 note 2) - the Xenon has two FP mode registers, ARM64 has one |
 | **enable any new a64 lever** | `THE THREE NEW a64 LEVERS ARE NOT INDEPENDENT` | `a64_fpcr_single_mode` SILENTLY disables `a64_vmx_fp_no_operand_copy`; measure one at a time |
@@ -387,6 +388,50 @@ has no interest in, finds nothing, and parks again. A classic thundering herd, p
   with a gated shared poke (XenDroid's shape), which is a refactor, not a patch.
 - **Measure before building** (rule 4): count wakeups vs. useful wakeups on the shared condvar under a real
   gameplay scene first. If the ratio is near 1 this is theoretical; the shape of the code says it will not be.
+
+**🧹 FIRST, A NEGATIVE RESULT THAT SAVES THE NEXT SESSION A SWEEP: THE SPIN-WAIT HYPOTHESIS IS DEAD.**
+The obvious power theory — "a 'waiting' guest thread is actually `sched_yield()`-looping at 100% duty, burning a
+core for zero work, invisible to fps" — was checked against every `MaybeYield`/spin site and **does not hold**:
+`xobject.cc:484/572/703/735` are **one-shot yields on the timeout RETURN path**, not loops; `GuestScheduler::
+SpinYield` explicitly calls `BlockCurrentThread()` with the comment *"parking rather than re-queueing, so a lone
+fiber idles instead of spinning its dispatch thread at full speed"*; `NtYieldExecution` is a guest-REQUESTED
+yield; and `xeKeKfAcquireSpinLock`'s backoff is already measured completely uncontended (0 of 16,673 acquires).
+**The wait paths block properly.** Do not re-run this sweep — the waste is in the WAKEUPS, not the parking.
+
+**✅✅ IMPLEMENTED 2026-08-07 (`84fff766c`), cvar `threading_per_object_condvar`, DEFAULT OFF, allowlisted.**
+**🔑 THE "NOT PORTABLE" VERDICT ABOVE WAS RIGHT ABOUT THE FACT AND WRONG ABOUT THE CONCLUSION — AND THE REASON
+GENERALISES.** It says their counter "would gate nothing" because *we have one static condvar doing both jobs*.
+That diagnosis is exactly correct, and it is also the entire solution: **the gate is useless only BECAUSE the two
+jobs share a condvar.** Split the jobs and the gate becomes meaningful. So the blocker was never portability, it
+was that only half of their design had been considered. **When an upstream fix is rejected as "not portable
+because our structure differs", check whether their OTHER change is the one that creates the structure.**
+| | before | after |
+|---|---|---|
+| single-object `Wait()` | shared static `cond_` | **per-object `local_cond_`** |
+| `WaitMultiple()` | shared static `cond_` | shared `cond_`, under a scoped `MultiWaitRegistration` |
+| all 7 signal sites | bare `cond_.notify_all()` | `NotifyWaiters()` — always wakes `local_cond_`, pokes the shared one **only while `multi_wait_refs_ != 0`** |
+**THREE DELIBERATE CONSTRAINTS, because the failure mode is a HANG:**
+1. **The shared MUTEX is untouched** — only the condvar changes. All locking order is preserved, and the #1677
+   hazard is neither fixed nor worsened. Do not bundle that refactor in.
+2. **The cvar is read EXACTLY ONCE** (`PerObjectCondvars()`, function-local static). If a waiter and a signaler
+   could ever disagree about which condvar an object uses, the wakeup goes to a condvar nobody is on.
+3. **`MultiWaitRegistration` is declared AFTER the lock**, so it is destroyed BEFORE the lock releases.
+   Registering under `mutex_` is what makes the gate race-free — the signaler holds the same mutex when it reads
+   the count, so it either sees the registration or has not yet changed the state the waiter re-tests.
+**VALIDATED DEVICE-FREE — and note the host suite structurally COULD NOT do it: Windows builds
+`threading_win.cc`, so `threading_test.cc` never compiles this file.** `tools/qemu/condvar_herd_equiv.c` distils
+the algorithm and stresses it under WSL g++ (8 objects, 16 single-waiters, 2 multi-waiters, 3200 signals):
+**3/3 PASS, `consumed + outstanding == effective signals` exactly in both modes, wasted wakeups 8296 → 4663
+(42.7–45.1% fewer).**
+**🪤 THE TEST FAILED FIRST AND THE TEST WAS WRONG, NOT THE CODE.** Its first version counted raw signals and
+reported both modes "losing" hundreds. **Setting an already-set auto-reset event is a no-op, so signals
+legitimately coalesce** — raw signal count is not a liveness invariant. Corrected to count state-CHANGING
+signals, which closes exactly. *A stress test that fails on BOTH arms is usually measuring itself.*
+**⚠️ UNMEASURED: any watt or temperature figure, and the real-world ratio.** The scenario keeps a multi-wait
+registered almost continuously so the gate rarely closes; the 44% comes entirely from single waiters no longer
+being woken. **Whether guest multi-waits are that persistent is unknown** — if they are rarer than in the test,
+the win is larger; if a multi-wait is always outstanding, the shared poke never stops and only the single-waiter
+half pays off. Read `entry_delta` AND thermals on the A/B, not fps.
 
 ## 📊 THE AOT PROGRESS BAR IS PROVABLY FROZEN — COMPILE IS FINE, THE BAR IS NOT (2026-08-07)
 **User reported it three times ("no bar movement"); now confirmed with evidence that does not depend on logging.**
