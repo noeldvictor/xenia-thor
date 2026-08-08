@@ -1431,6 +1431,24 @@ guest 0.** The A/B should therefore be THREE arms, not two, and must read therma
 | A (before) | 1:1 - guest 0-2 on A510 littles |
 | B (now) | guest 0 -> cpu7 X3, guest 1-5 -> cpu3-6 |
 | C (worth testing) | guest 0 -> cpu3 A715, guest 1-5 -> cpu4-7 - keeps the hot thread on the efficient tier |
+**📕 MANUAL EVIDENCE THAT NOW FAVOURS B (X3) - read the X3 and A715 Table 2-1 side by side:**
+| core | FP/ASIMD pipes | source |
+|---|---|---|
+| **Cortex-X3** | **4** (FP/ASIMD-0,1,2,3) | `cortex-x3-...pdf` Table 2-1, pdf-p12 |
+| Cortex-A715 | 2 (FP/ASIMD-0,1) | `cortex-a715-...pdf` Table 2-1, pdf-p13 |
+| Cortex-A710 | 2 | `cortex-a710-...pdf` Table 2-1 |
+**The X3 has DOUBLE the vector issue width of either mid core**, and reviews #2/#3 establish that our guest is a
+128-vector-register machine whose operands we are constantly spilling - i.e. the main guest thread is
+vector-bound precisely on the pipe the X3 doubles. **That is also a POWER argument, not only a speed one:** a
+vector-bound thread that issues in half the cycles is active for less time, and time-at-load is what the energy
+integral multiplies. The naive "prime core = more watts" intuition assumes the same work takes the same cycles
+on both, which the pipe counts say is false for THIS workload.
+⇒ **B is now the better-supported default and C is the control, not the other way round.** Still measure both -
+the pipe ratio is an issue-width argument and says nothing about DVFS voltage curves, which is where the X3's
+cost actually lives. But do not assume A715 is the efficient choice just because it is smaller.
+(Also from the same tables, for the crypto track: AES/crypto uOPs issue on **3 of 4** FP/ASIMD pipes on the X3
+but only **2 of 2** on the A715/A710 - so hardware crypto, if it is ever worth writing, is also prime-core
+favoured.)
 **If C wins on watts at similar fps, C is the right default for this project's actual goal.** Do not conclude
 from `entry_delta` alone; that metric cannot see power, and the whole point of this goal is that we are already
 fast enough in bursts and too hot overall.
