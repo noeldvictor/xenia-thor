@@ -2269,6 +2269,7 @@ bool ParsePpcThreadFieldLeafHelper(xe::Memory* memory,
 
 DECLARE_uint32(a64_spill_gprs_to_vector);
 DECLARE_bool(a64_fpcr_switch_census);
+DECLARE_bool(a64_fpcr_single_mode);
 
 namespace xe {
 namespace cpu {
@@ -6238,6 +6239,13 @@ void A64Emitter::ReloadMembase() {
 }
 
 bool A64Emitter::ChangeFpcrMode(FPCRMode new_mode, bool already_set) {
+  if (cvars::a64_fpcr_single_mode) {
+    // Never emit the msr: A710 SWOG Table 4-3 note 2 makes every
+    // control-field-changing FPCR write a pipeline barrier. VMX denormal
+    // handling falls back to PrepareVmxFpSources' software flush, so guest
+    // semantics are unchanged for BOTH scalar FP and VMX.
+    return false;
+  }
   if (fpcr_mode_ == new_mode) {
     return false;
   }

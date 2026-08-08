@@ -39,6 +39,7 @@ DECLARE_bool(a64_vmx_fp_no_operand_copy);
 DECLARE_bool(arm64_use_flat_membase);
 
 DECLARE_bool(a64_vmx_native_fmax_nan);
+DECLARE_bool(a64_fpcr_single_mode);
 
 namespace xe {
 namespace cpu {
@@ -542,7 +543,11 @@ inline void PrepareVmxFpSources(A64Emitter& e, const T1& op1, const T2& op2,
   // downstream fixups use v0/v1/v3 as scratch, which would clobber it. The
   // allocator only hands out v4-v31, so an allocated source can never alias
   // that scratch.
+  // With a64_fpcr_single_mode we never set FPCR.FZ, so the hardware is not
+  // flushing denormal inputs no matter what kA64FZFlushesInputs probed -
+  // the software path MUST run or VMX denormal semantics change.
   const bool flush_needed =
+      cvars::a64_fpcr_single_mode ||
       !e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs);
   if (cvars::a64_vmx_fp_no_operand_copy && !flush_needed && s1 >= 4 &&
       s2 >= 4) {
@@ -554,7 +559,7 @@ inline void PrepareVmxFpSources(A64Emitter& e, const T1& op1, const T2& op2,
   if (s1 != 0) e.mov(VReg(0).b16, VReg(s1).b16);
   if (s2 != 1) e.mov(VReg(1).b16, VReg(s2).b16);
   // Flush denormal inputs in software only if FPCR.FZ doesn't handle it.
-  if (!e.IsFeatureEnabled(xe::arm64::kA64FZFlushesInputs)) {
+  if (flush_needed) {
     FlushDenormals_V128(e, 0);
     FlushDenormals_V128(e, 1);
   }

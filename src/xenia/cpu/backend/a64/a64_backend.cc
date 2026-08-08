@@ -139,6 +139,24 @@ DEFINE_bool(
     "a64");
 
 DEFINE_bool(
+    a64_fpcr_single_mode, false,
+    "ARM64: never switch FPCR between scalar-FP and VMX modes. A710 SWOG "
+    "Table 4-3 lists an FPCR write as Non-Speculative and In-Order, and note "
+    "2 says a write that changes the control fields INTRODUCES A BARRIER "
+    "preventing subsequent instructions from executing. Our two modes differ "
+    "by exactly one bit (FZ), so every transition pays that barrier on a "
+    "13-to-17-wide out-of-order core. This is CORRECTNESS-PRESERVING, not a "
+    "precision trade: with FZ never set, VMX denormal flushing falls back to "
+    "the SOFTWARE path PrepareVmxFpSources already implements for hardware "
+    "where FZ does not flush inputs (kA64FZFlushesInputs), and scalar FP "
+    "keeps IEEE denormals exactly as now. The trade is a per-transition "
+    "BARRIER against a per-VMX-op software flush, so which wins depends on "
+    "transition density - measure with a64_fpcr_switch_census first. Root "
+    "cause it works around: the Xenon has TWO independent FP mode registers "
+    "(FPSCR for scalar, VSCR.NJ for VMX) and ARM64 has ONE.",
+    "a64");
+
+DEFINE_bool(
     a64_fpcr_switch_census, false,
     "Census (diagnostic only): count emitted msr-FPCR mode switches per "
     "compiled function. A710 SWOG Table 4-3 lists an FPCR write as "
