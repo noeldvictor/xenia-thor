@@ -1426,6 +1426,47 @@ extremely frequent - so values rarely live long, and a second class might buy li
 **Do the census before building it** (rule 4): count how many HIR values are live across a call vs die before
 one. That counter is cheap; a two-class allocator is not.
 
+## 📕📕📕 MANUAL-DERIVED ARCHITECTURE REVIEW #2: VMX128 IS A 128-REGISTER ISA RUNNING ON 28 REGISTERS
+**This is the sharpest guest/host mismatch found so far, and unlike the integer case there is no slack to find.**
+
+**The guest vector file, confirmed in THREE Xbox 360 manuals** (`docs/reference/xbox360/`):
+| source | quote |
+|---|---|
+| Hot Chips 17, pdf-p5 | *"**128 128-bit vector registers per thread**"*; *"2-issue per cycle, **in-order**, decoupled Vector/Scalar issue queue"*; *"VMX128 Units: Floating Point Unit, Permute Unit, Simple Unit"* |
+| IEEE Micro 2006, pdf-p3 | *"VMX128 includes **128 registers, of 128 bits**"* |
+| CIS501 lecture, pdf-p2 | *"Superscalar: **two-way issue**"*, *"VMX-128 instructions"* |
+
+**The host: ARM64 NEON has 32 vector registers TOTAL. We allocate 28 (v4-v31; v0-v3 scratch).**
+⇒ **128 guest -> 28 host is a 4.6:1 squeeze, and there is nowhere to get more.** The integer story (review #1)
+at least has 19 unallocated caller-saved GPRs to argue about; here ARM64 simply has 32 registers and we already
+use 28 of them.
+
+**🔑 WHY THE GUEST CODE IS REGISTER-HUNGRY BY DESIGN - this is the part that matters.** The Xenon is **in-order**
+(Hot Chips 17 p5). An in-order machine hides latency only through software pipelining and unrolling, which is
+exactly what a compiler does by keeping many values live at once - and Microsoft gave it 128 vector registers so
+it could. **So Xenon-targeted game code does not merely happen to use many vector registers; it was compiled to
+use them, deliberately, to cover latency the hardware could not.** We then run that code on a host with 28.
+
+**What a vector spill costs, from `arm/cortex-a710-software-optimization-guide.pdf`:**
+| operation | Exec Latency | Throughput | Pipelines |
+|---|---|---|---|
+| `LDR` vector reg (Q) - a spill RELOAD, Tbl 3-30 pdf-p37 | **6** | 3 | L |
+| `ST1` 1 element - a spill STORE, Tbl 3-37 pdf-p57 | 2 | 2 | **L01 + V** |
+| (integer `LDR` for comparison, Tbl 3-13) | 4 | 3 | L |
+**A vector reload is 6 cycles - 50% worse than an integer reload - and the spill STORE burns one of the only
+TWO FP/ASIMD (V) pipes the A710/A715 have** (Table 2-1; the X3 has 4). So vector register pressure does not just
+add memory traffic, it competes for the scarcest issue resource on the mid-cores.
+
+**⇒ THE STRUCTURAL STATEMENT, which is what the "straight to ARM64" rethink has to answer:** we are running a
+128-register in-order vector ISA on a 32-register out-of-order one. The host's out-of-order engine gives back
+some of what the guest's unrolling was buying (we do not need software pipelining), but it cannot give back
+REGISTERS, and every value the guest kept live costs a 6-cycle reload plus a V-pipe slot.
+**⚠️ NOT YET MEASURED - and the census is the cheap next step, not a rewrite.** Count, per translated function:
+peak live V128 values, and how many VMX register reads/writes go to `PPCContext` memory rather than an allocated
+register. If most guest functions keep <=28 vectors live, this is theoretical; if the hot ones keep 40+, it is
+the dominant cost on the vector path and would reframe the whole VMX effort (which so far has been about
+shaving 2-6 uOPs per op - irrelevant next to a 6-cycle spill on every operand).
+
 ## 🧨🧨🧨 THE CONSTANT-OPERAND BUG FAMILY — FOUR FOUND, SWEEP NOW COMPLETE (2026-08-07)
 **`SrcVReg` returns the SCRATCH INDEX when an operand is constant** (a64_seq_util.h:271-277): it materialises
 the constant into v0/v1 and returns 0/1. So `s1` can BE v0 and `s2` can BE v1 — and any sequence that later uses
