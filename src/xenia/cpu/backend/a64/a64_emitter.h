@@ -150,6 +150,7 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   bool TryEmitBlueDragonVmxCopyLoopBlock(const hir::Block* block);
   bool TryEmitBlueDragonWordCopyLoopBlock(const hir::Block* block);
   void MaybeEmitBlueDragonDrawWaitCallerProfile();
+  void MaybeEmitGuestSpinThrottle();
   void MaybeEmitBlueDragonStricmpReturnProfile();
   void AddGuestAddressToMembase(Xbyak_aarch64::WReg guest_reg,
                                 Xbyak_aarch64::XReg host_reg);

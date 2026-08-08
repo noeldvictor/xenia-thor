@@ -93,6 +93,10 @@ struct A64BackendContext {
   unsigned int flags;
   unsigned int Ox1000;  // constant 0x1000
   uint32_t blue_dragon_draw_wait_probe_counter;
+  // Hit counter for arm64_guest_spin_throttle_functions. Per-context (i.e. per
+  // guest thread), so two threads spinning in the same function each get their
+  // own stride rather than racing one shared counter.
+  uint32_t guest_spin_throttle_counter;
   uint32_t blue_dragon_draw_wait_yield_counter;
   uint32_t blue_dragon_draw_wait_caller_profile_counter;
   uint32_t last_guest_function;

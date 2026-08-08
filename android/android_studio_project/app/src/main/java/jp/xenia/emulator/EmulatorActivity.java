@@ -864,6 +864,11 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_fpcr_single_mode");
             copyBooleanExtra(intent, launchArguments, "a64_vmx_nan_fixup_branchless");
             copyBooleanExtra(intent, launchArguments, "a64_fold_cmp_immediates");
+            // Deschedules known guest busy-waits so the core can reach idle.
+            // Semantics-preserving: the real guest body still runs.
+            copyStringExtra(intent, launchArguments, "arm64_guest_spin_throttle_functions");
+            copyIntExtra(intent, launchArguments, "arm64_guest_spin_throttle_stride");
+            copyIntExtra(intent, launchArguments, "arm64_guest_spin_throttle_sleep_us");
             // Stops every guest signal waking every parked guest thread.
             // Default-off: a mistake here is a hang, not a wrong pixel.
             copyBooleanExtra(intent, launchArguments, "threading_per_object_condvar");

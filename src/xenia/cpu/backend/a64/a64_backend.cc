@@ -389,6 +389,33 @@ DEFINE_bool(
     "field scene 2.83->3.58 fps (+27%) by descheduling the ~21M/frame spin so "
     "the command-processor thread runs unconstrained. Pass false to disable.",
     "a64");
+DEFINE_string(
+    arm64_guest_spin_throttle_functions, "",
+    "Thor ARM64 POWER: comma-separated guest function addresses (hex, e.g. "
+    "'8238CD28,8246B408') that are known GUEST BUSY-WAITS. At entry to each, "
+    "every Nth call sleeps briefly so the spinning guest thread stops "
+    "monopolising its core. UNLIKE the Blue Dragon draw-wait fastpath this "
+    "does NOT reproduce the guest predicate - the real translated body still "
+    "runs and computes the real answer, so it cannot change what the guest "
+    "computes, only when. That makes it safe to point at a new title without "
+    "reverse-engineering its wait function first. Empty = disabled. Burnout's "
+    "8238CD28 is ~21M calls/sec and 85% of all guest entries, and currently "
+    "gets no descheduling at all.",
+    "a64");
+DEFINE_uint32(
+    arm64_guest_spin_throttle_stride, 16,
+    "Thor ARM64: sleep on every Nth entry to a function listed in "
+    "arm64_guest_spin_throttle_functions. Rounded DOWN to a power of two so "
+    "the check is a single AND. 16 matches the Blue Dragon fastpath, whose "
+    "descheduling is what produced its device-measured +27%.",
+    "a64");
+DEFINE_uint32(
+    arm64_guest_spin_throttle_sleep_us, 100,
+    "Thor ARM64: host microseconds to sleep when the spin throttle fires. 0 "
+    "uses sched_yield only. 100us is far below a frame, so wait-exit latency "
+    "is negligible, while the core it frees is a core that can reach idle - "
+    "which is the point, this is a WATTS lever before it is an fps lever.",
+    "a64");
 DEFINE_bool(
     arm64_blue_dragon_draw_wait_fastpath_host_counter_time, false,
     "Thor ARM64 bring-up: in the Blue Dragon draw-wait fastpath, derive "

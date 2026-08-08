@@ -20,6 +20,7 @@
 #include <limits>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <string_view>
 #include <system_error>
 #include <unordered_map>
@@ -64,6 +65,9 @@ DECLARE_string(arm64_pc_operand_log_tids);
 DECLARE_uint32(arm64_pc_operand_log_budget);
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath);
+DECLARE_string(arm64_guest_spin_throttle_functions);
+DECLARE_uint32(arm64_guest_spin_throttle_stride);
+DECLARE_uint32(arm64_guest_spin_throttle_sleep_us);
 DECLARE_bool(arm64_blue_dragon_draw_wait_fastpath_host_counter_time);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_native_yield_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_fastpath_native_sleep_us);
@@ -2050,6 +2054,55 @@ void YieldBlueDragonDrawWaitFastpath(void* raw_context) {
     return;
   }
   xe::threading::MaybeYield();
+}
+
+void YieldGuestSpinThrottle(void* raw_context) {
+  (void)raw_context;
+  uint32_t sleep_us = cvars::arm64_guest_spin_throttle_sleep_us;
+  if (sleep_us != 0) {
+    xe::threading::Sleep(std::chrono::microseconds(sleep_us));
+    return;
+  }
+  xe::threading::MaybeYield();
+}
+
+// Parsed once from arm64_guest_spin_throttle_functions. Emission is
+// single-threaded per emitter, and the cvar cannot change after startup.
+static const std::unordered_set<uint32_t>& GuestSpinThrottleFunctions() {
+  static const std::unordered_set<uint32_t> kSet = [] {
+    std::unordered_set<uint32_t> set;
+    const std::string& spec = cvars::arm64_guest_spin_throttle_functions;
+    size_t pos = 0;
+    while (pos < spec.size()) {
+      size_t comma = spec.find(',', pos);
+      if (comma == std::string::npos) comma = spec.size();
+      std::string tok = spec.substr(pos, comma - pos);
+      // Tolerate whitespace and an optional 0x prefix.
+      size_t b = tok.find_first_not_of(" \t");
+      size_t e = tok.find_last_not_of(" \t");
+      if (b != std::string::npos) {
+        tok = tok.substr(b, e - b + 1);
+        if (tok.size() > 2 && (tok[0] == '0') && (tok[1] == 'x' || tok[1] == 'X')) {
+          tok = tok.substr(2);
+        }
+        try {
+          unsigned long v = std::stoul(tok, nullptr, 16);
+          if (v) set.insert(static_cast<uint32_t>(v));
+        } catch (...) {
+          XELOGW("arm64_guest_spin_throttle_functions: ignoring bad entry '{}'",
+                 tok);
+        }
+      }
+      pos = comma + 1;
+    }
+    if (!set.empty()) {
+      XELOGI("Guest spin throttle armed for {} function(s), stride {}, {}us",
+             set.size(), cvars::arm64_guest_spin_throttle_stride,
+             cvars::arm64_guest_spin_throttle_sleep_us);
+    }
+    return set;
+  }();
+  return kSet;
 }
 
 void RecordBlueDragonDrawWaitCallerProfile(void* raw_context) {
@@ -4059,6 +4112,7 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   MaybeEmitBodyTimeProfileStart();
   MaybeEmitBlockBodyTimeProfileInit();
   MaybeEmitBlueDragonDrawWaitCallerProfile();
+  MaybeEmitGuestSpinThrottle();
 
   // ========================================================================
   // BODY
@@ -5195,6 +5249,43 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
   }
 
   return false;
+}
+
+// Insert a periodic deschedule at the top of a known guest busy-wait, then let
+// the REAL translated body run. Semantics-preserving by construction: the guest
+// predicate is still evaluated by the guest's own code, so this can only change
+// WHEN the poll happens, never what it returns. That is the whole reason it can
+// be aimed at a title nobody has reverse-engineered.
+void A64Emitter::MaybeEmitGuestSpinThrottle() {
+  const auto& fns = GuestSpinThrottleFunctions();
+  if (fns.empty() || !fns.count(current_guest_function_)) {
+    return;
+  }
+  // Round the stride DOWN to a power of two so the test is one AND, matching
+  // the Blue Dragon fastpath's shape. A stride of 0 or 1 means "every call".
+  uint32_t stride = cvars::arm64_guest_spin_throttle_stride;
+  while (stride > 1 && (stride & (stride - 1)) != 0) {
+    stride &= stride - 1;
+  }
+
+  const uint32_t counter_off = static_cast<uint32_t>(
+      offsetof(A64BackendContext, guest_spin_throttle_counter));
+  Xbyak_aarch64::Label* skip = nullptr;
+  if (stride > 1) {
+    skip = &NewCachedLabel();
+    ldr(w17, ptr(GetBackendCtxReg(), counter_off));
+    add(w17, w17, 1);
+    str(w17, ptr(GetBackendCtxReg(), counter_off));
+    and_(w17, w17, stride - 1);
+    cbnz(w17, *skip);
+  }
+  // CallNativeSafe preserves guest state; this runs after the prolog, so the
+  // frame is established and the body has not started.
+  CallNativeSafe(reinterpret_cast<void*>(&YieldGuestSpinThrottle));
+  if (skip) {
+    L(*skip);
+  }
+  ForgetFpcrMode();
 }
 
 bool A64Emitter::TryEmitBlueDragonDrawWaitFunctionBody() {
