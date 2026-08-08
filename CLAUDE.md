@@ -1563,6 +1563,38 @@ from `entry_delta` alone; that metric cannot see power, and the whole point of t
 fast enough in bursts and too hot overall.
 **⚠️ NEEDS ONE A/B**: same route, thermals + `entry_delta`, old mapping vs new. One-commit revert if it regresses.
 
+## 🎥❌ THE VIDEO RE-MINED FROM SOURCE (2026-08-08) — AND OUR RECORD OF ITS #1 FINDING WAS **BACKWARDS**
+**Re-fetched the actual captions rather than trusting the summary** (`yt-dlp` json3 → 1,876 lines; the Aug-5
+transcript was already in the scratchpad, so the video WAS mined before — that part is confirmed, not assumed).
+**Video: "PS3 emulation is fast on ARM now", Whatcookie, 60.5 min.** Its own opening also settles the manual
+question from the horse's mouth: *"the ARM Architecture Reference Manual … over 17,000 pages"* — that is the
+69 MB PDF already in `docs/reference/arm/`. **There is no separate Snapdragon chipset manual to hunt.**
+**🚨 ITEM #1 IN `20260805-rpcs3-arm64-optimizations-applicable.md` AND IN THE PLAYBOOK ABOVE IS WRONG ABOUT
+BOTH THE DIRECTION AND THE MECHANISM.** We recorded: *"Spin counts are WALL-CLOCK budgets… x86 `PAUSE` ≈140 cyc
+vs ARM `ISB` ≈10-30, so an x86-tuned constant UNDER-spins by ~4-8x on ARM."* **That is not the bug he found.**
+Verbatim from the talk: `busy_wait` reads the **hardware timer** and adds a fixed **3,000**. On x86 the timer
+runs at 2-4 GHz, so 3,000 ticks ≈ **1 µs**. On his ARM device the timer runs at **19 MHz**, so the same 3,000
+ticks ≈ **150 µs**.
+| | our recorded claim | what the video actually says |
+|---|---|---|
+| direction | **under**-spins | **OVER**-waits |
+| magnitude | ~4-8x | **150x** |
+| mechanism | instruction cost (`PAUSE` vs `ISB`) | **hardware-timer FREQUENCY** (2-4 GHz vs 19 MHz) |
+| fix | tune the spin count | **scale the wait by the timer frequency** |
+**Payoff he reports: +25% performance on average AND −10% power draw, from that one fix** — and a user going
+from 5-10 fps to a locked 30 fps in Skylanders. This is the single largest item in the talk and we had it
+inverted, which is exactly why the `a64_spin_hint_isb` lever it inspired measured CONFOUNDED/no-win: **it was
+built against the wrong mechanism.**
+**✅ CHECKED AGAINST OUR TREE, AND WE DO NOT HAVE THIS BUG — verified, not assumed.** `clock_posix.cc:28` reads
+**`cntfrq_el0` at runtime** (`asm volatile("mrs %0, cntfrq_el0")`) and scales by it; the inline emitter path
+reads **both** CNTVCT_EL0 and CNTFRQ_EL0 (a64_emitter.cc:5382-5387) rather than assuming a rate. **No hardcoded
+timer frequency anywhere.** Device check: the Thor's clocksource is `arch_sys_counter` (the architected timer);
+the exact Hz was not readable without root, and it does not matter precisely because we never hardcode it.
+**⇒ The transferable lesson is NOT the spin tuning, it is: any constant added to a HARDWARE TIMER value is a
+frequency-dependent bug when the code moves architectures.** Grep for magic constants near timer reads, not for
+spin loops. We are clean on the clock path; the guest-side wait predicates (BD 5000ms, Burnout 2000ms) are in
+GUEST milliseconds derived through CNTFRQ, so they are also unaffected.
+
 ## 🍎 APPLE ROSETTA x64->ARM: WHAT TRANSFERS, AND THE ONE THING IT TELLS US WE ARE DOING WRONG (2026-08-08)
 **User asked to "swipe stuff from Apple's Rosetta x64 to arm approach". Audited its five load-bearing techniques
 against our tree. THE HEADLINE IS AN INVERSION, and it reframes the whole memory-ordering question.**
