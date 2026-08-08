@@ -683,6 +683,36 @@ measurement protocol never covered. It is measurable on this device, but only un
 - **Pair it with the gameplay rule:** a power number from a menu or an attract mode is as worthless as an fps
   number from one. Measure power in the same real-gameplay scene the CPU protocol already requires.
 
+## 🚨🚨🚨 THE BURNOUT `entry_delta` BASELINE IN THIS FILE IS **9x HIGHER THAN ANYTHING REPRODUCIBLE TODAY** (2026-08-08)
+**This invalidates the sensitivity assumption behind every "FLAT" verdict recorded on 2026-08-08, and it may be
+a real regression. It needs resolving BEFORE any more CPU levers are measured.**
+This file states the Burnout attract baseline as **~122-128M `entry_delta` per 5s** (used to define what
+"gameplay-tier activity" even means). **Measured today across many runs, Burnout never exceeded ~14M/5s:**
+| scene | measured `entry_delta`/5s |
+|---|---|
+| title screen | 12.3 - 12.4M |
+| menus (route attempt: `start@9s;start@15s;a@21s…`) | plateau ~10M |
+| idle-at-title, 150s, no presses (attract should engage) | **peak 14.1M**, top-6 avg 13.5M |
+| **this file's documented attract baseline** | **122-128M** |
+**Either the recorded baseline is wrong, or guest throughput has regressed ~9x.** Both are serious and neither
+is diagnosed. Candidates, none checked: the figure was taken with a different profiler interval or unit; it
+predates the Edge kernel merge; or something in the current build genuinely runs an order of magnitude slower.
+**⇒ WHY THIS MATTERS MORE THAN THE LEVERS: it means the CPU is NOT the thing being stressed in any scene I could
+reach**, so a codegen lever has almost nothing to move, and "FLAT" mostly means "the instrument was reading a
+near-idle guest". The 2026-08-08 flat verdicts (GPR DSE, LLVM residency) should be re-read as **measured in a
+low-activity scene**, not as refutations. The verdicts whose reasoning is structural — dead stores absorbed by
+the store buffer, CR stores already stripped in-block, eieio at 4 sites — stand on their own reasoning and are
+NOT affected by this.
+**⇒ FIRST ACTION FOR THE NEXT CPU SESSION: reconcile this number before measuring anything else.** Find the run
+that produced 122-128M (it is quoted against Burnout ATTRACT, uncapped, `arm64_speed_profile_interval_ms 5000`)
+and either correct the baseline here or find the regression. **A 9x discrepancy in the project's reference
+CPU-activity metric makes every A/B on this device unreliable.**
+**❄️ ONE UNEXPLAINED SIGNAL WORTH A REPEAT, NOT A CLAIM:** in the attract-tier pair, base ended at **67C** and
+`context_residency + residency_writeback` at **63C** from identical 40C cold starts, with throughput equal.
+**4C cooler for the same work would be exactly the power win this project is chasing** — but it is a SINGLE
+sample, the levers also invalidate the object cache (different compile load during the run), and this file's own
+drift figure is ~2.8%. **Repeat it before believing it.**
+
 ## ⚠️ Measurement is the #1 trap
 BD's GPU scene complexity swings ~4×/second → **cross-run fps / gpu_frame_us is CONFOUNDED (worthless)**. Only
 trust: single-run in-place alternating A/B on a GPU-busy frame (`gpu_freeze_ab_alternate_vrs`,
