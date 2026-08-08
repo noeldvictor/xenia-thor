@@ -1586,8 +1586,12 @@ spills and fills"**, verbatim:
 ⇒ **A fill from a vector register is HALF the latency of a fill from L1 (2 vs 4), and it never touches the cache
 at all** - which matters doubly here, because review #3 shows our 2 KB context block is already competing for a
 32 KB L1 with a guest that was tuned for a 32 KB L1 of its own.
-**Capacity is not the problem either:** 28 allocatable vector registers x 2 x 64-bit lanes = **up to 56 GPR
-slots**, against a guest with 32 GPRs. The whole guest integer file could live in vector registers.
+**Capacity, CORRECTED by test:** one 64-bit slot per vector register, so 28 registers = **up to 28 GPR
+slots** against a guest with 32 - not 56. An earlier version of this section claimed 2 lanes per register;
+`tools/qemu/gpr_vector_spill_roundtrip.c` shows `FMOV Dn, Xs` ZEROES the upper 64 bits (all AArch64 scalar
+FP writes zero the upper lanes), so lane 1 cannot be a second slot unless it is written with `INS`
+(latency 5) and lane 0 is then never refilled with FMOV. The implementation already assumed one slot per
+register; only the documentation was wrong.
 **⚠️ THE HONEST CAVEAT - THROUGHPUT, and it is why Arm wrote "when possible":** `LDR` is throughput **3/cycle**
 on the 3-wide load pipe; `UMOV`/`FMOV` are throughput **1/cycle**. So memory wins for BULK spill/fill, VPR wins
 for LATENCY-critical single values. The right implementation is therefore selective, not wholesale: spill
