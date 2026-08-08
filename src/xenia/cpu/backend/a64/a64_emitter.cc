@@ -108,6 +108,17 @@ DECLARE_uint32(arm64_guest_stack_arg_handoff_audit_function);
 DECLARE_uint32(arm64_guest_stack_arg_handoff_audit_budget);
 DECLARE_uint32(arm64_speed_profile_body_time_after_ms);
 DECLARE_bool(a64_rtl_leave_fastpath_audit);
+DEFINE_bool(
+    a64_vmx_pressure_census, false,
+    "Census (diagnostic only): per compiled guest function, count how many of"
+    " the guest's 128 VMX registers it actually touches. The Xenon has 128"
+    " vector registers (Hot Chips 17 p5) and we allocate 28 (v4-v31), so a"
+    " function touching more than 28 CANNOT be kept resident and pays a"
+    " 6-cycle PPCContext.v[] reload (A710 SWOG Tbl 3-30) per spilled operand."
+    " This decides whether that squeeze is theoretical or dominant. Logs a"
+    " histogram plus the worst offenders every 4096 functions.",
+    "a64");
+
 DEFINE_bool(a64_inline_gprlr_helpers, true,
             "Inline PPC __savegprlr_* / __restgprlr_* ABI helpers in the "
             "A64 backend.",
@@ -2324,6 +2335,30 @@ A64Emitter::A64Emitter(A64Backend* backend, XbyakA64Allocator* allocator)
 
 A64Emitter::~A64Emitter() = default;
 
+// --- VMX pressure census ------------------------------------------------
+// Guest VMX file is PPCContext.v[128] at offset 0x220, 16 bytes each.
+namespace {
+constexpr uint32_t kVmxBase = uint32_t(offsetof(ppc::PPCContext, v));
+constexpr uint32_t kVmxEnd = kVmxBase + 128u * 16u;
+std::atomic<uint64_t> g_vmx_census_funcs{0};
+std::atomic<uint64_t> g_vmx_hist[6] = {};  // 0, 1-8, 9-16, 17-28, 29-48, 49+
+std::atomic<uint64_t> g_vmx_over28{0};
+std::atomic<uint32_t> g_vmx_worst_addr{0};
+std::atomic<uint32_t> g_vmx_worst_count{0};
+}  // namespace
+
+void A64Emitter::NoteVmxContextAccess(uint32_t context_offset) {
+  if (context_offset < kVmxBase || context_offset >= kVmxEnd) {
+    return;  // not a VMX register - could be r[], f[], or anything else
+  }
+  const uint32_t idx = (context_offset - kVmxBase) / 16u;
+  if (idx < 64u) {
+    vmx_touched_lo_ |= (uint64_t(1) << idx);
+  } else {
+    vmx_touched_hi_ |= (uint64_t(1) << (idx - 64u));
+  }
+}
+
 bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
                       uint32_t debug_info_flags, FunctionDebugInfo* debug_info,
                       void** out_code_address, size_t* out_code_size,
@@ -2337,6 +2372,8 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   trace_data_ = &function->trace_data();
 
   current_guest_function_ = function->address();
+  vmx_touched_lo_ = 0;
+  vmx_touched_hi_ = 0;
   auto a64_function = static_cast<A64Function*>(function);
   current_a64_function_ = nullptr;
   current_guest_function_entry_count_ = a64_function->profile_entry_count();
@@ -2609,6 +2646,42 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   }
 
   // Emplace the code into the code cache.
+  // VMX pressure census: the function has finished emitting, so the bitset
+  // now holds every guest vector register it touched.
+  if (cvars::a64_vmx_pressure_census) {
+    const uint32_t distinct =
+        uint32_t(xe::bit_count(vmx_touched_lo_) + xe::bit_count(vmx_touched_hi_));
+    size_t bucket = distinct == 0      ? 0
+                    : distinct <= 8    ? 1
+                    : distinct <= 16   ? 2
+                    : distinct <= 28   ? 3
+                    : distinct <= 48   ? 4
+                                       : 5;
+    g_vmx_hist[bucket].fetch_add(1, std::memory_order_relaxed);
+    if (distinct > 28) {
+      g_vmx_over28.fetch_add(1, std::memory_order_relaxed);
+    }
+    uint32_t worst = g_vmx_worst_count.load(std::memory_order_relaxed);
+    while (distinct > worst &&
+           !g_vmx_worst_count.compare_exchange_weak(worst, distinct,
+                                                    std::memory_order_relaxed)) {
+    }
+    if (distinct >= worst) {
+      g_vmx_worst_addr.store(current_guest_function_, std::memory_order_relaxed);
+    }
+    const uint64_t n = g_vmx_census_funcs.fetch_add(1, std::memory_order_relaxed) + 1;
+    if ((n & 0xFFF) == 0) {
+      XELOGI(
+          "VMXpressure after {} fns: touched 0={} 1-8={} 9-16={} 17-28={} "
+          "29-48={} 49+={} | OVER-28={} ({:.1f}%) | worst fn {:08X} touches {}",
+          n, g_vmx_hist[0].load(), g_vmx_hist[1].load(), g_vmx_hist[2].load(),
+          g_vmx_hist[3].load(), g_vmx_hist[4].load(), g_vmx_hist[5].load(),
+          g_vmx_over28.load(),
+          100.0 * double(g_vmx_over28.load()) / double(n),
+          g_vmx_worst_addr.load(), g_vmx_worst_count.load());
+    }
+  }
+
   *out_code_address = Emplace(func_info, function);
   *out_code_size = func_info.code_size.total;
 

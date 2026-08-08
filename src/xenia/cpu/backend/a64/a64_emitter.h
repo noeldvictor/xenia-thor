@@ -247,6 +247,13 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
 
   XexModule* GuestModule() { return guest_module_; }
   uint32_t current_guest_function() const { return current_guest_function_; }
+
+  // VMX PRESSURE CENSUS (a64_vmx_pressure_census, default off).
+  // Decides whether the 128-guest-vector -> 28-host-register squeeze is
+  // theoretical or dominant. Records which of the guest's 128 VMX registers a
+  // function actually touches; the distinct count is the number the allocator
+  // would have to keep resident to avoid PPCContext.v[] traffic entirely.
+  void NoteVmxContextAccess(uint32_t context_offset);
   bool blue_dragon_f1_carrier_stack_slot_enabled() const {
     return blue_dragon_f1_carrier_stack_slot_offset_ != 0;
   }
@@ -267,6 +274,8 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   XexModule* guest_module_ = nullptr;
   uint64_t feature_flags_ = 0;
   uint32_t current_guest_function_ = 0;
+  uint64_t vmx_touched_lo_ = 0;
+  uint64_t vmx_touched_hi_ = 0;
   A64Function* current_a64_function_ = nullptr;
   std::atomic<uint64_t>* current_guest_function_entry_count_ = nullptr;
   std::atomic<uint64_t>* current_guest_function_body_ticks_ = nullptr;

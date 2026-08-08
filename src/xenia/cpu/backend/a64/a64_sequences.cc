@@ -1242,6 +1242,7 @@ struct LOAD_CONTEXT_V128
     : Sequence<LOAD_CONTEXT_V128, I<OPCODE_LOAD_CONTEXT, V128Op, OffsetOp>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
+    e.NoteVmxContextAccess(offset);  // VMX pressure census
     e.ldr(i.dest, ptr(e.GetContextReg(), offset));
   }
 };
@@ -1393,6 +1394,7 @@ struct STORE_CONTEXT_V128
                I<OPCODE_STORE_CONTEXT, VoidOp, OffsetOp, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     auto offset = static_cast<uint32_t>(i.src1.value);
+    e.NoteVmxContextAccess(offset);  // VMX pressure census
     if (EmitBlueDragonCallBoundaryStateProbe(
             e, GetBlueDragonCallBoundaryStoreKind(e, i.instr, offset))) {
       return;
