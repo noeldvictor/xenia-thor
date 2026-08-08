@@ -2064,6 +2064,27 @@ logs and hits `tw` (trap).
 - ⇒ **The fastpath is a title-PARAMETERISED mechanism currently wearing a hardcoded address** (`current_guest_function_
   != 0x8246B408`). Generalising it to a per-title table {wait fn addr, flag offset, flag bit, timeout} is the highest-
   value CPU work available, and it is mostly refactoring code that is already proven on-device.
+  **⚠️ CORRECTION 2026-08-07 — "mostly refactoring" IS TOO OPTIMISTIC, I CHECKED.** `EmitBlueDragonDrawWait
+  FastpathBody` **hand-emits Blue Dragon's exact predicate** — offsets `0xA39`, `0x2A10`, `0x2A08`, `0x2A70`, its
+  own token/owner refresh, its own 5000ms timeout. Burnout's predicate differs in **SHAPE, not just constants**.
+  So generalising means writing and validating a SECOND predicate emitter, and a wrong wait predicate is a hang,
+  not a wrong pixel. **The {addr, flag offset, bit, timeout} table cannot express it.**
+  **✅ THE HALF THAT CARRIES THE WIN IS LANDED WITHOUT THE RISKY HALF (`e53891be4`) — `arm64_guest_spin_throttle_
+  functions` (+`_stride` 16, `_sleep_us` 100), all allowlisted, `functions` DEFAULTS EMPTY so it is inert.**
+  **The +27% never came from the cheap predicate — the cvar's own text says it came from "descheduling the ~21M/
+  frame spin so the command-processor thread runs unconstrained".** Descheduling needs no predicate at all. The
+  throttle emits at function ENTRY, after the prolog: per-context hit counter, `and`+`cbnz` to skip unless
+  `(hits & (stride-1))==0`, `CallNativeSafe(YieldGuestSpinThrottle)` — **then falls through to the REAL translated
+  body**. It does not substitute, skip or reproduce the guest predicate, so it can change only WHEN the poll
+  happens, never what it returns. **That is what makes it safe to aim at a title nobody has reverse-engineered**,
+  and it is the precise difference from the BD fastpath, which replaces the body.
+  - Counter lives in `A64BackendContext` ⇒ **per guest thread**; a shared counter would let two threads spinning
+    the same function race and skew the stride.
+  - Timeout safety: these predicates are **wall-clock** based, and sleeping does not slow wall-clock — it frees
+    the core for the CP thread that has to satisfy the wait, so the wait tends to complete SOONER. That is the BD
+    result, not a hope.
+  - **Aim it:** `--es arm64_guest_spin_throttle_functions 8238CD28` on Burnout **in a real race, not attract**;
+    read `entry_delta` AND thermals. **Never executed yet — empty by default.**
 - **Do NOT confuse this with `KfAcquireSpinLock`** — that one is MEASURED completely uncontended (see below) and is
   a dead end. The hot spin is in GUEST code, not our kernel HLE.
 
