@@ -40,6 +40,7 @@ DECLARE_bool(arm64_use_flat_membase);
 
 DECLARE_bool(a64_vmx_native_fmax_nan);
 DECLARE_bool(a64_fpcr_single_mode);
+DECLARE_bool(a64_vmx_nan_fixup_branchless);
 
 namespace xe {
 namespace cpu {
@@ -597,6 +598,41 @@ inline void PrepareVmxFpSources(A64Emitter& e, const T1& op1, const T2& op2,
 // NaN, so this only pays in code that actually produces NaNs.
 inline void FixupVmxNan_V128(A64Emitter& e, int s1 = 0, int s2 = 1) {
   using namespace Xbyak_aarch64;
+
+  // BRANCHLESS FORM (a64_vmx_nan_fixup_branchless). Only the GENERATED-NaN
+  // half of this function is actually needed - ARM already reproduces PPC's
+  // operand-position NaN precedence exactly (qemu-verified, 8 cases, see
+  // tools/qemu/vmx_nan_arith_differential.c). What ARM cannot supply is the
+  // PPC default NaN for a nan-from-nowhere result: ARM makes 7FC00000, PPC
+  // wants FFC00000. So: force FFC00000 exactly on lanes where the RESULT is
+  // NaN and NEITHER SOURCE was, and leave every other lane alone.
+  //
+  // Why branchless rather than the scalar loop below: A710 SWOG 4.2 says a
+  // V-pipeline uOP with more than one quad-word source, any part of which
+  // was written as SINGLE WORDS, stalls in dispatch for THREE CYCLES. The
+  // scalar path writes v2 one lane at a time (ins .s4[lane]) and the result
+  // is then consumed as a full Q - exactly that pattern. This form never
+  // writes a single word, has no branch, no stack spill, and no vector->GPR
+  // transfer (the old fast path did fmov w0, s3 just to test it).
+  if (cvars::a64_vmx_nan_fixup_branchless) {
+    // v3 = ~0 where the RESULT is not NaN
+    e.fcmeq(VReg(3).s4, VReg(2).s4, VReg(2).s4);
+    // v0/v1 = ~0 where each SOURCE is not NaN. Reading and writing the same
+    // register in one instruction is safe even when a constant operand put
+    // s1 in v0 or s2 in v1 - the read happens before the write.
+    e.fcmeq(VReg(0).s4, VReg(s1).s4, VReg(s1).s4);
+    e.fcmeq(VReg(1).s4, VReg(s2).s4, VReg(s2).s4);
+    e.and_(VReg(0).b16, VReg(0).b16, VReg(1).b16);  // neither source NaN
+    // AND result IS NaN  ->  bic(a, b) = a & ~b, and v3 is ~0 where NOT NaN
+    e.bic(VReg(0).b16, VReg(0).b16, VReg(3).b16);
+    // v1 = PPC default NaN (s2 is dead by now, so v1 is free)
+    LoadV128Const(e, 1, vec128i(0xFFC00000u), 0);
+    // where the mask is set take the default NaN, else keep the result
+    e.bsl(VReg(0).b16, VReg(1).b16, VReg(2).b16);
+    e.mov(VReg(2).b16, VReg(0).b16);
+    return;
+  }
+
   auto& done = e.NewCachedLabel();
 
   // Fast path: if no result lane is NaN, skip entirely.

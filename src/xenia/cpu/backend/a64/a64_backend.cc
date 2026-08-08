@@ -139,6 +139,22 @@ DEFINE_bool(
     "a64");
 
 DEFINE_bool(
+    a64_vmx_nan_fixup_branchless, false,
+    "ARM64: replace FixupVmxNan_V128 scalar lane loop with a branchless "
+    "vector select. Only the GENERATED-NaN half is needed - ARM already "
+    "matches PPC operand-position NaN precedence exactly (qemu-verified, see "
+    "tools/qemu/vmx_nan_arith_differential.c); the one thing it cannot supply "
+    "is PPC default NaN FFC00000 for a NaN produced from non-NaN inputs, "
+    "where ARM makes 7FC00000. A710 SWOG 4.2 prices the old shape: a "
+    "V-pipeline uOP with more than one quad-word source, any part of which "
+    "was written as SINGLE WORDS, stalls in dispatch for THREE CYCLES - and "
+    "the scalar path writes v2 lane by lane then feeds it to a full-Q "
+    "consumer. The branchless form is 8 vector ops with no branch, no stack "
+    "spill, no lane write and no vector-to-GPR transfer. Default off pending "
+    "a qemu differential of the four NaN classes against the scalar path.",
+    "a64");
+
+DEFINE_bool(
     a64_fpcr_single_mode, false,
     "ARM64: never switch FPCR between scalar-FP and VMX modes. A710 SWOG "
     "Table 4-3 lists an FPCR write as Non-Speculative and In-Order, and note "
