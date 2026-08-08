@@ -701,6 +701,18 @@ game**, and simultaneously prescribes `entry_delta` as *the* CPU-throughput metr
 CPU work … read the profiler's `entry_delta`"). **Those two rules are incompatible: the prescribed metric cannot
 see the prescribed backend.** Any lever A/B'd with LLVM on and judged by `entry_delta` was scored on a
 non-representative slice of guest execution — which is the most likely reason so many of them read FLAT.
+**🔧 SCOPED (2026-08-08) — WHAT MAKING THE METRIC BACKEND-COMPLETE ACTUALLY COSTS, so nobody starts it
+thinking it is a one-liner:** the counter is **`std::atomic<uint64_t> profile_entry_count_` on `A64Function`**
+(a64_function.h:273), NOT on the shared `GuestFunction` base — so an LLVM-compiled function has no counter
+object to increment at all. A real fix is four coordinated edits:
+1. move `profile_entry_count_` (and its accessor) down to the shared `GuestFunction`;
+2. keep the a64 path pointing at the moved member (`a64_emitter.cc:2462`, `:4104`) so its numbers stay
+   comparable with every figure already in this file;
+3. emit an `atomicrmw add` on that counter in the LLVM IR **entry block** (`llvm_assembler.cc:701`), gated on
+   the same `speed_profile_enabled()`;
+4. update the profiler's aggregation, which currently walks **a64 functions** to sum `entry_delta`.
+**Until that exists, `entry_delta` on an LLVM run is the fallback slice and nothing else.**
+
 **✅ WHAT TO DO INSTEAD (pick per lever):**
 - **a64 codegen levers** → A/B with **`--ez cpu_backend_llvm false`**, so `entry_delta` is complete and the
   metric matches the code under test. This is valid TODAY with no new code.
