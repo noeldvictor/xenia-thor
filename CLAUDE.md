@@ -1563,6 +1563,42 @@ from `entry_delta` alone; that metric cannot see power, and the whole point of t
 fast enough in bursts and too hot overall.
 **⚠️ NEEDS ONE A/B**: same route, thermals + `entry_delta`, old mapping vs new. One-commit revert if it regresses.
 
+## 📉📉📉 FIRST REAL DEVICE MEASUREMENTS OF THE POWER WORK (2026-08-08) — AND THE PRECOMPILE LEVER IS **REFUTED**
+**Device released by the user; Gears, Turnip Adreno (TM) 740 confirmed, `--es cpu arm64 --ez cpu_backend_llvm
+true --ez cpu_aot_maximize true`, 28,776 `LLVMobjload` (cache warm). Every number below read off the device.**
+**❌❌ `cpu_precompile_worker_core_policy` DOES NOT REDUCE STARTUP HEAT. DO NOT USE POLICY 1.**
+| arm | policy | cold | time-to-title | temp at title | rise |
+|---|---|---|---|---|---|
+| F-default | 0 | 33C | **12,358 ms** | 48C | **+14C** |
+| G-little | 1 (A510s) | 35C | **33,612 ms** | 48C | **+13C** |
+| H-midtier | 2 (cpu3-6) | 36C | **12,200 ms** | 49C | **+13C** |
+**Pinning the compile to the little cluster costs 2.7x the load time and buys 1C — inside noise, since the cold
+starts themselves differed by 3C.** The startup rise is ~+13-14C *regardless of which cores compile*.
+**🔑 WHY, and it is the useful part: a fixed amount of work costs a roughly fixed amount of ENERGY.** Little
+cores are more efficient per operation but take proportionally longer; big cores race to idle. The two effects
+cancel. **My hypothesis — "the efficient cores win because the task is throughput-bound and latency-insensitive"
+— was wrong, and it was wrong for a reason that generalises: perf/watt arguments about CORE CHOICE only pay when
+the work is NOT fixed** (e.g. a spin loop, where the little core simply does fewer wasted iterations). For a
+fixed instruction stream, core choice moves wall-clock far more than it moves joules.
+**Policy 2 (mid-tier) is neutral: same time-to-title, same temperature.** Harmless, pointless. Default stays 0.
+**⚠️ AND THE 40C->68C FIGURE IN THE THERMAL SECTION WAS AN a64-PATH NUMBER.** With LLVM + a warm object cache
+the compile is ~12s and the rise is +14C to **48C**, not 68C. The 68C figure came from runs on the a64 fallback,
+which has no object cache and recompiles ~28k functions from scratch. Quote the right one.
+**🛑 THE CONDVAR A/B DID NOT MEASURE GAMEPLAY — IT IS UNRESOLVED, NOT FLAT.** Both arms hit the **72C guard
+at ~80-100s**, and the Gears route does not reach Act 1 until **125-150s**. 16 profile windows were captured
+(~80s) and the tail `entry_delta` was **1.2-1.4M**, which is the TITLE-SCREEN figure (~1.1M), not gameplay
+(3.6-3.9M). Cold starts also differed (36C vs 40C). **Reporting "1.4M vs 1.2M" as a condvar result would have
+been exactly the benchmark-a-menu error this file opens with.** Redo from a genuinely cold chassis, one run per
+long cooldown — back-to-back runs heat-soak the device and the guard then fires before the scene.
+**🔥 THE STANDALONE FINDING THAT MATTERS MOST: GEARS REACHES 72C DURING MENUS AND CINEMATICS, BEFORE
+GAMEPLAY BEGINS.** From a 36C cold start the device saturates in under two minutes without ever entering Act 1.
+The startup compile is only +14C of that; the rest accrues in the menu/cinematic phase. **So the thermal budget
+is spent before the part we have been optimising even runs**, which reframes the whole power effort: the target
+is not (only) making gameplay cheaper, it is finding what burns 24C during menus.
+**⚡ WATTS STILL NOT MEASURED.** The device was USB-attached and `status: 2` (Charging) throughout, which the
+watts section already establishes makes `current_now` fiction. A real figure needs the cable OUT and adb over
+wifi (192.168.1.33:5555 is connected and ready).
+
 ## 🧭 THE MEASUREMENT FOR REVIEWS #1 AND #2 ALREADY EXISTED - `arm64_register_allocation_audit`
 **I built `a64_vmx_pressure_census` and then found the tree already had a better instrument, already
 allowlisted. Recorded so nobody repeats either the duplication or my metric mistake.**
