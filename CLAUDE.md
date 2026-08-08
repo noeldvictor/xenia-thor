@@ -1511,6 +1511,34 @@ routines, 4.5 load/store alignment, 4.7 region forwarding, 4.8 branch alignment,
 4.10 special register access, 4.11 register forwarding hazards). **§4 produced every actionable finding of this
 review; the instruction tables only priced things already suspected.** Read §4 first next time.
 
+## 📕 MANUAL REVIEW #8 - THE X3 SWOG HAS SECTIONS THE A710 DOES NOT (fusion, zero-latency MOVs)
+**The X3 guide's §4 is NOT a copy of the A710's** - it adds 4.5 store-to-load forwarding, 4.6 AES, 4.11
+instruction fusion, 4.12 zero-latency MOVs, 4.13-4.15 cache/MTE, 4.16-4.17 SVE. Two matter here, and one of them
+REFUTES a worry rather than confirming it.
+**§4.12 Zero Latency MOVs - the list is ONLY zeroing idioms:**
+```
+MOV Xd,#0    MOV Xd,XZR    MOV Wd,#0    MOV Wd,WZR    MOV Hd,WZR
+```
+*"These instructions do not utilize the scheduling and execution resources of the machine."*
+⇒ **REGISTER-TO-REGISTER MOVs ARE NOT FREE, even on the prime core.** I checked this expecting it might undercut
+`a64_vmx_fp_no_operand_copy` - if the X3 renamed our `mov v0.16b, v4.16b` staging copies away, that lever would
+buy nothing on the core the main guest thread now runs on. It does not: only zeroing forms are eliminated. **The
+lever keeps its value on the X3.** Recorded because the opposite is a very natural assumption.
+**§4.11 Instruction fusion - the X3 fuses these ADJACENT pairs into one operation:**
+`AESE+AESMC`, `AESD+AESIMC`, `CMP/CMN (imm) + B.cond`, `CMP/CMN (reg) + B.cond`, `TST (imm/reg) + B.cond`,
+`BICS (reg) + B.cond`, `NOP + Any`. *"These instruction pairs must be adjacent to each other in program code"*,
+and fusion is **not** allowed for shifted/extended REGISTER forms.
+**✅ VERIFIED CLEAN - we already satisfy this.** Every `EmitCmpImm32` site in the hot paths emits the compare
+immediately followed by the branch (a64_emitter.cc 4984/4985, 4990/4991, 5043/5044, 5049/5050, 5361-5363), so
+they fuse. The `CMN #1` form `EmitCmpImm32` picks for `0xFFFFFFFF` is in the fusion list too, and its
+`CMP #x, LSL #12` form is a shifted IMMEDIATE, not a shifted register, so it is unaffected by the exclusion.
+**⇒ THE STANDING RULE THIS CREATES: never insert an instruction between a compare and its conditional branch
+in the a64 backend.** It looks harmless and silently costs the fusion on the prime core - exactly the sort of
+thing a well-meaning peephole or a debug counter would break. `EmitAtomicIncrement64` between a CMP and a B.cond
+would do it.
+**Also noted for the crypto track:** `AESE+AESMC` fusion means hardware AES on the X3 is cheaper than the
+per-instruction table suggests - relevant if the `xe_crypt_sha_census` ever justifies writing the intrinsics.
+
 ## ⚠️⚠️ THE THREE NEW a64 LEVERS ARE NOT INDEPENDENT - MEASURE THEM SEPARATELY
 **Found by reading, before wasting a device run on it.** `a64_fpcr_single_mode` **silently disables**
 `a64_vmx_fp_no_operand_copy`: turning off FPCR.FZ makes the software denormal flush mandatory
