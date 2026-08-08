@@ -1454,6 +1454,33 @@ from `entry_delta` alone; that metric cannot see power, and the whole point of t
 fast enough in bursts and too hot overall.
 **⚠️ NEEDS ONE A/B**: same route, thermals + `entry_delta`, old mapping vs new. One-commit revert if it regresses.
 
+## 🧭 THE MEASUREMENT FOR REVIEWS #1 AND #2 ALREADY EXISTED - `arm64_register_allocation_audit`
+**I built `a64_vmx_pressure_census` and then found the tree already had a better instrument, already
+allowlisted. Recorded so nobody repeats either the duplication or my metric mistake.**
+`register_allocation_pass.cc` logs, **per register set (int / float / vec)**:
+```
+set=<int|float|vec> dest_values= allocation_successes= preferred_attempts= preferred_hits=
+preferred_fallbacks= spill_requests= spill_successes= max_active_registers= max_upcoming_uses=
+```
+- **`spill_requests` / `spill_successes` are the direct answer to "do we run out of registers"** - review #1 for
+  `set=int` (7 GPRs) and review #2 for `set=vec` (28 vectors), in ONE run, with no new code.
+- **`max_active_registers` is the RIGHT metric and my census measures the WRONG one.** It is peak
+  SIMULTANEOUSLY-LIVE values; `a64_vmx_pressure_census` counts DISTINCT registers touched per function, which
+  over-counts - a function can touch 40 distinct VMX registers and never hold more than 10 live at once. Only
+  the simultaneous figure decides whether the allocator spills.
+- It is **host-independent** (it lives in the shared HIR allocator, not the a64 backend), so unlike my census it
+  also runs on the desktop x64 build - though the register-set SIZES differ per backend, so the spill counts
+  only mean something when the a64 set sizes (7/28) are in force.
+- Filter to one function with `arm64_register_allocation_audit_function=<addr>`; both cvars are allowlisted.
+**⇒ USE THE EXISTING AUDIT FIRST.** Keep `a64_vmx_pressure_census` only for the one thing it does that the audit
+does not: telling you WHICH of the 128 guest VMX registers get touched, i.e. whether the guest's usage is
+clustered (cacheable) or spread across the whole 2 KB block (review #3).
+**And the spill DESTINATION, which review #5 needs:** `SpillOneRegister` calls `builder->AllocLocal()` and emits
+`StoreLocal`/`LoadLocal`, so spills go to the **stack frame**, not to `PPCContext`. That is the exact site Arm's
+§4.3 advice applies to - a stack local is still "the cache hierarchy". Implementing GPR-to-VPR spilling means
+teaching the allocator that `vec_set` can host a spilled integer, which is shared-code surgery (it would affect
+x64 too, where the same trick works via `MOVQ`), not an a64-local peephole. **Scope it accordingly.**
+
 ## 📕🔧 MANUAL REVIEW #5 - **ARM TELLS US TO SPILL GPRs INTO VECTOR REGISTERS, AND WE SPILL TO MEMORY**
 **The most directly actionable thing in the SWOGs, and it needs no census to justify - the manual states the
 principle outright.** `cortex-a710-software-optimization-guide.pdf` **§4.3 "Optimizing general-purpose register
