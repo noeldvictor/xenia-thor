@@ -51,68 +51,6 @@ namespace gpu {
 namespace vulkan {
 
 
-// Capture-only snapshot of the decoded command processor state consumed by one
-// committed draw. All members are copied values; descriptors in the frame
-// capture are never mutated after insertion.
-struct BdNativeDrawDescriptor {
-  struct ColorRenderTarget {
-    uint32_t bound = 0;
-    uint32_t base_tiles = 0;
-    uint32_t pitch = 0;
-    uint32_t format = 0;
-    uint32_t msaa = 0;
-  };
-
-  struct DepthRenderTarget {
-    uint32_t bound = 0;
-    uint32_t base_tiles = 0;
-    uint32_t pitch = 0;
-    uint32_t format = 0;
-    uint32_t msaa = 0;
-    uint32_t z_enable = 0;
-    uint32_t z_write_enable = 0;
-    uint32_t z_compare = 0;
-    uint32_t stencil_enable = 0;
-    uint32_t stencil_front_compare = 0;
-    uint32_t stencil_back_compare = 0;
-  };
-
-  uint64_t full_signature = 0;
-  uint64_t logical_signature = 0;
-
-  uint32_t primitive_type = 0;
-  uint32_t index_count = 0;
-  uint32_t indexed = 0;
-  uint32_t index_format = 0;
-  uint32_t index_endian = 0;
-  uint32_t index_guest_address = 0;
-  uint32_t index_buffer_count = 0;
-  uint64_t index_buffer_length = 0;
-  uint32_t instance_count = 0;
-  uint32_t vertex_count = 0;
-
-  std::array<ColorRenderTarget, xenos::kMaxColorRenderTargets> color_targets{};
-  DepthRenderTarget depth_target{};
-  uint32_t normalized_color_mask = 0;
-  uint32_t normalized_depth_control = 0;
-
-  uint64_t vertex_shader_hash = 0;
-  uint64_t pixel_shader_hash = 0;
-
-  std::array<uint32_t, xenos::kMaxColorRenderTargets> blend_controls{};
-  uint32_t color_control = 0;
-  uint32_t alpha_ref = 0;
-  uint32_t raster_control = 0;
-  uint32_t viewport_control = 0;
-  // XSCALE, XOFFSET, YSCALE, YOFFSET, ZSCALE, ZOFFSET, as raw float bits.
-  std::array<uint32_t, 6> viewport{};
-  uint32_t screen_scissor_tl = 0;
-  uint32_t screen_scissor_br = 0;
-  uint32_t window_scissor_tl = 0;
-  uint32_t window_scissor_br = 0;
-  uint32_t window_offset = 0;
-  uint32_t msaa = 0;
-};
 
 class VulkanCommandProcessor : public CommandProcessor {
  public:
@@ -477,10 +415,6 @@ class VulkanCommandProcessor : public CommandProcessor {
   // reaches IssueDraw on the Thor.
   uint32_t bd_issuedraw_count_ = 0;
 
-  // Stage 1 of the full native Blue Dragon HLE: capture-only, frame-local CP
-  // draw descriptors. This never owns or points at register-file state and is
-  // drained at IssueSwap without changing rendering.
-  std::vector<BdNativeDrawDescriptor> bd_native_frame_;
 
   // Blue Dragon native-draw HLE decoupled present (gpu_bd_hle_present_decoupled).
   // bd_capture_armed_ is set by BdArmDecoupledCapture around the synthetic draw;
