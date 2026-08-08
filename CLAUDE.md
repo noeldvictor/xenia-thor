@@ -696,6 +696,15 @@ is INVISIBLE, and what you are reading is the small a64 FALLBACK slice.**
 |---|---|
 | documented baseline (a64 backend era, profiler saw everything) | **122-128M / 5s** (≈ 24.4M entries/sec) |
 | measured today with `--ez cpu_backend_llvm true` | **~14M / 5s** — the a64 fallback subset only |
+**✅✅✅ CONFIRMED ON DEVICE 2026-08-08 — THE SAME TITLE, SAME SCENE, ONLY THE BACKEND CHANGED:**
+| run | `entry_delta` peak | top-6 avg |
+|---|---|---|
+| `--ez cpu_backend_llvm true` (shipping config) | **14.1M** | 13.5M |
+| `--ez cpu_backend_llvm false` (a64 only) | **130.6M** | **129.1M** |
+**9.3x, and the a64 figure lands exactly on this file's documented 122-128M baseline.** So the baseline was
+RIGHT all along and there is **no throughput regression** — the metric simply cannot see LLVM-compiled code.
+Diagnosed by reading `a64_emitter.cc:4104`, then proven by flipping one flag.
+
 **⚠️ AND IT COLLIDES WITH THE STANDING DIRECTIVE.** This file mandates **AOT + LLVM as the default for every
 game**, and simultaneously prescribes `entry_delta` as *the* CPU-throughput metric ("fps is the WRONG metric for
 CPU work … read the profiler's `entry_delta`"). **Those two rules are incompatible: the prescribed metric cannot
@@ -720,6 +729,12 @@ object to increment at all. A real fix is four coordinated edits:
   add the same atomic increment to the LLVM function prolog, or use a whole-system metric (frame time on an
   uncapped title, or wall-clock to a fixed in-game checkpoint).
 - **Never mix**: an `entry_delta` number is only comparable to another taken on the SAME backend.
+**🌡️❌ AND THE FIRST CORRECTED-METRIC A/B WAS THERMALLY CONFOUNDED — DISCARDED, NOT SCORED.** Re-running GPR
+DSE a64-only gave base 129.1M vs lever 128.5M (top-6), **but the cold starts were 39C and 52C**: the cooldown
+loop (60 x 15s) timed out before the second arm reached the 41C gate. A 13C hotter start is far larger than the
+effect being measured, so **that pair says nothing** and must be repeated one-arm-per-cooldown. *(Recorded
+because "it looked flat" is exactly how a confounded pair gets quietly promoted to a verdict.)*
+
 **⇒ RE-READ THE 2026-08-08 VERDICTS ACCORDINGLY.** GPR DSE (+0.8%) and LLVM residency (+0.7%) were both scored
 with LLVM on, i.e. **on the fallback slice** — they are UNMEASURED, not refuted. The structural verdicts
 (store-buffer absorption, CR stores already stripped in-block, eieio at 4 sites, timer frequency already scaled,
