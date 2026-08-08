@@ -266,6 +266,23 @@ workspace("xenia")
   startproject("xenia-app")
   if os.istarget("android") then
     platforms({"Android-ARM64", "Android-x86_64"})
+
+    -- DISK: symbols("On") above is GLOBAL, so every TU - including all of
+    -- third_party, and libLLVM is the monster - got full DWARF. That produced
+    -- ~14 GB of objects in build/ plus ~11 GB of gradle intermediates, and it
+    -- filled the disk mid-link on 2026-08-08 (the linker died with "no space
+    -- left on device", which surfaces as a bare "clang++: error: linker
+    -- command failed due to signal" and looks like a compiler bug).
+    -- -gline-tables-only keeps EXACTLY what this project's crash workflow uses
+    -- - function names and line numbers for llvm-addr2line against the
+    -- xenia-fault logcat tag - and drops the type/variable DWARF nobody here
+    -- reads. clang takes the LAST -g* option, so this overrides the -g that
+    -- symbols("On") emits. Use symbols("Full")/-g locally if you ever need a
+    -- real variable-inspecting debugger session.
+    filter("system:android")
+      buildoptions({"-gline-tables-only"})
+    filter({})
+
     filter("platforms:Android-ARM64")
       architecture("ARM64")
       -- The AYN Thor (the ONE target) is a Snapdragon 8 Gen 2 = ARMv9.0-A with

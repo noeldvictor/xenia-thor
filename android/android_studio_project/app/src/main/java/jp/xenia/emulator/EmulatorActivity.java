@@ -864,6 +864,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "a64_fpcr_single_mode");
             copyBooleanExtra(intent, launchArguments, "a64_vmx_nan_fixup_branchless");
             copyBooleanExtra(intent, launchArguments, "a64_fold_cmp_immediates");
+            // Counts eieio/sync translation sites - rule 4 before weakening
+            // eieio to a store-only barrier (dmb ishst).
+            copyBooleanExtra(intent, launchArguments, "cpu_ppc_barrier_census");
             // 0=OS, 1=A510 littles, 2=cpu3-6. The AOT precompile is the startup
             // heat (261-340% CPU, 40C->68C) and is latency-insensitive.
             copyIntExtra(intent, launchArguments, "cpu_precompile_worker_core_policy");

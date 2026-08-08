@@ -12,6 +12,8 @@
 #include <stddef.h>
 #include "xenia/base/assert.h"
 #include "xenia/base/cvar.h"
+#include <atomic>
+
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
 
@@ -28,6 +30,15 @@ DEFINE_bool(
     "lwsync->lighter-barrier weakening is deliberately NOT done here - lwsync "
     "requires store-store ordering that ARM64 'dmb ishld' does not provide, so "
     "weakening it would be a correctness bug.",
+    "CPU");
+
+DEFINE_bool(
+    cpu_ppc_barrier_census, false,
+    "Count eieio and sync TRANSLATION sites, to decide whether lowering eieio "
+    "to a cheaper store-only barrier (ARM64 'dmb ishst') is worth a new HIR "
+    "opcode. eieio orders stores only; we currently emit a full 'dmb ish'. "
+    "Rule 4: count before building - a handful of sites kills the idea without "
+    "touching the memory model.",
     "CPU");
 
 namespace xe {
@@ -748,12 +759,35 @@ int InstrEmit_stswx(PPCHIRBuilder& f, const InstrData& i) {
 
 // Memory synchronization (A-18)
 
+// Rule-4 census for the eieio->dmb-ishst question (2026-08-08). eieio orders
+// STORES only, which ARM64 'dmb ishst' provides, while we currently emit a full
+// 'dmb ish' for it. Whether that is worth a new HIR opcode depends entirely on
+// how many sites exist - so COUNT before building, the way the rlwinm census
+// did. Counts TRANSLATION sites (static), which is the cheap first filter: a
+// handful of sites kills the idea outright without touching the memory model.
+static std::atomic<uint32_t> g_eieio_sites{0};
+static std::atomic<uint32_t> g_sync_sites{0};
+
 int InstrEmit_eieio(PPCHIRBuilder& f, const InstrData& i) {
+  if (cvars::cpu_ppc_barrier_census) {
+    uint32_t n = g_eieio_sites.fetch_add(1, std::memory_order_relaxed) + 1;
+    if ((n & 0x3F) == 0 || n <= 4) {
+      XELOGI("PPCbarrier census: eieio sites={} sync sites={}", n,
+             g_sync_sites.load(std::memory_order_relaxed));
+    }
+  }
   f.MemoryBarrier();
   return 0;
 }
 
 int InstrEmit_sync(PPCHIRBuilder& f, const InstrData& i) {
+  if (cvars::cpu_ppc_barrier_census) {
+    uint32_t n = g_sync_sites.fetch_add(1, std::memory_order_relaxed) + 1;
+    if ((n & 0xFF) == 0 || n <= 2) {
+      XELOGI("PPCbarrier census: sync sites={} eieio sites={}", n,
+             g_eieio_sites.load(std::memory_order_relaxed));
+    }
+  }
   f.MemoryBarrier();
   return 0;
 }
