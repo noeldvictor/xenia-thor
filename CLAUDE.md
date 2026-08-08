@@ -1270,6 +1270,33 @@ opening regardless of how fast the JIT is.
 (`entry_delta` 3.5x the title, different hot set) - but **the scene it reaches STALLS, so it is NOT a valid
 benchmark scene** and no fps or throughput number from it means anything yet. "Route solved, gameplay
 measurement unblocked" was half right: navigation is solved, measurement is not.
+**🎯 HYPOTHESIS NARROWED (2026-08-07, code-read, no device): THEY ARE ASYNC-I/O COMPLETION EVENTS.**
+Three facts line up, and none of them needed a device:
+1. **A guest event does NOT need `NtCreateEvent` to exist.** `XObject::GetNativeObject` (xobject.cc:884) wraps a
+   guest `DISPATCHER_HEADER` into an XEvent **on first use** and allocates the handle then, stashing it in
+   `header->wait_list.blink_ptr`. So an event can be waited on while never appearing in any create trace - which
+   is exactly what we observed.
+2. **The stalled handles are LOW** - `F8000010 F8000018 F800004C F80000FC F8000104`. Handles are `slot << 2` plus
+   a base, so low values mean EARLY allocation: long-lived subsystem objects created during init, not
+   mid-gameplay churn.
+3. **This tree already documents the exact churn class for this exact game.** `object_table.cc:203` comment:
+   *"fires on EVERY handle add (e.g. **~135/s of async-I/O event churn during UE3 / Gears 3 asset loads**)"*.
+⇒ **The five events are most likely overlapped/async-I/O completion events that our kernel never signals** -
+the same defect class the Edge kernel port already partially addressed (`XamGetOverlappedResult` honouring
+bWait, overlapped event Reset on arm, 25ms dispatch - see the Edge port section). **Gears Act 1 is where UE3
+does its heaviest streaming, which is why the stall lands there.**
+**✅ NO NEW CODE NEEDED TO CONFIRM IT - the diagnostic already exists.** `ObjectTable::AddHandle` logs
+`"Added handle:{:08X} for {typeid}"` at **Debug** level (gated there deliberately, because at Info it cost a
+typeid + format + logcat write inside the global critical region on every handle add). So:
+```
+raise the log level to Debug, run the Gears route, then:
+  logcat -d -s xenia:* | grep -E "Added handle:F8000010|F8000018|F800004C|F80000FC|F8000104"
+```
+The `typeid` on those five lines names the owning subsystem, and the owner is the thing that owes the signal -
+which IS the fix site. Do that before writing any new instrumentation.
+**⚠️ Debug level is very verbose here** (~135 handle adds/sec plus everything else), so use a big logcat buffer
+and expect eviction - the same trap that made the first event-trace attempt look broken.
+
 **🔬 WAIT-TRACE DONE 2026-08-07 - THE FIVE EVENTS ARE NEVER TOUCHED BY GUEST CODE AT ALL.**
 Ran `--ez xboxkrnl_event_trace true --ei xboxkrnl_event_trace_budget 6000` plus the wait trace with
 `--ei xboxkrnl_thread_wait_trace_after_ms 110000` (delay matters - see the budget trap below). Stall reproduced,
