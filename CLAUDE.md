@@ -1404,6 +1404,24 @@ shed it. **So "46->72C in 30s" was never a gameplay figure; it is mostly the com
 **⇒ THE NEXT THERMAL MEASUREMENT MUST START AFTER THE COMPILE SETTLES**, not at launch, or it measures the
 precompile and calls it gameplay. Take a steady-state baseline once `AOT precompile progress` stops, THEN drive
 into a scene.
+**🔥🔥 AND THE COMPILE ITSELF IS A POWER BUG — REVIEW #4's MISTAKE IN A SECOND PLACE (found 2026-08-07,
+`f408592b0`, cvar `cpu_precompile_worker_core_policy`, DEFAULT 0, allowlisted).** The precompile spawns its
+workers as **raw `std::thread`s with NO affinity and NO priority**, sized by
+`hardware_concurrency()` (= **8**, counting three 2.0GHz A510s as equal to the 3.19GHz X3) minus 2 → **6
+CPU-saturating unpinned threads**. That is a request Android's EAS answers by **boosting the big cluster**.
+**The work is throughput-bound and latency-INSENSITIVE** — it sits behind a progress bar and is JOINED before the
+guest runs — which is precisely the case review #4 spells out: *"for a sustained full-duty load the mid cores
+usually win on perf/watt, because the prime core's last few hundred MHz cost disproportionate voltage."*
+⇒ **Racing the compile on big cores buys a shorter progress bar and spends the entire thermal budget BEFORE
+gameplay starts**, which is why the game then reaches 72C so fast. Policy `1` = A510 littles, `2` = cpu3-6
+(X3 left alone); `worker_count` is clamped to the mask's popcount (6 workers on 3 A510s is just context
+switching); affinity + a background renice are applied **from inside each worker**, same reason XenDroid's
+`bc257ce49` moved audio priority inside the thread — and the renice is the half that matters, since **lowering**
+priority is permitted where **raising** it EPERMs on Android.
+**⚠️ THE TRADE-OFF IS REAL: pinning to the littles makes the compile take LONGER in wall-clock.** The bet is that
+entering gameplay tens of degrees cooler is worth a slower load, because thermal headroom is what the whole
+session runs on. **UNMEASURED.** Measure BOTH: time-to-title AND the temperature gameplay starts at — a policy
+that loads slower and still starts hot is a straight loss.
 **✅ SOLVED SAME DAY - GEARS GAMEPLAY ROUTE, device-verified: `tools/thor/gears_gameplay_route.sh`.**
 `--es hid nop --es hid_nop_button_sequence 'start@40000:1200;start@47000:1200;start@53000:1200;start@59000:1200;
 start@65000:1200;start@71000:1200;a@79000:1200;a@86000:1200;a@93000:1200;a@100000:1200;a@107000:1200;a@114000:1200'`
