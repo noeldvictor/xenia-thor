@@ -1383,6 +1383,49 @@ a ~5 MINUTE run** (the user's whole session was 8,221). Same guard at `xma_conte
 the audio-priority ports are all installed and this is unaffected by them, exactly as the section below predicts.
 **This is now the largest un-fixed defect with a confirmed user-visible symptom.**
 
+## 📕📕📕 MANUAL-DERIVED ARCHITECTURE REVIEW #1: THE REGISTER ALLOCATOR HAS ONE CLASS, AND IT IS THE SMALL ONE
+**User directive 2026-08-07: "still way too much power and heat for how slow... rethink major pieces from
+xbox360 straight to ARM64. USE THE FUCKING MANUALS." This section is manual-first: every number below is quoted
+from a primary source in `docs/reference/`, not from memory.**
+
+**THE THREE REGISTER FILES, from the manuals:**
+| | source | integer registers |
+|---|---|---|
+| GUEST Xenon (PowerPC) | `ppc/powerpc-user-isa-book1.pdf` Figure 2, pdf-p16: `GPR 0 ... GPR 31` | **32** |
+| HOST ARM64 | AAPCS: x0-x30 | **31** (10 callee-saved: x19-x28) |
+| the x64 host the port came from | - | **16** |
+
+**WHAT WE ACTUALLY ALLOCATE (`a64_emitter.h:79`, `a64_emitter.cc:2306`):**
+```
+GPR_COUNT = 7      // x22..x28
+VEC_COUNT = 28     // v4..v31
+// Reserved: x19 backend ctx, x20 guest context, x21 membase
+// "Scratch: x0-x18 (caller-saved)"      <- 19 registers, never allocated
+```
+**❌ FIRST HYPOTHESIS, AND IT IS WRONG - RECORDED SO NOBODY RE-RAISES IT.** `x64_emitter.h` also says
+`GPR_COUNT = 7`, which looks like the port copied x64's budget onto a machine with twice the registers. **It did
+not.** ARM64 has exactly 10 callee-saved GPRs; minus our 3 reservations that is **exactly 7**. The match with
+x64 is a coincidence, and the vector set WAS widened correctly for ARM64 (x64 `XMM_COUNT = 12` -> a64
+`VEC_COUNT = 28`). Do not "fix" GPR_COUNT by raising the number - x29/x30/SP are not yours to take.
+**✅ THE REAL FINDING: WE HAVE A SINGLE REGISTER CLASS, AND IT IS CALLEE-SAVED-ONLY.** All 19 caller-saved
+integer registers (x0-x18) are used ONLY as fixed scratch, never given to the allocator. A conventional
+allocator carries two classes - callee-saved for values live across a call, caller-saved for short-lived
+temporaries - so a temporary that dies before the next call can use a caller-saved register for free. Ours
+cannot: every value competes for the same 7.
+**Why that costs, quoted from `arm/cortex-a710-software-optimization-guide.pdf`:**
+- §2.1 pdf-p12: the A710 dispatches into **thirteen issue pipelines** after **register renaming**; the X3
+  (`cortex-x3-...pdf` §2.1 pdf-p11) into **seventeen**. **Both cores rename**, so ARCHITECTURAL registers are
+  cheap - the physical file is much larger - while a spill becomes a real memory dependency renaming cannot undo.
+- Table 3-13 (Load instructions, pdf-p27): `LDR` = **Exec Latency 4, Throughput 3**, pipeline L.
+- Table 3-11 (Misc data-processing, pdf-p26): `MOVZ/MOVK` , `SBFM/UBFM`, `LSLV/LSRV/ASRV/RORV` = **latency 1,
+  throughput 4**, pipeline I.
+⇒ **A spill reload costs 4x the latency of the ALU op it feeds**, and the guest has 32 GPRs to squeeze into 7.
+**⚠️ NOT MEASURED, AND THERE IS A REAL COUNTER-ARGUMENT.** Caller-saved registers must be spilled around every
+guest->host call, and this file already measures **~24.4M guest function entries/sec on Burnout**, i.e. calls are
+extremely frequent - so values rarely live long, and a second class might buy little while costing save/restore.
+**Do the census before building it** (rule 4): count how many HIR values are live across a call vs die before
+one. That counter is cheap; a two-class allocator is not.
+
 ## 🧨🧨🧨 THE CONSTANT-OPERAND BUG FAMILY — FOUR FOUND, SWEEP NOW COMPLETE (2026-08-07)
 **`SrcVReg` returns the SCRATCH INDEX when an operand is constant** (a64_seq_util.h:271-277): it materialises
 the constant into v0/v1 and returns 0/1. So `s1` can BE v0 and `s2` can BE v1 — and any sequence that later uses
