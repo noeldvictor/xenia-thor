@@ -300,7 +300,30 @@ workspace("xenia")
       -- thermal starts, uncapped entry_delta) before any win is claimed. It is
       -- in because it is low-risk and strictly more informed than generic
       -- scheduling, NOT because it was measured.
-      buildoptions({"-march=armv8.2-a+lse", "-mno-outline-atomics",
+      -- ISA FEATURES: the Thor reports (from /proc/cpuinfo)
+      --   aes crc32 pmull sha1 sha2 sha3 sha512 asimddp i8mm bf16 fphp asimdhp
+      -- and we compiled with NONE of them, which meant:
+      --   * hardware AES/SHA intrinsics would not even COMPILE - the actual
+      --     blocker on using the crypto units at all. TinySHA1 and
+      --     rijndael-alg-fst do it all in software today.
+      --   * +crc gives CRC32, +dotprod gives UDOT/SDOT, +sha3 gives
+      --     EOR3/BCAX/RAX1/XAR.
+      -- MEASURED AFTER ENABLING THEM (disassembled the built libxenia-app.so,
+      -- 1,779,182 instructions): clang emitted ZERO eor3/bcax/rax1/xar, ZERO
+      -- aes*/sha*, ZERO crc32*, ZERO udot/sdot. So these flags change the
+      -- compiler's PERMISSION and nothing else - they are a PREREQUISITE for
+      -- hand-written intrinsics, NOT a free codegen win. Do not claim a
+      -- speedup from this line. (An earlier version of this comment implied
+      -- clang would now fuse C++ into EOR3/BCAX; it does not.) The reason to
+      -- keep them is that hardware AES/SHA intrinsics would not COMPILE
+      -- without +crypto - TinySHA1 and rijndael-alg-fst are still software.
+      -- Safe here for the same reason +lse is (see above): the Thor is the only
+      -- device this APK runs on. But NOTE these DO move the ISA baseline,
+      -- unlike -mtune - a build with them SIGILLs on an arm64 device lacking
+      -- them. Thor-targeted by intent.
+      -- NOT adding +fp16: FP16 is excluded for guest FP everywhere in this tree
+      -- (it black-screens as guest geometry) and there is no host-side case.
+      buildoptions({"-march=armv8.2-a+lse+crypto+sha3+crc+dotprod", "-mno-outline-atomics",
                     "-mtune=cortex-a710"})
     filter("platforms:Android-x86_64")
       architecture("x86_64")
