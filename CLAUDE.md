@@ -1245,6 +1245,31 @@ two fixed ones were real bugs, but they are not where the 8W-vs-3-5W gap lives.
    callback takes that same global mutex every few ms.
 **⇒ Spend effort on 1-3, not on hunting for a layer that is not there.**
 
+## 🎯🎯🎯 FIRST GEARS *GAMEPLAY* CPU PROFILE (2026-08-07) — AND IT KILLS THE #1 CPU LEVER FOR THIS TITLE
+**Captured with the new route, in the Act 1 prison corridor. This is the first gameplay-tier profile for Gears
+and the hot set is COMPLETELY different from the title screen's.**
+| # | guest fn | delta/5s | code_size |
+|---|---|---|---|
+| 1 | `sub_8253A088` | 403,371 | 5124 |
+| 2 | `sub_825F2D40` | 295,318 | 6512 |
+| 3 | `sub_825A5768` | 230,194 | 5968 |
+| 4 | `sub_822153F0` | 156,990 | 1608 |
+| 5/6 | `sub_82549E78` / `sub_82549F68` | 93,560 each (identical - a caller/callee pair) | 1928 / 10024 |
+| 7 | `sub_821911E0` | 60,008 | 6696 |
+**🔑 THE LOAD IS DISTRIBUTED, AND THAT IS THE FINDING.** Top-1 is ~403K of ~3M entries = **~13%**. Compare
+Burnout, where ONE function (`sub_8238CD28`, the D3D9 wait predicate) is **85% of all guest entries at ~21M
+calls/sec**. **Gears has no equivalent busy-wait.**
+**⇒ THE "GENERALISE THE WAIT FASTPATH" LEVER - recorded elsewhere in this file as the highest-value CPU work
+available - DOES NOT APPLY TO GEARS.** That lever exists because Burnout and Blue Dragon both hammer the same
+XDK wait helper; Gears simply does not. Do not port the per-title fastpath table expecting it to help here.
+**⇒ What WOULD help Gears is breadth, not a single fastpath:** the top 7 functions together are well under half
+the entries, so per-call overhead and ubiquitous codegen quality (prolog, shifts, `rlwinm`, memory ops) matter
+more than any one function. That also means Gears is a GOOD title for validating ubiquitous codegen changes and
+a BAD one for hunting a single hot spot.
+**⚠️ `entry_delta` is NOISY in gameplay** - 5.3M, 547K, 2.2M, 3.0M across consecutive 5s windows (the 547K
+window is a load/transition). Average over several windows; do not quote a single sample.
+**Thermals for this route: 40C cold -> 74C at 150s.** One run per cooldown, as recorded with the route.
+
 ## 🌡️ THERMAL DECOMPOSITION 2026-08-07: THE STARTUP HEAT IS THE AOT COMPILE, NOT THE GUEST
 **Measured, and it reframes the watts question.** Gears reaches **70-72C from a 36C cold start in ~2 minutes**
 of TITLE SCREEN, cinematics and MENUS - no gameplay at all. But the profiler over that same window shows the
