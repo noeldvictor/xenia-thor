@@ -111,7 +111,34 @@ registers.
 a<abi>`, so every cached object is `o2r0w0a0` today. **Turning residency on invalidates the entire 60k-object
 cache and forces a full recompile**, so the first run of each arm is slow and hot — budget for it and do not
 mistake it for the lever being expensive at runtime.
-**All three are allowlisted.** Measurement in progress; record the result here rather than re-deriving.
+**✅ MEASURED 2026-08-08, Burnout, uncapped, equal thermal starts — STABLE, BUT NO WIN AT TITLE-TIER:**
+| arm | entry_delta | cold→end | faults |
+|---|---|---|---|
+| base | 12.4M | 40→61C | 0 |
+| `context_residency` | 12.4M | 40→65C | 0 |
+| `+ residency_writeback` | 12.3M | 39→63C | 0 |
+**✅✅ AND THE LEVERS PROVABLY ENGAGED — verified, because a flat result from a lever that never ran is the trap
+this file records three times.** The objcache key carries the residency bits, so engagement is checkable
+without trusting the cvar plumbing:
+```
+o2r0w0a0 : 60,992   (baseline)
+o2r1w0a0 : 13,885   <- residency arm really compiled 13,885 functions
+o2r1w1a0 : 13,885   <- residency+writeback, another 13,885
+```
+**🔓 WHAT THIS DOES BUY, and it is not nothing: both levers are now DEVICE-VALIDATED AS STABLE** — title
+reached, **0 faults / SIGTRAP / Scudo** across both arms, 13,885 functions each compiled through the residency
+IR path. They were marked *"default off pending qemu-differential + device A/B validation"*; the stability half
+of that is now done. **What is NOT done is a gameplay-tier throughput measurement.**
+**⚠️ AND THE SAME CAVEAT AS THE GPR ARM APPLIES, HONESTLY: `entry_delta` ≈12.4M against this file's Burnout
+ATTRACT baseline of 122-128M/5s means the runs sat on the TITLE SCREEN**, at roughly a tenth of attract's
+activity. **Residency is a fix for MEMORY-BOUND guest execution** (its own help: *"the guest thread is
+memory-bound, ~half of BD's field CPU"*), and a title screen is the scene least likely to be memory-bound.
+**⇒ A flat result here is weak evidence, and specifically weaker than for the other levers measured today.**
+**⇒ THIS IS THE ONE LEVER STILL WORTH A REAL GAMEPLAY A/B.** Everything else in the 2026-08-08 sweep measured
+flat for a reason that generalises (store buffer absorbs dead stores; pipeline already strips dead CR stores;
+eieio is 4 sites). This one measured flat in a scene that cannot exercise what it fixes. Get a Burnout RACE
+route (none exists — only `tools/thor/gears_gameplay_route.sh`) or a BD field route, then re-run these three
+arms. Do NOT flip the defaults on title-screen evidence.
 
 **STATUS: NOT STUDIED IN DEPTH. Not cloned, not read.** Do that before making any claim about their codegen.
 
