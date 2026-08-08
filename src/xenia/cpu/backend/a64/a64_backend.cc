@@ -138,6 +138,25 @@ DEFINE_bool(
     "crash.",
     "a64");
 
+DEFINE_uint32(
+    a64_spill_gprs_to_vector, 0,
+    "ARM64: redirect the first N integer spill slots from the stack into "
+    "RESERVED vector registers. Cortex-A710 SWOG section 4.3 recommends "
+    "exactly this: transfers between GPR and ASIMD registers are lower "
+    "latency than reads and writes to the cache hierarchy, so GPRs should be "
+    "filled/spilled to the VPR rather than to memory. Measured on the A710: a "
+    "fill via UMOV is latency 2 against 4 for LDR, and it never touches L1. "
+    "0 = off (default). N reserves the TOP N vector registers, shrinking the "
+    "allocator vector set from 28 by N, using lane 0 of each as one 64-bit "
+    "slot; clamped to 8. THE TRADE IS TWO-SIDED, WHICH IS WHY IT IS OFF: the "
+    "guest is a 128-vector-register machine (Hot Chips 17 p5) already squeezed "
+    "into 28, so every register taken here worsens VECTOR pressure to relieve "
+    "INTEGER pressure. It only pays in integer-heavy, vector-light functions. "
+    "Settle it with arm64_register_allocation_audit: if set=int reports "
+    "spill_requests while set=vec max_active_registers sits well under 28, "
+    "this wins.",
+    "a64");
+
 DEFINE_bool(
     a64_vmx_native_fmax_nan, true,
     "ARM64: skip FixupVmxMaxMinNan and let the hardware fmax/fmin supply the NaN "
@@ -3329,7 +3348,10 @@ bool A64Backend::Initialize(Processor* processor) {
   std::strcpy(vec_set.name, "vec");
   vec_set.types = MachineInfo::RegisterSet::FLOAT_TYPES |
                   MachineInfo::RegisterSet::VEC_TYPES;
-  vec_set.count = A64Emitter::VEC_COUNT;
+  // a64_spill_gprs_to_vector reserves the TOP N vector registers as
+  // low-latency integer spill slots (A710 SWOG 4.3), so the allocator must
+  // not hand them out.
+  vec_set.count = A64Emitter::VEC_COUNT - int(A64Emitter::ReservedSpillVecs());
 
   // Generate thunks using ARM64 assembler.
   XbyakA64Allocator allocator;

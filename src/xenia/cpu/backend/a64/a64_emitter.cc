@@ -2267,6 +2267,8 @@ bool ParsePpcThreadFieldLeafHelper(xe::Memory* memory,
 }
 }  // namespace
 
+DECLARE_uint32(a64_spill_gprs_to_vector);
+
 namespace xe {
 namespace cpu {
 namespace backend {
@@ -2346,6 +2348,31 @@ std::atomic<uint64_t> g_vmx_over28{0};
 std::atomic<uint32_t> g_vmx_worst_addr{0};
 std::atomic<uint32_t> g_vmx_worst_count{0};
 }  // namespace
+
+// a64_spill_gprs_to_vector (A710 SWOG 4.3): reserve the TOP N vector registers
+// as integer spill slots. Clamped to 8 so the allocator always keeps >= 20
+// vector registers - the guest is a 128-vector machine and starving it to feed
+// the integer side would trade one bottleneck for a worse one.
+uint32_t A64Emitter::ReservedSpillVecs() {
+  uint32_t n = cvars::a64_spill_gprs_to_vector;
+  return n > 8 ? 8u : n;
+}
+
+// Local slots are 8-byte-aligned stack offsets. Map the first N of them onto
+// lane 0 of the reserved vector registers, counting DOWN from v31 so the
+// allocator's set (v4..) is unaffected. Returns -1 when the slot is not
+// covered and must use the stack as before.
+int A64Emitter::SpillVecForSlot(uint32_t local_offset) {
+  const uint32_t reserved = ReservedSpillVecs();
+  if (!reserved || (local_offset & 7u)) {
+    return -1;
+  }
+  const uint32_t slot = local_offset >> 3;
+  if (slot >= reserved) {
+    return -1;
+  }
+  return int(31u - slot);
+}
 
 void A64Emitter::NoteVmxContextAccess(uint32_t context_offset) {
   if (context_offset < kVmxBase || context_offset >= kVmxEnd) {

@@ -4425,6 +4425,13 @@ struct LOAD_LOCAL_I64
     : Sequence<LOAD_LOCAL_I64, I<OPCODE_LOAD_LOCAL, I64Op, I32Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     uint32_t off = static_cast<uint32_t>(i.src1.constant());
+    // A710 SWOG 4.3: filling from a vector register is latency 2 (UMOV)
+    // against 4 for LDR, and never touches the cache hierarchy.
+    const int spill_vec_l = A64Emitter::SpillVecForSlot(off);
+    if (spill_vec_l >= 0) {
+      e.umov(i.dest, Xbyak_aarch64::VReg(spill_vec_l).d[0]);
+      return;
+    }
     auto base = PrepareLocalBase(e, off, 8);
     e.ldr(i.dest, ptr(base, PrepareLocalImm(off, 8)));
   }
@@ -4519,6 +4526,14 @@ struct STORE_LOCAL_I64
     : Sequence<STORE_LOCAL_I64, I<OPCODE_STORE_LOCAL, VoidOp, I32Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     uint32_t off = static_cast<uint32_t>(i.src1.constant());
+    // A710 SWOG 4.3 - see LOAD_LOCAL_I64. Constants still go to the stack:
+    // materialising into a GPR just to FMOV it across would cost more than
+    // the str it replaces.
+    const int spill_vec_s = A64Emitter::SpillVecForSlot(off);
+    if (spill_vec_s >= 0 && !i.src2.is_constant) {
+      e.fmov(Xbyak_aarch64::DReg(spill_vec_s), i.src2.reg());
+      return;
+    }
     auto base = PrepareLocalBase(e, off, 8);
     uint32_t imm = PrepareLocalImm(off, 8);
     if (i.src2.is_constant) {

@@ -82,6 +82,13 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   static constexpr int VEC_COUNT = 28;
   static constexpr size_t kStashOffset = 32;
 
+  // a64_spill_gprs_to_vector: how many of the TOP vector registers are held
+  // back as integer spill slots (A710 SWOG 4.3). Clamped so the allocator
+  // always keeps a usable vector set.
+  static uint32_t ReservedSpillVecs();
+  // Physical vector register backing integer spill slot `index`, or -1.
+  static int SpillVecForSlot(uint32_t local_offset);
+
   static void SetupReg(const hir::Value* v, Xbyak_aarch64::WReg& r) {
     auto idx = gpr_reg_map_[v->reg.index];
     r = Xbyak_aarch64::WReg(idx);
