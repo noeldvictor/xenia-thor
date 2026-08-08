@@ -2101,6 +2101,19 @@ logs and hits `tw` (trap).
   - Timeout safety: these predicates are **wall-clock** based, and sleeping does not slow wall-clock — it frees
     the core for the CP thread that has to satisfy the wait, so the wait tends to complete SOONER. That is the BD
     result, not a hope.
+  - **🔑 EMITTER INVARIANT FOR ANY FUNCTION-ENTRY HOOK, verified 2026-08-07 (do not re-derive):**
+    `CallNativeSafe` is `mov x0,fn / mov x9,thunk / **blr** x9` — so it clobbers **x0, x9 and x30 (LR)**.
+    That is safe at the entry-hook point ONLY because the prolog has already spilled both: `str x30, [sp,
+    HOST_RET_ADDR]` (a64_emitter.cc:4073) and `str x0, [sp, GUEST_RET_ADDR]` run at :4072-4074, while the hooks
+    run at :4114-4115 — and **every epilog reloads x30 FROM THE STACK** (:4274, :4549, :5718, :5743), never
+    from the live register. **A hook placed BEFORE the prolog's LR spill would destroy the return address.**
+  - **⚠️ AND A RETRACTION: I first justified this placement by pointing at `MaybeEmitBlueDragonDrawWait
+    CallerProfile` as "direct precedent" for CallNativeSafe at function entry. That was WEAK —
+    `arm64_blue_dragon_draw_wait_caller_profile` is `DEFINE_bool(..., false)`, so the precedent is itself a path
+    that has never run.** This file already records the rule twice (`a64_three_operand_shifts` off-path,
+    `a64_vmx_fp_no_operand_copy` on-path): **a lever that has never executed is unvalidated code, and citing one
+    as evidence proves nothing.** The register-spill ordering above is the real proof, and unlike the appeal to
+    precedent it is checkable in four grep hits.
   - **Aim it:** `--es arm64_guest_spin_throttle_functions 8238CD28` on Burnout **in a real race, not attract**;
     read `entry_delta` AND thermals. **Never executed yet — empty by default.**
 - **Do NOT confuse this with `KfAcquireSpinLock`** — that one is MEASURED completely uncontended (see below) and is
