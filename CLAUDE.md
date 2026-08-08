@@ -1454,6 +1454,41 @@ from `entry_delta` alone; that metric cannot see power, and the whole point of t
 fast enough in bursts and too hot overall.
 **⚠️ NEEDS ONE A/B**: same route, thermals + `entry_delta`, old mapping vs new. One-commit revert if it regresses.
 
+## 📕🔧 MANUAL REVIEW #5 - **ARM TELLS US TO SPILL GPRs INTO VECTOR REGISTERS, AND WE SPILL TO MEMORY**
+**The most directly actionable thing in the SWOGs, and it needs no census to justify - the manual states the
+principle outright.** `cortex-a710-software-optimization-guide.pdf` **§4.3 "Optimizing general-purpose register
+spills and fills"**, verbatim:
+> *"Register transfers between general-purpose registers (GPR) and ASIMD registers (VPR) are lower latency than
+> reads and writes to the cache hierarchy, thus it is recommended that **GPR registers be filled/spilled to the
+> VPR rather to memory**, when possible."*
+**We do the opposite.** Review #1: 7 allocatable GPRs against the guest's 32, and everything else spills to
+`PPCContext` - i.e. to the cache hierarchy, which is exactly what §4.3 says not to do.
+**The numbers, from the A710 instruction tables:**
+| operation | Exec Latency | Throughput | Pipe | table |
+|---|---|---|---|---|
+| **fill from vector** `UMOV`/`SMOV` (element -> gen) | **2** | 1 | V | 3-33, pdf-p52 |
+| fill from memory `LDR` | **4** | 3 | L | 3-13, pdf-p27 |
+| **spill to vector** `FMOV` (gen -> low D) | 3 | 1 | M0 | 3-21, pdf-p36 |
+| spill to vector `INS` (gen -> element) | 5 | 1 | M0, V | 3-33, pdf-p52 |
+⇒ **A fill from a vector register is HALF the latency of a fill from L1 (2 vs 4), and it never touches the cache
+at all** - which matters doubly here, because review #3 shows our 2 KB context block is already competing for a
+32 KB L1 with a guest that was tuned for a 32 KB L1 of its own.
+**Capacity is not the problem either:** 28 allocatable vector registers x 2 x 64-bit lanes = **up to 56 GPR
+slots**, against a guest with 32 GPRs. The whole guest integer file could live in vector registers.
+**⚠️ THE HONEST CAVEAT - THROUGHPUT, and it is why Arm wrote "when possible":** `LDR` is throughput **3/cycle**
+on the 3-wide load pipe; `UMOV`/`FMOV` are throughput **1/cycle**. So memory wins for BULK spill/fill, VPR wins
+for LATENCY-critical single values. The right implementation is therefore selective, not wholesale: spill
+short-lived, latency-critical values to VPR and leave bulk state in the context.
+**⇒ THIS IS THE CONCRETE "REWORK MAJOR PIECES" ITEM FOR THE INTEGER SIDE**, and unlike reviews #1-#3 it does not
+wait on the census - Arm states the principle. It DOES interact with review #2: vector registers are only free
+to borrow when the function is not already vector-bound, which is exactly what `a64_vmx_pressure_census`
+measures. **So the census now decides scope, not whether to do it at all.**
+**Also found in §4.7 "Region based fast forwarding", and it prices something we already suspected:** the A710
+splits NEON forwarding into regions and warns *"it is not advisable to interleave instructions belonging to
+different regions"*, with a worked example where a `MOV v27.s[1], v20.s[1]` placed between FP ops **costs an
+extra cycle**. Our `PrepareVmxFpSources` staging copies are exactly that shape - `mov` interleaved with `fmax`/
+`fcmeq` - so they cost MORE than their nominal uOP count, which strengthens `a64_vmx_fp_no_operand_copy`.
+
 ## 📕📕📕 MANUAL-DERIVED ARCHITECTURE REVIEW #1: THE REGISTER ALLOCATOR HAS ONE CLASS, AND IT IS THE SMALL ONE
 **User directive 2026-08-07: "still way too much power and heat for how slow... rethink major pieces from
 xbox360 straight to ARM64. USE THE FUCKING MANUALS." This section is manual-first: every number below is quoted
