@@ -16,6 +16,11 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **fire the device** | `Never thrash the Thor`, `BLACK SCREEN? CHECK THE DISPLAY`, `TURNIP IS MANDATORY` | thermal limits are real; a sleeping panel looks exactly like a rendering bug; a bare launch uses the WRONG driver |
 | **chase a crash** | `BURNOUT ... LLVM WRITING x20`, `GEARS SIGTRAP`, `Android fault diagnosis` (memory) | decode the instruction before blaming a subsystem; x20/x21 state is the discriminator |
 | **hunt x86-shaped bugs** | `THE x86→ARM64 SWEEP: MEMORY ORDERING IS THE BUG CLASS` | TSO hides missing fences; look for an atomic index guarding a plain buffer, and check the POSIX `#elif` nobody profiles |
+| **work on POWER / HEAT / watts** | `MANUAL REVIEW #4` (little-core pin), `#6` (FPCR barriers), `HOW TO ACTUALLY MEASURE WATTS` | the main guest thread was HARD-PINNED to a 2.0GHz A510 while the X3 idled; watts are unmeasurable over USB |
+| **touch the register allocator** | `MANUAL REVIEW #1`, `#2`, `#3`, `#5`, `THE MEASUREMENT ... ALREADY EXISTED` | 32 guest GPRs into 7, 128 guest vectors into 28; Arm says spill GPRs to VECTOR regs, we spill to memory; and the census you want already exists |
+| **touch FP / VMX / FPCR** | `MANUAL REVIEW #6`, `THE THREE NEW a64 LEVERS ARE NOT INDEPENDENT` | every FPCR mode switch is a PIPELINE BARRIER (Table 4-3 note 2) - the Xenon has two FP mode registers, ARM64 has one |
+| **enable any new a64 lever** | `THE THREE NEW a64 LEVERS ARE NOT INDEPENDENT` | `a64_fpcr_single_mode` SILENTLY disables `a64_vmx_fp_no_operand_copy`; measure one at a time |
+| **read a CPU manual** | `docs/reference/arm/README.md`, and §4 "Special considerations" of the SWOGs FIRST | §4 is where the actionable advice is - the instruction tables only price things you already suspect |
 | **edit this file with a script** | `Config + git rules` | I truncated it to 0 bytes and pushed it once - encode before opening, gate `git add` on size |
 
 ## Goal
