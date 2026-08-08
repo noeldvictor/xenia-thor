@@ -2079,6 +2079,26 @@ measures a *subset* of the code you changed.
   what made the `a64_spin_hint_isb` A/B useless). Run **uncapped** (`--ei gpu_frame_limit_fps 0`) and read the
   profiler's `entry_delta` (guest entries/5s) = a direct CPU-throughput measure.
 
+## 🔐❌ CRYPTO / CRC32 HARDWARE: SEARCHED FOR A HOT TARGET, FOUND NONE (2026-08-07)
+**User asked directly: "use crypto hardware we have in arm 64 as needed too". The ISA prerequisite is now done
+- `-march=...+crypto+sha3+crc+dotprod` - but a search for somewhere it would actually PAY came up empty. Recorded
+as a negative so the next session does not repeat the hunt.**
+| candidate | verdict |
+|---|---|
+| `texture_info.cc:308`, `sampler_info.cc:54` - per-resource hashes | **already `XXH3_64bits`**, which beats CRC32 for bulk hashing. Nothing to win. |
+| `vulkan_command_processor.cc:8779` - per-draw FNV-1a signature, 37 mix calls, byte-at-a-time | **DEAD CODE.** It feeds `bd_native_frame_` (Blue Dragon full-native capture), gated by `gpu_bd_full_native`, which is `DEFINE_int32(..., 0)` and reads `0` in the live device config. It LOOKS like the perfect CRC32 target - a long serialized xor/multiply dependency chain per draw, where `CRC32X` does 8 bytes in one latency-2 instruction - and it never executes. |
+| XEX AES decryption (`rijndael-alg-fst.c`) | load-time, once per module. Even a 10x win is invisible next to a multi-second AOT pass. |
+| guest `XeCryptSha*` (`TinySHA1.hpp`) | frequency STILL UNMEASURED. `xe_crypt_sha_census` exists (xboxkrnl_crypt.cc:29) and has never been run. This is the only live question. |
+**⇒ The honest state: the ISA flags are a PREREQUISITE that is now in place, and nothing yet justifies writing
+intrinsics.** The one open question is guest SHA frequency, and it costs one device run to answer.
+**🔑 THE NEAR-MISS IS THE LESSON.** The per-draw FNV chain passes every smell test for a hardware-hash win -
+hot-sounding location, textbook-bad algorithm, exact instruction available - and optimising it would have
+achieved literally nothing, because the cvar that reaches it is off. **Check the GATE before the algorithm.**
+This file already says "a lever can be correct, allowlisted, and still never run"; the same applies to code you
+are about to speed up.
+**Also: that is more BD debris, in the draw path.** 37 byte-at-a-time mix calls per draw sit behind a
+default-off Blue Dragon cvar, in a function on the hot path. Worth removing with the rest of the BD cleanup.
+
 ## 🔐 ARM64 CRYPTO EXTENSIONS — HARDWARE IS THERE, WE USE NONE OF IT, BUT COUNT BEFORE BUILDING (2026-08-07)
 **Prompted by RPCS3 using crypto acceleration on ARM64. The Thor has the FULL set** (from `/proc/cpuinfo`):
 `aes crc32 pmull sha1 sha2 sha3 sha512`. **We use software for every one of them:**
