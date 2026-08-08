@@ -1245,6 +1245,29 @@ two fixed ones were real bugs, but they are not where the 8W-vs-3-5W gap lives.
    callback takes that same global mutex every few ms.
 **⇒ Spend effort on 1-3, not on hunting for a layer that is not there.**
 
+## 🛑🛑🛑 GEARS ACT 1 GAMEPLAY **STALLS** - 5 THREADS PARKED ON AN EVENT, 0-2 FPS (2026-08-07, NEW BUG)
+**Found while A/B-ing a codegen lever; it is far more important than the lever.** In the Act 1 prison sequence
+the emulator collapses to **0.0-2.0 fps** with **five guest threads blocked on an EVENT** (XObject type 2 =
+`Event`) for 30, 60 and 90 seconds:
+```
+XObject::Wait: host thread has waited 90s on a 2 (tid=00000012)
+XObject::Wait: host thread has waited 90s on a 2 (tid=00000011)
+XObject::Wait: host thread has waited 60s on a 2 (tid=00000007)   ... 10 such lines
+```
+**REPRODUCES ON BOTH ARMS** of the A/B (lever on: 2.0 fps; lever OFF: **0.0 fps**), so it is baseline behaviour,
+not a codegen regression. `entry_delta` stays 2.5-3.0M, i.e. the guest is still executing - a few threads run
+while the rest wait on an event nobody sets.
+**⇒ THIS IS THE SAME CLASS AS THE LOST ODYSSEY STALL** already tracked in this file (threads parked, workers
+idle, an un-signalled kernel object) and therefore the same class the Edge kernel port exists to fix. It is a
+COMPAT bug, and on current evidence it matters more than any CPU lever: Gears is not really playable past the
+opening regardless of how fast the JIT is.
+**⚠️⚠️ AND IT INVALIDATES PART OF MY OWN ROUTE CLAIM FROM EARLIER TODAY.** The route DOES reach gameplay
+(`entry_delta` 3.5x the title, different hot set) - but **the scene it reaches STALLS, so it is NOT a valid
+benchmark scene** and no fps or throughput number from it means anything yet. "Route solved, gameplay
+measurement unblocked" was half right: navigation is solved, measurement is not.
+**Next step is a wait-trace, not a perf run:** `--xboxkrnl_thread_wait_trace=true --xboxkrnl_event_trace=true`
+(the LO workflow in the Edge-port section) to find which event is created-and-waited-but-never-set.
+
 ## 🎯🎯🎯 FIRST GEARS *GAMEPLAY* CPU PROFILE (2026-08-07) — AND IT KILLS THE #1 CPU LEVER FOR THIS TITLE
 **Captured with the new route, in the Act 1 prison corridor. This is the first gameplay-tier profile for Gears
 and the hot set is COMPLETELY different from the title screen's.**
