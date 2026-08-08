@@ -117,6 +117,7 @@ census() {
   "$ADB" -s "$DEV" shell "am start -n $PKG/jp.xenia.emulator.EmulatorActivity \
     --es target '$GAME' --es cpu arm64 --ez cpu_backend_llvm true \
     --ez cpu_aot_maximize true --ez a64_vmx_pressure_census true \
+    --ez arm64_register_allocation_audit true \
     --es gpu_vulkan_driver turnip \
     --es gpu_vulkan_driver_path '/data/data/$PKG/files/gpu_drivers/$DRV/' \
     --es gpu_vulkan_driver_lib libvulkan_freedreno.so \
@@ -126,6 +127,11 @@ census() {
   "$ADB" -s "$DEV" shell am force-stop $PKG
   say "VMX pressure histogram:"
   "$ADB" -s "$DEV" shell "logcat -d -s xenia:*" 2>/dev/null | grep "VMXpressure" | tail -3
+  say "register-allocator spill pressure - the metric that actually decides it:"
+  # spill_requests>0 on set=int means 7 GPRs is a real constraint (review #1);
+  # on set=vec means 28 vectors is (review #2). max_active_registers is peak
+  # SIMULTANEOUSLY-live, which is what determines spilling.
+  "$ADB" -s "$DEV" shell "logcat -d -s xenia:*" 2>/dev/null | grep -oE "set=[a-z]+ .*max_active_registers=[0-9]+" | tail -6
 }
 
 preflight || exit 1
