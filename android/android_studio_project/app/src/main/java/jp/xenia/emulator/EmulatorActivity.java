@@ -1735,6 +1735,21 @@ public class EmulatorActivity extends WindowedAppActivity {
             resumeButton.setOnClickListener(view -> hideInGameMenu());
         }
 
+        // Discoverable fast-forward. The Select+R1 chord already worked and the
+        // FPS badge already showed "2.00x", but nothing on screen revealed it, so
+        // a user who did not know the chord could not find the feature.
+        final Button fastForwardButton = findViewById(R.id.emulator_menu_fastforward);
+        if (fastForwardButton != null) {
+            fastForwardButton.setOnClickListener(view -> {
+                // Read the CURRENT scalar rather than tracking a local flag, so the
+                // button agrees with the hotkey, a game profile, or the config -
+                // Clock stays the single source of truth.
+                final double now = nativeGetGuestTimeScalar();
+                nativeSetGuestTimeScalar(now > 1.01 ? 1.0 : 2.0);
+                refreshFastForwardButton();
+            });
+        }
+
         final Button controllerButton = findViewById(R.id.emulator_menu_controller_mapping);
         if (controllerButton != null) {
             controllerButton.setOnClickListener(view ->
@@ -1869,7 +1884,21 @@ public class EmulatorActivity extends WindowedAppActivity {
         finish();
     }
 
+    // Label reflects the LIVE scalar, so the menu never disagrees with the badge
+    // or with what the Select+R1 chord last did.
+    private void refreshFastForwardButton() {
+        final Button ff = findViewById(R.id.emulator_menu_fastforward);
+        if (ff == null) {
+            return;
+        }
+        final double scalar = nativeGetGuestTimeScalar();
+        ff.setText(scalar > 1.01
+                ? String.format(Locale.US, "Fast-forward: %.3gx → tap for 1x", scalar)
+                : "Fast-forward: 1x → tap for 2x");
+    }
+
     private void refreshInGameMenu() {
+        refreshFastForwardButton();
         if (mInGameMenuShowFps != null) {
             mUpdatingMenuControls = true;
             mInGameMenuShowFps.setChecked(mShowFps);
