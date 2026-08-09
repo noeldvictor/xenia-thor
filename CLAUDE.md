@@ -251,6 +251,20 @@ the 2 KB `PPCContext`. In call-dense guest code that is most of the time.
 **🔑 AND IT IS PRECISELY WHAT XenonRecomp AVOIDS.** It emits the **whole program as C++ in one translation
 unit**, so clang sees every callee, inlines across them, and keeps state in registers where we have a barrier.
 **Their advantage is not better codegen — it is COMPILATION UNIT SCOPE.** That is the "miracle tech".
+**📐 DESIGNED 2026-08-08 — `docs/research/20260808-multi-function-llvm-modules-design.md`.** The constraint
+is NOT in the LLVM backend: **`Assembler::Assemble(GuestFunction*, HIRBuilder*)` takes ONE function**
+(assembler.h:40) and `PPCTranslator::Translate` is called per function (ppc_translator.cc:257 → :369), so the
+per-function boundary runs all the way up the pipeline. A batch path must be ADDED alongside (the a64 backend
+implements the same interface and must not be disturbed), clustering belongs in the AOT walk where the call
+graph is already known, and the object-cache key stops being per-function.
+**⚠️ AND SIZE IT BEFORE BUILDING IT.** The doc names the measurement that can kill the idea in one run:
+**call-graph locality** — how many of a function's call targets would land in the same ≤32-function cluster. **If
+most guest calls leave any reasonable cluster, direct calls never happen and the design collapses.** Given
+everything else measured on 2026-08-08, that is a real possibility and a cheap negative.
+Other traps recorded there: cluster size is a CACHE-CHURN parameter (one changed function invalidates the whole
+cluster, against an 18k-function / 264 MB cache), the a64 clobber hazard (`x22-x28` + full `q8-q15`) applies to
+any call that might leave the cluster, and the 194 remaining vector-FMA fallbacks poison a cluster they sit in.
+
 **⇒ THE REAL STRUCTURAL LEVER, THEREFORE, IS MULTI-FUNCTION MODULES:** lower a call-graph CLUSTER of guest
 functions into ONE llvm::Module with internal linkage, so the inliner and register allocator work across the
 cluster. That is a genuine architectural change (module partitioning, cache keying per cluster, the ABI hazard
