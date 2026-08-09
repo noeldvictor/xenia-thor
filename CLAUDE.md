@@ -3052,6 +3052,24 @@ HANDLER'S DECODER SETTING THE INSTRUCTION SELECTION.** The fix is therefore NOT 
 **teach the access-violation handler to decode q-load/q-store**, and the 4-word split can collapse to one
 instruction on both backends. That is work in the fault path (see the `android-fault-diagnosis` memory), and it
 is bounded — one instruction form to decode.
+**🔧 THE FIX SITE, SCOPED (read before starting — it is bigger than "add one encoding"):**
+`MMIOHandler::TryDecodeLoadStore` (`mmio_handler.cc:119`) currently decodes **32-bit `LDR`/`STR` Wt** across the
+full addressing-mode set (unsigned-scaled, unscaled, pre/post-index, register-offset with extend) and also
+pattern-matches an `LDR`+`REV` pair. Adding the 128-bit SIMD `LDR/STR Qt` encodings is the easy half.
+**⚠️ THE HARD HALF IS THAT THERE ARE TWO CONSUMERS WITH DIFFERENT NEEDS, and only one of them is satisfiable:**
+| consumer | what it needs from the decode | 128-bit feasible? |
+|---|---|---|
+| **write-watch** (`EmulateWatchedStore`, :630) | that a store happened, its address and size, and the VALUE to write through | plausible — it re-executes the store itself |
+| **MMIO** (`:498`) | full emulation of a register access | **NO — MMIO registers are 32-bit; a 128-bit MMIO access is not a thing** |
+**⇒ SO THE REALISTIC SHAPE IS NOT "decode q-loads everywhere". It is: emit a single q-load/q-store for guest
+vector accesses that can only ever hit WRITE-WATCHED memory, and keep the 4-word split for anything that could
+reach MMIO** — which means the emitter needs to know which it is, and it currently does not. That is the actual
+design question, and it is why this is a project rather than a patch.
+**⚠️ AND DO NOT PROTOTYPE IT WITHOUT THE DEVICE.** Every failure mode here is a hang (`EmulateWatchedStore`
+returning 0 makes the caller stop watching the page, so a mis-decode silently loses GPU invalidations → wrong
+pixels or a stall), and none of it is reachable by the qemu harness, which models ISA semantics and not our
+fault path.
+
 **⚠️ UNMEASURED, deliberately.** No census exists of how many guest vector memory accesses execute per frame, so
 rule 4 applies before anyone touches the fault handler. But note the asymmetry that makes this different from
 the dead levers: **a64 already proves the 1-instruction form works** — this is not a hypothetical instruction
