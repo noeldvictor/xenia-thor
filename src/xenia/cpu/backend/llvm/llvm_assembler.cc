@@ -80,6 +80,19 @@ DEFINE_bool(
     "extra spills - A/B it, and verify PIXELS (BD field) not just no-crash.",
     "CPU");
 
+DEFINE_bool(
+    cpu_llvm_callgraph_locality_census, false,
+    "Bucket |callee - caller| for every DIRECT guest call during AOT. This is "
+    "the go/no-go measurement for multi-function LLVM modules "
+    "(docs/research/20260808-multi-function-llvm-modules-design.md): that design "
+    "only pays if call targets are close enough to share a module, so calls "
+    "become DIRECT and the inliner can finally fire. Tight distribution = "
+    "clusterable, worth building. Mostly >=512K = targets scatter, no call "
+    "becomes direct, and the design is DEAD for one cheap run. Aggregated into "
+    "5 buckets and printed every 4096 calls - NOT one line per edge, which "
+    "would be ~90k lines and evict the log.",
+    "CPU");
+
 DEFINE_uint32(
     cpu_llvm_fallback_log_budget, 120,
     "How many LLVMfallback lines to log before going quiet. Each line names a "
@@ -1671,6 +1684,42 @@ bool Lowerer::LowerInstr(Instr* i) {
 
     // ---- guest calls (P4) ----
     case OPCODE_CALL: {
+      // CALL-GRAPH LOCALITY CENSUS - the measurement that decides whether
+      // multi-function LLVM modules are worth building at all
+      // (docs/research/20260808-multi-function-llvm-modules-design.md).
+      //
+      // The whole design rests on clusters of guest functions sharing a module
+      // so intra-cluster calls become DIRECT LLVM calls the inliner can see. If
+      // most call targets are far from their caller they will not land in any
+      // reasonable cluster, no call becomes direct, and the design collapses.
+      //
+      // Buckets |target - caller| by magnitude rather than logging every edge:
+      // ~18k functions x several calls each would be ~90k log lines, and this
+      // repo has already been bitten by a diagnostic that floods logcat and
+      // evicts the lines you actually wanted.
+      if (cvars::cpu_llvm_callgraph_locality_census) {
+        const uint32_t callee = i->src1.symbol->address();
+        const uint32_t caller = guest_addr_;
+        const uint32_t d = callee > caller ? callee - caller : caller - callee;
+        static std::atomic<uint32_t> b_1k{0}, b_8k{0}, b_64k{0}, b_512k{0}, b_far{0};
+        static std::atomic<uint32_t> total{0};
+        if (d < 1024) b_1k.fetch_add(1, std::memory_order_relaxed);
+        else if (d < 8192) b_8k.fetch_add(1, std::memory_order_relaxed);
+        else if (d < 65536) b_64k.fetch_add(1, std::memory_order_relaxed);
+        else if (d < 524288) b_512k.fetch_add(1, std::memory_order_relaxed);
+        else b_far.fetch_add(1, std::memory_order_relaxed);
+        uint32_t n = total.fetch_add(1, std::memory_order_relaxed) + 1;
+        if ((n % 4096) == 0) {
+          XELOGI(
+              "LLVMcallgraph locality: calls={} <1K={} <8K={} <64K={} <512K={} "
+              ">=512K={}",
+              n, b_1k.load(std::memory_order_relaxed),
+              b_8k.load(std::memory_order_relaxed),
+              b_64k.load(std::memory_order_relaxed),
+              b_512k.load(std::memory_order_relaxed),
+              b_far.load(std::memory_order_relaxed));
+        }
+      }
       auto* tgt = b_.getInt32(i->src1.symbol->address());
       if (i->flags & CALL_TAIL) {
         if (!EmitGuestTailCall(tgt)) return false;
