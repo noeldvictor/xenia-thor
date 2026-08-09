@@ -6328,6 +6328,7 @@ static uint64_t PpcFrsqrte(uint64_t bits) {
 // ============================================================================
 // OPCODE_RSQRT
 // ============================================================================
+
 // RULE-4 COUNT for the frsqrte finding: these emitters each plant a HOST CALL
 // (mov x9, PpcFrsqrte / PpcVrsqrtefpLane; blr x9) because PPC frsqrte is defined
 // by a lookup table, not by ARM's FRSQRTE estimate. Inlining the table in ARM64
@@ -6469,25 +6470,40 @@ static uint32_t PpcVrsqrtefpLane(uint32_t bits) {
   return result;
 }
 
+// Whole-vector wrapper: the SAME per-lane function, called once instead of
+// four times, so a vrsqrtefp costs ONE guest->host transition. Results are
+// written back in place. Semantics are identical by construction - this only
+// moves the loop from emitted code into the helper.
+static void PpcVrsqrtefpVector(uint32_t* lanes) {
+  for (int lane = 0; lane < 4; ++lane) {
+    lanes[lane] = PpcVrsqrtefpLane(lanes[lane]);
+  }
+}
+
 struct RSQRT_V128 : Sequence<RSQRT_V128, I<OPCODE_RSQRT, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     CountRsqrtEmit("RSQRT_V128");
-    // Call PpcVrsqrtefpLane directly per lane (pure integer math).
-    // Save source to stack scratch, accumulate results there, load at end.
+    // ONE host call for the whole vector, not one PER LANE.
+    //
+    // This used to emit `mov x9, PpcVrsqrtefpLane; blr x9` inside a 4-iteration
+    // emit loop, i.e. FOUR guest->host transitions per vrsqrtefp - each saving
+    // and restoring state - to do integer math on one 32-bit lane. That shape
+    // came straight from the x64 backend. Device census 2026-08-09: 192+
+    // emission sites in Blue Dragon alone, so it is not a rarity.
+    //
+    // The table itself STAYS. PPC frsqrte is defined by a lookup table (PowerISA
+    // Table E-5), NOT by a high-precision estimate, so ARM's native FRSQRTE is a
+    // different approximation and swapping it in would silently change results.
+    // Only the CALL COUNT changes here - the per-lane function is byte-identical,
+    // so this is semantics-preserving by construction.
     int src_idx = SrcVReg(e, i.src1, 0);
     e.str(QReg(src_idx),
           Xbyak_aarch64::ptr(e.sp,
                              static_cast<int32_t>(StackLayout::GUEST_SCRATCH)));
-    for (int lane = 0; lane < 4; lane++) {
-      e.ldr(e.w0, Xbyak_aarch64::ptr(
-                      e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) +
-                                lane * 4));
-      e.mov(e.x9, reinterpret_cast<uint64_t>(PpcVrsqrtefpLane));
-      e.blr(e.x9);
-      e.str(e.w0, Xbyak_aarch64::ptr(
-                      e.sp, static_cast<int32_t>(StackLayout::GUEST_SCRATCH) +
-                                lane * 4));
-    }
+    // x0 = &scratch, the AAPCS first argument.
+    e.add(e.x0, e.sp, static_cast<uint64_t>(StackLayout::GUEST_SCRATCH));
+    e.mov(e.x9, reinterpret_cast<uint64_t>(PpcVrsqrtefpVector));
+    e.blr(e.x9);
     e.ldr(QReg(i.dest.reg().getIdx()),
           Xbyak_aarch64::ptr(e.sp,
                              static_cast<int32_t>(StackLayout::GUEST_SCRATCH)));
