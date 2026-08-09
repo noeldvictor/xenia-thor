@@ -180,6 +180,25 @@ DEFINE_bool(
     "CPU");
 
 DEFINE_bool(
+    cpu_llvm_batch_lane_calls, true,
+    "vrsqrtefp / vlogefp / vexptefp: make ONE host call for the whole vector "
+    "instead of FOUR (extract lane, call, insert lane, repeated 4x). That "
+    "per-lane form is the 'scalarized vector operation' shape - each lane paid "
+    "a full guest->host transition to do work on 32 bits. "
+    "THE SAME DEFECT WAS ALREADY FIXED ON THE a64 SIDE for vrsqrtefp (an "
+    "emit-time lane loop containing a blr, batched to one call) and that fix "
+    "left the LLVM path untouched - LLVM being the SHIPPING backend, the "
+    "version that mattered most kept paying 4x. The a64 census measured 192+ "
+    "emission sites, dominated by the vector form. "
+    "SEMANTICS UNCHANGED BY CONSTRUCTION: same per-lane helper, same order, "
+    "in-place writeback through an entry-block alloca. vrsqrte is pure integer "
+    "table math (no FPCR); log2/exp2 run in host FPCR exactly as before. "
+    "DEFAULT ON: unlike a register-allocation or float-semantics change, this "
+    "cannot alter results - it only changes how many times the identical "
+    "function is called. Set false to A/B the call overhead.",
+    "CPU");
+
+DEFINE_bool(
     cpu_llvm_vperm_tbl2_probe, false,
     "DIAGNOSTIC, NOT AN OPTIMISATION - EXPECT IT TO CRASH. Emits the two-table "
     "aarch64.neon.tbl2 for VPERM, which this tree records as crashing the "
@@ -476,9 +495,35 @@ class Lowerer {
   // helper is a pure function (no x20/x21 dependency; AAPCS-callee-saved).
   llvm::Value* EmitVecLaneCall(const char* name, llvm::Value* vec) {
     auto* i32 = b_.getInt32Ty();
+    auto* lt = LaneVecTy(INT32_TYPE);
+    if (cvars::cpu_llvm_batch_lane_calls) {
+      // ONE call for the whole vector instead of four.
+      //
+      // The old form below is the "scalarized vector operation" shape - extract
+      // lane, call, insert lane, x4 - so every vrsqrtefp / vlogefp / vexptefp
+      // paid FOUR guest->host transitions to do work on 32 bits at a time.
+      // Exactly the defect already fixed on the a64 side for vrsqrtefp, which
+      // left the SHIPPING LLVM path still paying 4x.
+      //
+      // Pass the vector by pointer through an ENTRY-block alloca (allocated
+      // once, so a loop body does not grow the stack) and let the helper loop
+      // internally. Semantics are unchanged by construction: same per-lane
+      // function, same order, in-place writeback.
+      std::string vname(name);
+      const size_t suffix = vname.rfind("_lane");
+      if (suffix != std::string::npos) {
+        vname.replace(suffix, 5, "_vec");
+        auto* slot = EntryAlloca(lt);
+        b_.CreateStore(b_.CreateBitCast(vec, lt), slot);
+        auto callee = mod_->getOrInsertFunction(
+            vname, llvm::FunctionType::get(b_.getVoidTy(),
+                                           {slot->getType()}, false));
+        b_.CreateCall(callee, {slot});
+        return b_.CreateBitCast(b_.CreateLoad(lt, slot), T(VEC128_TYPE));
+      }
+    }
     auto callee = mod_->getOrInsertFunction(
         name, llvm::FunctionType::get(i32, {i32}, false));
-    auto* lt = LaneVecTy(INT32_TYPE);
     auto* xv = b_.CreateBitCast(vec, lt);
     llvm::Value* r = llvm::PoisonValue::get(lt);
     for (int lane = 0; lane < 4; lane++) {

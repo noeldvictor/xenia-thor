@@ -531,6 +531,32 @@ extern "C" uint32_t xe_llvm_exp2_lane(uint32_t bits) {
   return bits;
 }
 
+// WHOLE-VECTOR forms of the three per-lane helpers above.
+//
+// The IR used to emit FOUR calls per vector instruction - extract lane, call,
+// insert lane, x4 - which is the "LLVM scalarized the whole vector operation"
+// shape, except we wrote it by hand rather than LLVM inferring it. Each lane
+// paid a full guest->host transition to do integer table math on 32 bits.
+//
+// This is the SAME defect already fixed on the a64 side for vrsqrtefp (an
+// emit-time `for (lane...)` loop containing a `blr`, batched to one call). The
+// a64 fix left the LLVM path untouched - and LLVM is the SHIPPING backend, so
+// the version that mattered most was still paying 4x. Measured on a64: 192+
+// emission sites, dominated by the vector form.
+//
+// Semantics are unchanged BY CONSTRUCTION: same per-lane function, same order,
+// in-place writeback. Nothing here depends on FPCR (vrsqrte is pure integer
+// table math); log2/exp2 run in host FPCR exactly as the per-lane versions did.
+extern "C" void xe_llvm_vrsqrte_vec(uint32_t* lanes) {
+  for (int i = 0; i < 4; ++i) lanes[i] = xe_llvm_vrsqrte_lane(lanes[i]);
+}
+extern "C" void xe_llvm_log2_vec(uint32_t* lanes) {
+  for (int i = 0; i < 4; ++i) lanes[i] = xe_llvm_log2_lane(lanes[i]);
+}
+extern "C" void xe_llvm_exp2_vec(uint32_t* lanes) {
+  for (int i = 0; i < 4; ++i) lanes[i] = xe_llvm_exp2_lane(lanes[i]);
+}
+
 // mftb (LOAD_CLOCK): the current guest tick count. Non-deterministic, so it is
 // not differential-testable; matches a64 LoadClock (Clock::QueryGuestTickCount).
 extern "C" uint64_t xe_llvm_load_clock() {
@@ -941,6 +967,12 @@ bool LLVMBackend::Initialize(Processor* processor) {
                   reinterpret_cast<void*>(&xe_llvm_log2_lane));
     define_helper("xe_llvm_exp2_lane",
                   reinterpret_cast<void*>(&xe_llvm_exp2_lane));
+    define_helper("xe_llvm_vrsqrte_vec",
+                  reinterpret_cast<void*>(&xe_llvm_vrsqrte_vec));
+    define_helper("xe_llvm_log2_vec",
+                  reinterpret_cast<void*>(&xe_llvm_log2_vec));
+    define_helper("xe_llvm_exp2_vec",
+                  reinterpret_cast<void*>(&xe_llvm_exp2_vec));
     define_helper("xe_llvm_unpack", reinterpret_cast<void*>(&xe_llvm_unpack));
     define_helper("xe_llvm_pack", reinterpret_cast<void*>(&xe_llvm_pack));
     define_helper("xe_llvm_pack2", reinterpret_cast<void*>(&xe_llvm_pack2));
