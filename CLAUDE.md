@@ -638,7 +638,39 @@ result. If DEAD/FLAT, do NOT re-run — build on the note. Skill: **xenia-experi
 `docs/research/experiments.db` (human narrative: `docs/research/experiment-ledger.md`). Exists because we
 repeatedly burned device runs re-deriving dead ends (grep-the-markdown kept missing them).
 
-## 🚨🚨🚨 THE STARTUP STALL, DIAGNOSED 2026-08-09: **A DEADLOCK, AND THE GPU COMMAND THREAD NEVER RUNS**
+## ❌❌ RETRACTED: MY OWN THREAD-STATE PROBE WAS BROKEN — SEVERAL "STALLED" READINGS WERE THE PROBE, NOT THE EMULATOR
+**Read this before trusting any thread-state figure from 2026-08-09.**
+The helper I used across most of that session's runs was:
+```sh
+case "$n" in *GPU\ Commands*) awk '{print $14+$15}' $t/stat;; esac
+```
+Passed through nested `adb shell "..."` quoting, the escaped space collapses and the `case` pattern matches
+NOTHING. The result was empty, and `${C:-0}` printed **0**, which I read as "this thread never ran".
+**⇒ The following verdicts are UNRELIABLE and must be re-taken:** Gears STALLED, Burnout STALLED, "LLVM off
+entirely" STALLED, "condvar change reverted" STALLED, "screen awake" STALLED. **Each may have been a healthy
+run.** In particular **the condvar change was NOT exonerated** by that test, and **my FMA lowering was NOT
+implicated** — both conclusions rested on the broken probe.
+**✅ THE RELIABLE METHOD: dump every thread and filter LOCALLY, never with a shell pattern containing a space:**
+```sh
+adb shell "for t in /proc/$P/task/*; do echo \"\$(cat \$t/comm)|\$(awk '{print \$(NF-37)+\$(NF-36)}' \$t/stat)\"; done"   | tr -d '' | grep -iE "GPU|XThread|Emulator"
+```
+`/proc/<tid>/stat` fields cannot be indexed as `$14`/`$15` either, because **comm contains spaces AND
+parentheses** — count from the END (`NF-37`, `NF-36`) or parse `/status`.
+**📉 WHAT A CORRECT READ ACTUALLY SHOWED, and it INVERTS the earlier claim:**
+```
+Emulator        8 ticks
+GPU Commands   19 ticks     <- running, NOT zero
+GPU VSync      23 ticks     <- running, NOT zero
+Main XThread    0 ticks     <- THE GUEST is what never ran
+```
+**So the headline "the GPU command thread never runs" is wrong for this run.** The GPU side is alive and the
+GUEST thread is the one at zero. An earlier run genuinely did show the reverse (Main XThread 275, GPU Commands
+0), so **the stall does not present identically every time** — which is itself the most useful fact here, and a
+reason to stop theorising from a single sample.
+**⇒ STILL TRUE: the emulator reaches `Title name:` and then produces no frames.** That part is real and is the
+blocker. **Everything about WHICH thread is stuck needs re-measuring with the method above.**
+
+## 🧊 (superseded by the retraction above) THE STARTUP STALL, 2026-08-09: FIRST-PASS DIAGNOSIS
 **This is the top blocker in the tree. It blocks every perf, power and route measurement, and it is now
 characterised properly instead of being called "intermittent".**
 **Reproduced on a PLAIN Blue Dragon launch** — no `hid nop`, no census cvars, no route, nothing unusual. Title
