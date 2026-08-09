@@ -1821,8 +1821,20 @@ by analogy. Their claim — **theirs, not ours, unverified by us**: ~60% faster 
   payoff: 3 µOPs → 1 on the scarce pipe.
   ⚠️ `a64_spin_hint_isb` = **CONFOUNDED / default-off / NO WIN measured** — frame-capped title screen + unequal
   thermal start (53.1°C vs 57.8°C); a refutation it is NOT. Retest in a real race from equal temps.
-  ❌ The A510 "two of three share a vector unit" claim is **REFUTED on the Thor** by our own probe (34014db95) —
-  do not re-plumb thread affinity around it.
+  ⚠️❌ **THE A510 "REFUTED" NOTE IS ITSELF WRONG — ARM'S OWN MANUAL SAYS ALL A510s SHARE THE VPU (read 2026-08-09).**
+  `cortex-a510-software-optimization-guide.pdf` **§4.8 "Shared VPU"**, verbatim:
+  > *"Cortex-A510 shares a VPU between **all** Cortex-A510 cores in a complex. The VPU is used to execute ASIMD,
+  > FP, Neon, and SVE instructions. Instructions being executed on VPU pipelines by one core **may reduce
+  > performance** of the instructions executed on the VPU by the other core."*
+  **Three positions, and the manual beats both of the others:** this file said the sharing claim was "REFUTED on
+  the Thor by our own probe (34014db95)"; the RPCS3 video said TWO share a 128-bit VPU while a third has an
+  exclusive 64-bit one; **Arm says ALL cores in a complex share it.** Sharing is an architectural property of the
+  core, not something a throughput probe can refute — and a probe comparing per-core vector throughput cannot
+  distinguish "shared" from "narrower" anyway, which is the flaw already noted against the video's version.
+  ⇒ **Treat the sharing as REAL.** It changes nothing shipped (review #4 moved guest threads off the A510s
+  entirely, which is correct under every version of the story) — but **do not cite "we refuted it" as a reason to
+  put vector work back on the little cores.** What remains genuinely unknown is the Thor's VPU WIDTH and complex
+  topology, which are integrator choices the SWOG does not fix.
   **OPEN — AND IT MAY BE A CORRECTNESS BUG, NOT AN OPTIMISATION (analysis 2026-08-06, NOT yet verified):**
   vmaxfp/vminfp `FixupVmxMaxMinNan` (#2). The framing "6 extra insns we can probably delete" is likely WRONG at
   both ends. What was established by reading (facts, checkable):
