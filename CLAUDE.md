@@ -72,6 +72,41 @@ the store-buffer reason above.
 all GPRs live). **Needs a real gameplay A/B before flipping the default — but it is the first lever in this whole
 sweep that demonstrably does work.**
 
+## ❓❓ **OPEN AND DECISIVE: HOW MUCH OF THE GUEST DOES LLVM ACTUALLY EXECUTE?** (2026-08-08, ONE run settles it)
+**If LLVM executes only a small slice of guest entries, then EVERY LLVM lever in this file is irrelevant no
+matter how good it is — and that would explain the whole run of flat results better than any codegen argument.
+This is now the cheapest high-value experiment available, and it is one launch.**
+**The suspicious numbers:** a64 `entry_delta` ≈ **14M/5s** in the shipping config, LLVM guest entries ≈
+**0.8M/5s**. If comparable, LLVM would be executing **~5%** of guest entries despite **28,776 `LLVMobjload`s**
+(so ~28k functions ARE LLVM-compiled and cached).
+**⚠️ BUT I CANNOT CLAIM 95% FALLBACK, AND I NEARLY DID — THOSE TWO FIGURES CAME FROM DIFFERENT RUNS.** They
+were never captured in the same log, so they are not a ratio. **Do not quote "LLVM executes 5% of the guest"
+until one run prints both.**
+**🚨 AND THE BENIGN EXPLANATION IS NOW DEAD.** I previously explained the gap as *"LLVM inlines and uses
+direct calls, so the same work costs far fewer FUNCTION ENTRIES"*. **That is refuted by the module finding
+above: one module per guest function, callees are external helpers, THE INLINER CANNOT FIRE.** So LLVM cannot be
+collapsing entries by inlining, and the gap needs a real explanation.
+**Candidate explanations, none checked:**
+1. **`cpu_llvm_no_runtime_compiles` (default TRUE) routes every function first discovered during GAMEPLAY to
+   a64.** If the hot gameplay set is discovered after the load window, the hottest code is a64 BY DESIGN — the
+   crash-safety gate and LLVM coverage are in direct tension, and nobody has measured the cost of that trade.
+2. **Unsupported-opcode fallback.** `llvm_assembler.cc:868` already logs
+   `LLVMfallback fn=0x{:08X} opcode={} (#{}) -> a64` — **a diagnostic that already exists and has never been
+   tallied.** One grep of a run gives the count AND the opcode histogram, i.e. exactly which opcodes to
+   implement for coverage.
+3. The two counters simply measure different things and the ratio is meaningless.
+**✅ THE EXPERIMENT (one launch, both counters in ONE log):**
+```
+--es cpu arm64 --ez cpu_backend_llvm true --ez cpu_aot_maximize true --ez cpu_llvm_guest_entry_census true --ei arm64_speed_profile_interval_ms 5000
+then, from the SAME logcat:
+  grep "A64 speed profile summary"   -> entry_delta   (a64 entries)
+  grep "LLVM guest entries"          -> delta         (LLVM entries)
+  grep -c "LLVMfallback"             -> how many functions fell back, and on which opcodes
+```
+**⇒ If LLVM's share is small, coverage is the lever and codegen is a distraction — and the opcode histogram
+names the work. If it is large, the module-scope finding above is the lever. Either way this run redirects the
+whole CPU effort, and it costs one launch IN GAME.**
+
 ## 🧱🧱🧱 **THE ARCHITECTURAL ANSWER: ONE LLVM MODULE PER GUEST FUNCTION, SO THE INLINER HAS NOTHING TO INLINE** (2026-08-08)
 **This is the structural reason we are memory-bound, and the exact thing XenonRecomp does differently. Found by
 reading the assembler, and it reframes every LLVM lever in this file.**
