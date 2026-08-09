@@ -1901,6 +1901,32 @@ function's blocks (iters=4 here) and removes nothing. `ppc_cross_block_dead_gpr_
 GPR slots and is **unmeasured** — it may fare better, since GPR stores are far more numerous than flag stores,
 but assume nothing: run it with its own `_audit` first.
 
+## 🎯 STAGE 3 IS THE REMAINING BIG ONE: `cpu_backend_llvm_residency_abi` — RISK-ASSESSED 2026-08-08, NOT ENABLED
+**Stages 1+2 (`context_residency` + `residency_writeback`) shipped 2026-08-08. Stage 3 is still off, and its own
+help calls it "the #1 lever toward big CPU speedups" — XenonRecomp's `non_volatile_as_local` / Box64's CALLRET.**
+**What it does:** after a guest call, DON'T reload the mirrors for PPC ABI callee-saved registers (GPR r14-r31,
+FPR f14-f31, VMX v14-v31 **and v64-v127** — the 360's VMX128 non-volatile set, not the narrower AltiVec
+v20-v31). An ABI-compliant callee preserves them, so **~18+ guest registers stay resident in host callee-saved
+registers ACROSS calls** instead of round-tripping through the context at every call boundary. Given the guest
+thread is memory-bound, this is the stage where the speed (as opposed to thermal) win would live.
+**⚠️ ITS STATED ASSUMPTION IS WEAKER FOR US THAN FOR XenonRecomp, AND THAT IS THE THING TO CHECK.** XenonRecomp
+statically recompiles the WHOLE program, so "every callee is ABI-compliant" is close to guaranteed. **We have
+HLE exports, fibers, APCs, interrupt callbacks, longjmp, and a hybrid LLVM/a64 fallback** — more ways for a
+callee to violate the assumption. Hazards enumerated and checked:
+| hazard | verdict |
+|---|---|
+| **HLE exports clobbering guest r14-r31** (we run host C++ as the "callee") | ✅ **CLEAR — grepped: ZERO writes to `r[14..31]` anywhere under `src/xenia/kernel`.** This was the one XenonRecomp never has to consider, and we are clean |
+| **LLVM function calls an a64-compiled callee** (hybrid fallback) | ✅ reasoned safe: an ABI-compliant guest callee restores r14-r31 before returning, so the context matches the mirror at the return point. The a64 backend spilling to context mid-body does not matter, only the value at return |
+| **Non-ABI-compliant hand-written guest asm** | ⚠️ **the real residual risk — identical to the one XenonRecomp accepts.** Cannot be ruled out by reading |
+| **longjmp / the stackpoint machinery** | ⚠️ **UNASSESSED.** This tree already records the longjmp sync leaking depth (Infinite Undiscovery crashed). A longjmp past frames with mirrors live in host callee-saved registers needs thought before enabling |
+**⇒ SO THE GATE IS NARROWER THAN "validate everything": the HLE hazard is CLEARED, and what remains is
+non-compliant guest asm plus the longjmp interaction.** Enable it behind a device run on a **heavy-longjmp title
+(Infinite Undiscovery)** as well as a normal one, and check PIXELS — a desynced non-volatile shows up as wrong
+values, not a crash.
+**Do NOT enable it on the strength of stages 1+2 succeeding.** Those are safe by construction (the context stays
+authoritative); stage 3 deliberately makes the mirror authoritative across a call, which is a different
+correctness argument entirely.
+
 ## ❄️❄️❄️ **LLVM CONTEXT RESIDENCY RUNS 5C COOLER AT EQUAL THROUGHPUT — REPLICATED 2/2** (2026-08-08)
 **The first positive power result of the whole sweep, measured with the corrected metric
 (`cpu_llvm_guest_entry_census`, which finally makes LLVM-compiled guest execution visible).**
