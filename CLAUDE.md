@@ -22,6 +22,11 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **touch FP / VMX / FPCR** | `MANUAL REVIEW #6`, `THE THREE NEW a64 LEVERS ARE NOT INDEPENDENT` | every FPCR mode switch is a PIPELINE BARRIER (Table 4-3 note 2) - the Xenon has two FP mode registers, ARM64 has one |
 | **enable any new a64 lever** | `THE THREE NEW a64 LEVERS ARE NOT INDEPENDENT` | `a64_fpcr_single_mode` SILENTLY disables `a64_vmx_fp_no_operand_copy`; measure one at a time |
 | **read a CPU manual** | `docs/reference/arm/README.md`, and §4 "Special considerations" of the SWOGs FIRST | §4 is where the actionable advice is - the instruction tables only price things you already suspect |
+| **measure CPU throughput AT ALL** | `entry_delta IS BLIND TO THE LLVM BACKEND` | ⭐ **`entry_delta` counts a64-compiled functions ONLY** - 14.1M vs 130.6M on one flag. Every CPU A/B ever run in the shipping LLVM config scored ~11% of the guest. Use fps on an UNCAPPED title (BD field ~9.9fps), never on Burnout (60fps cap) |
+| **work on LLVM coverage / fallbacks** | `SCALAR FMA LOWERING`, `ONE LLVM MODULE PER GUEST FUNCTION` | fallbacks were 1,022 → 194 by lowering scalar FMA; the log cap was hardcoded at 120 and reported exactly 120, looking like a count |
+| **expect a big win from register residency** | `THE MANUAL RESIZES STAGE 3` + `docs/reference/arm/aapcs64-callee-saved-notes.md` | AAPCS64 preserves only the LOW 64 BITS of v8-v15, so a 128-bit guest vector CANNOT stay resident across a call - vector residency is architecturally impossible, GPRs cap at 8 |
+| **believe a correlation from 2-3 runs** | `RETRACTED: hid nop DOES NOT CAUSE THE STALL` | I published 3/3 against `hid nop`, then A/B'd it: title in 9s BOTH ways. Run the discriminator BEFORE the write-up - it cost 4 minutes |
+| **run anything on the Thor** | `DEVICE HYGIENE`, `tools/thor/bd_fma_fps_ab.sh` | it is SHARED with an rpcs3 session; the idle check must ABORT, not print; force-stop before AND after; a run that never prints `Title name:` must abort, not report zeros |
 | **edit this file with a script** | `Config + git rules` | I truncated it to 0 bytes and pushed it once - encode before opening, gate `git add` on size |
 
 ## 🚨🚨🚨 TOP PRIORITY (user, 2026-08-08): **POWERPC/GPU → ARM64 DIRECTLY. KILL THE x86-SHAPED MIDDLE.**
