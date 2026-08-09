@@ -2804,14 +2804,24 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // built under different semantics. writeback and abi both change the emitted
     // code (writeback removes the per-store context writes; abi drops the
     // post-call reloads of the ABI callee-saved regs) - they were missing here.
-    char keybuf[80];
-    std::snprintf(keybuf, sizeof(keybuf), "g%08X_%016llX_o%dr%dw%da%d",
+    // 2026-08-09: two MORE lowering cvars were missing, both added the same day
+    // this key's own rule was written down - cpu_llvm_vperm_tbx (tbl1+tbx1 vs
+    // tbl1+tbl1+orr) and cpu_llvm_lower_scalar_fma (scalar FMA lowered vs
+    // dropped to a64). Without them in the key, `--ez cpu_llvm_vperm_tbx true`
+    // against a warm cache serves objects compiled WITHOUT the lowering: the
+    // A/B reads flat and the conclusion is "the lever does nothing", which is
+    // the most expensive possible way to be wrong about a lever. The build
+    // stamp in the DIRECTORY does not help here - both arms are the same build.
+    char keybuf[96];
+    std::snprintf(keybuf, sizeof(keybuf), "g%08X_%016llX_o%dr%dw%da%dp%df%d",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
                   cvars::cpu_backend_llvm_context_residency ? 1 : 0,
                   cvars::cpu_backend_llvm_residency_writeback ? 1 : 0,
-                  cvars::cpu_backend_llvm_residency_abi ? 1 : 0);
+                  cvars::cpu_backend_llvm_residency_abi ? 1 : 0,
+                  cvars::cpu_llvm_vperm_tbx ? 1 : 0,
+                  cvars::cpu_llvm_lower_scalar_fma ? 1 : 0);
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
         ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
