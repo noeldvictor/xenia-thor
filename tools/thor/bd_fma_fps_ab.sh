@@ -68,6 +68,7 @@ arm() {                     # $1 = label, $2.. = extra extras
   "$ADB" -s "$DEV" shell "am start -n $PKG/jp.xenia.emulator.EmulatorActivity \
     --es target '$GAME' --es cpu arm64 --ez cpu_backend_llvm true --ez cpu_aot_maximize true \
     --ez cpu_llvm_target_features_native true \
+    --ez vulkan_trace_draw_outcomes_per_frame true \
     --es hid nop --es hid_nop_button_sequence '$SEQ' \
     --es gpu_vulkan_driver turnip \
     --es gpu_vulkan_driver_path '/data/data/$PKG/files/gpu_drivers/$DRV/' \
@@ -85,19 +86,35 @@ arm() {                     # $1 = label, $2.. = extra extras
   fi
   say "arm $label: title up, driving the route (${SAMPLE_AFTER}s) then sampling ${SAMPLE_FOR}s"
   sleep "$SAMPLE_AFTER"
+  # Clear the log HERE so the frame count covers exactly the sample window and
+  # not the whole boot - otherwise fps = frames/window is meaningless.
+  "$ADB" -s "$DEV" logcat -c
   local peak=0
   for _ in $(seq 1 $((SAMPLE_FOR/5))); do
     t=$(gt); [ -n "$t" ] && [ "$t" -gt "$peak" ] && peak=$t
     [ -n "$t" ] && [ "$t" -gt 72000 ] && { say "  72C guard"; break; }
     sleep 5
   done
-  # FPS IS NOT IN LOGCAT. The number on screen is drawn by the JAVA overlay from
-  # nativeGetGuestSwapCount (EmulatorActivity.java:1962); xenia itself never logs
-  # "N.N FPS". Grepping for it returns n=0 and looks like a dead run - it cost an
-  # arm on 2026-08-08. Read it off the SCREENSHOT instead.
-  local log n avg
+  # FPS IS NOT IN LOGCAT AS A STRING. The on-screen number is drawn by the JAVA
+  # overlay from nativeGetGuestSwapCount (EmulatorActivity.java:1962); xenia never
+  # logs "N.N FPS", so grepping for it returns 0 and looks like a dead run - that
+  # cost an arm on 2026-08-08.
+  #
+  # But `vulkan_trace_draw_outcomes_per_frame` emits ONE "GPU draw outcomes/frame"
+  # line PER FRAME, carrying guest_ms and gpu_frame_us. So:
+  #   frames in the sample window / window seconds = FPS   (automatable, exact)
+  #   mean guest_ms                                = guest CPU time per frame,
+  #                                                  which is what an FMA change
+  #                                                  should actually move
+  # Counting LINES is robust; this file warns that gpu_frame_us in ABSOLUTE terms
+  # is unreliable because it includes idle, so guest_ms is reported alongside
+  # rather than instead of the frame count.
+  local log n avg gms
   log=$("$ADB" -s "$DEV" shell "logcat -d -s xenia:*" 2>/dev/null)
-  n=0; avg="see-screenshot"
+  n=$(echo "$log" | grep -c "GPU draw outcomes/frame")
+  avg=$(awk -v f="$n" -v w="$SAMPLE_FOR" 'BEGIN{ if (w>0) printf "%.2f", f/w; else printf "n/a" }')
+  gms=$(echo "$log" | grep -oE "guest_ms=[0-9.]+" | cut -d= -f2 | tail -40 \
+        | awk '{s+=$1;c++} END{ if(c) printf "%.2f", s/c; else printf "n/a" }')
   local flt; flt=$(echo "$log" | grep -cE "UNHANDLED host fault|SIGTRAP|Scudo ERROR")
   # MID-RUN INTRUSION CHECK. require_device_free is a point-in-time gate; on
   # 2026-08-08 rpcs3 started DURING an arm, so the arm was contended AND the
