@@ -227,6 +227,41 @@ then, from the SAME logcat:
 names the work. If it is large, the module-scope finding above is the lever. Either way this run redirects the
 whole CPU effort, and it costs one launch IN GAME.**
 
+## 📊 CALL-GRAPH LOCALITY, MEASURED 2026-08-08 — THE SIMPLE CLUSTERING HEURISTIC IS DEAD, THE DESIGN IS NOT
+**Blue Dragon, AOT, `cpu_llvm_callgraph_locality_census`:**
+```
+calls=28,672   <1K=1,238   <8K=2,770   <64K=3,092   <512K=5,355   >=512K=16,217
+```
+**56.6% of direct guest calls target something ≥512 KB away; only ~25% are within 64 KB**, across a ~6.8 MB code
+range. **Call targets are scattered.**
+**⚠️ BE PRECISE ABOUT WHAT THIS KILLS — MY CENSUS MEASURED ADDRESS PROXIMITY, NOT CALL-GRAPH CLUSTERABILITY.**
+- It **DOES** kill address-window clustering: a ~32-function cluster spans roughly 64 KB and ~75% of calls cross
+  that, so a "cluster by address range" heuristic leaves most calls on `xe_llvm_guest_call` anyway.
+- It **does NOT** kill a graph-based clusterer, which follows call EDGES regardless of address distance. A
+  caller and callee 2 MB apart can still share a module.
+- And one figure cuts the OTHER way: **28,672 direct calls across ~18k functions is only ~1.6 direct calls per
+  function.** Low fan-out is FAVOURABLE for graph clustering — small clusters could capture a large share of
+  edges. **That was not what I expected and it is the more encouraging number.**
+⇒ **Verdict: build the clusterer on the CALL GRAPH, never on addresses. The go/no-go measurement I designed
+answered a narrower question than I claimed it would when I built it.**
+**🚨 TRAP FOR ANY FUTURE LOWERING-TIME CENSUS: a warm object cache means `LowerAndJit` NEVER RUNS**, so no
+opcode is ever lowered and the census reports NOTHING. The first run produced zero lines for exactly this reason.
+**Pass `--ez cpu_llvm_object_cache false`** to force real lowering.
+
+## ❌ FMA A/B, FIFTH ATTEMPT (2026-08-08) — STILL NO IN-GAME NUMBER, BUT THE GUARDS FINALLY BEHAVED
+```
+ON    cold=41C peak=44C fps=0.00 (frames=0/60s) guest_ms=n/a faults=0
+OFF   VOID - rpcs3 appeared mid-run (foreground was net.rpcsx.easy/RPCSXActivity)
+```
+- **The OFF arm was correctly VOIDED rather than reported.** The mid-run intrusion check added earlier caught
+  rpcs3 taking the foreground and refused to publish a contended number. **That guard has now paid for itself.**
+- **The ON arm is also void, and says so honestly:** `frames=0/60s` and a 44C peak. BD's field should emit ~594
+  frame lines in 60s and push past 60C. **It reached the title and the route never got into gameplay.**
+**⇒ THE BLOCKER IS NOW UNAMBIGUOUS AND IT IS NOT THE HARNESS: THERE IS NO WORKING BLUE DRAGON GAMEPLAY ROUTE.**
+The button sequence in `bd_fma_fps_ab.sh` is guesswork and does not reach the field. **Route capture is the
+prerequisite for every remaining perf and power question**, it is iterative device work, and it needs an
+uncontended device — which is the one thing this session never had for long enough.
+
 ## 🧱🧱🧱 **THE ARCHITECTURAL ANSWER: ONE LLVM MODULE PER GUEST FUNCTION, SO THE INLINER HAS NOTHING TO INLINE** (2026-08-08)
 **This is the structural reason we are memory-bound, and the exact thing XenonRecomp does differently. Found by
 reading the assembler, and it reframes every LLVM lever in this file.**
