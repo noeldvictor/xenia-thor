@@ -65,6 +65,16 @@
 #include "llvm/Transforms/Utils/Cloning.h"
 #endif  // XE_LLVM_BACKEND_ENABLED
 
+DEFINE_uint32(
+    cpu_llvm_fallback_log_budget, 120,
+    "How many LLVMfallback lines to log before going quiet. Each line names a "
+    "guest function LLVM could NOT lower and the opcode that forced it to the "
+    "a64 backend, so a full-boot histogram is the list of opcodes worth "
+    "implementing next - those functions lose LLVM AND its register residency. "
+    "Was a hardcoded 120: a census then reports exactly 120 and LOOKS like a "
+    "real count. Raise it (e.g. 100000) for a census run.",
+    "CPU");
+
 DEFINE_bool(
     cpu_llvm_guest_entry_census, false,
     "Count guest-function entries through LLVM-COMPILED code, so a CPU A/B run "
@@ -864,9 +874,21 @@ bool Lowerer::Run(HIRBuilder* builder) {
         // (BD's hottest fn 0x824694A0 falls back today).
         static std::atomic<uint32_t> s_fb{0};
         uint32_t fb = s_fb.fetch_add(1, std::memory_order_relaxed);
-        if (fb < 120) {
+        // The cap USED to be a hardcoded 120, which is a trap: a full-boot
+        // histogram then reports exactly 120 fallbacks and looks like a real
+        // count. It bit me on 2026-08-08 - I read "120 functions fell back,
+        // 94 mul_add + 26 mul_sub" as the truth when it was just the limit,
+        // and the histogram only covered the first 120. Budgeted via a cvar so
+        // a census run can raise it and get the actual distribution.
+        const uint32_t budget = cvars::cpu_llvm_fallback_log_budget;
+        if (fb < budget) {
           XELOGW("LLVMfallback fn=0x{:08X} opcode={} (#{}) -> a64", guest_addr_,
                  i->opcode->name, fb);
+        } else if (fb == budget) {
+          XELOGW(
+              "LLVMfallback: budget {} reached - further fallbacks NOT logged. "
+              "Raise cpu_llvm_fallback_log_budget for a full histogram.",
+              budget);
         }
         return false;  // unsupported -> fallback
       }

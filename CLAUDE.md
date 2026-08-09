@@ -72,7 +72,43 @@ the store-buffer reason above.
 all GPRs live). **Needs a real gameplay A/B before flipping the default — but it is the first lever in this whole
 sweep that demonstrably does work.**
 
-## ❓❓ **OPEN AND DECISIVE: HOW MUCH OF THE GUEST DOES LLVM ACTUALLY EXECUTE?** (2026-08-08, ONE run settles it)
+## 🎯🎯🎯 **ANSWERED ON DEVICE 2026-08-08: LLVM RUNS ~71% OF THE GUEST, AND *ONE DISABLED LOWERING* CAUSES 99.7% OF ALL FALLBACKS**
+**Blue Dragon, shipping config, both counters in ONE log at last. This is the highest-value CPU finding in the
+file and it names a single, bounded piece of work.**
+```
+a64 entry_delta      :  90,679 / 5s          LLVM guest entries : 221,506 / 5s
+                     -> LLVM executes ~71% of guest entries, NOT ~5%
+LLVMobjload          :  18,447
+TRUE fallback count  :   1,022 functions     (~5.3% of compiled functions)
+  736  mul_add
+  283  mul_sub        <- 1,019 of 1,022 = 99.7%, ALL from ONE cvar
+    3  select
+```
+**❌ FIRST, TWO OF MY OWN ERRORS, BOTH CAUGHT BY THIS RUN:**
+1. **"LLVM only executes ~5% of the guest" was WRONG.** That came from pairing a64 `entry_delta` ≈14M with LLVM
+   ≈0.8M — **different runs AND different titles**. In one log it is 71% LLVM. **Never ratio two runs.**
+2. **"120 functions fall back" was the LOG CAP, not a count.** The diagnostic was hardcoded `if (fb < 120)`, so a
+   full boot reports exactly 120 and looks like data. The real number is **1,022** — **8.5x higher**. Fixed: the
+   limit is now `cpu_llvm_fallback_log_budget` (allowlisted), and the code prints a "budget reached" line so the
+   truncation can never masquerade as a result again.
+**🔥 THE FINDING: `cpu_backend_llvm_lower_vmaddfp` (DEFAULT FALSE) IS SINGLE-HANDEDLY FORCING 1,019 FUNCTIONS
+ONTO a64** — and `llvm_assembler.cc:864`'s own comment says **"BD's hottest fn 0x824694A0 falls back today"**.
+Those functions lose LLVM *and* the register residency that ships with it, on the hottest code in the slowest
+title.
+**Why it is off:** the vector lowering **exists and is qemu-byte-correct**, but DEVICE-miscompiles when lowered
+alongside other vector ops in one function — a codegen/regalloc **interaction** bug. Turning it off was proven
+to fix BD's field rendering (`cpu_backend_llvm_skip_opcodes=77`). **The disable is correct; it is the root cause
+that is unfixed.**
+**⇒ SO THE HIGHEST-VALUE CPU WORK IN THIS TREE IS NOW SPECIFIC, BOUNDED AND NAMED: root-cause the vmaddfp
+codegen/regalloc interaction bug.** Not a new lever, not a new pass — a debugging job on an existing, already
+written, already byte-validated lowering, whose payoff is 1,019 functions including BD's hottest moving onto
+LLVM+residency. **Every other CPU item in this file is worth low single digits by comparison.**
+**Starting points:** `cpu_backend_llvm_dump_asm` + `_range_lo/_hi` dumps ONE function's post-codegen assembly
+(the IR is known good, so the bug is in IR→asm); the AAPCS64 note explains the shape to suspect — **a64 callees
+clobber x22-x28 and the FULL q8-q15 while AAPCS preserves only the low 64 bits of v8-v15**, which is exactly the
+kind of interaction that corrupts a vector value live across a call.
+
+## ❓ (superseded by the section above) OPEN: HOW MUCH OF THE GUEST DOES LLVM ACTUALLY EXECUTE?
 **If LLVM executes only a small slice of guest entries, then EVERY LLVM lever in this file is irrelevant no
 matter how good it is — and that would explain the whole run of flat results better than any codegen argument.
 This is now the cheapest high-value experiment available, and it is one launch.**
