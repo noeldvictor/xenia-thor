@@ -2464,6 +2464,49 @@ from `entry_delta` alone; that metric cannot see power, and the whole point of t
 fast enough in bursts and too hot overall.
 **⚠️ NEEDS ONE A/B**: same route, thermals + `entry_delta`, old mapping vs new. One-commit revert if it regresses.
 
+## 🥇🥇🥇 THE VIDEO MINED IN FULL AT LAST (2026-08-09) — **THEY SOLVED THE TBL2 WALL WE WROTE OFF AS IMPOSSIBLE**
+**Full item-by-item verdicts: `docs/research/20260809-whatcookie-video-full-mining.md`.** Prior passes mined the
+opening and the topology section (~5 items); the talk says outright *"we're going to review how every single one
+of them was fixed"* and contains far more. All 60 minutes now read (287 caption blocks, re-fetched with yt-dlp).
+**🔥 THE HEADLINE: OUR `llvm_assembler.cc:2471` COMMENT AND THEIR 17:49-18:56 DESCRIBE THE SAME WALL.**
+Ours: *"Emit TWO single-table TBL1s OR'd, NOT one TBL2 … the `aarch64.neon.tbl2` intrinsic needs its two tables
+in a CONSECUTIVE register pair; with x20/x21 reserved + high register pressure the AArch64 backend can't satisfy
+that and CRASHES in the AsmPrinter."*
+Theirs, on SPU `SHFB`: *"requires both input vectors to be adjacent in the registers … LLVM just seems to give
+up and crash … **Just catch the crash … then retry it with a single source TBX and TBL** … when 10,000
+recompiled blocks compile successfully with the two source versions and **only three blocks need the fallback**,
+we can keep our **8% speed up** and keep all of our compatibility."*
+**⇒ THEY KEPT THE FAST PATH BEHIND A PER-FUNCTION FALLBACK; WE TOOK THE SLOW PATH GLOBALLY.** And this file
+already priced what that costs: a64 emits a real two-table `tbl` = **1 µOP**, our LLVM path emits **2xTBL1 + OR
+= 3 µOPs** on the FP/ASIMD pipe that is only **2 wide** on the mid cores — **and LLVM is the shipping default.**
+**⚠️⚠️ BUT IT IS NOT A DROP-IN PORT, AND THE DIFFERENCE IS THE ENTIRE RISK: THEIR FAILURE IS A DIAGNOSTIC, OURS
+IS A WILD-POINTER FAULT.** They catch a compile error; ours is a re-fault storm inside `libLLVM.so`'s AsmPrinter
+that freezes BD. **You cannot try/catch a segfault**, so "just catch it and retry" does not transfer as stated.
+**Routes, cheapest first:** (a) find out WHY ours faults where theirs diagnoses — we pass
+`+reserve-x20,+reserve-x21` and they do not reserve a guest-context register the same way, so this may be a
+CONFIGURATION difference rather than a law, and one `cpu_llvm_dump_asm` build answers it **with no device**;
+(b) pressure-gate TBL2 to low-live-vector functions; (c) compile-and-verify with a detectable failure.
+**🔍 AND A CHEAPER IDEA THE SAME SECTION HANDS US, WITH NO REGISTER-PAIR CONSTRAINT AT ALL (16:09):** **`TBX`
+leaves out-of-range lanes UNTOUCHED where `TBL` zeroes them.** Our 2xTBL1 form ends in an `OR` *precisely
+because* TBL1 zeroes. **`TBX1` may delete that OR outright — 3 µOPs → 2, no pair needed.** Untested, and it is
+the cheapest unexplored item in the whole document.
+**🔍 HIGHEST-BREADTH UNCHECKED ITEM — SHIFTS (28:48).** LLVM IR shifts produce **poison**, and the guard code
+that should fold away *does not on ARM* (it does on x86); their fix is the `USHL` intrinsic, **2 instructions
+saved per shift**. **We emit ZERO `aarch64.neon.ushl` intrinsics.** Shifts are everywhere.
+**Also unchecked and worth a look:** `FCGT` needing inline-asm `BSL` (15→7), `FSM` being **scalarized** by LLVM
+into one-bit-at-a-time `SBFX` (a CLASS of bug, not one instruction), and **re-rolling unrolled loops for ~2% on
+both arches** — plausibly real for us given a 264 MB / ~28k-function object cache.
+**❌ CONFIRMED N/A, so nobody re-derives them:** every SVE item (8 Gen 2 has no SVE), and the `UDOT` / `MUL-accum
+compare` / `ABD-ABA checksum` family (+22%/+38% for them) — those need a hot FIXED-LENGTH comparison or checksum,
+and ours are GPU-side or load-time. **Note that kills the "ABD/ABA is the real differentiator nobody else has"
+line elsewhere in this file: the technique is real, we have no site for it.**
+**🧠 THE FRAMING POINT WORTH WEIGHING, verbatim (20:37):** *"I can't count the number of times I read … that
+RPCS3 needs a complete rewrite … And it's like, no dude. We just got to put the square in the square hole."*
+**Their 60% came from DOZENS OF INDIVIDUAL INSTRUCTION LOWERINGS, not an architectural change** — the opposite
+of where our effort has gone (residency, module scope, allocator theory). **⚠️ But do not over-transfer: their
+hot path is the SPU recompiler, a 128-bit SIMD DSP where one lowering repeats billions of times. The SHAPE
+transfers; the MAGNITUDES do not.** Rule 4 still applies to every row.
+
 ## 🎥❌ THE VIDEO RE-MINED FROM SOURCE (2026-08-08) — AND OUR RECORD OF ITS #1 FINDING WAS **BACKWARDS**
 **Re-fetched the actual captions rather than trusting the summary** (`yt-dlp` json3 → 1,876 lines; the Aug-5
 transcript was already in the scratchpad, so the video WAS mined before — that part is confirmed, not assumed).

@@ -1,0 +1,113 @@
+# The RPCS3-on-ARM video, mined EXHAUSTIVELY — item-by-item verdicts against our tree
+
+**Source:** Whatcookie, *"PS3 emulation is fast on ARM now"*, 60m30s, re-fetched 2026-08-09 via
+`yt-dlp --write-auto-subs --sub-format json3` (1,018 KB of captions → 287 timestamped blocks).
+
+**Why re-mine when CLAUDE.md already quotes the video:** prior passes mined the opening and the core-topology
+section and extracted ~5 items. The talk contains **far more than that**, and it explicitly says so —
+*"we're going to review how every single one of them was fixed"*. This pass reads all 60 minutes and gives every
+claim a verdict. Their headline, **theirs not ours**: 60% faster at 25% less power on an Odin 2 (same SoC as the
+Thor).
+
+---
+
+## 🥇 THE FINDING THAT MATTERS MOST: **THEY SOLVED THE EXACT TBL2 WALL WE WROTE OFF AS IMPOSSIBLE**
+
+Our `llvm_assembler.cc:2471` comment, verbatim:
+
+> *"Emit TWO single-table TBL1s OR'd, NOT one TBL2. DEVICE-CONFIRMED: the `aarch64.neon.tbl2` intrinsic needs its
+> two tables in a CONSECUTIVE register pair; with x20/x21 reserved + high register pressure the AArch64 backend
+> can't satisfy that and CRASHES in the AsmPrinter"*
+
+The video, at 17:49–18:56, describing the same thing for SPU `SHFB`:
+
+> *"using TBX or TBL with two input vectors requires both input vectors to be adjacent in the registers, this
+> places a lot of constraints on the register allocator. And with how LLVM is configured in RPCS3, it just seems
+> to give up at a certain point and crash… So I was left with two choices. Give up on the optimization or just
+> enable it for games where it doesn't break… I settled on the world's stupidest solution. **Just catch the
+> crash when LLVM fails to compile a block with two source TBX or TBL. Then retry it with a single source TBX
+> and TBL.** It's an absolutely awful solution, but hey, when **10,000 recompiled blocks compile successfully
+> with the two source versions and only three blocks need the fallback method**, we can keep our 8% speed up and
+> keep all of our compatibility."*
+
+**Same wall. They kept the fast path behind a per-function fallback; we took the slow path GLOBALLY.**
+
+**What it costs us today, already priced in CLAUDE.md from the A710 SWOG:** a64 emits a real two-table `tbl` =
+**1 µOP**; our LLVM path emits **2×TBL1 + OR = 3 µOPs** on the FP/ASIMD pipe, which is only **2 wide** on the
+mid cores — and **LLVM is the shipping default**, so that is the path most VPERMs take. Their measured win on
+the analogous instruction was **8%** (SPU-heavy; ours will differ — VPERM frequency here is uncensused).
+
+**⚠️ BUT THE PORT IS NOT A DROP-IN, AND THE DIFFERENCE IS THE WHOLE RISK — DO NOT SKIP THIS PARAGRAPH.**
+Their failure is a **clean diagnostic** ("fails to compile a block … crash with this message") which is
+catchable. **Ours is a WILD-POINTER RE-FAULT STORM INSIDE `libLLVM.so`'s AsmPrinter** that freezes Blue Dragon —
+a segfault, not a thrown error. **You cannot `try`/`catch` a wild pointer.** So "just catch it and retry" as
+stated does not port.
+
+**Viable routes, in increasing order of work:**
+1. **Find out WHY ours faults where theirs diagnoses.** Ours reserves x20/x21 (`+reserve-x20,+reserve-x21`);
+   theirs does not reserve a guest-context register in the same way. If the fault is the allocator running out
+   of assignable consecutive pairs *because of our reservations*, that is a configuration difference, not a law.
+   **Cheapest first step and it needs no device: build one function with TBL2 and `cpu_llvm_dump_asm`, and see
+   whether the failure is a diagnostic or a fault on THIS LLVM version.**
+2. **Pressure-gate it:** emit TBL2 only when the function's live-vector count is below a threshold, 2×TBL1
+   otherwise. Keeps the fast path for the many, avoids the allocator cliff for the few.
+3. **Compile-and-verify:** lower with TBL2 into a scratch module, and if codegen fails *detectably*, re-lower
+   the function with the TBL1 form — their design, but gated on a detectable failure rather than a fault.
+
+**⇒ This is the single most concrete "apply the video" item in the tree, and it is squarely on the user's
+"take advantage of the hardware" ask: a 3→1 µOP reduction on the scarcest pipe of the mid cores.**
+
+---
+
+## The full item list, with verdicts
+
+| # | video item | what it is | verdict for us |
+|---|---|---|---|
+| 1 | **`busy_wait` timer frequency** (02:44) | 3,000 ticks assumed a 2-4 GHz timer; ARM timer is **19 MHz** → **150× over-wait**. Fix = scale by timer frequency. **+25% perf, −10% power** | ✅ **N/A — WE ARE CLEAN.** `clock_posix.cc:28` reads `cntfrq_el0` at runtime; the emitter reads CNTVCT+CNTFRQ. No hardcoded rate. Verified twice |
+| 2 | **`yield` is a NOP** (07:19) | `yield` only yields under SMT; ~99% of consumer ARM is SMP, so it does nothing. Use `ISB` | ✅ already known and implemented (`SpinLoopHint()`); `a64_spin_hint_isb` measured CONFOUNDED, no win |
+| 3 | **`SHFB` → TBX2** (13:34-18:56) | 10 → 5 → 4 insns; **8% uplift**; register-pair crash solved by catch-and-retry | 🥇 **THE TOP ITEM — see above.** We hit the identical wall and gave up |
+| 4 | **`TBX` over `TBL`** (15:56) | TBX leaves out-of-range lanes untouched instead of zeroing → drops the final OR | 🔍 **UNCHECKED.** Our 2×TBL1 form ends in an OR precisely because TBL1 zeroes. **TBX1 may remove that OR even without TBL2** — a 3→2 µOP win with NO register-pair constraint. **Cheapest untested idea in this document** |
+| 5 | **`BCAX` fuses AND+XOR** (16:33) | one SHA3 instruction replaces two bitwise ops; LLVM only pattern-matches it when inputs are non-constant | ⚠️ partially known (`+sha3` is on so LLVM fuses opportunistically). The **constant-input blind spot is new** and is an upstream LLVM bug they filed |
+| 6 | **`FCGT` → inline asm `BSL`** (25:26) | LLVM "completely dropped the ball"; only inline assembly fixed it. **15 → 7 insns** | 🔍 **UNCHECKED** — do we have a compare/select chain that fails to become one BSL? |
+| 7 | **`FSM` scalarized** (26:29) | LLVM emitted `SBFX` **one bit at a time** and scalarized the whole vector op. Fix = write the IR idiomatically like the x86 path → **2 insns via `CMTST`** (fused and+compare) | 🔍 **UNCHECKED, and this is a CLASS not an instruction.** Worth grepping our IR for anything LLVM might scalarize on ARM |
+| 8 | **Shift poison values** (28:48) | LLVM IR shifts produce **poison**, and the guard code does not fold away on ARM (it does on x86). Fix = use the `USHL` intrinsic. **2 insns saved per shift** | 🔍 **UNCHECKED — and shifts are everywhere.** We emit **zero** `aarch64.neon.ushl` intrinsics. Possibly the highest-breadth unchecked item |
+| 9 | **`UDOT` for `SUMB`/gather-bits** (21:02) | dot product with multiplicand 1 sums horizontally; with **powers of two** it gathers bits; negative powers exploit compare results being −1 | ❌ recorded as N/A — no hot fixed-length site here |
+| 10 | **`UMMLA`/`SMMLA` (i8mm)** (22:55) | 2-instruction GBB/GBH | ❌ same, N/A |
+| 11 | **Widening multiplies** (24:10) | `XTN` + `SMLAL`: MPY 5 → 3 insns | 🔍 unchecked; PPC VMX has its own multiply forms |
+| 12 | **MUL-accumulate for COMPARISON** (34:46-35:47) | **Novel.** Mid cores do **3 loads but only 2 vector ops/clock**; multiplying two compare results (−1×−1=1) and accumulating reaches 0.75 math/load. **+22% mid, +16% A510** | ❌ N/A — needs a hot fixed-length compare; ours are GPU-side or load-time |
+| 13 | **`ABD`/`ABA` accumulate for checksum** (37:43) | 2 loads + 1 abs-diff-accumulate. **+38% mid cores, +21% X3** | ❌ N/A, same reason. (CLAUDE.md calls this "the real differentiator"; the honest verdict is we have no site) |
+| 14 | **Re-roll unrolled loops** (38:33) | less code-cache pressure. **~2% on BOTH arches** | 🔍 **UNCHECKED and relevant** — we AOT-compile ~28k functions into a 264 MB object cache; code-cache pressure is plausibly real here |
+| 15 | **SVE** (39:51+) | predicate registers, etc. | ❌ **HARD N/A** — 8 Gen 2 ships ARMv9 **without SVE**. Confirmed in `/proc/cpuinfo` |
+| 16 | **Load/vector asymmetry** (32:02) | mid cores: **3× 128-bit loads but only 2 vector ops per clock**; X3: 3 loads / 4 vector ops. *"unusual … for any other CPU I've ever seen"* | ✅ already in the playbook, confirmed against Table 2-1 |
+| 17 | **A510 vector units** (31:12) | two A510s **share one 128-bit** vector unit; the third has **exclusive access to a 64-bit** unit, so 128-bit ops run at half speed | ⚠️ CLAUDE.md marks our probe "REFUTED" — but the probe could not distinguish *shared* from *half-width*. Moot for us: guest threads are off the A510s entirely |
+
+---
+
+## Two framing points from the talk worth keeping
+
+**1. "Just put the square in the square hole."** (20:37) Verbatim:
+> *"I can't count the number of times I read on Reddit or YouTube that RPCS3 needs a complete rewrite, or a brand
+> new emulator needs to be born to properly take advantage of ARM hardware. And it's like, no dude. We just got
+> to put the square in the square hole."*
+
+Their 60% came from **dozens of small, specific instruction-level fixes** — not an architectural rewrite. That is
+the opposite of where our effort has gone (residency, module scope, allocator theory), and it is worth weighing:
+**every single item in their list is an individual instruction lowering.**
+
+**2. Modern ARM is not simpler than x86.** (19:08) *"ARM is every bit as complex as x86… The manual alone is
+17,000 pages."* Useful antidote to "ARM is RISC so the port should be simple".
+
+---
+
+## ⚠️ The honest caveat on transferring ANY of this
+
+RPCS3's hot path is the **SPU recompiler** — a 128-bit-SIMD DSP with 128 registers, where a single instruction
+lowering repeated billions of times dominates. **Our hot path is different**: Burnout is capped, Gears is stalled
+on a kernel bug, and BD's field is CPU-bound but spread across many functions. So **the SHAPE transfers (fix the
+instruction lowerings, do not rewrite) but the MAGNITUDES do not** — an 8% SHFB win does not imply an 8% VPERM
+win here, and rule 4 (count before building) still applies to every row above.
+
+**Next actions, in priority order:**
+1. **Item 4 (TBX instead of TBL to drop the OR)** — cheapest, no register-pair constraint, pure win if it works.
+2. **Item 8 (shift intrinsics)** — highest breadth; we emit zero `ushl` intrinsics today.
+3. **Item 3 (TBL2)** — biggest, but needs the fault-vs-diagnostic question answered first.
