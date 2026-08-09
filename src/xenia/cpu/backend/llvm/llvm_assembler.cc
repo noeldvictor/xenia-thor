@@ -45,6 +45,7 @@
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/ExecutionEngine/Orc/LLJIT.h"
 #include "llvm/ExecutionEngine/Orc/ThreadSafeModule.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/IR/Constants.h"
@@ -64,6 +65,20 @@
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Utils/Cloning.h"
 #endif  // XE_LLVM_BACKEND_ENABLED
+
+DEFINE_bool(
+    cpu_llvm_guest_call_clobber_barrier, false,
+    "Tell LLVM the TRUTH about what an a64 guest callee clobbers. "
+    "xe_llvm_guest_call is a plain C call, so LLVM assumes AAPCS and keeps "
+    "values live across it in x19-x28 / v8-v15 - but a64 code clobbers x22-x28 "
+    "and the FULL q8-q15, and AAPCS only ever preserved the LOW 64 bits of "
+    "v8-v15. A 128-bit value parked there returns with its top half destroyed: "
+    "that is the vmaddfp miscompile (1,019 of 1,022 LLVM fallbacks come from "
+    "disabling that lowering to dodge it, including BD hottest fn 0x824694A0). "
+    "This emits an empty inline-asm barrier with the real clobber list after "
+    "every guest call. UNVALIDATED: it constrains the allocator and may force "
+    "extra spills - A/B it, and verify PIXELS (BD field) not just no-crash.",
+    "CPU");
 
 DEFINE_uint32(
     cpu_llvm_fallback_log_budget, 120,
@@ -430,7 +445,43 @@ class Lowerer {
         b_.CreateLoad(b_.getInt64Ty(), next_call_ret_addr_), i32);
     if (writeback_) WriteBackCtxRegs();  // flush guest regs -> ctx for the callee
     b_.CreateCall(callee, {ctx_ptr_, target_i32, ret_addr});
+    EmitGuestCallClobberBarrier();
     if (residency_) ReloadCtxRegs();  // callee may have changed guest state
+  }
+
+  // THE a64-CALLEE ABI LIE, AND THE FIX.
+  //
+  // xe_llvm_guest_call is declared as a PLAIN C FUNCTION, so LLVM applies
+  // standard AAPCS to the call site: it believes the callee preserves x19-x28
+  // and the low 64 bits of v8-v15, and it will happily keep values live across
+  // the call in exactly those registers. But the a64 guest code reached through
+  // that helper CLOBBERS x22-x28 and the FULL q8-q15 (llvm_assembler.cc ~:407),
+  // and AAPCS64 only ever promised the BOTTOM 64 BITS of v8-v15 anyway
+  // (docs/reference/arm/aapcs64-callee-saved-notes.md).
+  //
+  // So a 128-bit value live across a guest call can be parked in v8-v15 and come
+  // back with its TOP HALF DESTROYED. That is the long-standing vmaddfp
+  // miscompile: it only appears "when lowered together with other vector ops in
+  // one function" because that is when register pressure pushes a vector into
+  // v8-v15 in the first place - which is why the IR is byte-correct under qemu
+  // and the bug lives purely in register allocation.
+  //
+  // An empty inline-asm barrier with the real clobber list tells LLVM the truth,
+  // so it stops allocating those registers for values that must survive the call.
+  // MEASURED COST: it constrains the allocator across every guest call, so it can
+  // force extra spills - that is the price of correctness here, and it must be
+  // A/B'd, not assumed free.
+  void EmitGuestCallClobberBarrier() {
+    if (!cvars::cpu_llvm_guest_call_clobber_barrier) {
+      return;
+    }
+    auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), false);
+    // Full vector regs (not d8-d15) - the upper halves are the ones being lost.
+    std::string clobbers =
+        "~{v8},~{v9},~{v10},~{v11},~{v12},~{v13},~{v14},~{v15}"
+        ",~{x22},~{x23},~{x24},~{x25},~{x26},~{x27},~{x28}";
+    auto* ia = llvm::InlineAsm::get(fty, "", clobbers, /*hasSideEffects=*/true);
+    b_.CreateCall(ia);
   }
 
   // Guest CALL_EXTERN: call the extern HANDLER (C++) via xe_llvm_call_extern,

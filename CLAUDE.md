@@ -72,6 +72,37 @@ the store-buffer reason above.
 all GPRs live). **Needs a real gameplay A/B before flipping the default — but it is the first lever in this whole
 sweep that demonstrably does work.**
 
+## ❌ TESTED AND FAILED (2026-08-08): THE a64-CLOBBER BARRIER DOES **NOT** FIX THE vmaddfp MISCOMPILE
+**Hypothesis (mine):** `xe_llvm_guest_call` is a plain C call, so LLVM applies AAPCS and parks 128-bit vectors
+in v8-v15 across it — but a64 callees clobber the **full q8-q15** while AAPCS preserves only the **low 64 bits**
+(see `aapcs64-callee-saved-notes.md`), so the top half comes back destroyed. That would explain why the bug only
+appears "with other vector ops in one function" (pressure pushes a vector into v8-v15) and why the IR is
+qemu-byte-correct (the bug is purely register allocation).
+**Implemented** as `cpu_llvm_guest_call_clobber_barrier` (default OFF, allowlisted): an empty inline-asm barrier
+after every guest call declaring the REAL clobbers (`v8-v15`, `x22-x28`), so LLVM stops allocating them for
+values live across the call.
+**❌ RESULT: Blue Dragon renders ENTIRELY CYAN at 11.1 fps** with `cpu_backend_llvm_lower_vmaddfp true` +
+barrier on — i.e. the known `bd-llvm-postload-3d-cyan-bug`, unchanged. **0 faults, so it is a miscompile and not
+a crash, exactly as before. The barrier is not the fix.** The hypothesis is wrong or incomplete; the root cause
+is something else in IR→asm. **The lever stays default-off; do not re-try this angle without new evidence.**
+**✅ BUT THE RUN REDIRECTED THE TARGET, AND THAT IS THE REAL RESULT: THE VECTOR PATH WAS NEVER THE MAIN FALLBACK
+CAUSE.** Turning the vector lowering ON only moved fallbacks **1,022 → 969**, and `mul_add` remained the top
+cause:
+| | fallbacks | mul_add | mul_sub | select |
+|---|---|---|---|---|
+| vmaddfp OFF (shipping) | 1,022 | 736 | 283 | 3 |
+| vmaddfp ON + barrier | **969** | **673** | 159 | 137 |
+⇒ **~830 of the fallbacks are SCALAR f32/f64 FMA, which has NO LOWERING AT ALL** — the existing comment says so
+outright: *"Scalar f32/f64 FMA still falls back to a64."* The vector lowering, bug and all, was only ever worth
+~53 functions.
+**⇒ SO THE HIGHEST-VALUE CPU WORK IS NOT THE VECTOR BUG — IT IS IMPLEMENTING SCALAR `MUL_ADD`/`MUL_SUB`
+(F32/F64) IN THE LLVM LOWERER.** It is ~830 functions, it is plain `llvm.fma` on scalars (PPC `fmadd` is fused,
+single-rounded, so the intrinsic is the correct semantics), and **it is NOT subject to the vector miscompile**,
+which is specifically a vector-register-allocation interaction. That is a bounded, safe, unambiguously
+worthwhile piece of work, and it was invisible until the log budget was raised.
+**⚠️ `select` jumped 3 → 137** once vmaddfp stopped bailing early — functions now get further before hitting the
+next unsupported opcode. **Expect the histogram to shift as each opcode lands; re-census after every one.**
+
 ## 🎯🎯🎯 **ANSWERED ON DEVICE 2026-08-08: LLVM RUNS ~71% OF THE GUEST, AND *ONE DISABLED LOWERING* CAUSES 99.7% OF ALL FALLBACKS**
 **Blue Dragon, shipping config, both counters in ONE log at last. This is the highest-value CPU finding in the
 file and it names a single, bounded piece of work.**

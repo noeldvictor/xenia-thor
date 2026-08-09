@@ -870,6 +870,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             // entry_delta is a64-only; this makes the guest visible under LLVM.
             copyBooleanExtra(intent, launchArguments, "cpu_llvm_guest_entry_census");
             copyIntExtra(intent, launchArguments, "cpu_llvm_fallback_log_budget");
+            copyBooleanExtra(intent, launchArguments, "cpu_llvm_guest_call_clobber_barrier");
+            copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm_lower_vmaddfp");
             // 0=OS, 1=A510 littles, 2=cpu3-6. The AOT precompile is the startup
             // heat (261-340% CPU, 40C->68C) and is latency-insensitive.
             copyIntExtra(intent, launchArguments, "cpu_precompile_worker_core_policy");
