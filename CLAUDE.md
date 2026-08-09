@@ -638,6 +638,38 @@ result. If DEAD/FLAT, do NOT re-run — build on the note. Skill: **xenia-experi
 `docs/research/experiments.db` (human narrative: `docs/research/experiment-ledger.md`). Exists because we
 repeatedly burned device runs re-deriving dead ends (grep-the-markdown kept missing them).
 
+## 🚨🚨🚨 THE STARTUP STALL, DIAGNOSED 2026-08-09: **A DEADLOCK, AND THE GPU COMMAND THREAD NEVER RUNS**
+**This is the top blocker in the tree. It blocks every perf, power and route measurement, and it is now
+characterised properly instead of being called "intermittent".**
+**Reproduced on a PLAIN Blue Dragon launch** — no `hid nop`, no census cvars, no route, nothing unusual. Title
+line at 9s, then the log's last entries are:
+```
+KernelState: Launching module...
+KernelState: main guest thread created (handle=F8000008 entry=824669E0 ...)
+Emulator: resumed main guest thread (result=00000000 suspend_count_before=1)
+```
+…and then **NOTHING for 190+ seconds**. Black screen, GPU flat at 35C, only 4 swap mentions in the whole log.
+**🔎 THREAD STATE IS THE DIAGNOSIS — sampled twice, ten seconds apart:**
+```
+Emulator       S (sleeping)   cpu_ticks=8      frozen
+GPU Commands   S (sleeping)   cpu_ticks=0      <- NEVER RAN. Not one tick, ever.
+GPU VSync      S (sleeping)   cpu_ticks=0      <- NEVER RAN
+Main XThread   S (sleeping)   cpu_ticks=275    ran ~2.75s of CPU, then frozen
+```
+**Every thread asleep, ZERO CPU advance across the sample. Nothing is spinning — this is a true deadlock, not a
+slow load and not a livelock.**
+**🔑 THE STANDOUT FACT: the GPU command-processor thread has NEVER EXECUTED A SINGLE TICK.** It exists and it
+is asleep. So the likely shape is: the guest main thread runs briefly, blocks waiting on something the GPU/CP
+path owes it, and the CP thread never starts processing to deliver it. **That is a startup handshake that
+sometimes does not fire, not a guest-code problem** — and it explains "no swaps, 0.0 fps, presenter attached"
+from the 2026-08-04 sighting exactly.
+**⇒ WHERE TO LOOK:** whatever wakes the CP worker for the first time — `CommandProcessor` thread start /
+`worker_thread_->Create()` (command_processor.cc ~:866) and the first `SetupContext`/kickoff handshake. Compare
+a stalled boot against a healthy one for the last CP-side log line each reaches.
+**⚠️ AND IT IS NOT RARE.** It cost FIVE measurement attempts on 2026-08-08 and reproduced immediately on
+2026-08-09. **Any A/B harness must treat "no frames" as ABORT, never as a data point** — which
+`tools/thor/bd_fma_fps_ab.sh` now does.
+
 ## ❌❌ RETRACTED SAME DAY: `hid nop` DOES **NOT** CAUSE THE STARTUP STALL — I TESTED IT AND I WAS WRONG
 **I published a 3/3 correlation against `--es hid nop` and then ran the discriminator I had just written down.
 It cleared it outright:**
