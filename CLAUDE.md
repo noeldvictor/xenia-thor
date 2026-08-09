@@ -782,6 +782,50 @@ this lowering does not manage FPCR at all, so under VMX mode denormals would flu
 modelled the SEQUENCE, never the FPCR MODE — its 32/32 PASS does not cover it. Fix that, then pixel-check, then
 re-enable.
 
+## 🧊🔬🔬 THE STARTUP STALL, SHARPEST SIGNATURE YET (2026-08-09): **THE GUEST MAIN THREAD PARKS AT ITS FIRST WAIT**
+**Reproduced on a COLD device (42C, uncontended, 0 faults) and measured with `voluntary_ctxt_switches`, which is
+the diagnostic this file was missing. It converts "everything is asleep, must be a deadlock" into something much
+more specific.**
+```
+thread            state       voluntary_ctxt_switches   cpu ticks (12s delta)
+GPU VSync         sleeping    111,193                   +2   <- timer firing normally
+GPU Commands      sleeping     23,465                   +0   <- ALIVE, parked on an empty ring
+Emulator          sleeping        657                   +0
+Main XThread      sleeping          2                   +0   <- 0 ticks EVER, 2 switches EVER
+```
+**⇒ THE GUEST MAIN THREAD BLOCKED AT ESSENTIALLY ITS FIRST WAIT AND WAS NEVER WOKEN.** `vctx=2` with **zero
+lifetime CPU ticks** means it was created, resumed, ran almost nothing, parked, and stayed parked. The last three
+log lines are always the same:
+```
+KernelState: Launching module...
+KernelState: main guest thread created (handle=F8000008 entry=824669E0 ...)
+Emulator: resumed main guest thread (result=00000000 suspend_count_before=1)
+```
+…then silence, GPU flat, temp flat.
+**🔑 AND IT CORRECTS THE EARLIER READ IN THIS FILE.** The 2026-08-09 entry says *"the GPU command-processor
+thread has NEVER EXECUTED A SINGLE TICK"* and infers the CP thread is the thing that failed to start.
+**`voluntary_ctxt_switches` says the opposite: GPU Commands has switched 23,465 times.** It is not dead — it is
+healthily parked waiting for a ring that never fills, which is the CONSEQUENCE of the guest never running, not
+the cause. **CPU ticks alone cannot distinguish "never started" from "started, parked, waiting correctly";
+vctx can, and it inverts the causal arrow.**
+**⇒ SO THE SUSPECT IS THE GUEST'S FIRST KERNEL WAIT, NOT THE CP HANDOFF.** That puts it in the SAME CLASS as the
+Gears Act 1 stall and the Lost Odyssey stall already tracked here — a kernel object our HLE never signals —
+except it fires at guest startup instead of mid-game. **Three stalls, one shape, and this is the cheapest one to
+reproduce (it needs no route and no gameplay).**
+**⚠️ INTERMITTENT, AND THE CONTROL EXISTS: a BD launch 3 MINUTES EARLIER ON THE SAME APK reached the title, ran
+37,722 LLVM lowerings and advanced normally.** So it is not the build. Difference between the two runs: the
+stalled one carried `--es hid nop --es hid_nop_button_sequence`, `--ez vulkan_trace_draw_outcomes_per_frame` and
+`--ei gpu_frame_limit_fps 0`. **`hid nop` was explicitly CLEARED as a cause earlier by a direct A/B, so do not
+re-accuse it without one** — but the trace cvar and the uncap have never been isolated.
+**⇒ NEXT, AND IT IS CHEAP:** dump `voluntary_ctxt_switches` for every thread on a HEALTHY boot and diff it
+against a stalled one. The healthy boot's Main XThread will show the vctx count of a normal startup; the point
+where the stalled one stops short names the wait. Then trace that specific object with
+`--ez xboxkrnl_thread_wait_trace true --ei xboxkrnl_thread_wait_trace_budget 2000000`.
+**📌 AND A HARNESS RULE THIS RUN EARNED: `vulkan_trace_draw_outcomes_per_frame` EMITTED ZERO LINES** (it IS
+allowlisted, and the string is `"GPU draw outcomes/frame:"`) — because the guest never rendered a frame. **A
+per-frame diagnostic is useless as a liveness check: it is silent both when nothing is wrong and when everything
+is.** Use thread vctx/ticks for liveness and the frame trace only once frames are known to exist.
+
 ## ❌❌ RETRACTED: MY OWN THREAD-STATE PROBE WAS BROKEN — SEVERAL "STALLED" READINGS WERE THE PROBE, NOT THE EMULATOR
 **Read this before trusting any thread-state figure from 2026-08-09.**
 The helper I used across most of that session's runs was:
