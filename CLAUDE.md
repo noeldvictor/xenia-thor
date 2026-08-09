@@ -1929,7 +1929,25 @@ long way down, and it does so BEFORE spending a device session on it.
 "nowhere to get more". The manual says worse: **across a call the usable figure is not 28, it is 0.** That is
 the strongest statement yet of why the guest thread is memory-bound on the vector path, and it is a property of
 the host ABI, not of our allocator.
-**⚠️ UNVERIFIED ON OUR TOOLCHAIN:** whether clang actually assigns mirrors to x19-x28 under
+**✅✅ NOW VERIFIED IN EMITTED CODE (2026-08-08) — THE GPR HALF WORKS, CEILING IS EXACTLY 8.**
+`tools/qemu/residency_abi_probe.c`, NDK 25 clang, `-ffixed-x20 -ffixed-x21` (our exact reservations):
+```
+x20/x21 used ........................ 0    reservations honoured
+reloads from the CONTEXT after call . 0    <- no round-trip, which IS the lever
+mirrors kept in callee-saved regs ... 8    x19, x22, x23, x24, x25, x26, x27, x28
+excess mirrors ...................... spill to the STACK, not the context
+```
+**Eight is exactly the AAPCS64 arithmetic (x19-x28 = 10, minus x20/x21) confirmed in real codegen** — clang
+does spend every available callee-saved register on mirrors rather than keeping them for its own values.
+**And the overflow behaviour is a bonus, not a wash:** the 9th+ mirrors spill to the STACK, which is hot in L1,
+instead of adding traffic to the 2 KB `PPCContext` block that review #3 shows competing for a 32 KB L1.
+**⇒ SCOPE OF STAGE 3, NOW FULLY DERIVED WITHOUT A DEVICE:** GPRs **8 of 18 resident, 0 context reloads**
+(verified); FPRs **up to 8** (64-bit fits the preserved half); VMX **0 of 82** (architecturally impossible).
+**That is a real, bounded win worth measuring — and it is much smaller than "the #1 lever toward big CPU
+speedups" implies.**
+**⚠️ Still unmeasured:** the actual runtime effect. The probe proves the codegen shape, not that it moves fps
+or watts, and it must be measured IN GAME (Blue Dragon field — Burnout is capped and cannot show it).
+**⚠️ superseded note:** whether clang assigns mirrors to x19-x28 under
 `+reserve-x20,+reserve-x21` or spills them regardless. That is an emitted-code question — `clang -S` or a JIT IR
 dump answers it, the manual does not.
 
