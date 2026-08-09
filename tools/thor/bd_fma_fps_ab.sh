@@ -91,12 +91,26 @@ arm() {                     # $1 = label, $2.. = extra extras
     [ -n "$t" ] && [ "$t" -gt 72000 ] && { say "  72C guard"; break; }
     sleep 5
   done
-  local log fps n avg
+  # FPS IS NOT IN LOGCAT. The number on screen is drawn by the JAVA overlay from
+  # nativeGetGuestSwapCount (EmulatorActivity.java:1962); xenia itself never logs
+  # "N.N FPS". Grepping for it returns n=0 and looks like a dead run - it cost an
+  # arm on 2026-08-08. Read it off the SCREENSHOT instead.
+  local log n avg
   log=$("$ADB" -s "$DEV" shell "logcat -d -s xenia:*" 2>/dev/null)
-  fps=$(echo "$log" | grep -oE "[0-9]+\.[0-9]+ FPS" | tr -d ' FPS' | tail -12)
-  n=$(echo "$fps" | grep -c .)
-  avg=$(echo "$fps" | awk '{s+=$1;c++} END{ if(c) printf "%.2f", s/c; else printf "none" }')
+  n=0; avg="see-screenshot"
   local flt; flt=$(echo "$log" | grep -cE "UNHANDLED host fault|SIGTRAP|Scudo ERROR")
+  # MID-RUN INTRUSION CHECK. require_device_free is a point-in-time gate; on
+  # 2026-08-08 rpcs3 started DURING an arm, so the arm was contended AND the
+  # screencap captured THEIR foreground game (Folklore, with the rpcs3 overlay).
+  # An arm that was not alone is void - say so rather than reporting a number.
+  local intruder fg
+  intruder=$("$ADB" -s "$DEV" shell 'ps -A -o NAME 2>/dev/null | grep -icE "rpcs|rpcsx"' | tr -d '')
+  fg=$("$ADB" -s "$DEV" shell dumpsys activity activities 2>/dev/null | grep -m1 -E "ResumedActivity|topResumedActivity" | tr -d '')
+  if [ "${intruder:-0}" != "0" ] || ! echo "$fg" | grep -q "$PKG"; then
+    say "VOID arm $label: rpcs3 appeared mid-run or xenia lost the foreground"
+    say "  foreground was: $fg"
+    "$ADB" -s "$DEV" shell am force-stop $PKG >/dev/null; return 1
+  fi
   "$ADB" -s "$DEV" shell screencap -p //sdcard/bdfma_$label.png >/dev/null 2>&1
   "$ADB" -s "$DEV" shell am force-stop $PKG >/dev/null
   printf '%-6s cold=%sC peak=%sC fps_avg=%s (n=%s) faults=%s\n' \
