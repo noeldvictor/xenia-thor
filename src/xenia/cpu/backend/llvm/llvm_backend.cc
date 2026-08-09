@@ -50,6 +50,22 @@
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
+
+// Short, stable hash of the lowering TU's compile stamp - folded into the cache
+// directory so a rebuilt lowering cannot be served objects from the old one.
+// FNV-1a, 32-bit, rendered as 8 hex chars: short enough to keep the path sane,
+// wide enough that two builds colliding is not a practical concern.
+static std::string LlvmLoweringStampTag() {
+  const char* s = xe::cpu::backend::llvm_backend::LlvmLoweringBuildStamp();
+  uint32_t h = 2166136261u;
+  for (const char* p = s; *p; ++p) {
+    h ^= static_cast<uint8_t>(*p);
+    h *= 16777619u;
+  }
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%08X", h);
+  return std::string(buf);
+}
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 DEFINE_bool(cpu_backend_llvm, false,
@@ -825,7 +841,8 @@ bool LLVMBackend::Initialize(Processor* processor) {
     std::filesystem::path dir =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
         ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
-         std::to_string(cvars::cpu_backend_llvm_opt));
+         std::to_string(cvars::cpu_backend_llvm_opt) + "_b" +
+         LlvmLoweringStampTag());
     object_cache = CreateAndWireObjectCache(builder, dir.string());
     XELOGI("LLVMBackend: AOT object cache enabled at '{}'", dir.string());
   }

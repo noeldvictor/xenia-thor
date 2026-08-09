@@ -64,6 +64,34 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/Utils/Cloning.h"
+
+// Mirror of llvm_backend.cc's tag helper - both construction sites must produce
+// the SAME directory or the assembler and the JIT would disagree about where
+// objects live.
+static std::string LlvmLoweringStampTagAsm() {
+  const char* s = xe::cpu::backend::llvm_backend::LlvmLoweringBuildStamp();
+  uint32_t h = 2166136261u;
+  for (const char* p = s; *p; ++p) {
+    h ^= static_cast<uint8_t>(*p);
+    h *= 16777619u;
+  }
+  char buf[16];
+  snprintf(buf, sizeof(buf), "%08X", h);
+  return std::string(buf);
+}
+
+namespace xe {
+namespace cpu {
+namespace backend {
+namespace llvm_backend {
+// Compile stamp of THIS translation unit - the one that owns every lowering.
+// Declared in llvm_object_cache.h; see that header for why the cache directory
+// is keyed on it rather than on a hand-maintained version constant.
+const char* LlvmLoweringBuildStamp() { return __DATE__ " " __TIME__; }
+}  // namespace llvm_backend
+}  // namespace backend
+}  // namespace cpu
+}  // namespace xe
 #endif  // XE_LLVM_BACKEND_ENABLED
 
 DEFINE_bool(
@@ -2787,7 +2815,8 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
         ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
-         std::to_string(cvars::cpu_backend_llvm_opt)) /
+         std::to_string(cvars::cpu_backend_llvm_opt) + "_b" +
+         LlvmLoweringStampTagAsm()) /
         (std::string(keybuf) + ".o");
     std::error_code fs_ec;
     // Cache-miss diagnostic. A populated objcache that never hits means the KEY

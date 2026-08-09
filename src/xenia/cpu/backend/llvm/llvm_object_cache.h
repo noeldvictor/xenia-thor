@@ -36,7 +36,31 @@ namespace llvm_backend {
 // bits. v1 keys encoded only opt + context_residency, so a v1 .o compiled under a
 // DIFFERENT writeback/abi setting could be served to a run that asked for another
 // one - see the key construction in llvm_assembler.cc.
-constexpr uint32_t kLlvmObjectCacheVersion = 2;
+// v3 (2026-08-09): DEVICE-PROVEN that a stale cache is not theoretical - it is
+// the "intermittent startup stall" that cost five measurement attempts and
+// several retracted diagnoses. Measured 3/3 vs 3/3 on one variable:
+//   stale cache (92,556 objects, written by older builds) -> the guest main
+//     thread parks at its FIRST wait: 0 CPU ticks EVER, vctx=2, 0 frames
+//   fresh or bypassed cache -> guest runs normally, vctx=31,000+, 838 frames
+// Exactly the "wild execution" this comment warned about, except it presents
+// as a silent hang rather than a crash, which is why it was misread for days.
+constexpr uint32_t kLlvmObjectCacheVersion = 3;
+
+// Compile-time stamp of the translation unit that owns EVERY LLVM lowering
+// (llvm_assembler.cc), folded into the cache directory name.
+//
+// WHY THIS EXISTS: the version constant above only invalidates when a HUMAN
+// remembers to bump it on a lowering change. That is a promise, not a
+// mechanism, and it was broken twice in a single day (scalar-FMA lowering and
+// the VPERM TBX lowering both landed without a bump) - which is what produced
+// the stall above. Deriving the identity from the compile stamp makes the
+// invalidation automatic for the case that actually bites: the lowerings
+// changed but the cache did not.
+//
+// NOT git-derived on purpose: build/version.h comes from git HEAD, so it does
+// not change for UNCOMMITTED edits - i.e. it is blind during exactly the
+// edit-build-test loop where stale objects get produced.
+const char* LlvmLoweringBuildStamp();
 
 // Creates the disk-backed ORCv2 AOT object cache rooted at `dir`, wires `builder`
 // to compile through a SimpleCompiler bound to it (so getObject() is consulted

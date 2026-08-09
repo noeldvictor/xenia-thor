@@ -782,7 +782,48 @@ this lowering does not manage FPCR at all, so under VMX mode denormals would flu
 modelled the SEQUENCE, never the FPCR MODE — its 32/32 PASS does not cover it. Fix that, then pixel-check, then
 re-enable.
 
-## 🧊🔬🔬 THE STARTUP STALL, SHARPEST SIGNATURE YET (2026-08-09): **THE GUEST MAIN THREAD PARKS AT ITS FIRST WAIT**
+## ✅✅✅ **THE STARTUP STALL IS SOLVED (2026-08-09): IT WAS A STALE LLVM OBJECT CACHE. FIXED AND DEVICE-PROVEN.**
+**This is the top blocker in the tree. It cost FIVE measurement attempts, several retracted diagnoses, and a
+bisect — and it was never intermittent. It was deterministic on one variable nobody was controlling.**
+**THE A/B, 3 vs 3 on a cold uncontended device, discriminator = Main XThread CPU ticks:**
+| cache state | Main XThread | frames | verdict |
+|---|---|---|---|
+| **stale** (92,556 objects, mtimes 2026-08-05 → 08-09 12:15, written by OLDER builds) | **0 ticks EVER**, vctx=2-3 | 0 | **STALL 3/3** |
+| `cpu_llvm_object_cache=false` (bypassed) | vctx=33,000, ticks=22 | 894 | healthy |
+| cache dir moved aside (fresh, same binary) | vctx=31,050, ticks=23 | 838 | healthy |
+**🔑 ROOT CAUSE, AND THE HEADER ALREADY WARNED ABOUT IT.** `llvm_object_cache.h` says: *"Bump when the LLVM
+lowering, ABI, or runtime-helper set changes so cached .o files compiled by an older xenia are ignored (**a
+stale .o would link against a changed call ABI -> wild execution**)."* **That is a promise, not a mechanism** —
+it needs a human to bump a constant, and it was broken TWICE IN ONE DAY (the scalar-FMA lowering and the VPERM
+TBX lowering both landed without a bump). The key `g<addr>_<hash>_o<opt>r<res>w<wb>a<abi>` encodes four cvars
+and the guest code — **and nothing about the emulator build**.
+**⇒ AND IT PRESENTS AS A SILENT HANG, NOT A CRASH, WHICH IS WHY IT SURVIVED SO LONG.** "Wild execution" here
+means the guest main thread parks at its first wait and never returns: 0 CPU ticks, GPU threads healthily idle
+on a ring that never fills. Every previous investigation read that as a deadlock or a CP-handoff failure.
+**✅ FIXED TWO WAYS (`llvm_object_cache.h` + both dir-construction sites):**
+1. `kLlvmObjectCacheVersion` 2 → **3**, which retires every poisoned cache in the field.
+2. **The directory now carries a hash of `LlvmLoweringBuildStamp()`** — the `__DATE__ " " __TIME__` of
+   `llvm_assembler.cc`, the TU that owns every lowering. **Any lowering change recompiles that TU and therefore
+   changes the cache directory automatically.** Deliberately NOT git-derived: `build/version.h` comes from git
+   HEAD and does not change for UNCOMMITTED edits — i.e. it is blind during exactly the edit-build-test loop
+   that produces stale objects.
+**✅ DEVICE-PROVEN, with the poisoned cache deliberately left on disk:** the new binary selected
+`objcache_v3_opt2_b36B5514E`, and the same launch that stalled 3/3 gave **Main XThread vctx=34,820 / ticks=25,
+925 frames, 0 faults**.
+**📌 CONSEQUENCES FOR EVERY PAST MEASUREMENT — read before trusting old numbers.** Any run after an APK rebuild
+was served objects compiled by the previous build. That does not merely risk a stall; a run that *did* boot may
+have been executing stale codegen, so **an A/B that rebuilt between arms was not measuring what it claimed.**
+This plausibly explains part of the "levers measure flat" pattern. **Re-take anything important.**
+**📌 AND THE MEASUREMENT LESSON: `voluntary_ctxt_switches` IS THE DIAGNOSTIC THIS FILE WAS MISSING.** CPU ticks
+alone cannot tell "never started" from "started, parked, waiting correctly" — GPU Commands showed +0 ticks in
+both cases, which is what produced the wrong "the CP thread never ran" conclusion. vctx separates them
+instantly (23,465 vs 2) and inverts the causal arrow. **Use `/proc/<tid>/status` vctx for liveness, and never
+`awk '{print $3}'` on `/proc/<tid>/stat` — comm contains spaces and parens.**
+**🗑️ Left on the device: nothing stale. But note a poisoned `objcache_v2_opt2` (411 MB) is now dead weight on
+any device that has one** — the new binary ignores it, so it can be deleted freely:
+`run-as jp.xenia.emulator.github.debug rm -rf files/objcache/objcache_v2_opt2`.
+
+## 🧊🔬 (superseded by the section above — kept for the diagnostic method) THE STALL'S SIGNATURE
 **Reproduced on a COLD device (42C, uncontended, 0 faults) and measured with `voluntary_ctxt_switches`, which is
 the diagnostic this file was missing. It converts "everything is asleep, must be a deadlock" into something much
 more specific.**
