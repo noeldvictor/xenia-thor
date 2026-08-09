@@ -183,8 +183,36 @@ retry has to be driven from a longjmp/flag at the lowering call site, not from i
 
 **This is now a bounded one-launch experiment with a binary outcome, not an open question.**
 
+### ❌ Item 3 (TBL2) — PROBE RUN 2026-08-09. **The retry design does NOT port. Question closed.**
+Built the probe (`cpu_llvm_vperm_tbl2_probe` + an `install_fatal_error_handler` routing LLVM's message to
+XELOGE, since `report_fatal_error` writes to stderr and stderr is not in logcat on Android) and ran it on a cold
+free device with `cpu_llvm_object_cache=false` to force real lowering.
+
+**Result — the negative branch, unambiguously:**
+```
+last line   : LLVMbegin guest=0x82168540      <- died MID-LOWERING, ~function 1,731
+LLVMfatal   : 0                                <- the handler NEVER fired
+crash buffer: empty; no tombstone, no SIGSEGV, no SIGABRT
+logcat      : "ActivityManager: Process ... has died: fg TOP"
+```
+**The process vanishes during codegen without LLVM reporting anything.** It is NOT a clean
+`report_fatal_error`, so there is nothing for a handler to catch, and **upstream's catch-the-failure-and-retry
+design cannot be ported** — it depends on a diagnostic we do not get.
+
+**⇒ TWO CONCLUSIONS, and the second is the more valuable one:**
+1. **tbl2 stays disabled.** `cpu_llvm_vperm_tbx` (tbl1+TBX1, 3 µOPs → 2) is the achievable win here, and it is
+   already shipped and stability-validated. The 1-µOP two-table form is out of reach on this toolchain.
+2. **The original "wild-pointer re-fault storm" characterisation is CORROBORATED, not refuted** — despite our
+   libLLVM containing the "ran out of registers" string, that path is not what executes. So this is memory
+   corruption inside codegen, not an allocator giving up cleanly. **That matters beyond VPERM: the same storm is
+   blamed for Blue Dragon instability**, and it is now a known-live corruption bug in IR→asm rather than a
+   suspected one.
+
+**⚠️ One honest loose end:** a silent death with no tombstone is also consistent with an OOM kill. Against that:
+it died only ~1,731 functions into lowering, while other `object_cache=false` runs the same day lowered ~18,000
+functions over ~4 minutes without trouble. Not conclusive, but it points away from resource exhaustion.
+
 ### Remaining, in priority order
-1. **Item 3 (TBL2)** — see the investigation directly above. Next step is the one-launch fatal-handler probe.
 2. **Item 7 (LLVM scalarizing a vector op on ARM)** — a bug CLASS, not one instruction. Worth grepping our
    emitted asm for `SBFX`/lane-at-a-time patterns in vector lowerings.
 3. **Item 6 (`FCGT` → one `BSL`)** — do we have a compare/select chain that fails to fuse?

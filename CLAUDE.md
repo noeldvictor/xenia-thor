@@ -906,7 +906,8 @@ run.** In particular **the condvar change was NOT exonerated** by that test, and
 implicated** — both conclusions rested on the broken probe.
 **✅ THE RELIABLE METHOD: dump every thread and filter LOCALLY, never with a shell pattern containing a space:**
 ```sh
-adb shell "for t in /proc/$P/task/*; do echo \"\$(cat \$t/comm)|\$(awk '{print \$(NF-37)+\$(NF-36)}' \$t/stat)\"; done"   | tr -d '' | grep -iE "GPU|XThread|Emulator"
+adb shell "for t in /proc/$P/task/*; do echo \"\$(cat \$t/comm)|\$(awk '{print \$(NF-37)+\$(NF-36)}' \$t/stat)\"; done"   | tr -d '
+' | grep -iE "GPU|XThread|Emulator"
 ```
 `/proc/<tid>/stat` fields cannot be indexed as `$14`/`$15` either, because **comm contains spaces AND
 parentheses** — count from the END (`NF-37`, `NF-36`) or parse `/status`.
@@ -2596,6 +2597,29 @@ that freezes BD. **You cannot try/catch a segfault**, so "just catch it and retr
 `+reserve-x20,+reserve-x21` and they do not reserve a guest-context register the same way, so this may be a
 CONFIGURATION difference rather than a law, and one `cpu_llvm_dump_asm` build answers it **with no device**;
 (b) pressure-gate TBL2 to low-live-vector functions; (c) compile-and-verify with a detectable failure.
+**❌❌ PROBE RUN 2026-08-09 — THE RETRY DESIGN DOES **NOT** PORT. QUESTION CLOSED, AND THE ANSWER IS USEFUL.**
+Built `cpu_llvm_vperm_tbl2_probe` plus an `install_fatal_error_handler` routing LLVM's message to XELOGE (needed
+because `report_fatal_error` writes to STDERR, which is NOT in logcat on Android - so a clean LLVM abort and a
+segfault previously looked identical from adb). Ran it cold and free with `cpu_llvm_object_cache=false` to force
+real lowering:
+```
+last line   : LLVMbegin guest=0x82168540    <- died MID-LOWERING, ~function 1,731
+LLVMfatal   : 0                              <- the handler NEVER fired
+crash buffer: empty - no tombstone, no SIGSEGV, no SIGABRT
+logcat      : "ActivityManager: Process ... has died: fg TOP"
+```
+**The process vanishes during codegen without LLVM reporting anything**, so there is nothing to catch and
+upstream's catch-and-retry cannot be ported. **tbl2 stays disabled; `cpu_llvm_vperm_tbx` (3 µOPs -> 2, already
+shipped) is the achievable win.**
+**🔑 THE MORE VALUABLE HALF: THE "WILD-POINTER STORM" CHARACTERISATION IS CORROBORATED, NOT REFUTED.** Our
+libLLVM *contains* the "ran out of registers" string, yet that path demonstrably does not execute — so this is
+**memory corruption inside codegen, not an allocator giving up cleanly.** That matters well beyond VPERM: the
+same storm is blamed for Blue Dragon instability, and it is now a KNOWN-LIVE corruption bug in IR->asm rather
+than a suspected one.
+**⚠️ Honest loose end:** a silent death with no tombstone is also consistent with an OOM kill. Against that, it
+died only ~1,731 functions in, while other `object_cache=false` runs the same day lowered ~18,000 functions over
+~4 minutes without trouble. Points away from resource exhaustion, but is not proof.
+
 **🔍 AND A CHEAPER IDEA THE SAME SECTION HANDS US, WITH NO REGISTER-PAIR CONSTRAINT AT ALL (16:09):** **`TBX`
 leaves out-of-range lanes UNTOUCHED where `TBL` zeroes them.** Our 2xTBL1 form ends in an `OR` *precisely
 because* TBL1 zeroes. **`TBX1` may delete that OR outright — 3 µOPs → 2, no pair needed.** Untested, and it is
