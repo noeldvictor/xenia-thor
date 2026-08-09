@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <bitset>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -79,6 +80,24 @@ class InputSystem {
   // the re-enable path.
   Portal* GetPortal() { return portal_.get(); }
 
+  // Hotkey actions the input system cannot perform itself.
+  //
+  // Speed changes are done here directly (Clock is in base/, below hid), but a
+  // save state needs Emulator, which is ABOVE hid - calling it from here would
+  // invert the dependency and create a link cycle. So the input system reports
+  // the intent and whoever owns the emulator performs it. The handler runs on
+  // the GUEST thread that polled input, so it must not block: SaveToFile
+  // pauses the emulator internally and that is exactly the thread it would be
+  // waiting on.
+  enum class HotkeyAction {
+    kSaveState,
+    kLoadState,
+  };
+  using HotkeyHandler = std::function<void(HotkeyAction)>;
+  void SetHotkeyHandler(HotkeyHandler handler) {
+    hotkey_handler_ = std::move(handler);
+  }
+
   // Edge guards the whole input system with an xe_unlikely_mutex spinlock and
   // hands callers a lock via this method; the kernel input shims take it
   // around every InputSystem call. This fork has no xe_unlikely_mutex in
@@ -114,14 +133,28 @@ class InputSystem {
   // the game immediately after the dialog closes.
   std::array<uint16_t, XUserMaxUserCount> consumed_buttons_{};
 
-  // Back + RB speed toggle. Only the per-user held-state lives here, so the
-  // toggle is edge- rather than level-triggered (guests poll every frame).
-  // The ACTIVE state is not mirrored here on purpose - Clock's guest time
+  // Back + <button> hotkeys. Only the per-user held-state lives here, so each
+  // combo is edge- rather than level-triggered (guests poll every frame).
+  // The ACTIVE speed is not mirrored here on purpose - Clock's guest time
   // scalar is the single source of truth, and the OSD reads that directly, so
   // it stays correct however the scalar was set.
-  static constexpr double kSpeedToggleScalar = 2.0;
-  void HandleSpeedToggleHotkey(uint32_t user_index, X_INPUT_STATE* out_state);
+  void HandleHotkeys(uint32_t user_index, X_INPUT_STATE* out_state);
+  // Clamped reads of the user-settable multipliers. A cvar can hold anything,
+  // and a scalar of 0 stops guest time dead while a huge one desyncs audio
+  // past recovery - neither is a state the player can get out of, because the
+  // hotkey that caused it needs a running guest to be pressed again.
+  static double FastForwardScalar();
+  static double SlowMotionScalar();
   std::array<bool, XUserMaxUserCount> speed_toggle_combo_held_{};
+  std::array<bool, XUserMaxUserCount> slowmo_combo_held_{};
+  std::array<bool, XUserMaxUserCount> save_state_combo_held_{};
+  std::array<bool, XUserMaxUserCount> load_state_combo_held_{};
+  // Speed to restore when a HOLD-mode fast-forward is released. Captured on
+  // press so hold-mode composes with an unrelated scalar (a title profile)
+  // instead of forcing 1x on release.
+  std::array<double, XUserMaxUserCount> speed_hold_restore_{};
+
+  HotkeyHandler hotkey_handler_;
 };
 
 }  // namespace hid

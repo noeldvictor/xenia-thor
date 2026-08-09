@@ -2701,6 +2701,7 @@ bool A64Emitter::Emit(GuestFunction* function, hir::HIRBuilder* builder,
   tail_code_.clear();
   v128_const_pool_.clear();
   fpcr_mode_ = FPCRMode::Unknown;
+  fpcr_ever_vmx_ = false;
 
   // Try to emit.
   EmitFunctionInfo func_info = {};
@@ -4258,6 +4259,47 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   MaybeEmitBodyTimeProfileEnd();
   epilog_label_ = nullptr;
   code_offsets.epilog = getSize();
+
+  // Leave FPCR in SCALAR (FPU) mode if this function ever put it in VMX mode.
+  //
+  // WHY THIS IS A CORRECTNESS FIX AND NOT TIDINESS (traced 2026-08-09):
+  // PPC models scalar FP and VMX with TWO registers (FPSCR and VSCR.NJ), so the
+  // guest can have IEEE denormals for scalar FP and flush-to-zero for VMX at the
+  // same time. ARM64 has ONE (FPCR), so we emulate that by switching modes - and
+  // the switch leaked out of the function.
+  //
+  // The a64 backend never noticed because it defends itself on the CALLER side:
+  // Call() runs ForgetFpcrMode() before the blr, and after the call the cached
+  // mode is Unknown, so the next FP op re-emits an msr. An a64 caller therefore
+  // never trusts an inherited mode.
+  //
+  // ⚠️ THE LLVM BACKEND HAS NO SUCH LOGIC - it does not touch FPCR at all. So:
+  //     LLVM fn --xe_llvm_guest_call--> a64 fn that ends in VMX mode --ret-->
+  //     LLVM fn continues with FPCR.FZ SET
+  // and every subsequent SCALAR f32/f64 op in that LLVM function silently
+  // flushes denormals, which PPC scalar FP requires it NOT to do. That is a
+  // wrong-float-results bug with no crash - the exact signature of the black-sky
+  // gameplay regression - and it is NOT specific to the scalar-FMA lowering;
+  // FADD/FMUL/FDIV/FSQRT are all exposed. The FMA lowering only added more
+  // scalar FP to LLVM-compiled code and so made it easier to hit.
+  //
+  // Fixing it HERE rather than in the LLVM caller establishes the invariant
+  // globally - "FPCR is in FPU mode at every guest function boundary" - so a
+  // backend that does not manage FPCR is correct by construction. Tail calls
+  // already satisfy it via Call()'s ForgetFpcrMode(); this closes the return.
+  //
+  // COST: zero for functions that never touched VMX FP (no flag, no emit), and
+  // one msr for those that did - paid once per return, against a barrier that
+  // ChangeFpcrMode was already paying per transition inside the body.
+  if (fpcr_ever_vmx_ && !cvars::a64_fpcr_single_mode) {
+    // x11 is scratch (the allocator only hands out x22-x28) and the guest return
+    // value lives in the context, not a host register - the call-trace hook
+    // above already does a full CallNativeSafe here on the same reasoning.
+    ldr(w11, Xbyak_aarch64::ptr(
+                 GetBackendCtxReg(),
+                 static_cast<uint32_t>(offsetof(A64BackendContext, fpcr_fpu))));
+    msr(3, 3, 4, 4, 0, x11);  // msr FPCR, x11
+  }
 
   MaybeEmitEntryExitTimeProfileStartInX15();
   MaybeEmitEntryExitTimeProfileStoreStartFromX15();
@@ -6341,6 +6383,9 @@ bool A64Emitter::ChangeFpcrMode(FPCRMode new_mode, bool already_set) {
     return false;
   }
   fpcr_mode_ = new_mode;
+  if (new_mode == FPCRMode::Vmx) {
+    fpcr_ever_vmx_ = true;
+  }
   if (!already_set) {
     // Load the pre-computed FPCR value from the backend context.
     // This avoids an expensive MRS + read-modify-write cycle.

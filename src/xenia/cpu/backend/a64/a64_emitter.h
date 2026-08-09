@@ -323,6 +323,16 @@ class A64Emitter : public Xbyak_aarch64::CodeGenerator {
   std::unordered_map<uint32_t, Xbyak_aarch64::Label*> label_map_;
 
   FPCRMode fpcr_mode_ = FPCRMode::Unknown;
+  // Did THIS function ever switch FPCR into VMX mode? Drives the epilog's
+  // restore-to-FPU-mode.
+  //
+  // Why a sticky per-FUNCTION flag and not just `fpcr_mode_` at the epilog:
+  // the epilog is a MERGE POINT that every `return` branches to, so the
+  // emit-time cached mode there is whatever the last-emitted block happened to
+  // leave - which says nothing about the path actually taken at runtime. The
+  // sticky flag is the conservative version of the same question and is sound
+  // for a merge point.
+  bool fpcr_ever_vmx_ = false;
   bool synchronize_stack_on_next_instruction_ = false;
 };
 

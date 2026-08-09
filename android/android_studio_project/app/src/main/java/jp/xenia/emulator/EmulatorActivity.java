@@ -1403,11 +1403,43 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     @Override
     public boolean dispatchKeyEvent(final KeyEvent event) {
+        // Back (= Select on the Thor) is BOTH the menu button and the modifier for
+        // every gameplay hotkey, and the two live on completely different paths:
+        // the menu opens HERE on KEYCODE_BACK, while the hotkeys are handled
+        // natively in InputSystem::HandleHotkeys off X_INPUT. The native side
+        // swallows Back from the GUEST, but it cannot suppress this Android key
+        // event - so without the chord tracking below, every Back+<button> hotkey
+        // would ALSO pop the menu the moment you let go of Back.
+        //
+        // That is not a new-feature problem: the pre-existing Select+R1
+        // fast-forward has always had it. Fast-forwarding a cutscene opened the
+        // pause menu, which is very plausibly what "the OSD pause is awful"
+        // was describing.
+        //
+        // Rule: if any other gamepad button went down while Back was held, the
+        // Back-up is the END OF A CHORD, not a menu request. A press of Back with
+        // nothing else still toggles the menu, so nothing is lost.
         if (event != null && event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
-            if (event.getAction() == KeyEvent.ACTION_UP) {
-                toggleInGameMenu();
+            if (event.getAction() == KeyEvent.ACTION_DOWN) {
+                if (!mBackHeld) {
+                    mBackChordUsed = false;
+                }
+                mBackHeld = true;
+            } else if (event.getAction() == KeyEvent.ACTION_UP) {
+                mBackHeld = false;
+                if (mBackChordUsed) {
+                    mBackChordUsed = false;
+                } else {
+                    toggleInGameMenu();
+                }
             }
             return true;
+        }
+        // Note the ordering: this runs BEFORE the menu-visible branch on purpose,
+        // so a chord is registered even if something else later consumes the key.
+        if (event != null && mBackHeld && event.getAction() == KeyEvent.ACTION_DOWN
+                && isGamepadKeyCode(event.getKeyCode())) {
+            mBackChordUsed = true;
         }
         if (isInGameMenuVisible()) {
             if (event != null && event.getAction() == KeyEvent.ACTION_DOWN
@@ -1724,7 +1756,33 @@ public class EmulatorActivity extends WindowedAppActivity {
                 this, getDisplayNameForTarget(target), target);
     }
 
+    // Hand the native hotkey layer the two things it cannot work out for itself:
+    // WHERE the quick-state file lives (per-title, and the path is an Android
+    // app-private directory) and WHAT multiplier the user last chose.
+    //
+    // Deliberately NOT done through the `--ez/--es` allowlist: that whole block
+    // is gated on `getBundleExtra(EXTRA_CVARS) == null`, which is false for every
+    // GUI launch, so an allowlisted extra would silently never apply on the path
+    // real users take. nativeSetConfigVar runs unconditionally.
+    private void applyHotkeyConfig() {
+        try {
+            nativeSetConfigVar("hotkey_state_path", getStateFile().getAbsolutePath());
+        } catch (Throwable t) {
+            Log.w(TAG, "could not set hotkey_state_path", t);
+        }
+        final float saved = getPreferences(MODE_PRIVATE).getFloat(PREF_SPEED_SCALAR, 0f);
+        if (saved >= 1.25f && saved <= 8.0f) {
+            try {
+                nativeSetConfigVar("hotkey_speed_scalar",
+                        String.format(Locale.US, "%.2f", saved));
+            } catch (Throwable t) {
+                Log.w(TAG, "could not restore hotkey_speed_scalar", t);
+            }
+        }
+    }
+
     private void setupInGameMenu() {
+        applyHotkeyConfig();
         mInGameMenu = findViewById(R.id.emulator_in_game_menu);
         mInGameMenuShowFps = findViewById(R.id.emulator_menu_show_fps);
         mInGameMenuInputStatus = findViewById(R.id.emulator_menu_input_status);
@@ -1735,17 +1793,31 @@ public class EmulatorActivity extends WindowedAppActivity {
             resumeButton.setOnClickListener(view -> hideInGameMenu());
         }
 
-        // Discoverable fast-forward. The Select+R1 chord already worked and the
+        // Discoverable speed control. The Select+R1 chord already worked and the
         // FPS badge already showed "2.00x", but nothing on screen revealed it, so
         // a user who did not know the chord could not find the feature.
+        //
+        // The button CYCLES rather than toggles, because a toggle can only ever
+        // reach one speed and the useful multiplier is title-dependent - 2x is
+        // right for battles, 4x for overworld travel, 0.5x for a section you keep
+        // failing. Cycling exposes all of them without a submenu.
         final Button fastForwardButton = findViewById(R.id.emulator_menu_fastforward);
         if (fastForwardButton != null) {
             fastForwardButton.setOnClickListener(view -> {
                 // Read the CURRENT scalar rather than tracking a local flag, so the
                 // button agrees with the hotkey, a game profile, or the config -
                 // Clock stays the single source of truth.
-                final double now = nativeGetGuestTimeScalar();
-                nativeSetGuestTimeScalar(now > 1.01 ? 1.0 : 2.0);
+                final double next = nextSpeedInCycle(nativeGetGuestTimeScalar());
+                nativeSetGuestTimeScalar(next);
+                // Keep the CHORD in sync with the button: whatever fast speed was
+                // picked here becomes what Select+R1 toggles to, so the two
+                // controls cannot disagree about what "fast-forward" means.
+                if (next > 1.01) {
+                    nativeSetConfigVar("hotkey_speed_scalar",
+                            String.format(Locale.US, "%.2f", next));
+                    getPreferences(MODE_PRIVATE).edit()
+                            .putFloat(PREF_SPEED_SCALAR, (float) next).apply();
+                }
                 refreshFastForwardButton();
             });
         }
@@ -1884,6 +1956,32 @@ public class EmulatorActivity extends WindowedAppActivity {
         finish();
     }
 
+    // The speeds the OSD button cycles through. 8x is deliberately NOT here even
+    // though the cvar allows it: past ~4x the audio mixer cannot keep up and the
+    // guest's own frame pacing dominates, so it feels broken rather than fast.
+    // 0.5x is last so the common case (1x -> 2x) is one tap.
+    // Back-as-hotkey-modifier tracking; see dispatchKeyEvent.
+    private boolean mBackHeld = false;
+    private boolean mBackChordUsed = false;
+
+    private static final double[] SPEED_CYCLE = {1.0, 2.0, 3.0, 4.0, 0.5};
+    private static final String PREF_SPEED_SCALAR = "in_game_speed_scalar";
+
+    private static double nextSpeedInCycle(double current) {
+        // Match on approximate equality - the scalar round-trips through a double
+        // cvar and a string, so exact comparison would always fall through to the
+        // first entry and the cycle would never advance past 2x.
+        for (int i = 0; i < SPEED_CYCLE.length; i++) {
+            if (Math.abs(current - SPEED_CYCLE[i]) < 0.01) {
+                return SPEED_CYCLE[(i + 1) % SPEED_CYCLE.length];
+            }
+        }
+        // An unrecognised scalar (a title profile, a config value) is a real
+        // setting, not an error - step to normal speed rather than silently
+        // adopting it into the cycle.
+        return 1.0;
+    }
+
     // Label reflects the LIVE scalar, so the menu never disagrees with the badge
     // or with what the Select+R1 chord last did.
     private void refreshFastForwardButton() {
@@ -1892,9 +1990,16 @@ public class EmulatorActivity extends WindowedAppActivity {
             return;
         }
         final double scalar = nativeGetGuestTimeScalar();
-        ff.setText(scalar > 1.01
-                ? String.format(Locale.US, "Fast-forward: %.3gx → tap for 1x", scalar)
-                : "Fast-forward: 1x → tap for 2x");
+        final double next = nextSpeedInCycle(scalar);
+        final String label = Math.abs(scalar - 1.0) < 0.01
+                ? "Normal speed"
+                : (scalar < 1.0
+                        ? String.format(Locale.US, "Slow motion %.2gx", scalar)
+                        : String.format(Locale.US, "Fast-forward %.3gx", scalar));
+        ff.setText(String.format(Locale.US, "Speed: %s → tap for %s", label,
+                Math.abs(next - 1.0) < 0.01
+                        ? "1x"
+                        : String.format(Locale.US, "%.3gx", next)));
     }
 
     private void refreshInGameMenu() {

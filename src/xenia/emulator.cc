@@ -39,6 +39,7 @@
 #include "xenia/cpu/thread_state.h"
 #include "xenia/gpu/graphics_system.h"
 #include "xenia/hid/input_driver.h"
+#include "xenia/hid/hid_flags.h"
 #include "xenia/hid/input_system.h"
 #include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/kernel_state.h"
@@ -959,6 +960,49 @@ X_STATUS Emulator::Setup(
   if (result) {
     return result;
   }
+
+  // Quick save/load hotkeys (Back + X / Back + Y). The input system reports the
+  // intent; performing it is ours, because hid sits BELOW Emulator and calling
+  // up from there would invert the dependency.
+  //
+  // ⚠️ THE DEFERRAL IS LOAD-BEARING, NOT TIDINESS. The handler is invoked from
+  // whichever GUEST thread polled input, and SaveToFile -> Pause() suspends
+  // every guest thread and waits for each to acknowledge - including the one
+  // making the call, which can never acknowledge. Running it inline is a
+  // guaranteed deadlock. CallInUIThreadDeferred moves it to the UI thread,
+  // which is not a guest thread and is exactly where the OSD's Save/Load
+  // buttons already call SaveToFile from, so the two paths behave identically.
+  input_system_->SetHotkeyHandler(
+      [this](xe::hid::InputSystem::HotkeyAction action) {
+        const bool save = action == xe::hid::InputSystem::HotkeyAction::kSaveState;
+        if (cvars::hotkey_state_path.empty()) {
+          XELOGW(
+              "Hotkey {}: hotkey_state_path is unset, so there is nowhere to "
+              "put it. The Android UI sets this at launch; a headless run must "
+              "pass it explicitly.",
+              save ? "save state" : "load state");
+          return;
+        }
+        const std::string path = cvars::hotkey_state_path;
+        if (!display_window_) {
+          XELOGW("Hotkey {}: no display window, cannot defer off the guest "
+                 "thread - refusing rather than deadlocking",
+                 save ? "save state" : "load state");
+          return;
+        }
+        display_window_->app_context().CallInUIThreadDeferred([this, save,
+                                                               path]() {
+          bool ok = false;
+          try {
+            ok = save ? SaveToFile(std::filesystem::path(path))
+                      : RestoreFromFile(std::filesystem::path(path));
+          } catch (...) {
+            ok = false;
+          }
+          XELOGI("Hotkey {}: {}", save ? "save state" : "load state",
+                 ok ? "OK" : "FAILED");
+        });
+      });
 
   // Bring up the virtual filesystem used by the kernel.
   file_system_ = std::make_unique<xe::vfs::VirtualFileSystem>();

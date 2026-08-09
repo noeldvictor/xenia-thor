@@ -105,8 +105,19 @@ DEFINE_bool(
     "needs FPCR.FZ CLEAR; this lowering does not manage FPCR, so under VMX mode "
     "(FZ set) denormals flush and results differ. The qemu differential compared "
     "a C model of the SEQUENCE and never modelled the FPCR MODE, so its 32/32 "
-    "PASS does not cover this. NOT PROVEN - bisect not run. Fix the FPCR mode "
-    "and pixel-check before re-enabling.",
+    "PASS does not cover this. "
+    "UPDATE 2026-08-09: the FPCR HALF IS NOW FIXED AT ITS SOURCE. The leak was "
+    "traced by reading the emitter: the a64 epilog did NOT restore FPU mode "
+    "before ret, and a64 only got away with it because its CALLERS re-establish "
+    "the mode after every call (Call() -> ForgetFpcrMode()) while LLVM, which "
+    "never touches FPCR, does not. So an LLVM fn calling an a64 fn that ended in "
+    "VMX mode continued with FZ set. The a64 epilog now restores FPU mode when "
+    "the function ever entered VMX mode, which makes 'FPCR is in FPU mode at "
+    "every guest function boundary' a global invariant. NOTE the bug was never "
+    "specific to this lowering - FADD/FMUL/FDIV/FSQRT were equally exposed; this "
+    "lowering just put more scalar FP on the LLVM path. "
+    "STILL DEFAULT OFF: the remaining gate is the PIXEL CHECK, which needs the "
+    "device. Do not flip this on the strength of the FPCR fix alone.",
     "CPU");
 
 DEFINE_uint32(

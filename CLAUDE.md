@@ -661,20 +661,96 @@ remains a float-semantics defect**, and note `cpu_llvm_lower_scalar_fma` is now 
 FPCR-mode concern (a64 runs scalar FMA under `ChangeFpcrMode(Fpu)`; the LLVM lowering never manages FPCR).
 **Reproduce by WATCHING, not by screencap**, and bisect on "does the sky render".
 
-## 🎮 THE IN-GAME OSD IS A TOP BAR, NOT A MENU — THERE IS NO PAUSE UI (user, 2026-08-09)
-*"the osd pause is awful compared to other emu, do research and fix compared to rpcs3"* — correct, and the
-reason is structural: **there is no in-game menu at all.** `activity_emulator.xml` has only
-`emulator_osd_top_bar` (title / subtitle / runtime / warning) plus the FPS badge. `onPause()` is the Android
-lifecycle callback, not a user-facing pause. **Nothing lets the player pause, save, change a setting, or exit
-without leaving the app.**
-**What an rpcs3-class in-game overlay provides, and we have none of it:** Resume, Save state / Load state,
-per-game Settings, Controller/input, Exit to library — reachable from a single button, with the guest PAUSED
-while it is open.
-**⚠️ AND THE 2x FAST-FORWARD IS INVISIBLE.** The feature exists and works (`Back + RB` = **Select + R1**,
-`hotkey_speed_toggle` default true, scales the guest clock via `Clock::set_guest_time_scalar`, and the FPS badge
-appends `2.00x` — EmulatorActivity.java:1962). **But there is no on-screen control and no discoverability**: a
-user who does not know the chord cannot find it. That is the gap to close first, since the underlying feature is
-already done and validated.
+## 🚨🚨🚨 **FPCR LEAKED OUT OF a64 FUNCTIONS INTO LLVM-COMPILED CODE — A REAL WRONG-FLOAT BUG, FIXED 2026-08-09**
+**Found by READING the emitter, not by running anything, while chasing why `cpu_llvm_lower_scalar_fma` had to
+stay default-off. The hypothesis recorded in that cvar's help was RIGHT, and the mechanism is worse than
+suspected: it was never specific to scalar FMA.**
+**THE TRACE, four checkable facts:**
+1. The host→guest thunk restores `fpcr_fpu` on every entry (`a64_backend.cc:1356`), so a guest function *starts*
+   in scalar/FPU mode (FZ clear, which PPC scalar FP requires).
+2. `A64Emitter::Call` runs `ForgetFpcrMode()` **before** the `blr` (`a64_emitter.cc:6113`), which restores FPU
+   mode if the cached mode was VMX. So *callees* are entered in FPU mode, and **tail calls are fine too**.
+3. **❌ THE a64 EPILOG DID NOT RESTORE FPCR BEFORE `ret`** (`a64_emitter.cc:4282`). A function whose last FP work
+   was VMX returned with **FZ still SET**.
+4. a64 got away with (3) for years because it defends itself on the CALLER side: after a call the cached mode is
+   `Unknown`, so the next FP op re-emits an `msr`. **An a64 caller never trusts an inherited mode.**
+**🔥 THE LLVM BACKEND HAS NO SUCH LOGIC — IT DOES NOT TOUCH FPCR AT ALL.** So:
+```
+LLVM fn --xe_llvm_guest_call--> a64 fn that ends in VMX mode --ret--> LLVM fn continues with FPCR.FZ SET
+```
+and **every subsequent SCALAR f32/f64 op in that LLVM function silently flushes denormals**, which PPC scalar FP
+requires it not to do. **Wrong float results, no crash — the exact signature of the black-sky gameplay
+regression.**
+**⇒ AND THE SCOPE IS MUCH WIDER THAN THE THING THAT FOUND IT: `FADD`/`FMUL`/`FDIV`/`FSQRT` on FLOAT32/FLOAT64 are
+all lowered by LLVM and were all equally exposed.** The scalar-FMA lowering did not introduce this; it just put
+*more* scalar FP on the LLVM path and so made it far easier to hit. **This bug predates that change.**
+**✅ FIX: the a64 epilog now restores FPU mode when the function ever entered VMX mode** — establishing the global
+invariant **"FPCR is in FPU mode at every guest function boundary"**, so a backend that does not manage FPCR is
+correct by construction.
+- **A sticky per-FUNCTION `fpcr_ever_vmx_` flag, NOT `fpcr_mode_` at the epilog.** The epilog is a MERGE POINT
+  that every `return` branches to, so the emit-time cached mode there is whatever the last-emitted block happened
+  to leave and says nothing about the path actually taken at runtime. The sticky flag is the conservative version
+  of the same question and is sound for a merge point. **Getting this wrong would emit the restore on some paths
+  and not others, which is worse than not fixing it.**
+- **Cost is zero for functions that never touched VMX FP** (no flag, no emit), and one `msr` per return for those
+  that did — against a barrier `ChangeFpcrMode` was already paying per transition inside the body.
+- Respects `a64_fpcr_single_mode` (that lever never emits the `msr` at all, so there is nothing to restore).
+**⚠️ WHAT THIS DOES AND DOES NOT UNBLOCK.** `cpu_llvm_lower_scalar_fma` STAYS DEFAULT-OFF. Its help said "fix the
+FPCR mode and pixel-check before re-enabling" — the FPCR half is now done, **the pixel check is not, and it needs
+the device.** Do not flip it on the strength of this fix alone.
+**📌 ONE PATH STILL UNGUARDED, recorded rather than fixed:** LLVM calling an HLE export (`xe_llvm_call_extern`)
+runs host C++ that could in principle change FPCR. The a64 side already restores defensively after
+`CallNativeSafe` (`a64_backend.cc:1490`); the LLVM side does not. Host C++ does not normally touch FPCR, so this
+is a lower-probability path — but it is the next place to look if a float bug survives this fix.
+
+## 🎮 THE IN-GAME OSD / QoL FEATURE SET — BUILT 2026-08-09, **NOT YET DEVICE-TESTED**
+**⚠️ THE OLD SECTION HERE SAID "THERE IS NO IN-GAME MENU AT ALL". THAT WAS STALE AND WRONG** — a full menu
+exists in `activity_emulator.xml` (`emulator_in_game_menu`): Resume, Speed, Save/Load state, Controller map,
+Settings, Exit game, Show-FPS, plus input status/help. **Read the layout before claiming a UI gap.**
+**🔑 THE REAL GAP WAS NOT DISCOVERABILITY, IT WAS THAT THE MENU IS THE WRONG PLACE FOR SPEED.** `showInGameMenu()`
+calls `nativeSetEmulatorPaused(true)` — correctly, that is what made the pause honest — **but that makes the menu
+structurally useless for fast-forward: you cannot skip a cutscene from a menu that stops the cutscene.** So the
+QoL work went into the HOTKEY layer (`InputSystem::HandleHotkeys`, hid/input_system.cc), which runs without
+pausing, and the menu keeps a discoverable mirror of it.
+| chord | action | cvar |
+|---|---|---|
+| **Back + RB** | fast-forward toggle (or HOLD, see below) | `hotkey_speed_toggle`, `hotkey_speed_scalar` (2.0, clamp 1.25-8) |
+| **Back + LB** | slow motion toggle | `hotkey_slowmo_toggle`, `hotkey_slowmo_scalar` (0.5, clamp 0.1-0.9) |
+| **Back + X** | quick SAVE state | `hotkey_save_state`, `hotkey_state_path` |
+| **Back + Y** | quick LOAD state | same |
+- `hotkey_speed_hold` (default off) switches Back+RB from toggle to **hold-to-fast-forward**. It captures the
+  scalar on press and restores it on release, so it composes with a title profile instead of forcing 1x — with a
+  guard that refuses to restore a value >= the fast speed, since that would latch FF on release.
+- **The OSD Speed button CYCLES 1x → 2x → 3x → 4x → 0.5x**, and whatever fast speed you pick is written to
+  `hotkey_speed_scalar` and persisted, **so the button and the chord can never disagree about what "fast-forward"
+  means**. 8x is reachable by cvar but deliberately not in the cycle — past ~4x the audio mixer cannot keep up.
+- **⚠️ TWO LAYERING TRAPS THIS DESIGN EXISTS TO AVOID, both worth knowing before touching it:**
+  1. **`hid` is BELOW `Emulator`,** so the input system cannot call `SaveToFile` — that would invert the
+     dependency. It reports intent through a `SetHotkeyHandler` callback that `Emulator::Setup` installs.
+  2. **🚨 THE HANDLER MUST NOT RUN INLINE.** It is invoked from whichever GUEST thread polled input, and
+     `SaveToFile → Pause()` suspends every guest thread and waits for each to acknowledge — **including the
+     caller, which never can. Running it inline is a guaranteed deadlock.** It is posted via
+     `CallInUIThreadDeferred`, which is the same thread the OSD's Save/Load buttons already call from.
+- **`hotkey_state_path` is set from Java via `nativeSetConfigVar`, NOT via the `--es` allowlist** — that whole
+  allowlist block is gated on `getBundleExtra(EXTRA_CVARS) == null`, which is FALSE on every GUI launch, so an
+  allowlisted extra would silently never apply on the path real users take. It points at the SAME per-title file
+  the menu's Save/Load buttons use, so the two agree.
+**🐞🐞 AND THE BUG THAT PROBABLY *IS* "THE OSD PAUSE IS AWFUL" — PRE-EXISTING, NOT NEW, FIXED HERE.**
+**Back is BOTH the menu button and the modifier for every hotkey, and the two are on completely different code
+paths:** the menu opens in Java `dispatchKeyEvent` on `KEYCODE_BACK` (EmulatorActivity.java:1406); the hotkeys
+are native, off X_INPUT. **The native swallow hides Back from the GUEST but cannot suppress the Android key
+event** — so releasing Back after ANY chord also toggled the menu.
+⇒ **Select+R1 fast-forward has ALWAYS popped the pause menu when you let go.** Fast-forward a cutscene, get a
+pause menu. That is a complete explanation for the complaint, and it was never about the menu's appearance.
+**FIX:** `dispatchKeyEvent` now tracks whether any other gamepad button went down while Back was held; if so the
+Back-up is treated as the END OF A CHORD rather than a menu request. Back pressed alone still toggles, so nothing
+is lost. **The chord check is deliberately placed BEFORE the menu-visible branch**, so it registers even when
+something downstream consumes the key.
+**🔑 THE TRANSFERABLE BIT: a "swallow the button" fix is only complete if you know EVERY path that reads it.**
+The native side swallowed Back correctly and the feature was still broken, because a second consumer existed one
+layer up in Java. Grep for the keycode as well as the X_INPUT bit.
+**⚠️ STATUS: BUILDS CLEAN, NOT RUN ON HARDWARE.** No chord has been pressed on the Thor. The save/load path in
+particular is the one to validate first, because its failure mode is the deadlock described above.
 
 ## 🧊🧊 THE 2026-08-09 "BLACK SCREEN": NOT A DEADLOCK, NOT MY CHANGES — MOST LIKELY **DEVICE FATIGUE**
 **Symptom, measured with the RELIABLE probe and a screenshot:**
