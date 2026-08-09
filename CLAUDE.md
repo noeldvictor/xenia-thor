@@ -1901,6 +1901,38 @@ function's blocks (iters=4 here) and removes nothing. `ppc_cross_block_dead_gpr_
 GPR slots and is **unmeasured** — it may fare better, since GPR stores are far more numerous than flag stores,
 but assume nothing: run it with its own `_audit` first.
 
+## 📕🚨 THE MANUAL RESIZES STAGE 3: **AArch64 CANNOT HOLD A 128-BIT VECTOR ACROSS A CALL** (AAPCS64, 2026-08-08)
+**The governing manual for cross-call residency was MISSING from `docs/reference/arm/` — we had the Arm ARM and
+four SWOGs, but not the Procedure Call Standard, which is the document that actually decides which registers
+survive a call.** Fetched and summarised at **`docs/reference/arm/aapcs64-callee-saved-notes.md`** (Arm IHI
+0055). Two clauses, verbatim:
+> "Registers r19-r29 and SP are Callee-saved."
+> "Additionally, **only the bottom 64 bits** of each value stored in **v8-v15** need to be Callee-saved; it is
+> the responsibility of the caller to preserve larger values."
+**⇒ THE CEILING ON `cpu_backend_llvm_residency_abi`, DERIVED NOT GUESSED:**
+| host resource | count | vs what the lever wants to keep resident |
+|---|---|---|
+| callee-saved GPRs x19-x28 | 10, **7 after** our x19/x20/x21 reservations | guest r14-r31 = **18** |
+| callee-saved vector regs v8-v15 | 8, **low 64 bits only** | guest FPR f14-f31 = 18 (64-bit → fits) |
+| callee-saved regs preserving a **full 128 bits** | **ZERO** | guest VMX v14-v31 + v64-v127 = **82** |
+- **GPRs: at most 7 of 18** survive a call, and only if LLVM spends every reservable callee-saved register on
+  guest mirrors rather than its own values.
+- **VMX: 0 of 82.** A 128-bit guest vector **cannot** stay resident across a call on AArch64 — there is no host
+  register that preserves 128 bits. LLVM must spill it around every call no matter what the lever says.
+- **FPRs: up to 8** — a PPC FPR is 64-bit and fits the preserved half exactly. The only clean mapping.
+**⚠️ SO THE HELP TEXT'S "~18+ guest registers RESIDENT … ACROSS the call" IS OPTIMISTIC, and the VECTOR half of
+the lever is ARCHITECTURALLY IMPOSSIBLE, not merely unimplemented.** Do not justify stage 3 on vector residency.
+**This does not kill it** — 7 GPRs plus 8 FPR halves held across calls is still real traffic removed from a
+thread this tree has measured as memory-bound — but it resizes the "#1 lever toward big CPU speedups" claim a
+long way down, and it does so BEFORE spending a device session on it.
+**🔑 AND IT SHARPENS REVIEW #2's VERDICT.** Review #2 said the 128-guest-vector → 28-host-vector squeeze has
+"nowhere to get more". The manual says worse: **across a call the usable figure is not 28, it is 0.** That is
+the strongest statement yet of why the guest thread is memory-bound on the vector path, and it is a property of
+the host ABI, not of our allocator.
+**⚠️ UNVERIFIED ON OUR TOOLCHAIN:** whether clang actually assigns mirrors to x19-x28 under
+`+reserve-x20,+reserve-x21` or spills them regardless. That is an emitted-code question — `clang -S` or a JIT IR
+dump answers it, the manual does not.
+
 ## 🎯 STAGE 3 IS THE REMAINING BIG ONE: `cpu_backend_llvm_residency_abi` — RISK-ASSESSED 2026-08-08, NOT ENABLED
 **Stages 1+2 (`context_residency` + `residency_writeback`) shipped 2026-08-08. Stage 3 is still off, and its own
 help calls it "the #1 lever toward big CPU speedups" — XenonRecomp's `non_volatile_as_local` / Box64's CALLRET.**
