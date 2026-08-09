@@ -806,6 +806,31 @@ this lowering does not manage FPCR at all, so under VMX mode denormals would flu
 modelled the SEQUENCE, never the FPCR MODE — its 32/32 PASS does not cover it. Fix that, then pixel-check, then
 re-enable.
 
+## ⛔⛔ **THE REAL MEASUREMENT CEILING, MEASURED 2026-08-09: ~25 SECONDS OF GAMEPLAY PER RUN**
+**First run where the scene gate CONFIRMED gameplay (`rendered=1033`, `total_vertices=149,147`) — and it
+immediately exposed why an in-game A/B on this title is so expensive. It is not the route. It is arithmetic:**
+```
+t=0-110s    AOT precompile + load. ZERO frames rendered. 44C -> ~55C
+t=115s      first frames                                  64C
+t=126s      278 frames/10s                                63C
+t=137s      233 frames/10s          -> 70C, GUARD FIRED, force-stopped
+```
+**Startup eats ~110 seconds and most of the thermal budget BEFORE a single frame renders, leaving roughly
+25 SECONDS of gameplay from a 44C start.** Two usable 10s buckets. That is not enough for an A/B against this
+project's documented ~2.8% run-to-run drift.
+**⇒ CONSEQUENCES FOR THE PROTOCOL, and they are not optional:**
+1. **Start COLDER than the 50C gate allows** — 44C still only bought 25s. Sub-40C is the real requirement.
+2. **Or average across MULTIPLE short runs per arm**, which multiplies battery cost (this session went 68% ->
+   51% across a handful of runs).
+3. **The AOT precompile is the thermal cost, not the gameplay** — this file already recorded that, but now it is
+   quantified against a gameplay-confirmed run: ~110s of compile to buy ~25s of measurement.
+**⚠️ NO BASELINE NUMBER IS CLAIMED FROM THIS RUN.** The three gameplay buckets read 14.5 / 27.8 / 23.3 fps —
+the first is the tail of loading, and the last is already thermally throttled at 70C. **Averaging them would be
+inventing a figure**, and the spread is far wider than any lever being tested.
+**🔑 THE UNCOMFORTABLE IMPLICATION: an honest in-game CPU A/B on Blue Dragon costs ~4 runs and 2 long cooldowns
+per arm.** Before committing to that, consider whether an UNCAPPED, FAST-BOOTING title can carry the same
+comparison — the constraint here is startup cost and thermal headroom, not anything about the lever.
+
 ## 🏁🏁 **THE BLUE DRAGON GAMEPLAY ROUTE EXISTS AT LAST — `tools/thor/bd_gameplay_route.sh` (2026-08-09)**
 **This was the documented prerequisite for EVERY perf and power claim in this file, and five measurement
 attempts died without it. It only became reachable once the startup stall was root-caused to the stale object
