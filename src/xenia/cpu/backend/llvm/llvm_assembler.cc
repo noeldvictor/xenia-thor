@@ -139,9 +139,16 @@ DEFINE_bool(
     "VALIDATED DEVICE-FREE: tools/qemu/vperm_tbx_vs_tbl_or.c, 8/8 PASS "
     "including an EXHAUSTIVE 32-index x 16-lane sweep (512 cases), all "
     "bit-identical to both the current form and a C reference. "
-    "STILL DEFAULT OFF: qemu proves ISA SEMANTICS and says nothing about how "
-    "LLVM selects and allocates around the intrinsic, and a wrong byte permute "
-    "is WRONG PIXELS, not a crash. One device pixel-check away.",
+    "DEVICE-VALIDATED FOR STABILITY 2026-08-09 (Blue Dragon, Turnip, full AOT): "
+    "title reached, 0 faults / SIGTRAP / Scudo, guest threads advancing. "
+    "CRITICALLY the run passed cpu_llvm_object_cache=false so the lever ACTUALLY "
+    "RAN - LLVMobjload=0 with 37,722 LLVM lowerings. The objcache key "
+    "(o<opt>r<res>w<wb>a<abi>) does NOT include this cvar, so a warm cache would "
+    "have served pre-existing objects and the A/B would have measured nothing. "
+    "STILL DEFAULT OFF: what remains is a PIXEL check, and it needs a human - "
+    "screencap does not reliably capture this SurfaceView (it returned 14,881 "
+    "bytes, the 'got nothing' size, on a title known to render). A wrong byte "
+    "permute is wrong pixels, not a crash, so stability is not sufficient.",
     "CPU");
 
 DEFINE_uint32(
