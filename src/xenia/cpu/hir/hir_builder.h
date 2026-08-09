@@ -86,6 +86,8 @@ class HIRBuilder {
   void Nop();
   // Cooperative-scheduler preemption safepoint (lowered by the backends).
   Instr* CheckPreempt();
+  // Yield/backoff hint inside a guest spin. Lowered by a64 and LLVM.
+  Instr* DelayExecution();
 
   void SourceOffset(uint32_t offset);
 

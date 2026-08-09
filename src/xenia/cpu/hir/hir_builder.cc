@@ -901,6 +901,12 @@ Instr* HIRBuilder::CheckPreempt() {
   return i;
 }
 
+Instr* HIRBuilder::DelayExecution() {
+  Instr* i = AppendInstr(OPCODE_DELAY_EXECUTION_info, 0);
+  i->src1.value = i->src2.value = i->src3.value = NULL;
+  return i;
+}
+
 void HIRBuilder::SourceOffset(uint32_t offset) {
   Instr* i = AppendInstr(OPCODE_SOURCE_OFFSET_info, 0);
   i->src1.offset = offset;

@@ -223,7 +223,12 @@ DEFINE_OPCODE(
     OPCODE_DELAY_EXECUTION,
     "delay_execution",
     OPCODE_SIG_X,
-    0)
+    // VOLATILE, added 2026-08-09. It has no result and no other side-effect
+    // flag, so with flags=0 dead-code elimination would delete every one that
+    // was ever emitted. Nobody noticed because NOTHING emitted it - both
+    // backends carried a lowering for an opcode the HIR builder could not
+    // produce. MemoryPollParkPass is the first producer, hence the fix.
+    OPCODE_FLAG_VOLATILE)
 
 DEFINE_OPCODE(
     OPCODE_LOAD_MMIO,
