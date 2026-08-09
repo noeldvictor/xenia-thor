@@ -6328,8 +6328,24 @@ static uint64_t PpcFrsqrte(uint64_t bits) {
 // ============================================================================
 // OPCODE_RSQRT
 // ============================================================================
+// RULE-4 COUNT for the frsqrte finding: these emitters each plant a HOST CALL
+// (mov x9, PpcFrsqrte / PpcVrsqrtefpLane; blr x9) because PPC frsqrte is defined
+// by a lookup table, not by ARM's FRSQRTE estimate. Inlining the table in ARM64
+// would remove the guest->host transition - but only if these are actually hot.
+// "should be hot in vertex math" is the same reasoning that produced three dead
+// levers (EOR3 0-of-1, the FNV chain behind an off cvar, eieio at 4 sites), so
+// count the emission sites before writing any inline lowering.
+static std::atomic<uint32_t> g_rsqrt_emits{0};
+static void CountRsqrtEmit(const char* which) {
+  uint32_t n = g_rsqrt_emits.fetch_add(1, std::memory_order_relaxed) + 1;
+  if ((n & 0x3F) == 0 || n <= 3) {
+    XELOGI("RSQRTcensus: host-call emissions={} (latest {})", n, which);
+  }
+}
+
 struct RSQRT_F32 : Sequence<RSQRT_F32, I<OPCODE_RSQRT, F32Op, F32Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    CountRsqrtEmit("RSQRT_F32");
     e.ChangeFpcrMode(FPCRMode::Fpu);
     SReg src = i.src1.is_constant ? e.s0 : SReg(i.src1.reg().getIdx());
     if (i.src1.is_constant) {
@@ -6349,6 +6365,7 @@ struct RSQRT_F32 : Sequence<RSQRT_F32, I<OPCODE_RSQRT, F32Op, F32Op>> {
 };
 struct RSQRT_F64 : Sequence<RSQRT_F64, I<OPCODE_RSQRT, F64Op, F64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    CountRsqrtEmit("RSQRT_F64");
     // PPC frsqrte uses a specific lookup table, not a high-precision estimate.
     // Call PpcFrsqrte directly (pure integer math, no FPCR impact).
     DReg src = i.src1.is_constant ? e.d0 : DReg(i.src1.reg().getIdx());
@@ -6454,6 +6471,7 @@ static uint32_t PpcVrsqrtefpLane(uint32_t bits) {
 
 struct RSQRT_V128 : Sequence<RSQRT_V128, I<OPCODE_RSQRT, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
+    CountRsqrtEmit("RSQRT_V128");
     // Call PpcVrsqrtefpLane directly per lane (pure integer math).
     // Save source to stack scratch, accumulate results there, load at end.
     int src_idx = SrcVReg(e, i.src1, 0);

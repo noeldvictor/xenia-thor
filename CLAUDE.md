@@ -974,7 +974,30 @@ performance hat**, exactly like the `FixupVmxMaxMinNan` case in reverse.
 mantissa, index a 16- or 32-entry table, interpolate. **All of it can be emitted INLINE in ARM64**; the host
 call is the x86-inherited part (x64 did it the same way), and a guest→host transition per `frsqrte` is far more
 expensive than the arithmetic it performs.
-**🛑 RULE 4 FIRST: nobody has counted `frsqrte`/`vrsqrtefp`.** They are normalisation primitives, so they
+**✅ COUNTED ON DEVICE 2026-08-09 — IT SURVIVES RULE 4, UNLIKE THE OTHERS.** `RSQRTcensus`, Blue Dragon, full
+AOT on the a64 backend: **192+ host-call emission sites and still climbing when the window closed**, dominated
+by `RSQRT_V128`. Compare `eieio` (4 sites, killed) and `EOR3` (0 of 1, killed) — this one clears the bar those
+failed.
+**🔥 AND IT IS 4x WORSE THAN THE SITE COUNT SUGGESTS: the vector form emits FOUR host calls per instruction.**
+The `blr` is inside an emit-time `for (int lane = 0; lane < 4; lane++)` loop:
+```cpp
+for (int lane = 0; lane < 4; lane++) {
+  … e.mov(e.x9, reinterpret_cast<uint64_t>(PpcVrsqrtefpLane)); e.blr(e.x9); …
+}
+```
+**Every `vrsqrtefp` is FOUR guest→host transitions**, each saving and restoring state, to do integer math on one
+32-bit lane.
+**⇒ TWO FIXES, IN INCREASING ORDER OF WORK AND RISK:**
+1. **Batch the four lanes into ONE call** — pass the whole vector, loop inside the helper. **Identical semantics,
+   trivially safe, removes 3 of every 4 transitions.** Do this first.
+2. **Emit the table lookup inline.** It is exponent/mantissa extraction, a 16- or 32-entry table index, and an
+   interpolation — all integer ops ARM64 can do natively, with no host transition at all. More work, still
+   bit-exact if the table is preserved.
+**⚠️ STILL NOT A DYNAMIC MEASUREMENT.** 192 is EMISSION sites (static). It proves the shape is everywhere; it
+does not prove the instruction is hot at runtime. But unlike the dead levers, the cost per occurrence here is a
+guest→host call rather than a couple of µops — so the bar for "worth fixing" is far lower.
+
+**🛑 (superseded) RULE 4 FIRST: nobody has counted `frsqrte`/`vrsqrtefp`.** They are normalisation primitives, so they
 *should* be hot in 3D vertex math — but "should be hot" is exactly the reasoning that produced three dead levers
 this session (EOR3, the FNV→CRC32 chain, eieio at 4 sites). **Count the emission sites first; inline the table
 only if the count justifies it.**
