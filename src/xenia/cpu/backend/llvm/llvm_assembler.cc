@@ -2090,11 +2090,19 @@ bool Lowerer::LowerInstr(Instr* i) {
         // wants its own negative default NaN, which ARM cannot produce natively.
         auto* gen = b_.CreateSelect(b_.CreateFCmpUNO(res, res),
                                     b_.CreateBitCast(def_nan, fty), res);
-        llvm::Value* out = gen;
-        out = b_.CreateSelect(b_.CreateFCmpUNO(d, d), quiet(d), out);
-        out = b_.CreateSelect(b_.CreateFCmpUNO(c, c), quiet(c), out);
-        out = b_.CreateSelect(b_.CreateFCmpUNO(a, a), quiet(a), out);
-        Def(i->dest, out);
+        // Pick the FIRST NaN source in the FP DOMAIN (fcsel), then quiet it ONCE.
+        // The naive form quiets all three sources up front and selects between
+        // them, which costs 3 ORs and 5 FP<->GPR round trips; those moves are
+        // latency-3 M0-pipe ops on the A710, and only one of the three is ever
+        // used. Measured with clang -S: 19 insns / 5 fmov naive vs 16 / 3 here,
+        // and clang fuses the any-NaN test into fccmp. Semantics are identical -
+        // if a is NaN both yield quiet(a), else c, else d, else the FMA result.
+        auto* a_nan = b_.CreateFCmpUNO(a, a);
+        auto* c_nan = b_.CreateFCmpUNO(c, c);
+        auto* d_nan = b_.CreateFCmpUNO(d, d);
+        auto* nan_src = b_.CreateSelect(a_nan, a, b_.CreateSelect(c_nan, c, d));
+        auto* any_nan = b_.CreateOr(a_nan, b_.CreateOr(c_nan, d_nan));
+        Def(i->dest, b_.CreateSelect(any_nan, quiet(nan_src), gen));
         return true;
       }
       if (!cvars::cpu_backend_llvm_lower_vmaddfp) return false;

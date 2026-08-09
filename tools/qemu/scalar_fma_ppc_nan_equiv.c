@@ -54,6 +54,26 @@ static u64 ref_f64(u64 a, u64 c, u64 d, int is_sub) {
 }
 
 // ---------- CANDIDATE: the branchless select chain the LLVM lowering emits ----
+// v2 = what actually ships: pick the first NaN in the FP domain, quiet ONCE.
+static u32 cand2_f32(u32 a, u32 c, u32 d, int is_sub) {
+  float s1 = b2f(a), s2 = b2f(c), s3 = b2f(d);
+  float res = fmaf(s1, s2, is_sub ? -s3 : s3);
+  float nan_src = isnan(s1) ? s1 : (isnan(s2) ? s2 : s3);
+  int any_nan = isnan(s1) || isnan(s2) || isnan(s3);
+  u32 quieted = f2b(nan_src) | (1u << 22);
+  u32 gen = isnan(res) ? 0xFFC00000u : f2b(res);
+  return any_nan ? quieted : gen;
+}
+static u64 cand2_f64(u64 a, u64 c, u64 d, int is_sub) {
+  double s1 = b2d(a), s2 = b2d(c), s3 = b2d(d);
+  double res = fma(s1, s2, is_sub ? -s3 : s3);
+  double nan_src = isnan(s1) ? s1 : (isnan(s2) ? s2 : s3);
+  int any_nan = isnan(s1) || isnan(s2) || isnan(s3);
+  u64 quieted = d2b(nan_src) | (1ull << 51);
+  u64 gen = isnan(res) ? 0xFFF8000000000000ull : d2b(res);
+  return any_nan ? quieted : gen;
+}
+
 static u32 cand_f32(u32 a, u32 c, u32 d, int is_sub) {
   float s1 = b2f(a), s2 = b2f(c), s3 = b2f(d);
   float addend = is_sub ? -s3 : s3;
@@ -101,7 +121,8 @@ int main(void) {
     for (unsigned k = 0; k < sizeof(cases)/sizeof(cases[0]); ++k) {
       u32 r = ref_f32(cases[k].a, cases[k].c, cases[k].d, sub);
       u32 g = cand_f32(cases[k].a, cases[k].c, cases[k].d, sub);
-      int ok = (r == g);
+      u32 g2 = cand2_f32(cases[k].a, cases[k].c, cases[k].d, sub);
+      int ok = (r == g) && (r == g2);
       if (!ok) ++bad;
       printf("  %s ref=%08X cand=%08X %s\n", cases[k].name, r, g,
              ok ? "ok" : "MISMATCH");
@@ -119,7 +140,8 @@ int main(void) {
     for (unsigned k = 0; k < sizeof(d64)/sizeof(d64[0]); ++k) {
       u64 r = ref_f64(d64[k].a, d64[k].c, d64[k].d, sub);
       u64 g = cand_f64(d64[k].a, d64[k].c, d64[k].d, sub);
-      int ok = (r == g);
+      u64 g2 = cand2_f64(d64[k].a, d64[k].c, d64[k].d, sub);
+      int ok = (r == g) && (r == g2);
       if (!ok) ++bad;
       printf("  %-13s %s ref=%016llx cand=%016llx %s\n", d64[k].name,
              sub ? "sub" : "add", (unsigned long long)r, (unsigned long long)g,
