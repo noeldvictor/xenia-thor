@@ -116,6 +116,10 @@ public class EmulatorActivity extends WindowedAppActivity {
     private static native long nativeGetGuestSwapCount();
 
     private static native double nativeGetGuestTimeScalar();
+    /** Set guest speed from the UI - the discoverable path to fast-forward. */
+    private static native void nativeSetGuestTimeScalar(double scalar);
+    /** Pause/resume the guest so the in-game menu is a REAL pause. */
+    private static native void nativeSetEmulatorPaused(boolean paused);
 
     private static native boolean nativeSaveState(String path);
 
@@ -1825,6 +1829,11 @@ public class EmulatorActivity extends WindowedAppActivity {
         if (mInGameMenu == null) {
             return;
         }
+        // REALLY pause the guest. Until 2026-08-09 this method only changed
+        // visibility, so the game kept running - and kept burning CPU, power and
+        // thermal budget - behind the menu. That is what made the overlay feel
+        // cheap next to rpcs3, where opening it stops emulation.
+        nativeSetEmulatorPaused(true);
         refreshInGameMenu();
         mInGameMenu.setVisibility(View.VISIBLE);
         mInGameMenu.requestFocus();
@@ -1838,6 +1847,9 @@ public class EmulatorActivity extends WindowedAppActivity {
         if (mInGameMenu == null) {
             return;
         }
+        // Resume BEFORE hiding, so no frame is presented while the guest is still
+        // suspended.
+        nativeSetEmulatorPaused(false);
         mInGameMenu.setVisibility(View.GONE);
         final WindowSurfaceView surfaceView = findViewById(R.id.emulator_surface_view);
         if (surfaceView != null) {

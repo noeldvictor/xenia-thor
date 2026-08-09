@@ -791,6 +791,39 @@ Java_jp_xenia_emulator_EmulatorActivity_nativeGetGuestSwapCount(
   return jlong(xe::ui::vulkan::VulkanPerfCountersGetIssueSwapCount());
 }
 
+// Set guest speed from the UI, so fast-forward is reachable WITHOUT knowing the
+// Select+R1 chord. The hotkey stays; this is the discoverable path.
+// Clock is the single source of truth, so the OSD badge follows automatically.
+JNIEXPORT void JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeSetGuestTimeScalar(
+    JNIEnv* jni_env, jclass clazz, jdouble scalar) {
+  // Clamp: 0 or negative would stop or reverse guest time, and absurd values
+  // make audio and timers diverge badly. 1x..4x covers normal + fast-forward.
+  double s = double(scalar);
+  if (!(s >= 0.25)) s = 0.25;
+  if (s > 4.0) s = 4.0;
+  xe::Clock::set_guest_time_scalar(s);
+  XELOGI("UI: guest time scalar set to {}", s);
+}
+
+// Pause/resume the guest for an in-game overlay. Without this the "pause" menu
+// would be cosmetic - the guest would keep running (and keep burning power)
+// behind the overlay, which is exactly what makes an overlay feel cheap.
+JNIEXPORT void JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeSetEmulatorPaused(
+    JNIEnv* jni_env, jclass clazz, jboolean paused) {
+  xe::Emulator* emulator = xe::GetGlobalEmulator();
+  if (!emulator) {
+    return;
+  }
+  if (paused) {
+    emulator->Pause();
+  } else {
+    emulator->Resume();
+  }
+  XELOGI("UI: emulator {}", paused ? "paused" : "resumed");
+}
+
 JNIEXPORT jdouble JNICALL
 Java_jp_xenia_emulator_EmulatorActivity_nativeGetGuestTimeScalar(
     JNIEnv* jni_env, jclass clazz) {
