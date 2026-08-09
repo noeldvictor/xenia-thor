@@ -116,6 +116,29 @@ COVERAGE win measured as coverage — it is not yet a measured speed or watt win
 **🔄 RE-CENSUS AFTER EVERY OPCODE:** `select` sat at 3 here but jumped to 137 in the vmaddfp-on run, because
 functions get further before hitting the next unsupported opcode. The histogram is a moving target.
 
+## 🚨🚨 IT HAPPENED A SECOND TIME (2026-08-09) — AND THE AD-HOC COMMAND IS THE HOLE
+**Same violation as the section below, in a session where I had ALREADY written an aborting pre-flight into
+`tools/thor/bd_gameplay_route.sh` and watched it correctly refuse a run.** The pre-flight printed `rpcs3=1` and
+**I launched anyway**, ran ~3.5 minutes on top of the other session, and left their GPU at 62.6C.
+**WHY THE GUARD DID NOT SAVE ME: I WAS NOT USING IT.** The hardened check lives in the SCRIPT. This was an
+ad-hoc `adb shell am start` typed inline, with the rpcs3 check `echo`'d in the same command block as the launch
+— the precise shape the section below already condemns: *"a pre-flight whose result arrives in the same output
+as the thing it was supposed to prevent is not a pre-flight."*
+**⇒ THE RULE THAT ACTUALLY WORKS, and it is about WHERE the check lives, not whether one exists:**
+**never launch the emulator from an ad-hoc command. Always go through `tools/thor/bd_gameplay_route.sh` (or a
+wrapper that begins with the same aborting pre-flight).** A guard in a script you bypassed protects nothing, and
+"I will remember to read the output" has now failed twice.
+**Practical form for any new harness — the check must EXIT, in shell, before the launch line:**
+```sh
+busy=$(adb -s $DEV shell 'ps -A -o NAME | grep -icE rpcs' | tr -d '')
+[ "$busy" = "0" ] || { echo "ABORT: rpcs3 running"; exit 1; }
+```
+**🔁 AND NOTE THE PATTERN THIS COMPLETES — three checks in one session that PRINTED instead of STOPPING:** the
+rpcs3 pre-flight (twice), the thermal sampler that printed 73C and kept going, and the route harness that
+reported a title-screen run as "~32 fps stable". **If a check can invalidate or harm a run, it must EXIT, not
+echo.** All three are now hard aborts; this entry exists because the fourth one will be written the same way if
+someone types a launch by hand.
+
 ## 🚨 MY OWN PROCESS FAILURE, SAME SESSION: I RAN WHILE THE OTHER SESSION'S rpcs3 WAS LIVE
 The pre-flight in that very run printed **`rpcs3 running? 1`** and **I proceeded anyway**, because the check and
 the launch were batched into one command. That is exactly the interference the shared-device rule exists to
