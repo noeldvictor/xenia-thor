@@ -955,6 +955,40 @@ AAudio DataCallback  (real-time, every few ms)
 - **Already checked and NOT applicable:** `366f38da8` ("fill the whole AAudio request instead of one guest block
   per callback") — our `FillAudio` already loops over queued frames and zero-fills on underrun.
 
+## 🔎 XenonRecomp READ AT LAST (2026-08-09) — IT IS CLONED IN `reference/`, AND IT ANSWERS "WHAT EXTRA LAYER?"
+**I said twice that XenonRecomp was "not cloned, not read". WRONG — `reference/XenonRecomp` and
+`reference/XenosRecomp` have been sitting there the whole time.** Read now. Two techniques, both a direct
+contrast with a layer we still carry.
+**1. 💡 USED GUEST REGISTERS BECOME C++ LOCALS — THIS IS THE "EXTRA LAYER" IN ONE LINE.**
+`recompiler.cpp` walks each function first and records which registers it actually touches
+(`localVariables.r[i]`, `.f[i]`, `.v[i]`, `.cr[i]`, `.ctr`, `.xer`), then emits ONLY those as locals:
+```cpp
+for (size_t i = 0; i < 32;  i++) if (localVariables.r[i]) println("	PPCRegister r{}{{}};", i);
+for (size_t i = 0; i < 128; i++) if (localVariables.v[i]) println("	PPCVRegister v{}{{}};", i);
+```
+**The C++ compiler then register-allocates them.** Guest state is NOT in memory for the body of a function.
+**Ours is the opposite:** every guest register lives in the 2 KB `PPCContext` struct and is reached as a
+`ctx+offset` load/store (measured: ~99 context memory ops against 1 alloca before residency). **That struct IS
+the extra layer** — it exists because the interpreter and the x64 backend needed a canonical memory home, and
+the ARM64 port inherited it wholesale.
+⇒ **Note what they do NOT do: they do not model a register budget.** They declare 128 vector locals if the
+function uses 128 and let the compiler spill what it must. **Our HIR allocator decides up front that only 7 GPRs
+and 28 vectors exist, and spills the rest to the context** — a decision copied from a 16-register x64 host and
+applied to a machine whose compiler could have made it per-function.
+**2. 🔥 THEY TRACK FPU-vs-VMX MODE STATICALLY, WHICH IS MANUAL REVIEW #6's BARRIER PROBLEM SOLVED AT COMPILE
+TIME.** `CSRState { Unknown, FPU, VMX }` is threaded through recompilation: the mode switch is emitted only when
+the state actually CHANGES, an `"Unconditional"` variant is used when the prior state is known, and the state
+resets to `Unknown` at every label and after every call (`csrState = CSRState::Unknown; // the call could change
+it`).
+**Review #6 measured that every FPCR write is a pipeline barrier (A710 Table 4-3 note 2) and that we switch on
+every scalar-FP↔VMX transition.** Our a64 backend tracks `fpcr_mode_` too, but per-block; **theirs is
+whole-function with explicit invalidation at merge points**, which is strictly stronger and is the model to copy
+if the FPCR census ever justifies the work.
+**⇒ AND IT NAMES THE BUG IN MY OWN SCALAR-FMA LOWERING.** a64 wraps scalar FMA in `ChangeFpcrMode(Fpu)`; my
+LLVM lowering manages FPCR not at all. **XenonRecomp's CSRState is the evidence that mode tracking is
+load-bearing for correctness, not just performance** — which is why `cpu_llvm_lower_scalar_fma` stays default-off
+until the mode is handled.
+
 ## 🔄🔄 XENDROID RE-SWEPT 2026-08-09: **4,854 NEW COMMITS**, AND THEY FIXED THE CONDVAR COST BETTER THAN I DID
 **`reference/XenDroid`, `git fetch origin` → `git log HEAD..origin/HEAD` = 4,854 commits.** Several land exactly
 on this session's work.
