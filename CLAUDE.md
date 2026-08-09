@@ -782,6 +782,31 @@ this lowering does not manage FPCR at all, so under VMX mode denormals would flu
 modelled the SEQUENCE, never the FPCR MODE — its 32/32 PASS does not cover it. Fix that, then pixel-check, then
 re-enable.
 
+## 🏁🏁 **THE BLUE DRAGON GAMEPLAY ROUTE EXISTS AT LAST — `tools/thor/bd_gameplay_route.sh` (2026-08-09)**
+**This was the documented prerequisite for EVERY perf and power claim in this file, and five measurement
+attempts died without it. It only became reachable once the startup stall was root-caused to the stale object
+cache (section below) — before that, the guest parked at its first wait and no route could possibly work.**
+**MEASURED PROFILE (frames counted from `vulkan_trace_draw_outcomes_per_frame`, 10s buckets):**
+```
+t=22-34s   ~33 fps            title screen
+t=46-57s   ~28 -> ~22 fps     transition / cutscene
+t=68s+     ~17.5 fps STABLE   3D gameplay, held for 100 SECONDS
+```
+**✅ AND IT IS GAMEPLAY BY EVIDENCE, NOT BY VIBE:** the end-state frames carry **`rendered=1219` draws and
+`total_vertices=240,235` per frame**. A title screen does not issue 1,219 draws or push a quarter of a million
+vertices. That is the discriminator this file has been missing — **draws/vertices per frame, from the guest
+side**, not screenshot bytes (which lie) and not `entry_delta` (which is backend-blind).
+**⚠️⚠️ MY OWN THERMAL VIOLATION, RECORDED BECAUSE THE RULE EXISTS FOR A REASON.** This route crosses 70C at
+~t=57s and I let it run to **73C** — past this file's own force-stop limit — because my sampling loop printed
+the temperature but did not act on it. **The committed script now ABORTS at 70C.** A guard that only reports is
+not a guard; that is the same lesson as the pre-flight that printed `rpcs3 running? 1` and proceeded.
+**⚠️ DO NOT READ "9.9 -> 17.5 fps" AS AN IMPROVEMENT.** The ~9.9 fps BD field figure elsewhere in this file
+predates the Edge kernel merge and the LLVM backend and may be a different part of the map. **They are not the
+same experiment.** 17.5 fps is a fresh baseline for THIS scene on THIS build, and that is all it is.
+**⇒ WHAT THIS UNBLOCKS:** the first legitimate in-game A/B harness for CPU levers. Pass an arm through `EXTRA=`,
+e.g. `EXTRA='--ez cpu_llvm_vperm_tbx true'`. One run per cooldown from <=45C, and the script voids itself if no
+frames render (the stale-cache stall produced exactly that shape and it looked like a measurement).
+
 ## ✅✅✅ **THE STARTUP STALL IS SOLVED (2026-08-09): IT WAS A STALE LLVM OBJECT CACHE. FIXED AND DEVICE-PROVEN.**
 **This is the top blocker in the tree. It cost FIVE measurement attempts, several retracted diagnoses, and a
 bisect — and it was never intermittent. It was deterministic on one variable nobody was controlling.**
