@@ -955,6 +955,34 @@ AAudio DataCallback  (real-time, every few ms)
 - **Already checked and NOT applicable:** `366f38da8` ("fill the whole AAudio request instead of one guest block
   per callback") — our `FillAudio` already loops over queued frames and zero-fills on underrun.
 
+## 🔄🔄 XENDROID RE-SWEPT 2026-08-09: **4,854 NEW COMMITS**, AND THEY FIXED THE CONDVAR COST BETTER THAN I DID
+**`reference/XenDroid`, `git fetch origin` → `git log HEAD..origin/HEAD` = 4,854 commits.** Several land exactly
+on this session's work.
+**🎯 `eb71db58d [Kernel] Wake only the CPUs a signal can matter to, and skip condvar syscalls nobody is parked
+on` — THIS DIAGNOSES THE COST I GOT WRONG.** Their comment, verbatim:
+> *"bionic's `pthread_cond_broadcast` issues the futex syscall **even with no sleeper**. Under the cooperative
+> scheduler guest waits are **fibers**, so nearly every signal is uncontended and paid a syscall for nothing."*
+**I assumed the waste was a thundering herd of wakeups and split the condvar per object to fix it. The dominant
+cost is actually a SYSCALL PER SIGNAL WITH ZERO THREADS PARKED** — which per-object splitting does NOT remove,
+because the notify still happens. Under a FIBER-based guest scheduler most "waiters" are not on the condvar at
+all, so the broadcast is pure syscall overhead.
+**✅ PORTED (their `parked_waiters_` counter):** a `uint32_t parked_waiters_` guarded by `mutex_`, incremented by
+a scoped `ScopedParked` around every park, and `NotifyWaiters()` returns EARLY when it is zero (and no multi-wait
+is registered). Exact by construction — every wait site holds `mutex_` on both sides of the park, and the
+signaler holds the same mutex when it reads. **Simpler than my per-object condvar, and it has no object-lifetime
+hazard** (there is no per-object condvar that can be destroyed under a waiter).
+**⇒ KEEP BOTH: the counter removes the syscall, the per-object condvar removes the wakeup.** They are
+complementary, and the counter is the one that matters most on this scheduler.
+**📌 THE NEXT TWO WORTH PORTING, both directly on this session's threads:**
+- **`edaf74cd4 [CPU] Park indefinite guest memory-poll loops with the adaptive spin backoff`** — this is the
+  guest busy-wait problem my `arm64_guest_spin_throttle` targeted. **They park the loop; I only descheduled it
+  periodically.** Read theirs before developing mine further.
+- **`70ac7a4e5 [Kernel] Drop the Ace Combat 6 event hand-off quirk, fixed by targeted wakes`** — a per-title
+  quirk DELETED because the general fix made it unnecessary. That is the shape to aim for.
+**⚠️ AND THE STANDING RULE APPLIES: port the IDEA, not the patch.** Their tree is 4,854 commits diverged and
+carries its own `GuestScheduler::WakeForSignal(object, sole_waiter)` targeted-wake machinery that we do not
+have; the counter transplanted cleanly, the targeted wake would not.
+
 ## 🌩️🌩️ ONE GLOBAL CONDVAR WAKES EVERY WAITING GUEST THREAD ON EVERY SIGNAL (found 2026-08-07, NOT fixed)
 **`PosixConditionBase::cond_` and `::mutex_` are `static`** (threading_posix.cc, bottom of the class) — **a SINGLE
 condition variable shared by every event, semaphore, mutant and timer in the emulator.** `WaitMultiple` (:242)

@@ -241,6 +241,9 @@ class PosixConditionBase {
       // never disagree about which condvar this object uses - that would be a
       // lost wakeup, i.e. a hang.
       std::condition_variable& cv = PerObjectCondvars() ? local_cond_ : cond_;
+      // Count this thread as parked for the whole wait, so a signaler can skip
+      // the futex syscall when nobody is here.
+      ScopedParked parked(*this);
       if (timeout == std::chrono::milliseconds::max()) {
         cv.wait(lock, predicate);
         executed = true;  // Did not time out;
@@ -328,6 +331,24 @@ class PosixConditionBase {
   // Wake everything that could be waiting on THIS object. Caller must hold
   // mutex_, exactly as the bare cond_.notify_all() calls this replaces did.
   void NotifyWaiters() {
+    // PORTED FROM XenDroid eb71db58d, which found the cost I had MISDIAGNOSED.
+    // I assumed the waste was waking unrelated waiters (a thundering herd), and
+    // split the condvar per object to fix it. Their comment names the real
+    // expense: "bionic's pthread_cond_broadcast issues the futex syscall EVEN
+    // WITH NO SLEEPER. Under the cooperative scheduler guest waits are FIBERS,
+    // so nearly every signal is uncontended and paid a syscall for nothing."
+    //
+    // So the dominant cost is a SYSCALL PER SIGNAL with zero threads parked -
+    // which no amount of per-object condvar splitting removes, because the
+    // notify still happens. This counter skips the syscall entirely.
+    //
+    // Exact by construction: parked_waiters_ is only touched under mutex_, and
+    // every wait site holds that mutex on both sides of the park, so a signaler
+    // holding the same mutex reads a value that cannot be mid-update.
+    if (parked_waiters_ == 0 &&
+        multi_wait_refs_.load(std::memory_order_relaxed) == 0) {
+      return;
+    }
     if (!PerObjectCondvars()) {
       // Legacy behaviour: single waiters are parked on the shared condvar, so
       // it is the only one that can wake them.
@@ -346,6 +367,20 @@ class PosixConditionBase {
  protected:
   inline virtual bool signaled() const = 0;
   inline virtual void post_execution() = 0;
+
+  // Threads actually parked inside a cond_ wait on THIS object. Guarded by
+  // mutex_ - every wait site holds it on both sides of the park, so the count
+  // is exact whenever NotifyWaiters reads it. Ported from XenDroid eb71db58d.
+  uint32_t parked_waiters_ = 0;
+
+  // Scopes a cond_ wait for the parked-waiter count, so an early return or an
+  // exception cannot leave the counter high (which would reinstate the syscall
+  // it exists to avoid, silently).
+  struct ScopedParked {
+    explicit ScopedParked(PosixConditionBase& c) : c_(c) { ++c_.parked_waiters_; }
+    ~ScopedParked() { --c_.parked_waiters_; }
+    PosixConditionBase& c_;
+  };
 
   // Scoped ++/-- on multi_wait_refs_. Must be constructed and destroyed under
   // mutex_ (see the use site in WaitMultiple).
