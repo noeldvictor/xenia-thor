@@ -85,6 +85,52 @@ class XeLlvmObjectCache : public llvm::ObjectCache {
       : dir_(std::move(dir)) {
     std::error_code ec;
     std::filesystem::create_directories(dir_, ec);
+    PruneSupersededCacheDirs();
+  }
+
+  // Delete sibling cache directories that are not the active one.
+  //
+  // ⚠️ THIS EXISTS BECAUSE THE BUILD-STAMP IN THE DIRECTORY NAME IS A DISK LEAK
+  // WITHOUT IT. The stamp (added 2026-08-09 so a changed lowering cannot be
+  // served stale objects) means every rebuild of llvm_assembler.cc starts a
+  // FRESH directory - and a populated one is ~400 MB. Device-measured the same
+  // day: FIVE directories, 765 MB, after a single session of iteration, and
+  // growing by a full cache per rebuild.
+  //
+  // That is not a cosmetic problem in this repo - a full disk here previously
+  // presented as `clang++: error: linker command failed due to signal`, i.e. it
+  // looks like a toolchain crash rather than an out-of-space condition.
+  //
+  // Safe by construction: only siblings inside the SAME objcache root whose
+  // name starts with "objcache_" are touched, never the active directory, and
+  // everything removed is a regenerable compile artifact. Failures are ignored
+  // - losing the prune is harmless, and a cache dir held open by another
+  // process must not stop us from booting.
+  void PruneSupersededCacheDirs() {
+    std::error_code ec;
+    const auto root = dir_.parent_path();
+    if (root.empty()) {
+      return;
+    }
+    for (std::filesystem::directory_iterator it(root, ec), end;
+         !ec && it != end; it.increment(ec)) {
+      if (!it->is_directory(ec)) {
+        continue;
+      }
+      const auto name = it->path().filename().string();
+      if (name.rfind("objcache_", 0) != 0) {
+        continue;  // not ours
+      }
+      if (it->path() == dir_) {
+        continue;  // the live one
+      }
+      std::error_code rm_ec;
+      const auto removed = std::filesystem::remove_all(it->path(), rm_ec);
+      if (!rm_ec) {
+        XELOGI("LLVM objcache: pruned superseded cache dir '{}' ({} files)",
+               name, removed);
+      }
+    }
   }
 
   void notifyObjectCompiled(const llvm::Module* m,
