@@ -806,7 +806,36 @@ this lowering does not manage FPCR at all, so under VMX mode denormals would flu
 modelled the SEQUENCE, never the FPCR MODE — its 32/32 PASS does not cover it. Fix that, then pixel-check, then
 re-enable.
 
-## 🐞🐞 **THE AOT OBJECT CACHE DOES NOT PERSIST BURNOUT: 14,128 LOWERINGS, 0 OBJECTS WRITTEN** (2026-08-09)
+## ✅✅✅ **THE OBJECT CACHE NOW WORKS END TO END: 155s -> 5s STARTUP, DEVICE-PROVEN (2026-08-09)**
+**This is the fix that unblocks measurement. Three defects compounded to make every launch recompile the whole
+title; all three are fixed and the chain is verified on hardware.**
+| | cold (first run) | warm (second run) |
+|---|---|---|
+| time to guest resume | **155s** | **5s** |
+| `LLVMobjload` (cache hits) | 0 | **13,744** |
+| `LLVMbegin` (compiles) | 14,128 | **384** |
+**31x faster startup.** Only 384 functions recompile — the tail discovered at runtime, exactly as designed.
+**THE THREE DEFECTS, all found on 2026-08-09 and all in the same key machinery:**
+1. **`opath` and `setModuleIdentifier()` diverged.** Two constructions of the SAME key: `opath` drives the
+   skip-lowering fast path, the module identifier becomes the cache FILENAME. The `p`/`f` fields were added to
+   `opath` alone, so the fast path looked for a name the cache never writes. **Self-inflicted, same day.**
+2. **Three lowering cvars were never in the key at all** — `lower_vmaddfp`, `batch_lane_calls`,
+   `guest_call_clobber_barrier`. **`lower_vmaddfp` is the one that matters historically: it is a documented
+   lever, and toggling it against a warm cache served objects built under the OTHER setting.** Any A/B of it
+   measured nothing and would have read FLAT.
+3. **Stamped cache dirs were never pruned** — 5 dirs / 765 MB after one session, growing ~400 MB per rebuild.
+**⇒ WHAT THIS MEANS FOR THE MEASUREMENT BACKLOG, and it is the important part: the ~110-155s of pre-gameplay
+compile that ate the thermal budget of EVERY attempt this session is GONE.** Blue Dragon spent ~110s of a ~137s
+window compiling, leaving ~25s of gameplay. With a warm cache that window is now almost entirely gameplay.
+**⚠️ AND IT PUTS EVERY "MEASURED FLAT" VERDICT IN THIS FILE IN DOUBT.** Defect 2 means a lever A/B could serve
+objects compiled under the opposite setting; defect 1 means a rebuild between arms forced a full recompile with
+different thermal conditions. **Re-run anything that matters before trusting it — starting with
+`cpu_backend_llvm_lower_vmaddfp`, which is directly implicated by defect 2.**
+**🔑 THE ROOT CAUSE IS STRUCTURAL, NOT A TYPO: the key is hand-maintained and nothing forces a new lowering cvar
+into it.** Three instances in one day. Both construction sites now carry a comment demanding they stay
+identical, but the real fix is to derive the key from ONE table of lowering cvars so omission is impossible.
+
+## 🐞🐞 (superseded by the section above — the "0 stored" reading was wrong) THE AOT OBJECT CACHE DOES NOT PERSIST BURNOUT: 14,128 LOWERINGS, 0 OBJECTS WRITTEN** (2026-08-09)
 **Found while trying to make Burnout the A/B vehicle. It explains the 60-150s startup recompile that has been
 eating the thermal budget of every measurement attempt this session.**
 ```
