@@ -23,6 +23,24 @@
 # NOT abort and ran to 73C; that was a rule violation, and the guard exists so
 # it is not repeated. Budget ONE run per cooldown from <=45C.
 #
+# 🚨 THE TRAP THAT VOIDS A RUN SILENTLY - READ THIS BEFORE TRUSTING ANY NUMBER.
+# The button timings below are ABSOLUTE MILLISECONDS FROM LAUNCH, so they assume
+# the guest starts rendering within ~10s. That only holds with a FULLY WARM
+# object cache. With a cold or PARTIALLY warm cache the guest does not render
+# until t=120s+, every press fires into the loading screen, and the game sits on
+# the title.
+#
+# THAT FAILURE DOES NOT LOOK LIKE A FAILURE. Observed 2026-08-09: a partly
+# warmed cache produced "~32 fps, rock stable, 0 faults" that was entirely TITLE
+# SCREEN. 32 fps is a believable baseline; the fps column cannot tell you which
+# scene you were in. The scene gate at the bottom of this script exists for
+# exactly that reason.
+#
+# ⇒ WARM THE CACHE FIRST AND LET AOT ACTUALLY FINISH: launch with no route, wait
+# for "resumed main guest thread" PLUS ~60s, then force-stop. Stopping right
+# after the resume line leaves the cache half-populated, which is what produced
+# the void run above.
+#
 # ⚠️ AND THE MEASUREMENT CAVEAT: ~17.5 fps is this scene on this build. The
 # ~9.9 fps "BD field" figure elsewhere in CLAUDE.md predates the Edge kernel
 # merge and the LLVM backend, and may be a different part of the map. Do NOT
@@ -86,5 +104,19 @@ echo "faults: $("$ADB" -s "$DEV" logcat -d 2>/dev/null | grep -icE 'Fatal signal
 # produced exactly that shape and it looked like a measurement.
 [ "$prev" -gt 0 ] || { echo "VOID: no frames rendered at all"; exit 1; }
 echo "scene at end:"
-"$ADB" -s "$DEV" logcat -d 2>/dev/null | grep 'GPU draw outcomes' | tail -1 | \
-  grep -oE 'rendered=[0-9]+|total_vertices=[0-9]+'
+last=$("$ADB" -s "$DEV" logcat -d 2>/dev/null | grep 'GPU draw outcomes' | tail -1)
+echo "$last" | grep -oE 'rendered=[0-9]+|total_vertices=[0-9]+'
+# SCENE GATE. A title screen draws a couple of hundred times and pushes under a
+# thousand vertices; gameplay is ~1,200 draws and ~240,000 vertices. Without
+# this gate a title-screen run reports "~32 fps, stable, 0 faults" - which is a
+# perfectly plausible baseline and is what a partially-warm cache produced on
+# 2026-08-09. fps alone CANNOT tell you which scene you measured.
+verts=$(echo "$last" | grep -oE 'total_vertices=[0-9]+' | grep -oE '[0-9]+')
+if [ "${verts:-0}" -lt 50000 ]; then
+  echo "VOID: end scene has only ${verts:-0} vertices/frame - never reached gameplay."
+  echo "      Cause is almost always a cold/partly-warm object cache: the button"
+  echo "      timings are ABSOLUTE from launch, so a slow guest start makes every"
+  echo "      press fire into the loading screen. Warm the cache fully first."
+  exit 1
+fi
+echo "OK: gameplay-tier scene confirmed (${verts} vertices/frame)"
