@@ -806,6 +806,33 @@ this lowering does not manage FPCR at all, so under VMX mode denormals would flu
 modelled the SEQUENCE, never the FPCR MODE — its 32/32 PASS does not cover it. Fix that, then pixel-check, then
 re-enable.
 
+## 🐞🐞 **THE AOT OBJECT CACHE DOES NOT PERSIST BURNOUT: 14,128 LOWERINGS, 0 OBJECTS WRITTEN** (2026-08-09)
+**Found while trying to make Burnout the A/B vehicle. It explains the 60-150s startup recompile that has been
+eating the thermal budget of every measurement attempt this session.**
+```
+Burnout, cpu_aot_maximize, LLVM backend, cache ENABLED and path set:
+  AOT precompile progress : 6,656 / ~6,665 functions   <- the pass RAN to completion
+  LLVMbegin               : 14,128                     <- LLVM LOWERED 14,128 functions
+  LLVMobjload             : 0                          <- nothing read (expected, empty for this title)
+  objects in cache dir    : 18,596 BEFORE -> 18,596 AFTER   <- NOTHING WRITTEN
+```
+**14,128 successful lowerings produced zero cache files.** The directory is the right one
+(`objcache_v3_opt2_b36B5514E`) and it is writable — **Blue Dragon populated those same 18,596 objects into it
+earlier the same session**, so the write path is not dead in general. It is title-specific or
+condition-specific, and unidentified.
+**⇒ WHY THIS MATTERS MORE THAN IT SOUNDS: it means Burnout RECOMPILES ~14k functions ON EVERY LAUNCH.** That is
+the 60-150s of pre-gameplay compile measured all session, and it is where the thermal budget goes before a
+single frame renders. Fixing it would turn a ~150s hot startup into a ~10s one and make in-game A/B cheap —
+which is currently the single biggest obstacle to measuring ANY lever.
+**⚠️ DO NOT ASSUME IT IS BURNOUT-SPECIFIC WITHOUT CHECKING.** BD wrote successfully; Burnout did not. The
+difference is unknown. Candidates worth eliminating in order: the `has_end_address()` conjunct in the cache gate
+(a title whose functions lack end addresses would lower fine and cache never), an exception/early-return on the
+write path that is silently swallowed, and free-space or file-count limits on the app-private dir.
+**🔎 THE CHEAP FIRST STEP:** the gate already has a diagnostic (`LLVMobjcache GATE: object_cache=.. skip_lowering=..
+path_set=.. has_end=.. end_gt_start=..`). It printed for BD historically. **Run Burnout and grep for that line —
+if a conjunct reads 0, that is the answer in one launch.** If the line is absent entirely, the write path is not
+being reached at all and the question becomes where `notifyObjectCompiled` goes.
+
 ## ⛔⛔ **THE REAL MEASUREMENT CEILING, MEASURED 2026-08-09: ~25 SECONDS OF GAMEPLAY PER RUN**
 **First run where the scene gate CONFIRMED gameplay (`rendered=1033`, `total_vertices=149,147`) — and it
 immediately exposed why an in-game A/B on this title is so expensive. It is not the route. It is arithmetic:**
