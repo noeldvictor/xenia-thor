@@ -130,8 +130,9 @@ arm() {                     # $1 = label, $2.. = extra extras
   fi
   "$ADB" -s "$DEV" shell screencap -p //sdcard/bdfma_$label.png >/dev/null 2>&1
   "$ADB" -s "$DEV" shell am force-stop $PKG >/dev/null
-  printf '%-6s cold=%sC peak=%sC fps_avg=%s (n=%s) faults=%s\n' \
-    "$label" "$((t0/1000))" "$((peak/1000))" "$avg" "$n" "$flt" | tee -a /tmp/bdfma.txt
+  printf '%-6s cold=%sC peak=%sC fps=%s (frames=%s/%ss) guest_ms=%s faults=%s\n' \
+    "$label" "$((t0/1000))" "$((peak/1000))" "$avg" "$n" "$SAMPLE_FOR" "$gms" "$flt" \
+    | tee -a /tmp/bdfma.txt
 }
 
 : > /tmp/bdfma.txt
