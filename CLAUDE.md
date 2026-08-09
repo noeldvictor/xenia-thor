@@ -130,7 +130,8 @@ wrapper that begins with the same aborting pre-flight).** A guard in a script yo
 "I will remember to read the output" has now failed twice.
 **Practical form for any new harness — the check must EXIT, in shell, before the launch line:**
 ```sh
-busy=$(adb -s $DEV shell 'ps -A -o NAME | grep -icE rpcs' | tr -d '')
+busy=$(adb -s $DEV shell 'ps -A -o NAME | grep -icE rpcs' | tr -d '
+')
 [ "$busy" = "0" ] || { echo "ABORT: rpcs3 running"; exit 1; }
 ```
 **🔁 AND NOTE THE PATTERN THIS COMPLETES — three checks in one session that PRINTED instead of STOPPING:** the
@@ -3026,6 +3027,39 @@ clustered (cacheable) or spread across the whole 2 KB block (review #3).
 §4.3 advice applies to - a stack local is still "the cache hierarchy". Implementing GPR-to-VPR spilling means
 teaching the allocator that `vec_set` can host a spilled integer, which is shared-code surgery (it would affect
 x64 too, where the same trick works via `MOVQ`), not an a64-local peephole. **Scope it accordingly.**
+
+## 🔥🔥 MANUAL REVIEW #10 (2026-08-09): **EVERY GUEST VECTOR LOAD/STORE COSTS 4x ON LLVM AND 1x ON a64**
+**Found while hunting the video's "LLVM scalarised the vector op" class. This is the largest per-operation cost
+difference between our two backends that anyone has written down, it is on the SHIPPING backend, and it is
+manual-priced. It is also NOT a bug - it is a deliberate trade whose price nobody had costed.**
+| | guest VEC128 load | guest VEC128 store |
+|---|---|---|
+| **a64** (`a64_seq_memory.cc:574`) | `e.ldr(i.dest, mem)` — **ONE q-load** | one q-store |
+| **LLVM** (`llvm_assembler.cc:1655`, `:549`) | **FOUR volatile 32-bit LDRs + THREE `insertelement`s** | **FOUR volatile 32-bit STRs** |
+**WHY IT IS LIKE THAT, and the reason is real:** the comment says each access must be *"a single decodable LDR
+for the access-violation handler (a q-load that faults on a GPU write-watch / MMIO page can't be decoded -> BD
+hangs)"*, and `volatile` stops LLVM re-merging them. **Do not "optimise" this in the emitter — the failure mode
+is a hang, and it was presumably a hang that caused it to be written this way.**
+**📕 BUT THE PRICE IS HIGHER THAN 4-vs-1, AND REVIEW #7 ALREADY QUANTIFIED THE EXTRA PART.** A710 SWOG §4.2:
+> *"In the event of a V-pipeline uOP containing more than 1 quad-word register source, **a portion or all of
+> which was previously written as one or multiple single words**, that uOP will **stall in dispatch for three
+> cycles**."*
+**Building a vector out of four `insertelement`s and then consuming it as a quad-word is EXACTLY that pattern.**
+So the LLVM vector load costs: **4 LDR** (vs 1) + **3 lane inserts** on the V pipes — which are only **2 wide**
+on the mid cores — **plus a 3-cycle dispatch stall on the first consumer.** Against a64's single `ldr`.
+**⇒ THIS IS PLAUSIBLY THE LARGEST REMAINING CPU ITEM IN THE TREE, AND IT IS NOT A CODEGEN BUG — IT IS THE FAULT
+HANDLER'S DECODER SETTING THE INSTRUCTION SELECTION.** The fix is therefore NOT in the emitter:
+**teach the access-violation handler to decode q-load/q-store**, and the 4-word split can collapse to one
+instruction on both backends. That is work in the fault path (see the `android-fault-diagnosis` memory), and it
+is bounded — one instruction form to decode.
+**⚠️ UNMEASURED, deliberately.** No census exists of how many guest vector memory accesses execute per frame, so
+rule 4 applies before anyone touches the fault handler. But note the asymmetry that makes this different from
+the dead levers: **a64 already proves the 1-instruction form works** — this is not a hypothetical instruction
+sequence, it is one backend paying 4-7x what the other pays for the identical operation.
+**🔑 AND IT REFRAMES AN OLD RESULT.** This file records that LLVM and a64 entry counts are not comparable and
+that LLVM "runs ~71-81% of the guest". Whatever LLVM's share is, **it is paying multiples on every vector
+memory access** — which is a far better candidate for "why does the guest thread look memory-bound" than the
+context round-trip that review #9 just cleared.
 
 ## 📕✅ MANUAL REVIEW #9 - STORE-TO-LOAD FORWARDING ON THE `PPCContext` ROUND-TRIP: **CLEAN, BY CONSTRUCTION**
 **A negative result, and a valuable one: it closes off the most plausible remaining "the context round-trip is
