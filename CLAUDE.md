@@ -1900,6 +1900,43 @@ direct calls, so the same work costs far fewer FUNCTION ENTRIES.**
 another entry count **from the same backend** — which is exactly how the residency pair above was run, and why
 that pair is valid. **Never compare an a64 entry_delta to an LLVM one and conclude anything about speed.**
 
+## 🎥 TRANSCRIPT MINED PROPERLY (2026-08-08) — IT CONFIRMS OUR PIPE COUNTS AND **CHALLENGES ONE OF OUR "REFUTED" VERDICTS**
+**I had only mined the opening. Read the core-topology section (30:28-33:43) and it is the most useful part of
+the talk for us.** Verbatim points, with our tree checked against each:
+**1. ✅ THE LOAD/VECTOR ASYMMETRY IS CONFIRMED FROM A SECOND SOURCE.** *"the mid cores … are capable of 3
+128-bit loads per clock, but only two vector operations per clock"*, versus the X3 at *"3 128-bit loads and 4
+128-bit vector operations"*. **That matches Table 2-1 exactly** (A710/A715 = 2 FP/ASIMD pipes, X3 = 4, both 3
+load pipes). Our playbook rule — spend loads, save vector ops, on mid cores ONLY — is independently corroborated.
+He calls the asymmetry *"unusual not just for all other arm cores, but any other CPU I've ever seen"*.
+**2. 🚨 THE A510 VECTOR-UNIT CLAIM IS MORE SPECIFIC THAN OURS, AND OUR "REFUTED" ENTRY MAY HAVE TESTED THE
+WRONG THING.** This file says: *"The A510 'two of three share a vector unit' claim is REFUTED on the Thor by our
+own probe (34014db95) - do not re-plumb thread affinity around it."* **The talk states a two-part configuration
+we never tested for:**
+> *"these two Cortex A510s share a single 128-bit vector unit … The third A510 actually doesn't share a vector
+> unit, but it has exclusive access to a **64-bit** vector unit. So, 128-bit instructions execute at **half the
+> speed**."*
+⇒ **All three A510s are handicapped for vector work, in TWO DIFFERENT WAYS** — two by contention, one by width.
+**A probe that compares per-core vector throughput could easily read "no sharing" if the odd core is
+half-width**, because the shared pair and the narrow single can land at similar numbers for opposite reasons.
+**Our refutation is therefore not safe to rely on.** Do NOT re-plumb affinity on the talk's word either — but
+re-run the probe distinguishing THREE cases (shared-pair contention, exclusive-but-64-bit, and a big-core
+control) before treating either claim as settled. *(This does not change the shipped affinity fix, which moves
+guest threads OFF the A510s entirely — that is correct under BOTH stories.)*
+**3. Context for the comparison, worth keeping:** his device is an **AYN Odin 2**, which he describes as *"a
+Snapdragon 8 Gen 2 without the wireless functionality"* — i.e. the same SoC as the Thor, so his measurements
+transfer directly rather than by analogy.
+
+## ❌❌ MY OWN ERROR, CORRECTED BY THE USER (2026-08-08): **BURNOUT IS NOT A THROUGHPUT PROBLEM**
+I cited *"Burnout spends 85% of guest entries in one D3D wait predicate"* as evidence that the guest is starved
+and that we are too slow. **That inference is wrong, and the user caught it.** **Burnout Revenge runs at 59.4
+fps — measured and screenshotted 2026-08-08, at its cap.** A title sitting at its frame cap spends most of its
+time in a wait predicate *because it finished the frame early*. **That is what a healthy, fast-running game
+looks like.** The 85% figure is real; reading it as a bottleneck is not.
+**⇒ TWO CONSEQUENCES:** (a) **Burnout is a BAD benchmark for finding speed wins** — it is capped, so a real CPU
+improvement cannot show up as fps, and much of today's A/B work spent device time on a title with no headroom
+to reveal. (b) The titles that ARE slow are the ones to profile: **Blue Dragon's field (~9.9 fps)** and **Gears
+Act 1 (0-2 fps, and that is the un-signalled-event stall, a COMPAT bug, not a codegen one)**.
+
 ## 🍎 APPLE ROSETTA x64->ARM: WHAT TRANSFERS, AND THE ONE THING IT TELLS US WE ARE DOING WRONG (2026-08-08)
 **User asked to "swipe stuff from Apple's Rosetta x64 to arm approach". Audited its five load-bearing techniques
 against our tree. THE HEADLINE IS AN INVERSION, and it reframes the whole memory-ordering question.**
