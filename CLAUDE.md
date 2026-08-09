@@ -638,6 +638,36 @@ result. If DEAD/FLAT, do NOT re-run — build on the note. Skill: **xenia-experi
 `docs/research/experiments.db` (human narrative: `docs/research/experiment-ledger.md`). Exists because we
 repeatedly burned device runs re-deriving dead ends (grep-the-markdown kept missing them).
 
+## 🧊🧊 THE 2026-08-09 "BLACK SCREEN": NOT A DEADLOCK, NOT MY CHANGES — MOST LIKELY **DEVICE FATIGUE**
+**Symptom, measured with the RELIABLE probe and a screenshot:**
+```
+Emulator        28 ticks     GPU Commands  32 ticks    <- both RUNNING
+Main XThread     0 ticks     but NINE other XThreads at ~20 ticks each  <- guest IS executing
+gpu 56-57C                   <- real work, real heat
+screencap       14,881 bytes <- BLACK. A real frame is >1 MB.
+```
+⇒ **The emulator is NOT stalled and NOT deadlocked.** Guest code runs, the GPU thread runs, the device heats.
+**It simply is not presenting.** Only ~3 swap lines in the whole boot.
+**✅ TWO SUSPECTS TESTED AND BOTH EXONERATED:**
+- **The per-object condvar change** — reverted `threading_posix.cc` to its pre-change state, rebuilt: still black.
+- **The scalar FMA lowering** — gated it OFF (`cpu_llvm_lower_scalar_fma`, now default false), rebuilt: **still
+  black**. So the always-on float-semantics change is NOT the cause either.
+**⇒ LEADING EXPLANATION, AND IT IS ALREADY IN THIS FILE:** *"Device degrades under heavy firing (boot stalls
+after ~6 launches). Batch fixes, build once, fire once, fill cooldowns with device-free work."* **This session
+fired well over TWENTY launches.** The same Burnout ISO rendered at **59.4 fps** earlier the same day from the
+identical headless recipe, and nothing in the diff between those points survives testing as a cause.
+**⇒ SO: STOP FIRING AND LET IT REST before concluding there is a code regression.** Re-test after a genuine
+idle period. **Do NOT reboot** (standing rule) and do not bisect a code regression that may not exist — that is
+hours of builds chasing device state.
+**🔑 AND THE MEASUREMENT LESSON: SCREENSHOT BYTES ARE THE ONLY SIGNAL THAT NEVER LIED TODAY.** Thread ticks
+misled (broken probe), `entry_delta` is backend-blind, "N.N FPS" is not in logcat, and frame-trace lines depend
+on cvars. **~15 KB = black, >1 MB = real frame.** Check it FIRST, before any number.
+**⚠️ `cpu_llvm_lower_scalar_fma` STAYS DEFAULT-OFF even though it was exonerated here**, because a separate
+concern is unresolved: a64 runs scalar FMA under `ChangeFpcrMode(Fpu)` (PPC scalar FP needs FPCR.FZ CLEAR) and
+this lowering does not manage FPCR at all, so under VMX mode denormals would flush. The qemu differential
+modelled the SEQUENCE, never the FPCR MODE — its 32/32 PASS does not cover it. Fix that, then pixel-check, then
+re-enable.
+
 ## ❌❌ RETRACTED: MY OWN THREAD-STATE PROBE WAS BROKEN — SEVERAL "STALLED" READINGS WERE THE PROBE, NOT THE EMULATOR
 **Read this before trusting any thread-state figure from 2026-08-09.**
 The helper I used across most of that session's runs was:

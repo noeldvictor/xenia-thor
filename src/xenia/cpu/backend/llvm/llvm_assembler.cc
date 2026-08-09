@@ -93,6 +93,22 @@ DEFINE_bool(
     "would be ~90k lines and evict the log.",
     "CPU");
 
+DEFINE_bool(
+    cpu_llvm_lower_scalar_fma, false,
+    "Lower SCALAR f32/f64 MUL_ADD/MUL_SUB in the LLVM backend instead of "
+    "falling back to a64. Recovers ~830 functions (LLVM fallbacks 1,022 -> 194, "
+    "device-measured) which then also keep LLVM register residency. DEFAULT OFF "
+    "since 2026-08-09: a rendering regression (guest + GPU threads running, 57C, "
+    "BLACK screen = degenerate geometry) appeared in the window this landed in, "
+    "and this is the only always-on float-semantics change in it. SUSPECTED "
+    "CAUSE: a64 runs scalar FMA under ChangeFpcrMode(Fpu) because PPC scalar FP "
+    "needs FPCR.FZ CLEAR; this lowering does not manage FPCR, so under VMX mode "
+    "(FZ set) denormals flush and results differ. The qemu differential compared "
+    "a C model of the SEQUENCE and never modelled the FPCR MODE, so its 32/32 "
+    "PASS does not cover this. NOT PROVEN - bisect not run. Fix the FPCR mode "
+    "and pixel-check before re-enabling.",
+    "CPU");
+
 DEFINE_uint32(
     cpu_llvm_fallback_log_budget, 120,
     "How many LLVMfallback lines to log before going quiet. Each line names a "
@@ -2115,7 +2131,27 @@ bool Lowerer::LowerInstr(Instr* i) {
       // ARM FNMSUB Sd,Sn,Sm,Sa computes Sn*Sm - Sa, so MUL_SUB == fma(s1,s2,-s3).
       // Branchless via selects - no lane writes, and it keeps the function on
       // LLVM instead of bailing.
-      if (i->dest->type == FLOAT32_TYPE || i->dest->type == FLOAT64_TYPE) {
+      // GATED DEFAULT-OFF 2026-08-09 after a RENDERING REGRESSION appeared in the
+      // window this landed in: guest threads execute and the GPU thread runs, the
+      // device heats to 57C, but the screen stays BLACK - the signature of
+      // degenerate geometry, i.e. wrong float results, not a hang.
+      //
+      // THE SUSPECTED DEFECT, and the qemu differential could not have caught it:
+      // a64's EmitFmaWithPpcNan_F32/_F64 begins with ChangeFpcrMode(FPCRMode::Fpu)
+      // because scalar PPC FP must run with FPCR.FZ CLEAR. This lowering does not
+      // manage FPCR at all, so if a scalar FMA executes while FPCR is still in VMX
+      // mode (FZ set, DEFAULT_VMX_FPCR = 1<<24) denormal inputs and results are
+      // FLUSHED TO ZERO and the answer differs from a64's. The differential in
+      // tools/qemu/scalar_fma_ppc_nan_equiv.c compares a C model of the SEQUENCE;
+      // it never modelled the FPCR MODE the sequence runs under, so 32/32 PASS
+      // says nothing about this.
+      //
+      // NOT PROVEN to be the regression - the bisect was not run. Gated because
+      // an unvalidated float-semantics change that is ALWAYS ON is the wrong thing
+      // to leave enabled while rendering is broken. Re-enable only with a pixel
+      // check, and fix the FPCR mode first if the hypothesis holds.
+      if (cvars::cpu_llvm_lower_scalar_fma &&
+          (i->dest->type == FLOAT32_TYPE || i->dest->type == FLOAT64_TYPE)) {
         const bool f64 = i->dest->type == FLOAT64_TYPE;
         auto* a = V(i->src1.value);
         auto* c = V(i->src2.value);
