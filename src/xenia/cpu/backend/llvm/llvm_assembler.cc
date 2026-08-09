@@ -179,6 +179,24 @@ DEFINE_bool(
     "permute is wrong pixels, not a crash, so stability is not sufficient.",
     "CPU");
 
+DEFINE_bool(
+    cpu_llvm_vperm_tbl2_probe, false,
+    "DIAGNOSTIC, NOT AN OPTIMISATION - EXPECT IT TO CRASH. Emits the two-table "
+    "aarch64.neon.tbl2 for VPERM, which this tree records as crashing the "
+    "AsmPrinter in a wild-pointer re-fault storm. Purpose: observe the failure "
+    "MODE instead of inferring it. Upstream RPCS3 hit the identical "
+    "consecutive-register-pair wall on SPU SHFB and got past it by catching "
+    "LLVM's compile failure and retrying that one function with the "
+    "single-table form (3 fallbacks per 10,000 blocks, keeping an 8% win). "
+    "Whether that ports depends on which failure we have, and the two are "
+    "indistinguishable from outside: a clean report_fatal_error now appears in "
+    "logcat as 'LLVMfatal: ...' via the handler installed in llvm_backend.cc, "
+    "whereas memory corruption kills the process with nothing logged. Our "
+    "libLLVM DOES contain the 'ran out of registers' diagnostic (verified by "
+    "grepping the stripped .so), so the clean path exists in the binary - which "
+    "is why this is worth exactly one launch. Never ship enabled.",
+    "CPU");
+
 DEFINE_uint32(
     cpu_llvm_fallback_log_budget, 120,
     "How many LLVMfallback lines to log before going quiet. Each line names a "
@@ -2540,6 +2558,31 @@ bool Lowerer::LowerInstr(Instr* i) {
         //   tbl1(bb, remap - 16)  -> bb[remap-16]  for remap in 16..31 else 0
         auto* remap_hi =
             b_.CreateSub(remap, llvm::ConstantInt::get(i8x16, 16));
+        if (cvars::cpu_llvm_vperm_tbl2_probe) {
+          // ONE-LAUNCH EXPERIMENT, not an optimisation. Emits the two-table
+          // tbl2 that the comment below says crashes our AsmPrinter, so the
+          // failure MODE can finally be observed instead of inferred.
+          //
+          // Upstream RPCS3 hit this exact wall on SPU SHFB and got past it by
+          // catching LLVM's compile failure and retrying that one function with
+          // the single-table form (3 fallbacks per 10,000 blocks, keeping an 8%
+          // win). Whether that design ports depends entirely on WHICH failure
+          // we have, and the two candidates are indistinguishable from the
+          // outside:
+          //   clean report_fatal_error -> now logged as "LLVMfatal: ..." by the
+          //     handler installed in llvm_backend.cc. Retry design PORTS.
+          //   memory corruption        -> process dies with nothing logged.
+          //     Then tbl2 is not the real bug and the attribution is wrong.
+          // Our libLLVM DOES contain "ran out of registers", so the clean path
+          // exists in the binary - which is why this is worth one launch.
+          //
+          // Run: --ez cpu_llvm_vperm_tbl2_probe true, grep for LLVMfatal.
+          // EXPECT IT TO CRASH. That is the point; do not ship it enabled.
+          auto* tbl2 = b_.CreateIntrinsic(llvm::Intrinsic::aarch64_neon_tbl2,
+                                          {i8x16}, {a, bb, remap});
+          Def(i->dest, b_.CreateBitCast(tbl2, T(VEC128_TYPE)));
+          return true;
+        }
         auto* lo = b_.CreateIntrinsic(llvm::Intrinsic::aarch64_neon_tbl1,
                                       {i8x16}, {a, remap});
         if (cvars::cpu_llvm_vperm_tbx) {

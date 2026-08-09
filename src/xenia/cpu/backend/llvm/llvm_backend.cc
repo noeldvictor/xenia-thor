@@ -47,6 +47,7 @@
 #include "llvm/ExecutionEngine/Orc/TaskDispatch.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/Support/Error.h"
+#include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/TargetSelect.h"
 #include "llvm/TargetParser/Host.h"
 #include "llvm/TargetParser/Triple.h"
@@ -827,6 +828,30 @@ bool LLVMBackend::Initialize(Processor* processor) {
   // SIGSEGV handler / reserves address space (create() crashes/hangs if it runs
   // after, though it works standalone). x20/x21 reserved per-function in the
   // lowering via a target-features attribute.
+  // Fatal-error probe. LLVM reports unrecoverable codegen failures - notably
+  // "ran out of registers during register allocation" - through
+  // report_fatal_error, which prints to stderr and aborts. On Android stderr is
+  // NOT in logcat, so such a failure is indistinguishable from a silent crash,
+  // and that ambiguity is exactly what has kept the OPCODE_PERMUTE tbl2
+  // question open: our note says the AsmPrinter dies in a "wild-pointer
+  // re-fault storm", while the clean diagnostic string IS present in our
+  // libLLVM (verified by grepping the stripped .so). Those imply different
+  // fixes - upstream's catch-and-retry works for the first and not the second.
+  //
+  // Routing the message into XELOGE settles it in ONE launch: if the handler
+  // fires, the failure is a clean report_fatal_error and the retry design is
+  // portable; if the process dies with nothing logged, it is memory corruption
+  // and the tbl2 attribution is wrong.
+  //
+  // The handler deliberately does NOT try to recover. report_fatal_error must
+  // not return, and longjmp-ing out of LLVM's internals to retry is only worth
+  // building once we know there is something clean to catch.
+  llvm::install_fatal_error_handler(
+      [](void*, const char* reason, bool) {
+        XELOGE("LLVMfatal: {}", reason ? reason : "(null)");
+      },
+      nullptr);
+
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
   llvm::orc::LLJITBuilder builder;
