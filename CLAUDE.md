@@ -72,6 +72,38 @@ the store-buffer reason above.
 all GPRs live). **Needs a real gameplay A/B before flipping the default — but it is the first lever in this whole
 sweep that demonstrably does work.**
 
+## ✅✅✅ **SHIPPED + MEASURED 2026-08-08: SCALAR f32/f64 FMA LOWERING — LLVM FALLBACKS 1,022 → 194 (-81%)**
+**The one concrete CPU win of the sweep, and it came from fixing a MEASUREMENT bug (the 120-line log cap) that
+had been hiding the real target.**
+| | before | after |
+|---|---|---|
+| LLVM fallbacks (Blue Dragon, full AOT) | **1,022** | **194** (-81%, **828 functions recovered**) |
+| remaining causes | mul_add 736, mul_sub 283, select 3 | mul_sub 138, mul_add 53, select 3 — all VECTOR forms, still gated behind `cpu_backend_llvm_lower_vmaddfp` |
+| LLVM share of guest entries | ~71% | **~80.8%** (LLVM 202,089 vs a64 47,973 per 5s) |
+| faults | 0 | **0** |
+**What it is:** `OPCODE_MUL_ADD` / `OPCODE_MUL_SUB` for `FLOAT32_TYPE`/`FLOAT64_TYPE` had **no lowering at all**
+— the vector path existed, the scalar path just returned false, so every guest function containing a scalar
+`fmadd` dropped to a64 **and lost register residency with it**. Now lowered as `llvm.fma` (PPC `fmadd` is fused
+/ single-rounded, so the intrinsic is the correct semantics) with the PPC NaN rules applied branchlessly.
+**✅ VALIDATED BEFORE THE DEVICE EVER SAW IT** — `tools/qemu/scalar_fma_ppc_nan_equiv.c`, **32/32 cases PASS**
+against the a64 reference (`EmitFmaWithPpcNan_F32/_F64`, a64_sequences.cc:1686), including the ones that are
+easy to get wrong: SNaN quieting, **first-NaN-wins ordering s1>s2>s3**, generated-NaN → PPC's **NEGATIVE**
+default (`FFC00000` / `FFF8000000000000`), and MUL_SUB's `inf-inf` correctly giving ±inf rather than NaN.
+**⚠️ NOT YET DONE: pixel validation and a gameplay perf/power number.** Fallback counts are COMPILE-TIME and
+therefore trustworthy; the entry ratio was taken while another process was on the device (below). **This is a
+COVERAGE win measured as coverage — it is not yet a measured speed or watt win.**
+**🔄 RE-CENSUS AFTER EVERY OPCODE:** `select` sat at 3 here but jumped to 137 in the vmaddfp-on run, because
+functions get further before hitting the next unsupported opcode. The histogram is a moving target.
+
+## 🚨 MY OWN PROCESS FAILURE, SAME SESSION: I RAN WHILE THE OTHER SESSION'S rpcs3 WAS LIVE
+The pre-flight in that very run printed **`rpcs3 running? 1`** and **I proceeded anyway**, because the check and
+the launch were batched into one command. That is exactly the interference the shared-device rule exists to
+prevent — I burned their thermal budget (GPU 53C afterwards) and my own entry-rate numbers are contended.
+**⇒ THE RULE NEEDS TEETH, NOT JUST A NOTE: the idle check must be able to ABORT the run.** Put it in a separate
+command, or gate the launch on it (`[ "$busy" = "0" ] || exit 1`). A pre-flight whose result arrives in the same
+output as the thing it was supposed to prevent is not a pre-flight. **Compile-time counts (fallbacks, objloads)
+survive contention; entry rates, fps, temperature and watts do NOT — re-take those.**
+
 ## ❌ TESTED AND FAILED (2026-08-08): THE a64-CLOBBER BARRIER DOES **NOT** FIX THE vmaddfp MISCOMPILE
 **Hypothesis (mine):** `xe_llvm_guest_call` is a plain C call, so LLVM applies AAPCS and parks 128-bit vectors
 in v8-v15 across it — but a64 callees clobber the **full q8-q15** while AAPCS preserves only the **low 64 bits**

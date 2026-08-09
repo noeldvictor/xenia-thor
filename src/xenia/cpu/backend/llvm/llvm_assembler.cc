@@ -2050,6 +2050,53 @@ bool Lowerer::LowerInstr(Instr* i) {
       // is qemu-byte-correct). Fall back to a64 (correct) by default; the lowering
       // below is preserved behind the cvar for future root-cause work. Device-proven
       // fix (cpu_backend_llvm_skip_opcodes=77 rendered BD's field correctly).
+      // SCALAR f32/f64 FMA (fmadd/fmsub family). Device-censused 2026-08-08:
+      // ~830 of 1,022 LLVM fallbacks are THIS, not the vector form - scalar FMA
+      // simply had no lowering, so every guest function containing one lost LLVM
+      // *and* its register residency. It is also NOT subject to the vector
+      // vmaddfp miscompile, which is a vector-regalloc interaction.
+      //
+      // Semantics copied from a64 EmitFmaWithPpcNan_F32/F64
+      // (a64_sequences.cc:1686), which is the reference this must match:
+      //   if any source is NaN -> propagate the FIRST NaN in order s1,s2,s3,
+      //                           QUIETED (f32 |= 1<<22, f64 |= 1<<51)
+      //   else                 -> fused multiply-add, single-rounded
+      //   if the result is a GENERATED NaN -> PPC default NaN, which is NEGATIVE
+      //                           (f32 0xFFC00000, f64 0xFFF8000000000000)
+      // ARM FNMSUB Sd,Sn,Sm,Sa computes Sn*Sm - Sa, so MUL_SUB == fma(s1,s2,-s3).
+      // Branchless via selects - no lane writes, and it keeps the function on
+      // LLVM instead of bailing.
+      if (i->dest->type == FLOAT32_TYPE || i->dest->type == FLOAT64_TYPE) {
+        const bool f64 = i->dest->type == FLOAT64_TYPE;
+        auto* a = V(i->src1.value);
+        auto* c = V(i->src2.value);
+        auto* d = V(i->src3.value);
+        if (!a || !c || !d) return false;
+        auto* fty = a->getType();
+        if (fty != c->getType() || fty != d->getType() || !fty->isFloatingPointTy())
+          return false;
+        auto* ity = f64 ? b_.getInt64Ty() : b_.getInt32Ty();
+        auto* quiet_bit = llvm::ConstantInt::get(
+            ity, f64 ? (1ull << 51) : (1ull << 22));
+        auto* def_nan = llvm::ConstantInt::get(
+            ity, f64 ? 0xFFF8000000000000ull : 0xFFC00000ull);
+        auto quiet = [&](llvm::Value* v) {
+          return b_.CreateBitCast(
+              b_.CreateOr(b_.CreateBitCast(v, ity), quiet_bit), fty);
+        };
+        auto* addend = (op == OPCODE_MUL_SUB) ? b_.CreateFNeg(d) : d;
+        auto* res = b_.CreateIntrinsic(llvm::Intrinsic::fma, {fty}, {a, c, addend});
+        // A NaN out of a non-NaN input set is GENERATED (inf*0, inf-inf): PPC
+        // wants its own negative default NaN, which ARM cannot produce natively.
+        auto* gen = b_.CreateSelect(b_.CreateFCmpUNO(res, res),
+                                    b_.CreateBitCast(def_nan, fty), res);
+        llvm::Value* out = gen;
+        out = b_.CreateSelect(b_.CreateFCmpUNO(d, d), quiet(d), out);
+        out = b_.CreateSelect(b_.CreateFCmpUNO(c, c), quiet(c), out);
+        out = b_.CreateSelect(b_.CreateFCmpUNO(a, a), quiet(a), out);
+        Def(i->dest, out);
+        return true;
+      }
       if (!cvars::cpu_backend_llvm_lower_vmaddfp) return false;
       // VMX float32x4 fused multiply-add/sub (vmaddfp / vnmsubfp): dest =
       // s1*s2 (+/-) s3, single-rounded (llvm.fma), with the full PPC semantics =
