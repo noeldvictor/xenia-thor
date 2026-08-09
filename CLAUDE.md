@@ -667,6 +667,30 @@ at the DEFAULT ran 240s+ fine. The bug was in the OFF path, not the ON path.**
   moved verbatim, not retyped. Retyping is where the arm went missing, and it type-checks either way because
   `.reg()` on a constant operand compiles fine.
 
+## ⚡⚡⚡ **FIRST VALID WATT MEASUREMENT: 7.4 W RUNNING, 1.4 W IDLE, ~6.0 W FOR THE EMULATOR** (2026-08-08)
+**Taken exactly as the protocol below demands: cable OUT, adb over wifi (192.168.1.33:5555), `USB powered:
+false`, `status: 3` (Discharging) re-confirmed on EVERY arm. Battery 80% -> 77% across the pair.**
+| | draw |
+|---|---|
+| idle baseline, screen on, 12 samples/60s | **1.40 W** (samples 1.08-2.26, mostly ~1.3) |
+| Burnout Revenge running, residency ON | **7.40 W** (16 samples/80s, after the AOT compile settled) |
+| Burnout Revenge running, residency OFF | **7.45 W** |
+| **emulator delta over idle** | **≈ 6.0 W** |
+**⇒ THIS CONFIRMS THE USER'S OWN "8 WATTS" REPORT with an instrument instead of an impression, and it sizes the
+gap honestly: rpcs3 on this same handheld is claimed at 3-5 W, so we draw roughly 1.5-2x.** Quote the pair —
+7.4 W total, ~6.0 W delta — and say which, because their figure is a total.
+**❌ THE RESIDENCY A/B IN THIS PAIR IS CONFOUNDED AND ATTRIBUTES NOTHING.** Cold starts were **31C vs 41C**; a
+10C difference moves leakage current, which is exactly the magnitude being compared. The 0.05 W between arms is
+noise and **neither confirms nor refutes** the 4-5C thermal result recorded elsewhere (which WAS taken from
+matched 40C starts, twice). **Redo it one arm per cooldown, from equal starts, before crediting residency with
+any wattage.**
+**✅ Two things this run DOES settle:** the measurement path works end-to-end and is repeatable, and the
+emulator's steady-state draw is now a known number rather than an estimate. **Every future power claim in this
+file should be a delta against the 1.40 W idle baseline, measured the same way.**
+**🌡️ Thermals in the same run: 61-63C at the end**, well under the 72C the menu phase reaches from cold —
+consistent with the earlier finding that the menu/cinematic phase, not gameplay, is where the thermal budget
+goes.
+
 ## 🔋 HOW TO ACTUALLY MEASURE WATTS (2026-08-07) - you CANNOT do it over USB
 **The rpcsx-ui-android-thor comparison is stated in POWER (30fps at 3-5W), and power is the one metric our whole
 measurement protocol never covered. It is measurable on this device, but only under one condition.**
