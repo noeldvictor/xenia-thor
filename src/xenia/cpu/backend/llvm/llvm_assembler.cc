@@ -3103,15 +3103,29 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // drops the post-call reloads of the ABI callee-saved regs) and were missing
     // from this key, so a warm hit could serve a .o built under different
     // residency semantics than the run requested. Cache version bumped to 2.
-    char idbuf[80];
-    std::snprintf(idbuf, sizeof(idbuf), "%sg%08X_%016llX_o%dr%dw%da%d",
+    // ⚠️ THIS STRING AND THE `opath` KEY ABOVE MUST STAY IDENTICAL. They are two
+    // constructions of the SAME key: `opath` drives the skip-lowering fast path
+    // in this file, while THIS one becomes the module identifier that
+    // XeLlvmObjectCache turns into the actual filename. Change one without the
+    // other and the fast path looks for a name the cache never writes, so every
+    // launch recompiles the whole title and the cache silently does nothing.
+    //
+    // That is not hypothetical - it happened on 2026-08-09, when p/f were added
+    // to `opath` alone. Device symptom: gate all-1s, "LLVMobjcache MISS: want=
+    // '...o2r0w0a0p0f0.o' but dir has '...o2r0w0a0.o'", and ~14k functions
+    // recompiled every single launch (the 60-150s hot startup that was eating
+    // the thermal budget of every measurement).
+    char idbuf[96];
+    std::snprintf(idbuf, sizeof(idbuf), "%sg%08X_%016llX_o%dr%dw%da%dp%df%d",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
                   cvars::cpu_backend_llvm_context_residency ? 1 : 0,
                   cvars::cpu_backend_llvm_residency_writeback ? 1 : 0,
-                  cvars::cpu_backend_llvm_residency_abi ? 1 : 0);
+                  cvars::cpu_backend_llvm_residency_abi ? 1 : 0,
+                  cvars::cpu_llvm_vperm_tbx ? 1 : 0,
+                  cvars::cpu_llvm_lower_scalar_fma ? 1 : 0);
     mod->setModuleIdentifier(idbuf);
   }
 
