@@ -70,7 +70,7 @@ stated does not port.
 | 5 | **`BCAX` fuses AND+XOR** (16:33) | one SHA3 instruction replaces two bitwise ops; LLVM only pattern-matches it when inputs are non-constant | ⚠️ partially known (`+sha3` is on so LLVM fuses opportunistically). The **constant-input blind spot is new** and is an upstream LLVM bug they filed |
 | 6 | **`FCGT` → inline asm `BSL`** (25:26) | LLVM "completely dropped the ball"; only inline assembly fixed it. **15 → 7 insns** | 🔍 **UNCHECKED** — do we have a compare/select chain that fails to become one BSL? |
 | 7 | **`FSM` scalarized** (26:29) | LLVM emitted `SBFX` **one bit at a time** and scalarized the whole vector op. Fix = write the IR idiomatically like the x86 path → **2 insns via `CMTST`** (fused and+compare) | 🔍 **UNCHECKED, and this is a CLASS not an instruction.** Worth grepping our IR for anything LLVM might scalarize on ARM |
-| 8 | **Shift poison values** (28:48) | LLVM IR shifts produce **poison**, and the guard code does not fold away on ARM (it does on x86). Fix = use the `USHL` intrinsic. **2 insns saved per shift** | 🔍 **UNCHECKED — and shifts are everywhere.** We emit **zero** `aarch64.neon.ushl` intrinsics. Possibly the highest-breadth unchecked item |
+| 8 | **Shift poison values** (28:48) | LLVM IR shifts produce **poison**, and the guard code does not fold away on ARM (it does on x86). Fix = use the `USHL` intrinsic. **2 insns saved per shift** | ❌ **N/A — CHECKED IN EMITTED ASM 2026-08-09, see below.** I flagged this as the highest-breadth item and I was wrong |
 | 9 | **`UDOT` for `SUMB`/gather-bits** (21:02) | dot product with multiplicand 1 sums horizontally; with **powers of two** it gathers bits; negative powers exploit compare results being −1 | ❌ recorded as N/A — no hot fixed-length site here |
 | 10 | **`UMMLA`/`SMMLA` (i8mm)** (22:55) | 2-instruction GBB/GBH | ❌ same, N/A |
 | 11 | **Widening multiplies** (24:10) | `XTN` + `SMLAL`: MPY 5 → 3 insns | 🔍 unchecked; PPC VMX has its own multiply forms |
@@ -107,7 +107,40 @@ on a kernel bug, and BD's field is CPU-bound but spread across many functions. S
 instruction lowerings, do not rewrite) but the MAGNITUDES do not** — an 8% SHFB win does not imply an 8% VPERM
 win here, and rule 4 (count before building) still applies to every row above.
 
-**Next actions, in priority order:**
-1. **Item 4 (TBX instead of TBL to drop the OR)** — cheapest, no register-pair constraint, pure win if it works.
-2. **Item 8 (shift intrinsics)** — highest breadth; we emit zero `ushl` intrinsics today.
-3. **Item 3 (TBL2)** — biggest, but needs the fault-vs-diagnostic question answered first.
+---
+
+## Execution log
+
+### ✅ Item 4 — SHIPPED (`cpu_llvm_vperm_tbx`, default off)
+`tbl1 + tbl1 + ORR` → `tbl1 + TBX1`. **3 µOPs → 2** on the 2-wide mid-core vector pipe, on the shipping backend.
+Stays on the single-table intrinsic, so it carries none of the tbl2 register-pair risk.
+**Proven device-free:** `tools/qemu/vperm_tbx_vs_tbl_or.c`, **8/8 PASS** including an exhaustive 32-index ×
+16-lane sweep (512 cases), bit-identical to both the old form and a C reference. Default off pending a pixel
+check, allowlisted so it can be A/B'd.
+
+### ❌ Item 8 — N/A, AND MY PRIORITISATION WAS WRONG
+I called this "possibly the highest-breadth unchecked item" on the strength of us emitting zero `ushl`
+intrinsics. **Diffing the emitted asm killed it in one command** — the repo rule that says do that first exists
+for exactly this, and this is the fifth time it has paid.
+**Why their bug cannot occur here: THE IR SHAPES DIFFER.** Their SPU shift masks **6 bits**, which *permits*
+counts ≥ lane width, so the IR needs an out-of-range guard — and that guard is what fails to fold on ARM. **Ours
+masks to `(w-1)`** (`llvm_assembler.cc:2017`), so the count is in range by construction and **no guard is ever
+generated.** NDK 25 clang 14, `-O2 -march=armv8.2-a+lse -mtune=cortex-a710`:
+```
+variable amount:  movi + and + ushl                (left)     <- optimal
+                  movi + and + neg + ushl          (right)    <- the neg is unavoidable; the video says so too
+constant amount:  shl v0.4s, v0.4s, #5             ONE insn
+                  ushr / sshr  #5                  ONE insn
+```
+**No poison guard, no scalarization, and the constant case — the common PPC one — folds to a single
+instruction.** There is nothing to win.
+
+### Remaining, in priority order
+1. **Item 3 (TBL2)** — the big one. Blocked on a question, not on work: **why does ours fault where theirs
+   diagnoses?** We pass `+reserve-x20,+reserve-x21`; they do not reserve a guest-context register the same way.
+   One `cpu_llvm_dump_asm` build answers it, device-free.
+2. **Item 7 (LLVM scalarizing a vector op on ARM)** — a bug CLASS, not one instruction. Worth grepping our
+   emitted asm for `SBFX`/lane-at-a-time patterns in vector lowerings.
+3. **Item 6 (`FCGT` → one `BSL`)** — do we have a compare/select chain that fails to fuse?
+4. **Item 14 (re-roll unrolled codegen, ~2% both arches)** — plausible for us given ~28k AOT functions / 264 MB
+   object cache.

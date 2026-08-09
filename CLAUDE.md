@@ -2490,9 +2490,22 @@ CONFIGURATION difference rather than a law, and one `cpu_llvm_dump_asm` build an
 leaves out-of-range lanes UNTOUCHED where `TBL` zeroes them.** Our 2xTBL1 form ends in an `OR` *precisely
 because* TBL1 zeroes. **`TBX1` may delete that OR outright — 3 µOPs → 2, no pair needed.** Untested, and it is
 the cheapest unexplored item in the whole document.
-**🔍 HIGHEST-BREADTH UNCHECKED ITEM — SHIFTS (28:48).** LLVM IR shifts produce **poison**, and the guard code
-that should fold away *does not on ARM* (it does on x86); their fix is the `USHL` intrinsic, **2 instructions
-saved per shift**. **We emit ZERO `aarch64.neon.ushl` intrinsics.** Shifts are everywhere.
+**✅ ITEM 4 IS SHIPPED — `cpu_llvm_vperm_tbx` (default off, allowlisted).** `tbl1+tbl1+ORR` -> `tbl1+TBX1`,
+**3 µOPs -> 2** on the shipping backend, single-table only so it carries none of the tbl2 pair risk. **Proven
+device-free: `tools/qemu/vperm_tbx_vs_tbl_or.c`, 8/8 PASS including an EXHAUSTIVE 32-index x 16-lane sweep (512
+cases)**, bit-identical to the old form and to a C reference. One pixel check from being a defensible default.
+**❌❌ SHIFTS (item 8) ARE N/A, AND MY OWN PRIORITISATION WAS WRONG — I called it "the highest-breadth unchecked
+item" and one `clang -S` killed it.** That is the FIFTH time "diff the emitted asm before believing a lever"
+has paid, and I still had to be reminded by the rule rather than reaching for it first.
+**WHY THEIR BUG CANNOT OCCUR HERE — THE IR SHAPES DIFFER.** Their SPU shift masks **6 bits**, which PERMITS
+counts >= lane width, so the IR carries an out-of-range guard, and that guard is what fails to fold on ARM.
+**Ours masks to `(w-1)`** (llvm_assembler.cc:2017), so the count is in range BY CONSTRUCTION and no guard is
+ever generated. NDK 25 clang 14, `-O2 -march=armv8.2-a+lse -mtune=cortex-a710`:
+```
+variable amt:  movi+and+ushl (left) | movi+and+neg+ushl (right)   <- optimal; the neg is unavoidable
+constant amt:  shl / ushr / sshr  #imm                            <- ONE instruction (the common PPC case)
+```
+**No poison guard, no scalarisation, nothing to win.**
 **Also unchecked and worth a look:** `FCGT` needing inline-asm `BSL` (15→7), `FSM` being **scalarized** by LLVM
 into one-bit-at-a-time `SBFX` (a CLASS of bug, not one instruction), and **re-rolling unrolled loops for ~2% on
 both arches** — plausibly real for us given a 264 MB / ~28k-function object cache.
