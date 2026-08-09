@@ -894,6 +894,24 @@ check — `tools/thor_launch.sh` does this automatically now.
   frame N dropped, nothing will be shown` (with surface/window state). Grep that first on any black screen; the
   paint chain is also traceable via logcat tag `XeniaPaint` (surfaceCreated/surfaceChanged/postInvalidate/onDraw).
 
+## 🛑 DEVICE HYGIENE (user, 2026-08-08): **FORCE-STOP THE EMULATOR BEFORE *AND* AFTER EVERY USE**
+*"make sure to close emu when you done and prior to use"* — and *"you and other claude code are testing on ayn
+thor, other claude is testing rcps3, be mindful of that"*.
+```
+adb -s <dev> shell am force-stop jp.xenia.emulator.github.debug     # BEFORE you start
+  … run …
+adb -s <dev> shell am force-stop jp.xenia.emulator.github.debug     # AFTER you finish
+adb -s <dev> shell pidof jp.xenia.emulator.github.debug             # must be BLANK
+```
+**BEFORE matters as much as after, for two reasons:** a leftover instance from a previous run keeps the SoC hot
+and skews your cold-start gate, and it holds the GPU/driver so your own launch may silently fail. **AFTER
+matters because the device is SHARED** — leaving xenia running burns another session's thermal budget and
+invalidates their measurement, and right now **another Claude session is benchmarking rpcs3 on this same
+device**. A stray 260-340% CPU process is not a small confound for them.
+**Also disconnect wifi adb when you are finished with a batch** (`adb disconnect <ip>:5555`) so a stray script
+cannot poke the device while someone else owns it. **And killing a background TASK is not the same as killing
+the emulator** — stopping the script leaves whatever it launched running. Do both, then verify with `pidof`.
+
 ## ⚠️ Never thrash the Thor (hard safety)
 Before ANY launch read `/sys/class/kgsl/kgsl-3d0/temp` (milli-°C) + `gpu_busy_percentage`; launch only if
 temp < 50-55°C. Force-stop `jp.xenia.emulator.github.debug` past ~70°C.
