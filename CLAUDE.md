@@ -72,6 +72,54 @@ the store-buffer reason above.
 all GPRs live). **Needs a real gameplay A/B before flipping the default — but it is the first lever in this whole
 sweep that demonstrably does work.**
 
+## 🧱🧱🧱 **THE ARCHITECTURAL ANSWER: ONE LLVM MODULE PER GUEST FUNCTION, SO THE INLINER HAS NOTHING TO INLINE** (2026-08-08)
+**This is the structural reason we are memory-bound, and the exact thing XenonRecomp does differently. Found by
+reading the assembler, and it reframes every LLVM lever in this file.**
+1. **`auto mod = std::make_unique<llvm::Module>("guest", ctx);` is PER GUEST FUNCTION** (llvm_assembler.cc:2449,
+   inside the per-function lowering path).
+2. **Guest calls do NOT become LLVM calls to other guest functions.** They lower to `xe_llvm_guest_call` /
+   `xe_llvm_call_extern` / `xe_llvm_resolve_function` — **opaque external runtime helpers** (:418/:435/:459).
+3. ⇒ The O2 pipeline (`buildPerModuleDefaultPipeline`, :2618) runs on **a module containing exactly ONE
+   function whose callees are invisible**. **The inliner cannot fire. Interprocedural passes have nothing to
+   see.**
+**⇒ SO EVERY GUEST CALL IS A HARD STATE BARRIER**, and combined with the AAPCS64 ceiling above the picture is
+complete and airtight:
+| | can guest state stay in host registers across a guest call? |
+|---|---|
+| GPRs | at most 8, and see the a64 hazard below |
+| FPRs | up to 8 (low 64 bits of v8-v15) |
+| **VMX (128-bit)** | **NO — no host register preserves 128 bits (AAPCS64)** |
+| **via inlining the callee away** | **NO — one module per function, callee is an external helper** |
+**⇒ THAT IS WHY THE GUEST THREAD IS MEMORY-BOUND, AND WHY RESIDENCY GAVE THERMALS BUT NO SPEED.** Stages 1+2
+keep registers resident *within* a function; the moment the guest calls anything, all of it round-trips through
+the 2 KB `PPCContext`. In call-dense guest code that is most of the time.
+**🔑 AND IT IS PRECISELY WHAT XenonRecomp AVOIDS.** It emits the **whole program as C++ in one translation
+unit**, so clang sees every callee, inlines across them, and keeps state in registers where we have a barrier.
+**Their advantage is not better codegen — it is COMPILATION UNIT SCOPE.** That is the "miracle tech".
+**⇒ THE REAL STRUCTURAL LEVER, THEREFORE, IS MULTI-FUNCTION MODULES:** lower a call-graph CLUSTER of guest
+functions into ONE llvm::Module with internal linkage, so the inliner and register allocator work across the
+cluster. That is a genuine architectural change (module partitioning, cache keying per cluster, the ABI hazard
+below), not a cvar — but it is the only route on the table that could plausibly be worth a large multiple
+rather than a few percent. **Nothing else in this file has that shape.**
+
+## ❌❌ CORRECTION TO MY OWN STAGE-3 VERDICT (2026-08-08): **LLVM→a64 CALLS ARE *NOT* SAFE FOR ABI RESIDENCY**
+Earlier today I assessed the hybrid-fallback hazard as *"reasoned safe: an ABI-compliant guest callee restores
+r14-r31 before returning."* **That reasoned about GUEST registers and missed the HOST ones. It is wrong.**
+This tree's own comment (llvm_assembler.cc ~:395, dated 2026-07-24) already records the truth:
+> "the a64 backend expects x19 = its backend context (LLVM does not reserve x19), and **a64 code clobbers
+> x22-x28 and the full q8-q15** — whereas AAPCS only guarantees the LOW 64 bits of v8-v15 are preserved. At
+> opt=2 LLVM allocates exactly those registers for values live across the call, so the callee silently destroys
+> them"
+**My own probe showed clang placing mirrors in exactly `x19, x22, x23, x24, x25, x26, x27, x28`** — i.e. **the
+precise set an a64 callee clobbers.** So enabling `cpu_backend_llvm_residency_abi` while ANY callee can be
+a64-compiled is silent guest-state corruption, not a perf lever.
+**⇒ Stage 3 is gated on more than "non-compliant guest asm": it needs the LLVM→a64 boundary to preserve host
+x19/x22-x28 and full q8-q15, or it needs a guarantee the callee is LLVM-compiled.** Check what
+`xe_llvm_guest_call` actually saves before going further.
+**📝 And credit where due: the v8-v15 low-64-bit rule was ALREADY in this tree** in that July comment. My
+AAPCS64 work rediscovered it independently — the new value is the manual now being in `docs/reference/arm/` and
+the ceiling being derived for stage 3, not the fact itself.
+
 ## 🌟🌟🌟 THE REFERENCE THE USER POINTS AT: **UNLEASHED RECOMPILED / XenonRecomp** (2026-08-08, NOT yet studied in depth)
 *"the sonic unleashed recomp from 360 shows miracle tech"* — correct, and it is the purest form of what the
 priority above is asking for. **`XenonRecomp` STATICALLY recompiles an Xbox 360 PPC executable into C++ SOURCE,
