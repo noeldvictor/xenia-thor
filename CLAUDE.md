@@ -89,6 +89,22 @@ had been hiding the real target.**
 against the a64 reference (`EmitFmaWithPpcNan_F32/_F64`, a64_sequences.cc:1686), including the ones that are
 easy to get wrong: SNaN quieting, **first-NaN-wins ordering s1>s2>s3**, generated-NaN → PPC's **NEGATIVE**
 default (`FFC00000` / `FFF8000000000000`), and MUL_SUB's `inf-inf` correctly giving ±inf rather than NaN.
+**⚠️⚠️ AND A CAVEAT ON MY OWN CHANGE, FOUND BY READING THE EMITTED CODE (device-free, 2026-08-08): PER-FMA IT
+IS PROBABLY *SLOWER* THAN a64. THE WIN HAS TO COME FROM COVERAGE, NOT FROM THE SEQUENCE.**
+| | shape | count |
+|---|---|---|
+| **a64 today** (`EmitFmaWithPpcNan_F32`) | BRANCHY: `fcmp`+3x`fccmp`+`b.VS`, then `fmadd`, then `fcmp`+`b.VC` | **~8 insns on the no-NaN fast path**, 2 well-predicted branches, **+ an FPCR mode change (a pipeline barrier, review #6)** |
+| **new LLVM lowering** (GPR form, what shipped) | BRANCHLESS selects | **19 insns, ALWAYS**, 0 branches, **5 cross-domain `fmov`** (FP↔GPR, latency 3, M0 pipe on A710) |
+| FP-domain variant (tested, NOT taken) | branchless, stays in v-regs | **23 insns**, 0 `fmov`, 0 branches — worse: AArch64 has no vector unordered-compare, so `x!=x` becomes `fcmge`+`fcmgt`+`orr` **per test**, and mid-cores have only **2 V pipes** |
+⇒ **In the overwhelmingly common no-NaN case a64 executes ~8 instructions and we execute 19.** So this change is
+NOT unambiguously good: it trades a heavier per-FMA sequence for keeping the whole function on LLVM (register
+residency + whole-function optimisation). **Which side wins is an empirical question and is NOT yet measured.**
+**⇒ IF THE IN-GAME A/B SHOWS A REGRESSION, THE FIX IS KNOWN AND CHEAP: emit the branchy form** — an early-out on
+"no source is NaN" around a bare `llvm.fma`, mirroring a64. Branches are fine here precisely because the NaN path
+is almost never taken, which is exactly why a64 chose them. **Do not conclude the lowering itself was a mistake
+— conclude the SHAPE was.** (And note a64 pays an FPCR barrier the LLVM path does not, so the 8-vs-19 gap
+overstates a64's advantage by some unmeasured amount.)
+
 **⚠️ NOT YET DONE: pixel validation and a gameplay perf/power number.** Fallback counts are COMPILE-TIME and
 therefore trustworthy; the entry ratio was taken while another process was on the device (below). **This is a
 COVERAGE win measured as coverage — it is not yet a measured speed or watt win.**
