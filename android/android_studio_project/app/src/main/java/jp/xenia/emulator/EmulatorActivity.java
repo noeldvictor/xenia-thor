@@ -879,6 +879,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "cpu_llvm_fallback_log_budget");
             copyBooleanExtra(intent, launchArguments, "cpu_llvm_callgraph_locality_census");
             copyBooleanExtra(intent, launchArguments, "cpu_llvm_lower_scalar_fma");
+            copyBooleanExtra(intent, launchArguments, "cpu_llvm_vperm_tbx");
             copyBooleanExtra(intent, launchArguments, "cpu_llvm_guest_call_clobber_barrier");
             copyBooleanExtra(intent, launchArguments, "cpu_backend_llvm_lower_vmaddfp");
             // 0=OS, 1=A510 littles, 2=cpu3-6. The AOT precompile is the startup

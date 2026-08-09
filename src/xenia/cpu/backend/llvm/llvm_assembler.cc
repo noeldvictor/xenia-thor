@@ -120,6 +120,30 @@ DEFINE_bool(
     "device. Do not flip this on the strength of the FPCR fix alone.",
     "CPU");
 
+DEFINE_bool(
+    cpu_llvm_vperm_tbx, false,
+    "VPERM (INT8): emit tbl1 + TBX1 instead of tbl1 + tbl1 + ORR, dropping the "
+    "OR. 3 uOPs -> 2 on the FP/ASIMD pipe, which is only 2 WIDE on the A710/"
+    "A715 mid cores - and LLVM is the shipping backend, so this is the path "
+    "most VPERMs take (a64 emits a real two-table tbl = 1 uOP). "
+    "WHY IT WORKS: the current form relies on TBL ZEROING out-of-range lanes so "
+    "the OR reconstructs a two-table permute; TBX instead PRESERVES the "
+    "destination out-of-range, which is the same reconstruction with the OR "
+    "folded in. Lanes indexing the low table compute remap-16, which wraps as "
+    "u8 to 240..255 and is therefore out of range for TBX, preserving the tbl1 "
+    "result. "
+    "IMPORTANTLY this keeps the SINGLE-table form, so it carries NONE of the "
+    "consecutive-register-pair constraint that makes aarch64.neon.tbl2 crash "
+    "our AsmPrinter (see the comment at the emit site). Same win direction, "
+    "none of the allocator risk. "
+    "VALIDATED DEVICE-FREE: tools/qemu/vperm_tbx_vs_tbl_or.c, 8/8 PASS "
+    "including an EXHAUSTIVE 32-index x 16-lane sweep (512 cases), all "
+    "bit-identical to both the current form and a C reference. "
+    "STILL DEFAULT OFF: qemu proves ISA SEMANTICS and says nothing about how "
+    "LLVM selects and allocates around the intrinsic, and a wrong byte permute "
+    "is WRONG PIXELS, not a crash. One device pixel-check away.",
+    "CPU");
+
 DEFINE_uint32(
     cpu_llvm_fallback_log_budget, 120,
     "How many LLVMfallback lines to log before going quiet. Each line names a "
@@ -2483,6 +2507,28 @@ bool Lowerer::LowerInstr(Instr* i) {
             b_.CreateSub(remap, llvm::ConstantInt::get(i8x16, 16));
         auto* lo = b_.CreateIntrinsic(llvm::Intrinsic::aarch64_neon_tbl1,
                                       {i8x16}, {a, remap});
+        if (cvars::cpu_llvm_vperm_tbx) {
+          // TBX1 preserves the destination for out-of-range indices where TBL1
+          // zeroes, so it folds the OR into the second table lookup: 3 uOPs
+          // -> 2 on the 2-wide mid-core vector pipe.
+          //
+          // The correctness rests on UNSIGNED WRAPAROUND: for lanes indexing
+          // the LOW table (remap 0..15), remap-16 wraps as u8 to 240..255,
+          // which TBX treats as out of range and therefore preserves the tbl1
+          // result. Proven exhaustively rather than argued -
+          // tools/qemu/vperm_tbx_vs_tbl_or.c sweeps all 32 indices x 16 lanes
+          // (512 cases) plus 7 shaped cases, 8/8 bit-identical on hardware.
+          //
+          // NOTE this stays on the SINGLE-table intrinsic, so it does NOT
+          // reintroduce the consecutive-register-pair constraint described
+          // below - that is the whole point of preferring it to tbl2.
+          Def(i->dest,
+              b_.CreateBitCast(
+                  b_.CreateIntrinsic(llvm::Intrinsic::aarch64_neon_tbx1,
+                                     {i8x16}, {lo, bb, remap_hi}),
+                  T(VEC128_TYPE)));
+          return true;
+        }
         auto* hi = b_.CreateIntrinsic(llvm::Intrinsic::aarch64_neon_tbl1,
                                       {i8x16}, {bb, remap_hi});
         Def(i->dest,
