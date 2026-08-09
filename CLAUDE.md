@@ -3158,6 +3158,26 @@ pattern-matches an `LDR`+`REV` pair. Adding the 128-bit SIMD `LDR/STR Qt` encodi
 vector accesses that can only ever hit WRITE-WATCHED memory, and keep the 4-word split for anything that could
 reach MMIO** — which means the emitter needs to know which it is, and it currently does not. That is the actual
 design question, and it is why this is a project rather than a patch.
+**💡 A CHEAPER DESIGN THAN "TEACH THE DECODER", found 2026-08-09 — AND THE INFRASTRUCTURE IS ALREADY THERE.**
+The framing above assumes the fault handler must DECODE the faulting instruction, which is why 128-bit looked
+expensive (every addressing mode x every SIMD form, and MMIO cannot be emulated at 16 bytes anyway).
+**But the handler does not actually need to decode anything it could simply be TOLD.** The emitter knows exactly
+what each memory access is at emit time.
+**And the per-function machine-code -> guest map ALREADY EXISTS:** `SourceMapEntry` with
+`Function::LookupMachineCodeOffset(uint32_t offset)` (function.h:127), maintained for every compiled function
+via `source_map_arena_` (a64_emitter.h:311).
+⇒ **The design is a SIDE TABLE, not a decoder:** at emit time, for each VECTOR memory access, record
+`{machine_code_offset, is_load, size, reg}`. On a watch fault, look the host PC up instead of decoding it, and
+re-execute the access from the recorded description. Then the emitter can emit a **single q-load/q-store** and
+the 4-word split disappears.
+**Why this is materially cheaper than the decoder route:** it is bounded by the number of VECTOR accesses (not
+every addressing mode), it cannot regress the existing 32-bit decode path (which stays exactly as it is for
+MMIO), and it sidesteps the "MMIO registers are 32-bit" objection entirely — MMIO accesses keep using the
+current split, and only watch-eligible vector accesses take the fast form.
+**⚠️ STILL NOT FREE, and these are the real costs to weigh:** a table entry per vector access across ~28k
+functions is not small and must be stored per-function alongside the source map; the lookup happens on a fault
+path where the current code is a pure decode with no allocation; and it must handle a fault in a function whose
+table has been evicted or was never built (fall back to the 4-word form for those).
 **⚠️ AND DO NOT PROTOTYPE IT WITHOUT THE DEVICE.** Every failure mode here is a hang (`EmulateWatchedStore`
 returning 0 makes the caller stop watching the page, so a mis-decode silently loses GPU invalidations → wrong
 pixels or a stall), and none of it is reachable by the qemu harness, which models ISA semantics and not our
