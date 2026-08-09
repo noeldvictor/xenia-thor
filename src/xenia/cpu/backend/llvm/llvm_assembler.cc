@@ -2900,8 +2900,9 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // A/B reads flat and the conclusion is "the lever does nothing", which is
     // the most expensive possible way to be wrong about a lever. The build
     // stamp in the DIRECTORY does not help here - both arms are the same build.
-    char keybuf[96];
-    std::snprintf(keybuf, sizeof(keybuf), "g%08X_%016llX_o%dr%dw%da%dp%df%d",
+    char keybuf[128];
+    std::snprintf(keybuf, sizeof(keybuf),
+                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%d",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
@@ -2909,7 +2910,10 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_backend_llvm_residency_writeback ? 1 : 0,
                   cvars::cpu_backend_llvm_residency_abi ? 1 : 0,
                   cvars::cpu_llvm_vperm_tbx ? 1 : 0,
-                  cvars::cpu_llvm_lower_scalar_fma ? 1 : 0);
+                  cvars::cpu_llvm_lower_scalar_fma ? 1 : 0,
+                  cvars::cpu_llvm_batch_lane_calls ? 1 : 0,
+                  cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
+                  cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0);
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
         ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
@@ -3115,8 +3119,9 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // '...o2r0w0a0p0f0.o' but dir has '...o2r0w0a0.o'", and ~14k functions
     // recompiled every single launch (the 60-150s hot startup that was eating
     // the thermal budget of every measurement).
-    char idbuf[96];
-    std::snprintf(idbuf, sizeof(idbuf), "%sg%08X_%016llX_o%dr%dw%da%dp%df%d",
+    char idbuf[144];
+    std::snprintf(idbuf, sizeof(idbuf),
+                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%d",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
@@ -3125,7 +3130,10 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_backend_llvm_residency_writeback ? 1 : 0,
                   cvars::cpu_backend_llvm_residency_abi ? 1 : 0,
                   cvars::cpu_llvm_vperm_tbx ? 1 : 0,
-                  cvars::cpu_llvm_lower_scalar_fma ? 1 : 0);
+                  cvars::cpu_llvm_lower_scalar_fma ? 1 : 0,
+                  cvars::cpu_llvm_batch_lane_calls ? 1 : 0,
+                  cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
+                  cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0);
     mod->setModuleIdentifier(idbuf);
   }
 
