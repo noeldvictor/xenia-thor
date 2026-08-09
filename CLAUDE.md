@@ -584,7 +584,32 @@ result. If DEAD/FLAT, do NOT re-run — build on the note. Skill: **xenia-experi
 `docs/research/experiments.db` (human narrative: `docs/research/experiment-ledger.md`). Exists because we
 repeatedly burned device runs re-deriving dead ends (grep-the-markdown kept missing them).
 
-## 🧊🧊 THE STARTUP STALL RECURRED **TWICE IN A ROW** ON 2026-08-08 — AND BOTH RUNS USED `--es hid nop`
+## ❌❌ RETRACTED SAME DAY: `hid nop` DOES **NOT** CAUSE THE STARTUP STALL — I TESTED IT AND I WAS WRONG
+**I published a 3/3 correlation against `--es hid nop` and then ran the discriminator I had just written down.
+It cleared it outright:**
+```
+NO-hidnop      title=YES at 9s
+WITH-hidnop    title=YES at 9s      <- identical command lines otherwise
+```
+**The original 2026-08-04 note ("`hid nop` is NOT implicated") was right, and my correlation was coincidence.**
+Three data points that all shared a variable, where the variable was not the cause. **Correlation over three
+runs of an INTERMITTENT fault is worth almost nothing** — that is exactly the reasoning error this file warns
+about elsewhere, and I made it anyway.
+**❌❌ AND A SECOND ERROR IN THE SAME WRITE-UP: `entry_delta=0` IS *EXPECTED* UNDER LLVM, NOT EVIDENCE OF A
+STALL.** The clean runs above ALSO reported `entry_delta=0` while reaching the title in 9s — because the a64
+profiler is blind to LLVM-compiled code (proven earlier today: 14.1M vs 130.6M on one flag). **I used an
+a64-only counter as proof the guest never executed, one day after documenting that it cannot see the guest.**
+**⇒ WHAT REMAINS TRUE about the two void A/B runs:** no `Title name:` line, `LLVM guest entries: total=0`, GPU
+flat 40C, and `funcs=196` against ~18,000 in a healthy boot. **Those still say something went wrong** — the
+LLVM entry counter is the one that is actually diagnostic, not `entry_delta`. **Cause: still unknown.** The
+remaining untested difference is that those runs carried `cpu_llvm_guest_entry_census` AND
+`cpu_llvm_fallback_log_budget 100000` together; a healthy earlier run used the budget alone. **Test the census
+cvar next, not `hid nop`.**
+**🔑 THE TRANSFERABLE LESSON: when an intermittent fault appears twice, the FIRST move is the A/B that isolates
+the suspect — not a write-up asserting the correlation.** The discriminator cost 4 minutes. The write-up cost a
+retraction and would have sent the next session chasing the route mechanism.
+
+## 🧊 (superseded, kept for the trail) THE STARTUP STALL RECURRED TWICE ON 2026-08-08
 **Two back-to-back Blue Dragon launches produced NO guest execution at all.** Log signature, identical in both:
 ```
 Module Hash: 3C19B6F951F93D49 (code 820C0000-82750000)     <- module loaded
