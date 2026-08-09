@@ -135,10 +135,56 @@ constant amount:  shl v0.4s, v0.4s, #5             ONE insn
 **No poison guard, no scalarization, and the constant case — the common PPC one — folds to a single
 instruction.** There is nothing to win.
 
+### 🔬 Item 3 (TBL2) — INVESTIGATED 2026-08-09, and the picture changed. **The catch-and-retry design is probably portable after all.**
+
+I set out to answer "why does ours fault where theirs diagnoses". Four checkable facts, none needing the device:
+
+**1. ❌ Our x20/x21 reservation is NOT the cause.** The comment blames *"x20/x21 reserved + high register
+pressure"*. Built a deliberately hostile case — 8 live table registers, 4 `vqtbl2q_u8` uses in one loop, values
+live across it — with NDK clang, **with and without `-ffixed-x20 -ffixed-x21`. Both compiled clean.** The
+reservation alone does not break tbl2.
+
+**2. ⚠️ But that test used the WRONG LLVM, and the gap is 6 major versions.** NDK 25 is **clang 14**; the JIT
+links **`third_party/llvm-android/lib/libLLVM.so`, which is LLVM 20.1.8**. So (1) is suggestive, not decisive —
+the AArch64 backend changed enormously between them.
+
+**3. ✅ The crash is NOT a stale-library artifact — it is live in what we ship.** `libLLVM.so` is dated
+**2026-06-26**; the workaround commit `dc5c6cf77` ("LLVM: FIX the storm — OPCODE_PERMUTE tbl2 -> two tbl1") is
+**2026-06-27**. Same binary, never rebuilt since. (Note it is **untracked/gitignored**, so `git log` says nothing
+about it — the mtime is the only record.)
+
+**4. 🔑 THE FINDING: our libLLVM CONTAINS the clean register-allocation diagnostic.** Grepped the stripped .so
+directly (`strings` returns nothing on it — use `grep -a`):
+```
+"ran out of registers"  : 1      <- the RA failure path EXISTS
+"LLVM ERROR"            : 2
+"UNREACHABLE executed"  : 1
+```
+**So LLVM 20.1.8 as we build it CAN report this failure cleanly rather than corrupting memory** — which is
+exactly the failure mode Whatcookie catches and retries.
+
+**⇒ THE TWO STORIES NO LONGER MATCH, AND THAT IS THE USEFUL PART.** Our recorded symptom is a *wild-pointer
+re-fault storm inside the AsmPrinter*. But the clean `report_fatal_error("ran out of registers…")` path is
+present in the same library. Either:
+- **(a)** the 2026-06-27 diagnosis **mis-attributed** the storm — tbl2 was correlated with it, not the cause; or
+- **(b)** there are **two distinct failures**, and only one is the allocator.
+
+**⇒ THE EXPERIMENT THAT DECIDES IT, with a clear decision rule.** Re-enable the tbl2 lowering behind a cvar,
+install an **`llvm::install_fatal_error_handler`** before lowering, and run ONE Blue Dragon boot:
+- **Handler fires with "ran out of registers"** → the failure is clean and catchable. **Port their design**:
+  handler sets a flag, re-lower that one function with the TBL1 form. Their ratio was 3 fallbacks per 10,000
+  blocks, so we would keep the 1-µOP form nearly everywhere.
+- **Still a wild-pointer fault** → it is not the allocator, the comment's attribution is wrong, and the real bug
+  is elsewhere in IR→asm. That is also worth knowing, because the same storm is blamed for BD instability.
+
+`report_fatal_error` is not a C++ exception and cannot be `try`/`catch`'d — **`install_fatal_error_handler` is
+the supported interception point** and is why this is portable at all. Note the handler must not return; the
+retry has to be driven from a longjmp/flag at the lowering call site, not from inside the handler.
+
+**This is now a bounded one-launch experiment with a binary outcome, not an open question.**
+
 ### Remaining, in priority order
-1. **Item 3 (TBL2)** — the big one. Blocked on a question, not on work: **why does ours fault where theirs
-   diagnoses?** We pass `+reserve-x20,+reserve-x21`; they do not reserve a guest-context register the same way.
-   One `cpu_llvm_dump_asm` build answers it, device-free.
+1. **Item 3 (TBL2)** — see the investigation directly above. Next step is the one-launch fatal-handler probe.
 2. **Item 7 (LLVM scalarizing a vector op on ARM)** — a bug CLASS, not one instruction. Worth grepping our
    emitted asm for `SBFX`/lane-at-a-time patterns in vector lowerings.
 3. **Item 6 (`FCGT` → one `BSL`)** — do we have a compare/select chain that fails to fuse?
