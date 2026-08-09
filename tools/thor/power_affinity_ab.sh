@@ -44,13 +44,41 @@ native_dir() {  # MUST be re-read after every install - the APK dir is randomise
   echo "$(dirname "$("$ADB" -s "$DEV" shell pm path $PKG | head -1 | sed 's/^package://' | tr -d '\r')")/lib/arm64"
 }
 
+# The Thor is SHARED - another Claude session runs rpcs3 on it. This must be able
+# to ABORT, and it must be called before EVERY arm, not once at startup.
+#
+# WHY IT IS A FUNCTION THAT RETURNS NON-ZERO AND NOT A println: on 2026-08-08 I
+# batched an idle check and a launch into one command, saw "rpcs3 running? 1" in
+# the output, and had already started the run by the time I read it. A
+# pre-flight whose result arrives alongside the thing it was meant to prevent is
+# not a pre-flight. It burned the other session's thermal budget and contended
+# my own entry-rate numbers.
+require_device_free() {
+  local other mine
+  other=$("$ADB" -s "$DEV" shell 'ps -A -o NAME 2>/dev/null | grep -icE "rpcs|rpcsx"' | tr -d '\r')
+  if [ "${other:-0}" != "0" ]; then
+    say "ABORT: another emulator (rpcs3) is running - the device is SHARED"
+    return 1
+  fi
+  # A leftover xenia of our own skews the cold-start gate and holds the GPU.
+  mine=$("$ADB" -s "$DEV" shell pidof $PKG 2>/dev/null | tr -d '\r')
+  if [ -n "$mine" ]; then
+    say "stale xenia (pid $mine) - force-stopping before we start"
+    "$ADB" -s "$DEV" shell am force-stop $PKG >/dev/null 2>&1
+  fi
+  return 0
+}
+
 preflight() {
   local t b st
+  require_device_free || return 1
   t=$("$ADB" -s "$DEV" shell cat /sys/class/kgsl/kgsl-3d0/temp | tr -d '\r')
   b=$("$ADB" -s "$DEV" shell dumpsys battery | grep -m1 level | grep -oE '[0-9]+')
   st=$("$ADB" -s "$DEV" shell dumpsys battery | grep -m1 status | grep -oE '[0-9]+')
   say "pre-flight: temp=$((t/1000))C battery=${b}% battery_status=${st} (2=Charging 3=Discharging)"
   [ "$b" -lt 30 ] && { say "BATTERY TOO LOW - refusing"; return 1; }
+  # Was reported but never enforced; a hot start invalidates the arm anyway.
+  [ "$t" -gt 55000 ] && { say "TOO HOT ($((t/1000))C > 55C) - refusing"; return 1; }
   return 0
 }
 
@@ -76,6 +104,7 @@ power_sample() {
 
 run_arm() {           # $1 = arm label, $2..$n = extra am-start args
   local label="$1"; shift
+  require_device_free || return 1   # re-check: rpcs3 can start mid-batch
   cooldown || return 1
   local idle_w; idle_w=$(power_sample)
   local t0; t0=$("$ADB" -s "$DEV" shell cat /sys/class/kgsl/kgsl-3d0/temp | tr -d '\r')
@@ -235,3 +264,7 @@ NOT RUN HERE, AND DELIBERATELY SO:
   8246B408): it would deschedule twice, once here and once in the fastpath's own
   yield stride.
 NOTE
+
+# Leave the device as we found it - the next session may be someone else's.
+"$ADB" -s "$DEV" shell am force-stop $PKG >/dev/null 2>&1
+say "done - xenia force-stopped; leftover pid: $("$ADB" -s "$DEV" shell pidof $PKG 2>/dev/null | tr -d '')(blank=clean)"
