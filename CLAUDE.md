@@ -3158,6 +3158,28 @@ pattern-matches an `LDR`+`REV` pair. Adding the 128-bit SIMD `LDR/STR Qt` encodi
 vector accesses that can only ever hit WRITE-WATCHED memory, and keep the 4-word split for anything that could
 reach MMIO** — which means the emitter needs to know which it is, and it currently does not. That is the actual
 design question, and it is why this is a project rather than a patch.
+**🚨🚨 STOP — THE PREMISE MAY BE WRONG. a64 EMITS A SINGLE q-LOAD AND DOES NOT CRASH (found 2026-08-09).**
+Before building ANY of the designs below, resolve this contradiction, because it may mean there is nothing to
+build and the fix is one line.
+| fact | source |
+|---|---|
+| **a64 emits a plain `e.ldr(i.dest, mem)` — a single q-load — for every guest VEC128 load** | `a64_seq_memory.cc:574` |
+| **`MMIOHandler::EmulateWatchedStore` is called ONLY from `x64_backend.cc`** (:581) | grep; and **0 `x64_` sources compile into the APK** |
+| **the a64 watch-page fault handler is gated on `cvars::cpu_watch_guest_write_page`** — a default-off RE/debug tool, not a production path | `a64_backend.cc:3732` |
+⇒ **So the backend that emits the FAST form is the one that ships, and it does not crash.** The LLVM split is
+justified by a comment about a decoder (`TryDecodeLoadStore`) whose watch-store consumer is x64-only on this
+platform. **The two backends disagree about a supposedly shared constraint, and the permissive one works.**
+**⚠️ WHAT IS STILL REAL, so this is not a licence to just delete it:** MMIO *is* live on ARM64 —
+`MMIOHandler::Install` runs (memory.cc:249) and `TryDecodeLoadStore` has a real ARM64 branch decoding 32-bit
+LDR/STR. A guest VECTOR access that landed on an MMIO page would still be undecodable. The open question is
+whether that can actually happen: MMIO is the GPU register range and guest code writes it with 32-bit accesses,
+but the emitter cannot prove a given vector access misses it.
+**⇒ THE EXPERIMENT, and it is far cheaper than any design below:** add a cvar that makes the LLVM path emit a
+single q-load/q-store exactly like a64, and run a title. **a64 already runs this way every day, so the risk is
+the risk a64 already takes** — not a new one. If it is stable, the 4x cost disappears for a one-line change and
+every design below is unnecessary. If it hangs, the comment is right, and THEN the side table earns its keep.
+**Do that before writing a side table.**
+
 **💡 A CHEAPER DESIGN THAN "TEACH THE DECODER", found 2026-08-09 — AND THE INFRASTRUCTURE IS ALREADY THERE.**
 The framing above assumes the fault handler must DECODE the faulting instruction, which is why 128-bit looked
 expensive (every addressing mode x every SIMD form, and MMIO cannot be emulated at 16 bytes anyway).
