@@ -2814,6 +2814,53 @@ clustered (cacheable) or spread across the whole 2 KB block (review #3).
 teaching the allocator that `vec_set` can host a spilled integer, which is shared-code surgery (it would affect
 x64 too, where the same trick works via `MOVQ`), not an a64-local peephole. **Scope it accordingly.**
 
+## 📕✅ MANUAL REVIEW #9 - STORE-TO-LOAD FORWARDING ON THE `PPCContext` ROUND-TRIP: **CLEAN, BY CONSTRUCTION**
+**A negative result, and a valuable one: it closes off the most plausible remaining "the context round-trip is
+secretly expensive" theory using primary-source rules and four checkable facts, with zero device time.**
+**🔎 FIRST, A GAP IN OUR OWN NOTES: "§4 IS NOW FULLY READ" (review #7) WAS **A710-ONLY**.** The A710 SWOG has no
+store-to-load-forwarding section. **The X3 (§4.5, pdf-p57) and A715 (§4.5, pdf-p60) DO**, and the X3 is where
+guest CPU 0 now runs after the review-#4 affinity fix. So this was genuinely unmined.
+**THE RULES, verbatim (identical in both guides):**
+> *"Load start address should align with the start or middle address of the older store"*
+> *"Loads of size greater than 8 bytes can get the data forwarded from a maximum of 2 stores. If there are 2
+> stores, then each store should forward to either first or second half of the load"*
+> *"Loads of size less than or equal to 4 bytes can get their data forwarded from only 1 store"*
+**WHY THIS MATTERED ENOUGH TO CHECK:** reviews #1-#3 establish that most guest state lives in a 2 KB memory
+block and is spilled/reloaded at every block boundary and around every call. **That is the single most executed
+memory pattern in the emulator.** If a reload could not forward from its own spill, it would eat full L1 latency
+(or a store-buffer drain) every time — which would dwarf every uOP-shaving lever in this file.
+**⇒ MEASURED BY READING, ALL FOUR REGISTER CLASSES. NO MISMATCH EXISTS:**
+| class | store | load | forwards? |
+|---|---|---|---|
+| **GPR** | `StoreGPR` asserts `INT64_TYPE`, `r + reg*8` (ppc_hir_builder.cc:632) | `LoadGPR` `INT64_TYPE`, same address (:628) | ✅ 8↔8, one store, start-aligned |
+| **FPR** | `f + reg*8`, FLOAT64 | same | ✅ 8↔8 |
+| **VMX** | `LOAD/STORE_CONTEXT_V128` = one `ldr`/`str` of a Q reg | same | ✅ 16↔16, **one** store (rule 2 allows 2) |
+| **CR** | `StoreCR` writes **four separate 1-byte** stores at +0..+3 (:473) | `LoadCR` reads **four separate 1-byte** loads and reassembles with shifts/ORs (:438) | ✅ 1↔1, exactly one store each (rule 3 allows 1) |
+**🔑 THE CR CASE IS THE INTERESTING ONE, AND IT INVERTS THE OBVIOUS READ.** `cr0`..`cr7` are each a **union of a
+`uint32_t value` and four `uint8_t` bytes**, and `StoreCR` writing four byte-stores *looks* naive — this file
+already flagged it as eager materialisation. **But `LoadCR` never reads the 32-bit `value`; it loads the same
+four bytes individually.** Had it read the union's word, that would be a **4-byte load fed by 4 byte-stores,
+which rule 3 forbids from forwarding at all** — a guaranteed stall on every `mfcr`. The byte-wise decomposition
+that looks clumsy is exactly what §4.5 wants. **Do not "optimise" `StoreCR`/`LoadCR` into 32-bit word access.**
+**✅ §4.4 ALIGNMENT ALSO CLEAN, and this one is load-bearing enough to record the arithmetic.** §4.4 penalises
+*"quad-word load operations that are not 4B aligned"* and *"store operations that cross a 32B boundary"*. The
+context is `memory::AlignedAlloc<PackedContext>(64)`, and `PackedContext` is `uint8_t backend_data[256]` +
+`PPCContext`, pinned by `static_assert(offsetof(PackedContext, ctx) == 256)`. So PPCContext is 64B-aligned, and
+`v[128]` at **0x220 = 544 = 17x32** is **32-byte aligned** — every 16B VMX slot is 16B-aligned and **none can
+cross a 32B boundary**. If that `static_assert` ever changes to a non-multiple of 16, **every VMX context access
+becomes misaligned**; it is protecting more than adjacency.
+**⇒ VERDICT: THE CONTEXT ROUND-TRIP IS FORWARDING-CLEAN. THIS IS NOT A LEVER.** The cost of reviews #1-#3 is
+that the traffic EXISTS, not that it is mis-shaped — so the fix remains keeping values in registers
+(residency / multi-function modules), not re-shaping the accesses.
+**🔗 AND IT STRENGTHENS AN EARLIER MEASURED RESULT.** `ppc_cross_block_dead_gpr_elim` removed 12,942 dead stores
+for +0.8% (noise). The explanation recorded then was "the store buffer absorbs independent dead stores". §4.5
+adds the other half: the LIVE spill/reload pairs were already forwarding optimally, so there was never a stall
+hiding there for the pass to recover either.
+**📌 ONE THEORETICAL HAZARD LEFT, deliberately not chased:** HOST C++ writing `cr0.value` as a 32-bit store while
+JIT code reads a byte at +1 or +3 — those offsets are neither the start nor the middle of a 4-byte store, so
+rule 1 fails and it will not forward. This only happens at host↔JIT context save/restore boundaries, not in a
+hot loop. Recorded so nobody rediscovers it and thinks it is hot.
+
 ## 📕 MANUAL REVIEW #7 - SINGLE-WORD LANE WRITES COST A 3-CYCLE DISPATCH STALL (A710 4.1/4.2)
 **Completes the §4 sweep, and it prices the FixupVmxNan_V128 rewrite that was previously "unmeasurable".**
 **§4.2 Dispatch stall, verbatim:**
