@@ -386,6 +386,37 @@ result. If DEAD/FLAT, do NOT re-run — build on the note. Skill: **xenia-experi
 `docs/research/experiments.db` (human narrative: `docs/research/experiment-ledger.md`). Exists because we
 repeatedly burned device runs re-deriving dead ends (grep-the-markdown kept missing them).
 
+## 🚫🚫🚫 HARD RULE (user, verbatim 2026-08-08): **"do not check menus or videos for testing … you must be in game"**
+**This is not a preference and it is not new — it is the rule directly below, restated because I broke it all
+day on 2026-08-08. Read the audit before quoting ANY runtime number from that date.**
+**❌ EVERY RUNTIME MEASUREMENT I TOOK ON 2026-08-08 WAS OUT-OF-GAME. All of it needs re-taking in gameplay:**
+| number | scene it was actually taken in | status |
+|---|---|---|
+| **7.4 W running / ~6.0 W delta** (the headline watt figure) | Burnout title + attract | ⚠️ **NOT a gameplay wattage** |
+| **4-5C cooler with residency**, replicated 2/2 | title / attract | ⚠️ not gameplay |
+| `entry_delta` 12.3-12.4M, 10M, 13.5M | title, menus, attract | ⚠️ not gameplay |
+| GPR DSE +0.8%, residency +0.7% | title / attract | ⚠️ not gameplay |
+**⇒ The 7.4 W figure is still the first VALID-PROTOCOL power reading this project has (cable out, discharging,
+confirmed) and it does confirm the user's "8 watts" — but it is a TITLE/ATTRACT wattage, and gameplay draws
+more, not less. Do not compare it to rpcs3's 3-5 W gameplay claim without saying so.**
+**✅ WHAT SURVIVES, because it is COMPILE-TIME or a CODE FACT and cannot depend on the scene:**
+- **`entry_delta` is LLVM-blind** (14.1M vs 130.6M on one flag) — the ratio is a property of which backend emits
+  the counter, and both arms ran the same scene. **Stands.**
+- **`eieio` = 4 translation sites**, `CrossBlockFlagDSE` = **0 removals**, `CrossBlockGprDSE` = **12,942
+  removals** — all counted during AOT translation. **Stand.**
+- **Residency is STABLE and renders correctly** (0 faults over 5 runs, 27,770+ functions, pixel-checked).
+  **Stands** — that is a correctness observation, not a perf one.
+- **Precompile core policy** (time-to-title 12.4s vs 33.6s) — legitimately a LOAD-TIME measurement, which is
+  what that lever affects. **Stands.**
+**🔑 WHY I DRIFTED, so the next session does not: the in-game scenes are EXPENSIVE and the out-of-game ones
+are cheap.** Gears thermally guards out at ~80-100s and its route needs 125-150s; no Burnout race route exists
+(an attempt on 2026-08-08 landed in menus); BD's field needs ~120-135s. When each valid data point costs a
+cooldown plus two minutes of driving, a title screen that boots in 12s is a constant temptation — **and it is
+worth exactly nothing.** **Capturing a race/field route is therefore not overhead, it is the PREREQUISITE for
+any perf or power claim.** Budget it first, before the levers.
+**⚠️ AND NOTE WHICH TITLE: Burnout at its 60fps cap cannot show a CPU win at all** — see the Burnout correction
+section. An in-game measurement on a capped title is still the wrong measurement.
+
 ## 🎬🎬🎬 NEVER BENCHMARK A MOVIE (user, verbatim 2026-08-06: "don't benchmark movies")
 **A benchmark scene must be REAL GAMEPLAY. Attract modes, demo replays, title screens, menus and FMV are not.**
 Worst to best: **FMV/video** (measures XMA decode + a blit — none of the code you changed) → **title screen** →
