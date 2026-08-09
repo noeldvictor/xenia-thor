@@ -91,6 +91,11 @@
     <string name="emulator_menu_status">Last input: %1$s</string>
     <string name="emulator_menu_no_input">none yet</string>
     <string name="emulator_menu_input_format">%1$s -> %2$s</string>
+    <string name="emulator_menu_frame_gen">Frame generation (2x presented)</string>
+    <string name="emulator_menu_frame_gen_note">Synthesizes an in-between frame. Raises PRESENTED smoothness on guests locked to a fixed rate (Blue Dragon is 30Hz); it does NOT make the game logic run faster and adds a little latency.</string>
+    <string name="emulator_menu_trainers_none">Trainers: none active</string>
+    <string name="emulator_menu_trainers_active">Trainers active (%1$d): %2$s
+A trainer patches guest memory, so it can cause crashes or glitches. Disable it before reporting a bug.</string>
     <string name="emulator_menu_controls_note">Back opens or closes this menu. Exit game closes the running title. Use Controller map to remap any physical Thor button.</string>
     <string name="xam_keyboard_title">Keyboard Input</string>
     <string name="xam_keyboard_description">Enter text</string>

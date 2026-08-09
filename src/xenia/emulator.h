@@ -323,6 +323,24 @@ class Emulator {
   // <storage>/trainers (gated by the trainer_enable cvar).
   void LoadTrainersForTitle();
 
+ public:
+  // Names of trainers actually LOADED for the running title, in load order.
+  //
+  // Recorded because a trainer is invisible once it is running: it patches guest
+  // memory and leaves no on-screen trace, so "is my trainer on?" was only
+  // answerable by grepping logcat. That also makes it a debugging trap - a
+  // trainer is a memory patch, so it can perfectly well be the cause of a crash
+  // or a graphical fault, and until now nothing in the UI would tell you one was
+  // active. Only successfully-loaded ones are listed; a file that matched the
+  // title prefix but failed to load is deliberately NOT here, because the whole
+  // point is to report what is actually affecting the guest.
+  const std::vector<std::string>& loaded_trainers() const {
+    return loaded_trainers_;
+  }
+
+ private:
+  std::vector<std::string> loaded_trainers_;
+
   std::filesystem::path command_line_;
   std::filesystem::path storage_root_;
   std::filesystem::path content_root_;

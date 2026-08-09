@@ -264,6 +264,33 @@
                 android:textColor="@color/xenia_text"
                 android:textSize="15sp" />
 
+            <CheckBox
+                android:id="@+id/emulator_menu_frame_gen"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:text="@string/emulator_menu_frame_gen"
+                android:textColor="@color/xenia_text"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/emulator_menu_frame_gen_note"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:letterSpacing="0"
+                android:text="@string/emulator_menu_frame_gen_note"
+                android:textColor="@color/xenia_text_secondary"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/emulator_menu_trainers"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="18dp"
+                android:letterSpacing="0"
+                android:text="@string/emulator_menu_trainers_none"
+                android:textColor="@color/xenia_text_secondary"
+                android:textSize="12sp" />
+
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"

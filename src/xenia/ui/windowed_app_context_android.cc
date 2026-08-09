@@ -887,6 +887,27 @@ Java_jp_xenia_emulator_EmulatorActivity_nativeLoadState(
   return ok ? JNI_TRUE : JNI_FALSE;
 }
 
+// Names of the trainers actually loaded for the running title, newline-joined,
+// or "" if none. Returned as ONE string rather than a String[] because the only
+// consumer is a TextView - building a jobjectArray here would cost more JNI
+// plumbing than the caller saves.
+JNIEXPORT jstring JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeGetActiveTrainers(
+    JNIEnv* jni_env, jclass clazz) {
+  xe::Emulator* emulator = xe::GetGlobalEmulator();
+  if (!emulator) {
+    return jni_env->NewStringUTF("");
+  }
+  std::string joined;
+  for (const std::string& name : emulator->loaded_trainers()) {
+    if (!joined.empty()) {
+      joined.push_back('\n');
+    }
+    joined.append(name);
+  }
+  return jni_env->NewStringUTF(joined.c_str());
+}
+
 JNIEXPORT jboolean JNICALL
 Java_jp_xenia_emulator_EmulatorActivity_nativeSetConfigVar(
     JNIEnv* jni_env, jclass clazz, jstring name_jstring,

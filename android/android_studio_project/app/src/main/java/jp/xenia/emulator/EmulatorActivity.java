@@ -127,6 +127,9 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     private static native boolean nativeSetConfigVar(String name, String value);
 
+    // Newline-joined names of trainers actually loaded for the running title.
+    private static native String nativeGetActiveTrainers();
+
     @Override
     protected String getWindowedAppIdentifier() {
         return "xenia";
@@ -1770,6 +1773,16 @@ public class EmulatorActivity extends WindowedAppActivity {
         } catch (Throwable t) {
             Log.w(TAG, "could not set hotkey_state_path", t);
         }
+        // Frame gen is remembered per-device and re-applied at launch, so the
+        // in-game toggle is not lost the moment the title restarts.
+        mFrameGenEnabled = getPreferences(MODE_PRIVATE).getBoolean(PREF_FRAME_GEN, false);
+        if (mFrameGenEnabled) {
+            try {
+                nativeSetConfigVar("present_frame_extrapolation", "true");
+            } catch (Throwable t) {
+                Log.w(TAG, "could not restore present_frame_extrapolation", t);
+            }
+        }
         final float saved = getPreferences(MODE_PRIVATE).getFloat(PREF_SPEED_SCALAR, 0f);
         if (saved >= 1.25f && saved <= 8.0f) {
             try {
@@ -1966,6 +1979,8 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     private static final double[] SPEED_CYCLE = {1.0, 2.0, 3.0, 4.0, 0.5};
     private static final String PREF_SPEED_SCALAR = "in_game_speed_scalar";
+    private static final String PREF_FRAME_GEN = "in_game_frame_gen";
+    private boolean mFrameGenEnabled = false;
 
     private static double nextSpeedInCycle(double current) {
         // Match on approximate equality - the scalar round-trips through a double
@@ -2002,8 +2017,66 @@ public class EmulatorActivity extends WindowedAppActivity {
                         : String.format(Locale.US, "%.3gx", next)));
     }
 
+    // Frame generation is a PRESENTATION feature, not a speed one, and the menu
+    // says so - it raises presented smoothness on a guest locked to a fixed rate
+    // (Blue Dragon is 30Hz) without making game logic run faster. Conflating the
+    // two is how "frame gen" gets mistaken for emulation speed.
+    //
+    // The backend already existed (present_frame_extrapolation + the synth tick
+    // thread in presenter.cc); it was only reachable from Settings, which needs a
+    // relaunch to matter. This toggles it live, in-game, which is the only way to
+    // judge whether the added latency is worth the smoothness on THIS scene.
+    private void refreshFrameGenToggle() {
+        final CheckBox fg = findViewById(R.id.emulator_menu_frame_gen);
+        if (fg == null) {
+            return;
+        }
+        mUpdatingMenuControls = true;
+        fg.setChecked(mFrameGenEnabled);
+        mUpdatingMenuControls = false;
+        if (fg.getTag() == null) {
+            fg.setTag(Boolean.TRUE);
+            fg.setOnCheckedChangeListener((btn, checked) -> {
+                if (mUpdatingMenuControls) {
+                    return;
+                }
+                mFrameGenEnabled = checked;
+                nativeSetConfigVar("present_frame_extrapolation",
+                        checked ? "true" : "false");
+                getPreferences(MODE_PRIVATE).edit()
+                        .putBoolean(PREF_FRAME_GEN, checked).apply();
+            });
+        }
+    }
+
+    // A running trainer is otherwise INVISIBLE - it patches guest memory and
+    // leaves no on-screen trace - so a crash or a graphical fault caused by one
+    // looks exactly like an emulator bug. Naming them here is a debugging aid
+    // first and a status line second.
+    private void refreshTrainerNote() {
+        final TextView tv = findViewById(R.id.emulator_menu_trainers);
+        if (tv == null) {
+            return;
+        }
+        String joined = "";
+        try {
+            joined = nativeGetActiveTrainers();
+        } catch (Throwable t) {
+            Log.w(TAG, "could not read active trainers", t);
+        }
+        if (joined == null || joined.isEmpty()) {
+            tv.setText(getString(R.string.emulator_menu_trainers_none));
+            return;
+        }
+        final String[] names = joined.split("\n");
+        tv.setText(getString(R.string.emulator_menu_trainers_active,
+                names.length, android.text.TextUtils.join(", ", names)));
+    }
+
     private void refreshInGameMenu() {
         refreshFastForwardButton();
+        refreshFrameGenToggle();
+        refreshTrainerNote();
         if (mInGameMenuShowFps != null) {
             mUpdatingMenuControls = true;
             mInGameMenuShowFps.setChecked(mShowFps);

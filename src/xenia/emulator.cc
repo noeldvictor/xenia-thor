@@ -2008,6 +2008,9 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
 }
 
 void Emulator::LoadTrainersForTitle() {
+  // Cleared up front so a re-launch inside one process cannot report the
+  // PREVIOUS title's trainers as active - which would be worse than no report.
+  loaded_trainers_.clear();
   if (!cvars::trainer_enable) {
     return;
   }
@@ -2048,6 +2051,9 @@ void Emulator::LoadTrainersForTitle() {
     if (kernel_state_->LoadTrainerModule(entry.path(),
                                          cvars::trainer_run_entry)) {
       loaded++;
+      // Record only on SUCCESS - the OSD reports what is actually patching the
+      // guest, not what we attempted.
+      loaded_trainers_.push_back(filename);
     }
   }
 
