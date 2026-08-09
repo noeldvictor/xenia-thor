@@ -584,6 +584,35 @@ result. If DEAD/FLAT, do NOT re-run — build on the note. Skill: **xenia-experi
 `docs/research/experiments.db` (human narrative: `docs/research/experiment-ledger.md`). Exists because we
 repeatedly burned device runs re-deriving dead ends (grep-the-markdown kept missing them).
 
+## 🧊🧊 THE STARTUP STALL RECURRED **TWICE IN A ROW** ON 2026-08-08 — AND BOTH RUNS USED `--es hid nop`
+**Two back-to-back Blue Dragon launches produced NO guest execution at all.** Log signature, identical in both:
+```
+Module Hash: 3C19B6F951F93D49 (code 820C0000-82750000)     <- module loaded
+NO "Title name:" line, ever
+A64 speed profile summary: funcs=196 entry_delta=0 h2g=0/1  <- guest NEVER RAN
+LLVM guest entries: total=0 delta=0
+GPU 40C -> 40C across a 150s window                          <- nothing executing
+screencap 14.8 KB / 34.6 KB                                  <- no real frame
+```
+This is the stall already recorded from 2026-08-04 (*"no guest threads ever created, 0 swaps, 0.0 fps"*).
+**⚠️ IT COST THE ENTIRE FMA A/B**, which is why it is written up here rather than shrugged off.
+**🔎 AND IT CONTRADICTS THE EARLIER "NOT IMPLICATED" NOTE ON `hid nop`.** The 2026-08-04 entry says the same
+command line *"ran to the title at 59.1 fps on the retry, so `hid nop` is NOT implicated despite the first
+read."* But now: **every Blue Dragon launch WITHOUT `--es hid nop` this session worked** (18,447 and 18,495
+objloads, 202,089 LLVM entries/5s, title reached), and **both launches WITH it stalled.** That is 2 for 2
+against, plus the original occurrence which also used it.
+**⇒ Treat `hid nop` + a button sequence as a SUSPECT again, not cleared.** It is not proof — the stall is
+intermittent and BD is an `.m3u` multi-disc path, which is a second uncontrolled variable — but the correlation
+is now 3/3 and the exoneration rested on a single retry.
+**⇒ CHEAP DISCRIMINATOR, do this before the next route-based run:** launch BD twice with an identical command
+line differing ONLY in `--es hid nop`, and compare for a `Title name:` line. If the no-hid arm reaches the title
+and the hid arm does not, the route mechanism itself is breaking the very measurements it exists to enable
+— which would invalidate the whole "capture a route first" plan and make it the top bug in the tree.
+**🔧 AND FIX THE HARNESS EITHER WAY: a run that never prints `Title name:` must ABORT, not sleep and report
+zeros.** Mine waited 180s for the title, gave up silently, then slept a further 150s and printed
+`llvm/5s=0 a64/5s=0 fps=[]` — numbers that look like a measurement and are actually "the emulator never
+started". Two arms, eleven minutes, nothing. **Gate on the title line and bail with a clear message.**
+
 ## 🚫🚫🚫 HARD RULE (user, verbatim 2026-08-08): **"do not check menus or videos for testing … you must be in game"**
 **This is not a preference and it is not new — it is the rule directly below, restated because I broke it all
 day on 2026-08-08. Read the audit before quoting ANY runtime number from that date.**
