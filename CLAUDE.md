@@ -638,6 +638,44 @@ result. If DEAD/FLAT, do NOT re-run — build on the note. Skill: **xenia-experi
 `docs/research/experiments.db` (human narrative: `docs/research/experiment-ledger.md`). Exists because we
 repeatedly burned device runs re-deriving dead ends (grep-the-markdown kept missing them).
 
+## ❌❌❌ CORRECTED BY THE USER LOOKING AT THE SCREEN: IT IS **NOT A BLACK SCREEN** — IT IS A BLACK **SKY** + A FREEZE
+**User, watching the device while I was bisecting: *"sky is black, i think it froze on game play"*.**
+**⇒ THE GAME IS RENDERING AND REACHING GAMEPLAY.** My entire "black screen" investigation was built on
+`screencap` returning **14,881 bytes**, which I treated as proof of a blank display. **That inference is wrong,
+and so is everything I concluded from it**, including:
+- "the emulator is deadlocked" — no, it reaches gameplay
+- "device fatigue after 20+ launches" — no
+- the bisect result "`ebd19fdd5` is also black, so the regression is older" — **VOID**, the metric was invalid
+**🚨 WHY `screencap` LIED, and this is the durable lesson: Android `screencap` does NOT reliably capture a
+hardware-composited `SurfaceView`.** The emulator renders the guest into a SurfaceView; depending on the
+composition path the framebuffer grab can come back as flat black while the panel plainly shows the game. It
+captured real frames EARLIER in the same session (a 2.3 MB Burnout frame, the cyan BD frame), so it is
+INTERMITTENTLY valid — which is the worst kind of instrument. **~15 KB does NOT mean "black screen". It means
+"screencap got nothing", and the two are indistinguishable from the shell.**
+**⇒ THE ONLY TRUSTWORTHY VISUAL CHECK IS A HUMAN LOOKING AT THE PANEL, or a frame counter that comes from the
+GUEST side.** I said earlier today that "screenshot bytes are the only signal that never lied" — **that was
+exactly backwards and it cost a bisect.**
+**🐛 THE ACTUAL BUG, as reported: BLACK SKY + FREEZE DURING GAMEPLAY.** That is the degenerate-geometry /
+wrong-float signature, the same family as the documented `bd-llvm-postload-3d-cyan-bug`. **Prime suspect
+remains a float-semantics defect**, and note `cpu_llvm_lower_scalar_fma` is now DEFAULT OFF with an unresolved
+FPCR-mode concern (a64 runs scalar FMA under `ChangeFpcrMode(Fpu)`; the LLVM lowering never manages FPCR).
+**Reproduce by WATCHING, not by screencap**, and bisect on "does the sky render".
+
+## 🎮 THE IN-GAME OSD IS A TOP BAR, NOT A MENU — THERE IS NO PAUSE UI (user, 2026-08-09)
+*"the osd pause is awful compared to other emu, do research and fix compared to rpcs3"* — correct, and the
+reason is structural: **there is no in-game menu at all.** `activity_emulator.xml` has only
+`emulator_osd_top_bar` (title / subtitle / runtime / warning) plus the FPS badge. `onPause()` is the Android
+lifecycle callback, not a user-facing pause. **Nothing lets the player pause, save, change a setting, or exit
+without leaving the app.**
+**What an rpcs3-class in-game overlay provides, and we have none of it:** Resume, Save state / Load state,
+per-game Settings, Controller/input, Exit to library — reachable from a single button, with the guest PAUSED
+while it is open.
+**⚠️ AND THE 2x FAST-FORWARD IS INVISIBLE.** The feature exists and works (`Back + RB` = **Select + R1**,
+`hotkey_speed_toggle` default true, scales the guest clock via `Clock::set_guest_time_scalar`, and the FPS badge
+appends `2.00x` — EmulatorActivity.java:1962). **But there is no on-screen control and no discoverability**: a
+user who does not know the chord cannot find it. That is the gap to close first, since the underlying feature is
+already done and validated.
+
 ## 🧊🧊 THE 2026-08-09 "BLACK SCREEN": NOT A DEADLOCK, NOT MY CHANGES — MOST LIKELY **DEVICE FATIGUE**
 **Symptom, measured with the RELIABLE probe and a screenshot:**
 ```
