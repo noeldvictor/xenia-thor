@@ -955,6 +955,30 @@ AAudio DataCallback  (real-time, every few ms)
 - **Already checked and NOT applicable:** `366f38da8` ("fill the whole AAudio request instead of one guest block
   per callback") — our `FillAudio` already loops over queued frames and zero-fills on underrun.
 
+## 🧹 x86-SHAPED SWEEP 2026-08-09 — THE TREE IS CLEANER THAN EXPECTED, WITH ONE REAL FIND
+**Swept the a64 backend for transliteration tells (`xmm`, `sse`, `movaps`, "like x64", "as x64"): FOUR hits, and
+three are comments on issues already recorded** (the SSE two-operand staging copies, the `maxps` NaN note now
+fixed, the FlushDenormals "x86 habit"). **There is no pile of unconverted x86 idioms left to find** — the
+remaining x86 inheritance is STRUCTURAL (the `PPCContext` memory home, the 7-GPR/28-vector budget,
+one-module-per-function), not idiomatic.
+**🎯 THE ONE REAL FIND: `frsqrte` / `vrsqrtefp` ARE A HOST FUNCTION CALL PER OPERATION.**
+`RSQRT_F64` emits `mov x9, PpcFrsqrte; blr x9` — a call out to C++ — and `PpcVrsqrtefpLane` is the same shape
+per lane, both explicitly *"the same 32-entry lookup table … as x64's"* (a64_sequences.cc:6274, :6371).
+**⚠️ AND THE OBVIOUS FIX IS WRONG, WHICH IS WHY THIS NEEDS WRITING DOWN.** ARM64 has native `FRSQRTE`/`FRECPE`
+(including vector forms) and we emit them **nowhere** — zero instruction sites, all grep hits are comments. It
+looks like a missed hardware win. **It is not:** the code says *"PPC frsqrte uses a specific lookup table, not a
+high-precision estimate"* (PowerISA Table E-5). ARM's estimate is a DIFFERENT approximation, so swapping it in
+changes results. **Do not "optimise" this into `frsqrte` — that is a correctness regression wearing a
+performance hat**, exactly like the `FixupVmxMaxMinNan` case in reverse.
+**⇒ THE ACTUAL OPPORTUNITY IS THE CALL, NOT THE TABLE.** The lookup is integer math — extract exponent and
+mantissa, index a 16- or 32-entry table, interpolate. **All of it can be emitted INLINE in ARM64**; the host
+call is the x86-inherited part (x64 did it the same way), and a guest→host transition per `frsqrte` is far more
+expensive than the arithmetic it performs.
+**🛑 RULE 4 FIRST: nobody has counted `frsqrte`/`vrsqrtefp`.** They are normalisation primitives, so they
+*should* be hot in 3D vertex math — but "should be hot" is exactly the reasoning that produced three dead levers
+this session (EOR3, the FNV→CRC32 chain, eieio at 4 sites). **Count the emission sites first; inline the table
+only if the count justifies it.**
+
 ## 🔎 XenonRecomp READ AT LAST (2026-08-09) — IT IS CLONED IN `reference/`, AND IT ANSWERS "WHAT EXTRA LAYER?"
 **I said twice that XenonRecomp was "not cloned, not read". WRONG — `reference/XenonRecomp` and
 `reference/XenosRecomp` have been sitting there the whole time.** Read now. Two techniques, both a direct
