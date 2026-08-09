@@ -2731,7 +2731,19 @@ burned this repo (`EOR3`: 0 of 1 fusable; the per-draw FNV chain: perfect target
 **Also noted, NOT a bug:** `InstrEmit_isync` is `f.Nop()` (:761). That is defensible for an emulator — `isync` is
 context-synchronising for instruction fetch, which our JIT handles through its own code-cache invalidation rather
 than guest-visible ordering. Recorded so nobody "fixes" it into an `isb` and pays for it every occurrence.
-**📕 THE MANUAL HUNT IS SETTLED, AND NO PLAYWRIGHT IS NEEDED — 12 PDFs ARE IN-REPO** (verified 2026-08-08):
+**📕✅ THE MANUAL HUNT IS NOW CLOSED WITH THE DOCUMENT IN HAND, NOT BY ASSERTION (2026-08-09).** The ask kept
+being re-raised, so it was settled properly: the Qualcomm SM8550 **product brief was actually fetched** and is at
+`docs/reference/snapdragon/` with a README. **It is 2 pages of marketing** — measured keyword counts, so nobody
+re-checks: `cortex: 0, cache: 0, pipeline: 0, issue: 0, throughput: 0, neon: 0, sve: 0`. **It contains nothing
+that can inform codegen** and is kept only so the next person can see that in ten seconds.
+**And the "huge manual from the video" is confirmed from a SECOND source to be the Arm ARM.** Press coverage of
+Whatcookie's work: *"they scoured every page of an ARM Architecture manual with over 17,000 pages"* — matching
+the talk's own words. **That is `docs/reference/arm/arm-architecture-reference-manual-a-profile.pdf`, 69 MB,
+in-repo since 2026-08-07.** It is not a Qualcomm document. **There is nothing to scrape; do not reach for
+Playwright.** Same coverage restates the headline as **60% faster at 25% less power on an Odin 2** (their claim,
+not ours) and re-confirms the #1 fix is TIMER-FREQUENCY scaling of waits — which we already verified we do
+correctly (`cntfrq_el0` read at runtime, no hardcoded rate).
+**📕 (prior entry) 12 PDFs ARE IN-REPO** (verified 2026-08-08):
 Arm ARM A-profile (**69 MB** — this IS the "huge manual" from the video), Cortex-**X3/A715/A710/A510** SWOGs,
 AltiVec PEM + API, **Power ISA 2.07**, PowerPC User ISA Book 1, and three Xbox 360 architecture papers
 (Hot Chips 17, IEEE Micro 2006, CIS501). **There is no Qualcomm SM8550 CPU TRM to fetch** — Qualcomm publishes
