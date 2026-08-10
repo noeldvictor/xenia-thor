@@ -1247,6 +1247,32 @@ AAudio DataCallback  (real-time, every few ms)
 - **Already checked and NOT applicable:** `366f38da8` ("fill the whole AAudio request instead of one guest block
   per callback") — our `FillAudio` already loops over queued frames and zero-fills on underrun.
 
+## 🔬🔬 **a64-vs-LLVM VMX FLOAT SEMANTICS DIFF (2026-08-09) — TWO CONFIRMED DIVERGENCES ON THE SHIPPING BACKEND**
+**The a64 backend has had three separate float-semantics fixes researched, manual-cited and qemu-validated. NONE
+of them were carried across to the LLVM backend — which is the one that ships and runs ~80% of guest entries.
+Found by diffing the two backends op-by-op rather than one instruction at a time.**
+| VMX float op | a64 | LLVM (shipping) | verdict |
+|---|---|---|---|
+| **`vaddfp` / `vsubfp`** | `EmitWithVmxFpcr` -> FPCR.FZ, hardware flush | **bare `fadd`/`fsub`, no flush, FPCR never set** | ❌ **CONFIRMED divergence** — fixed behind `cpu_llvm_vmx_float_flush` |
+| **`vmaxfp` / `vminfp`** | native `fmax` (propagates NaN, matches PPC) after the `a64_vmx_native_fmax_nan` work | **`llvm.maxnum` = IEEE maxNum -> returns the NUMBER, lowers to FMAXNM** | ❌ **CONFIRMED divergence** — fixed behind `cpu_llvm_vmx_fmax_nan` |
+| `vmaddfp` / `vnmsubfp` | flush + NaN fixup | software flush + NaN fixup | ✅ agrees (this one WAS done properly) |
+| `vcfsx` / `vctsxs` (converts) | wrapped in `EmitWithVmxFpcr` | bare `SIToFP`/`FPToSI` | ⚠️ **FLAGGED, NOT CONFIRMED — see below** |
+**🔑 THE PATTERN IS THE FINDING, not any single instruction: a fix landing on a64 does NOT propagate to LLVM, and
+nothing checks.** Three instances now — these two, plus `vrsqrtefp`'s 4-call batching, which was fixed on a64 and
+left the LLVM path paying 4x. **When a codegen fix lands on one backend, diff the other before closing it.**
+**⚠️ THE CONVERSION ROW IS DELIBERATELY NOT "FIXED" — I could not confirm it is a real divergence, and guessing
+would be worse than leaving it.** The reasoning against: `DEFAULT_VMX_FPCR` differs from `DEFAULT_FPU_FPCR` only
+in **FZ** (both have RMode=0, round-to-nearest), and **int32 -> float32 cannot produce a denormal** (smallest
+nonzero magnitude is 1.0), while a denormal INPUT to float->int truncates to 0 under either mode. So for the
+plain conversions FZ is inert. **The case that could still bite is the SCALED forms** (`vcfsx` divides by
+2^UIMM): scaling a normal down can produce a denormal, which FZ would flush and LLVM would keep. **Check whether
+our lowering does the scale in float before deciding.**
+**⇒ BOTH FIXES ARE DEFAULT-OFF and need one pixel check.** They move LLVM onto behaviour already validated
+against the PowerPC manual (PEM 3.2.5.1) and `tools/qemu/fmax_nan_differential.c`, so the expected direction is
+FEWER wrong pixels. **And retest `cpu_backend_llvm_lower_vmaddfp` with them on** — the cyan bug is a
+float-semantics fault that appears when vmaddfp is lowered *alongside other vector ops*, and "the other vector
+ops silently skip VMX denormal flush and get NaN backwards" is a concrete mechanism for exactly that.
+
 ## 🧹 x86-SHAPED SWEEP 2026-08-09 — THE TREE IS CLEANER THAN EXPECTED, WITH ONE REAL FIND
 **Swept the a64 backend for transliteration tells (`xmm`, `sse`, `movaps`, "like x64", "as x64"): FOUR hits, and
 three are comments on issues already recorded** (the SSE two-operand staging copies, the `maxps` NaN note now
