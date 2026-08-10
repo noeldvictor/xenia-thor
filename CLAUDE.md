@@ -727,6 +727,28 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🚧 **WHY EVERY NUMBER IN THIS FILE IS BLUE DRAGON: IT IS THE ONLY TITLE WITH A VALID BENCHMARK SCENE (2026-08-10)**
+**The standing goal is "2x speed for EVERY game". Checked what could actually be measured, and the answer is
+one title - which is a structural blocker worth stating plainly rather than leaving implicit.**
+| title | route | why it cannot carry a measurement |
+|---|---|---|
+| **Blue Dragon** | `tools/thor/bd_gameplay_route.sh` | ✅ **the only usable one** - uncapped, reaches a stable field, gameplay-gated |
+| **Gears of War** | `tools/thor/gears_gameplay_route.sh` (exists, device-verified) | ❌ **the scene it reaches STALLS** - 5 guest threads parked on an event nobody signals, 0-2 fps, reproduces on BOTH arms of an A/B. A COMPAT bug, not a perf one |
+| **Burnout Revenge** | none (an attempt landed in menus) | ❌ **at its 60 fps CAP already** (59.4 measured) - no headroom to show a CPU or GPU win even if one exists |
+**⇒ SO "2x FOR EVERY GAME" IS NOT CURRENTLY A MEASURABLE PROPOSITION.** One title can be measured, one is
+blocked by an unfixed kernel stall, and one is capped. **Every conclusion in this file - fragment-bound, the
+resolution curve, the dead structural levers - is BD-specific until a second title can be benchmarked**, and
+that is a caveat on the whole GPU story, not a footnote.
+**⇒ AND IT REPRIORITISES: THE GEARS ACT-1 STALL IS NOT JUST A COMPAT BUG, IT IS THE BLOCKER ON GENERALISING
+EVERY PERF FINDING WE HAVE.** This file already scoped it (async-I/O completion events our HLE never signals;
+the five handles never appear in a 6,003-line event trace) and already names the fix class (the Edge kernel
+port's overlapped-I/O work). **Fixing it buys a second benchmark title, which is worth more right now than
+another lever on BD.**
+**⚠ AND NOTE WHAT THAT MEANS FOR THE FRAGMENT-BOUND FINDING SPECIFICALLY: it is corroborated on a SECOND title
+already, but by someone else** - XenDroid's counter study is Geometry Wars on a Retroid Pocket 5, and it
+reached the same "fragment-shader ALU bound" verdict. **Two titles, two devices, two instruments.** That is the
+strongest evidence available that the diagnosis generalises even though our own measurements cannot yet show it.
+
 ## 🔧 **"INCREMENT 2" SCOPED IN CODE: WHAT IT WOULD TAKE TO SHIP THE RESOLUTION WIN (2026-08-10)**
 **The measured win (1.38x at 71%, 1.79x at 50%) is gated on one correctness question, and it is answerable
 from the source rather than by staring at the screen. It is real.**
