@@ -1541,6 +1541,40 @@ bool Lowerer::LowerInstr(Instr* i) {
     case OPCODE_MUL: {
       auto *a = V(i->src1.value), *c = V(i->src2.value);
       if (!a || !c) return false;
+      if (i->dest->type == VEC128_TYPE) {
+        // ⚠️ V128 MUL IS A **FLOAT** MULTIPLY. a64's only OPCODE_MUL V128
+        // sequence is MUL_V128 -> EmitVmxFpBinOp_V128(VmxFpBinOp::Mul), i.e.
+        // VMX float32x4 with denormal flush and PPC NaN propagation
+        // (a64_sequences.cc:2315, a64_seq_util.h:851).
+        //
+        // IsFloat() below is TRUE ONLY for FLOAT32/FLOAT64 - VEC128_TYPE is
+        // not float by that predicate - so this case previously fell into
+        // CreateMul, an INTEGER multiply over the float bit patterns. Not a
+        // rounding difference: completely wrong arithmetic, silently, on the
+        // shipping backend.
+        //
+        // Reached from vcfsx/vcfux with a non-zero scale, which lower to
+        // VectorConvertI2F followed by Mul(v, splat(2^-uimm))
+        // (ppc_emit_altivec.cc:549) - i.e. colour/texture conversion, which is
+        // the right shape to produce wrong colours.
+        auto* i32x4 = T(VEC128_TYPE);
+        auto* f32x4 = LaneVecTy(FLOAT32_TYPE);
+        auto* ai = b_.CreateBitCast(a, i32x4);
+        auto* ci = b_.CreateBitCast(c, i32x4);
+        if (cvars::cpu_llvm_vmx_float_flush) {
+          ai = VmxFlushDenorm(ai);
+          ci = VmxFlushDenorm(ci);
+        }
+        auto* prod = b_.CreateFMul(b_.CreateBitCast(ai, f32x4),
+                                   b_.CreateBitCast(ci, f32x4));
+        auto* resi = b_.CreateBitCast(prod, i32x4);
+        resi = VmxNanFixup(resi, {ai, ci});
+        if (cvars::cpu_llvm_vmx_float_flush) {
+          resi = VmxFlushDenorm(resi);
+        }
+        Def(i->dest, b_.CreateBitCast(resi, T(VEC128_TYPE)));
+        return true;
+      }
       Def(i->dest, IsFloat(i->dest->type) ? b_.CreateFMul(a, c)
                                           : b_.CreateMul(a, c));
       return true;
