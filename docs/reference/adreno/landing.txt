@@ -1,0 +1,147 @@
+Source: https://docs.qualcomm.com/doc/80-78185-2/topic/landing.html
+Fetched with Playwright (JS SPA; plain HTTP fetch returns nothing).
+
+Qualcomm Docs
+Game Developer Guide
+Introduction
+Highlights
+What’s New
+GUIDES
+COMPONENTS
+TUTORIALS
+
+Legal notice
+
+Introduction
+Introduction
+Download
+Updated: Mar 03, 2026 80-78185-2 Rev: AL
+
+These documents are intended to help developers in their journey to create best-in-class experiences targeting Qualcomm platforms. The Game Developer Guides consist of:
+
+Guides: Additional insight on the various cores available in Snapdragon platforms.
+
+Components: Product-specific documentation of various tools, middleware, and SDKs available for game developers.
+
+Tutorials: Learn about specific topics with practical examples and real-world scenarios.
+
+Highlights
+
+If you are new to mobile game development, the Feature Summary section from the Adreno™ GPU guide will give you a better understanding of Adreno™ tiling architecture and how it differs from desktop and console.
+
+For practical tips and tricks to maximize your application’s performance, visit Best Practices Summary, or Adreno GPU on Mobile: Best Practices for more detailed articles.
+
+The Qualcomm® Oryon™ CPU and Qualcomm® Kryo™ CPU guides introduce various concepts needed to optimize game execution on both performance and power. Use these guides to learn about the impact of proper thread scheduling, thread affinity, and how to maximize your game’s performance using NEON SIMD.
+
+For more optimization opportunities, visit the Qualcomm® Hexagon™ DSP guide to learn how you can offload work to the DSP to free other cores and conserve power.
+
+Note
+
+The Game Developer Guides are living documents. They are updated and improved continuously. Don’t forget to bookmark this page and come back to see what’s new!
+
+What’s New
+October 2025
+
+Tile Shading Vulkan Extensions
+
+Mesh Shading
+
+Load-Balancing Texture Pipe and Shader Pipe
+
+New Universal Bandwidth Compression (UBWC) details
+
+July 2024
+
+New Raytracing section
+
+Concurrent Binning
+
+Texture Pipe and SSBO
+
+Numerous other new recommendations
+
+Reorganized and summarized content
+
+Removed obsolete Adreno SDK’s for OpenGLES and Vulkan
+
+August 2021
+
+New recommendations for vulkan_subpasses
+
+New Variable Rate Shading (VRS) section
+
+Updated Vulkan Adreno Layer section with description of error codes provided by this layer as well as VK_EXT_debug_utils
+
+February 2021
+
+New Kryo and Qualcomm® Hexagon™ DSP sections
+
+New Windows on Snapdragon tutorials
+
+New Tutorials section
+
+Updated Adreno GPU on Mobile: Best Practices for A5x and A6x content
+
+Next
+
+Guides
+
+May contain U.S. and international export controlled information
+On this page
+Highlights
+What’s New
+October 2025
+July 2024
+August 2021
+February 2021
+Light
+Dark
+Auto
+Qualcomm relentlessly innovates to deliver intelligent computing everywhere, helping the world tackle some of its most important challenges. Our leading-edge AI, high performance, low-power computing, and unrivaled connectivity deliver proven solutions that transform major industries. At Qualcomm, we are engineering human progress.
+Quick links
+Products
+Support
+Partners
+Contact us
+Developer
+Company info
+About us
+Careers
+Investors
+News & media
+Our businesses
+Email Subscriptions
+Stay connected
+
+Get the latest Qualcomm and industry information delivered to your inbox.
+
+Subscribe
+Manage your subscription
+Terms of Use
+Privacy
+Cookie Policy
+Accessibility Statement
+Responsible AI Policy
+Do Not Sell or Share My Personal Information
+Language: English (US)
+Languages
+English ( United States )
+简体中文 ( China )
+
+© Qualcomm Technologies, Inc. and/or its affiliated companies.
+
+Snapdragon and Qualcomm branded products are products of Qualcomm Technologies, Inc. and/or its subsidiaries. Qualcomm patented technologies are licensed by Qualcomm Incorporated.
+
+Note: Certain services and materials may require you to accept additional terms and conditions before accessing or using those items.
+
+References to "Qualcomm" may mean Qualcomm Incorporated, or subsidiaries or business units within the Qualcomm corporate structure, as applicable.
+
+Qualcomm Incorporated includes our licensing business, QTL, and the vast majority of our patent portfolio. Qualcomm Technologies, Inc., a subsidiary of Qualcomm Incorporated, operates, along with its subsidiaries, substantially all of our engineering, research and development functions, and substantially all of our products and services businesses, including our QCT semiconductor business.
+
+Materials that are as of a specific date, including but not limited to press releases, presentations, blog posts and webcasts, may have been superseded by subsequent events or disclosures.
+
+Nothing in these materials is an offer to sell or license any of the services or materials referenced herein.
+
+This website processes personal data through our and third parties’ online tracking technologies, including analytics and advertising cookies. To learn more about how we and our affiliates within the Qualcomm Group may use your personal data and cookies, please review the Privacy Policy published at the bottom of this website and Qualcomm’s Cookie Policy. If you don’t want to share your website activities, including browsing behavior, with our third-party partners via these tracking technologies, click on “Cookie Settings" below to update your preferences. You can also update your cookie preferences at any time by clicking the Do Not Sell or Share My Personal Information link at the bottom of this website.
+Cookie Settings
+I Understand

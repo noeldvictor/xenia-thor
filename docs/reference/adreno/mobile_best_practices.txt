@@ -1,0 +1,1539 @@
+Source: https://docs.qualcomm.com/doc/80-78185-2/topic/mobile_best_practices.html
+Fetched with Playwright (JS SPA; plain HTTP fetch returns nothing).
+
+Qualcomm Docs
+Game Developer Guide
+Introduction
+GUIDES
+Qualcomm® Adreno™ GPU
+Overview
+Spec Sheets
+Adreno GPU on Mobile: Best Practices
+Feature Summary
+Best Practices Summary
+Renderer Architecture
+Tile-based Rendering
+Render Surfaces
+Z-Buffer
+LRZ, Early-Z and Fast-Z
+Vertex and Index Buffers
+Texture Features
+Shaders
+Compute Shaders
+GPU-Driven Rendering
+Low Priority Asychronous Compute (LPAC)
+Mesh Shading
+Raytracing
+2D operation hardware acceleration
+Queries
+Qualcomm True HDR setup
+Variable Rate Shading (VRS)
+XR/VR/AR (Extended Reality/Virtual Reality/Augmented Reality)
+Querying the driver version to implement version-specific workarounds
+Adreno APIs
+Texture Compression Examples
+Qualcomm® Oryon™ CPU
+Qualcomm® Kryo™ CPU
+Qualcomm® Hexagon™ DSP
+COMPONENTS
+TUTORIALS
+
+Legal notice
+
+GUIDES
+Qualcomm® Adreno™ GPU
+Adreno GPU on Mobile: Best Practices
+Adreno GPU on Mobile: Best Practices
+Download
+Updated: Mar 03, 2026 80-78185-2 Rev: AL
+Feature Summary
+
+Adreno has a rich set of hardware and software features. Here is a quick-start overview of what’s available, linking to more information:
+
+Renderer Architecture: Make the most of Adreno’s performance and battery usage by considering:
+
+renderpass and subpass management (including image layout, memory buffer usage, manual GMEM optimization, z-buffer setup and shader submission)
+
+reduced fragment shader invocations
+
+swapchain setup
+
+less performant features to avoid
+
+Tile-based Rendering: FlexRender™, mid-frame, constantly chooses between binning/GMEM and direct/system-memory mode: optimize for both (ideally with Vulkan extensions)
+
+Render Surface Target: The image at the end of the frame involves sRGB and pixel formats, upscaling optimizations, and ensuring optimal layout
+
+Universal BandWidth Compression (UBWC): increases memory bus throughput and reduces battery power
+
+Z-buffer: Depth buffers should use the optimal pixel format
+
+LRZ, Early-Z and Fast-Z: Hardware acceleration for depth buffering can dramatically improve performance
+
+Vertex and Index Buffers: Vertex and index buffer layouts impact performance, as does submission order of buffer changes
+
+Texture Features: Sampler setup and texture formats impact performance, as can leveraging driver-optimized texture features
+
+Shaders: Adreno’s unified/scalar shader architecture enables many shader-level optimizations
+
+Compute Shaders: have some special considerations beyond other shaders
+
+GPU-Driven Rendering: involves using compute shaders to offload more work from the CPU onto the GPU – consider a tile-based approach
+
+Low Priority Asychronous Compute (LPAC): can efficiently perform some compute shaders concurrently with other processing on the Graphics Pipe
+
+Mesh Shaders afford custom control over geometry generation and culling
+
+Raytracing: efficient simulation of light rays for beautiful imagery on low-power devices like mobile
+
+OpenCL (download pdf): is supported
+
+2D Operation Hardware Acceleration: is accessible through graphic APIs
+
+Queries: should be issued correctly to maximize performance and accuracy
+
+Qualcomm True HDR: mobile devices featuring OLED screens support a higher dynamic range and wider color gamut: make use of this color depth
+
+Variable Rate Shading (VRS): allows a fragment shader to color one or more pixels at a time, so a fragment can represent one pixel or a group of pixels
+
+Querying the driver version: helps you implement workarounds for older drivers and devices
+
+Best Practices Summary
+
+Here is a quick-start overview of some of the most relevant development best practices, linking to more information:
+
+Renderer Architecture
+
+Prefer Vulkan to OpenGL ES
+
+Follow Vulkan best practices
+
+Minimize renderpasses correctly
+
+Setup renderpasses efficiently
+
+Maximize Universal BandWidth Compression (UBWC)
+
+Manually optimize for GMEM
+
+Depth-only render efficiently
+
+Use swapchain efficiently
+
+Pass VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT in shipping builds to maximize performance
+
+Use Vulkan Adreno Layer in nonshipping builds
+
+Use buffer best practices
+
+Separate graphics submits and compute dispatches
+
+Maximize indirect draw calls
+
+Avoid less performant features
+
+Use framerate extrapolation
+
+Ideal screenspace triangle size is at least 4 pixels, and not much larger than a bin
+
+Tile-based Rendering
+
+Minimize the number of bins
+
+Use tile-based draws when it fits your algorithm
+
+Prefer MSAA to other anti-aliasing techniques (for small-pixel form factors like mobile, consider no anti-aliasing)
+
+Concurrent Binning
+
+Issue each draw call such that it produces enough fragment shader work to parallelize with the next draw call’s binning
+
+Minimize dependencies – renderpass, barrier, Z-buffer-clear – that prevent concurrent binning
+
+Use the same Z-buffer (without clearing or invalidating it) between passes – or use separate Z-buffers per pass
+
+Render Surface Target
+
+Use HDR (high dynamic range)
+
+Use the fastest possible sRGB pixel format
+
+Use the lowest render target resolution that looks good and upscale: prefer SGSR when possible, or frame buffer blits otherwise.
+
+On Android, consider relying on SurfaceFlinger’s efficient bilinear rescale
+
+Maximize use of Variable Rate Shading
+
+If using Multiple Render Targets, stay below device performance limits
+
+Z-Buffer
+
+Use the fastest possible depth format
+
+Don’t disable LRZ (Low Resolution Z-Buffer) or Early Z Rejection
+
+Vertex and Index Buffers
+
+Lay out vertex buffers optimally
+
+Minimize the size of vertex buffers
+
+Minimize the size of index buffers
+
+Batch vertex buffer object updates
+
+Texture Features
+
+Use ASTC texture compression in the sRGB format
+
+Shaders
+
+Use Adreno Offline Compiler to optimize shaders
+
+Make instruction counts fit the instruction cache for binning, concurrent-binning, vertex, fragment, and compute shaders (LPAC compute shaders have a slightly larger instruction cache). Consider splitting up long shaders
+
+Minimize GPR (general purpose register) usage. Consider splitting up shaders that spill GPRs and cannot be further optimized
+
+Don’t reference too many unique vertex buffers, textures-and-SSBOs, samplers or uniform buffers
+
+Minimize texture samples in vertex shaders
+
+Load-balance shader-pipe and texture-pipe
+
+Separate graphics submits and compute dispatches
+
+Maximize half precision
+
+Minimize type casting
+
+Prefer built-in instructions
+
+Use hardware accelerated blits, convolution kernels, etc
+
+Use Android-phone pre-rotation on Vulkan
+
+Compute Shaders
+
+Most shader advice applies to compute shaders
+
+Prefer fragment shaders to compute shaders
+
+Instruction counts and GPR limits are similar – but not identical – to other shaders
+
+Minimize compute thread synchronization – when it’s necessary, prefer atomics
+
+Tune workgroup sizes and number of workgroups, taking into account shader stalls and whether the shaders read each others’ memory
+
+Mesh Shading
+
+Most shader advice applies to mesh shaders
+
+Avoid amplification shaders
+
+Set the optimal wave count
+
+Prefer per-vertex attributes to per-primitive attributes
+
+Keep mesh shader payload sizes under device limits
+
+Consider using LPAC to load-balance with the Graphics Pipe
+
+Raytracing
+
+Prefer ray queries to ray pipelines
+
+Minimize calls to rayQuery Proceed()
+
+Avoid proceed() calls in loops for non-opaque traversal that “accept first fit”
+
+Use only one ray query object; reuse as needed
+
+Access ray query data through intrinsics
+
+Prefer building, serializing and deserializing acceleration structures on the GPU
+
+Refit and rebuild deformable raytraced meshes judiciously
+
+Queries
+
+Use occlusion queries correctly for accuracy and efficiency
+
+Use GPU timestamp queries correctly for accuracy
+
+XR/VR/AR (Extended Reality/Virtual Reality/Augmented Reality)
+
+Use foveated rendering to likely drastically improve performance and battery life with few or no noticeable artifacts
+
+Renderer Architecture
+
+Here are some overarching issues to keep in mind while architecting a renderer that will make the most of Adreno’s performance and battery usage.
+
+Graphics API
+
+Prefer Vulkan to OpenGL ES. While Vulkan is not a perfect superset of OpenGL ES, in most respects it is more performant, more debuggable, and more fully featured.
+
+Render Pass
+
+Minimize the number of render passes – for example, any time several consecutive passes use the same formatted color buffer, combine them (disabling depth and/or stencil if one or both are unused). Snapdragon Profiler shows how renderpasses and subpasses are (or are not) merged on its Rendering Stages metric.
+
+When combining the results of multiple passes (as in deferred rendering or blending transparent objects with opaque objects), prefer using alpha blending to the alternatives (such as the discard instruction, shader branching, stencil testing and compute shaders).
+
+Many applications are fragment-shader bound, and Adreno has many tools to optimize such applications:
+
+Render target resolutions can be efficiently upscaled in several ways
+
+Variable Rate Shading shades fewer pixels
+
+Framerate Extrapolation can also nearly double a fragment-bound application’s framerate
+
+Depending on content, these features can involve little to no visual quality degradation.
+
+When performing depth-only rendering (like a depth-prepass), use an empty fragment shader and disable frame buffer writes to leverage Fast-Z.
+
+Invalidate framebuffer contents as early as possible, so the driver doesn’t wastefully resolve GMEM render target memory to system memory:
+
+VulkanOpenGL ES
+
+To invalidate framebuffer contents as early as possible, correctly use VK_ATTACHMENT_LOAD_OP_CLEAR and VK_ATTACHMENT_LOAD_OP_DONT_CARE on your renderpass (and VK_QCOM_render_pass_shader_resolve if a nonstandard shader resolve is desired).
+
+Correct subpass handling is also essential.
+
+Vulkan introduced render ‘subpasses’, which allow developers to set up render pipelines that explicitly state their usage, render target interactions, dependencies, transitions, etc. This allows GPUs to make informed decisions about how to handle these frame buffer transitions efficiently. To efficiently use GMEM, proper subpass use is crucial in tile-rendering architectures such as the Adreno GPU.
+
+A properly structured renderpass allows Vulkan to instruct the GPU to execute all subpasses on a per-tile basis. That is, the full subpass chain can be executed for each tile, thus avoiding the need to resolve subpasses to system memory after each pass. Proper setup of these subpasses is required for the Vulkan driver to “merge” the subpasses into one. This can result in gains of over 10% frametime depending on subpass chain complexity and configuration.
+
+Generally, a good Vulkan renderpass involves the following:
+
+Subpass count > 1
+
+Renderpass has input targets
+
+Each resolve attachment is used in an exactly one subpass
+
+srcAccessMask is not VK_ACCESS_SHADER_WRITE_BIT, and dstAccessMask is not VK_ACCESS_SHADER_READ_BIT
+
+Starting from the second subpass where the input_attachments field is used, the dstAccessMask must be set to VK_ACCESS_INPUT_ATTACHMENT_READ_BIT
+
+Note
+
+Subpass merging only applies when the given surface is being rendered in binning mode. Snapdragon Profiler ‘Rendering Stages’ metric in Trace capture identifies the mode these surfaces are being rendered with, and if proper merging has been done. Additionally, using the Vulkan Adreno Layer can also help identify if subpasses were not be merged properly by logging the VKDBGUTILWARN003 flag.
+
+Sample Code:
+
+SubPass
+
+Tonemapping Efficiently
+
+VulkanOpenGL ES
+
+Pass VK_PIPELINE_CREATE_LINK_TIME_OPTIMIZATION_BIT_EXT in shipping builds to maximize performance.
+
+Prefer uniform buffers instead of push constants for performance.
+
+Shader mode switching
+
+Minimize pipeline and compute kernel switching to avoid unnecessary internal synchronization – and particularly minimize alternating between graphics submits and compute dispatches.
+
+In other words, separate graphics submits and compute dispatches as much as possible – ideally issue a series of only graphics submits followed by a series of only compute dispatches.
+
+And even within the phase (or, possibly less optimally, phases) of the frame where graphics submits take place, minimize interleaving pipelines – for example, prefer (SubmitGraphicsPipelineA 2 times, SubmitGraphicsPipelineB) to (SubmitGraphicsPipelineA, SubmitGraphicsPipelineB, SubmitGraphicsPipelineA). The same rationale applies to dispatching compute kernels.
+
+Images
+
+Vulkan image layout datastructures should be as specific as possible. This is significantly more important for performance on Adreno hardware than on many other GPU’s.
+
+VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT should be avoided as much as possible on all devices prior to Adreno750.
+
+Buffer Best Practices
+
+Flag all buffers read-only as much as possible.
+
+Prefer Vertex Buffer Objects (VBOs) when possible.
+
+Otherwise prefer uniform buffers (UBOs) provided the sum of their sizes for a given shader remain under 90% of 8K – 0.9*8192 = 7372 bytes. Note that the maximum size reported by graphics APIs (in Vulkan, vkPhysicalDeviceLimits::maxUniformBufferRange) is only a correctness limit – not a performance limit. Note that the sum of all uniform buffers used by a shader – not just each uniform buffer individually – must stay under this limit to avoid this possible performance reduction.
+
+For larger data sizes prefer textures over Shader Storage Buffer Objects (SSBOs).
+
+If a UBO exceeds its optimal size, the compiler will attempt to determine which portion of the UBO may be accessed by the shader, and map only those portions of the UBO to constant RAM. Dynamic or indirect indexing might prevent this optimization, so if your UBO might exceed its optimal size (and you choose not to use textures or SSBOs), prefer static indexing.
+
+Vulkan: use VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT for buffers that are not read from outside of the renderpass (especially MSAA attachments, which are larger than non-MSAA attachments). For example, a Z-buffer that exists only to be cleared and used for typical z-buffering within a single renderpass should use this flag.
+
+Vulkan
+
+Avoid less performant features of the API
+
+If you encounter VK_DEVICE_LOST, calling VK_EXT_device_fault is your only option – calling any other part of the API is undefined.
+
+Vulkan image layout datastructures should be as specific as possible.
+
+Swapchain
+
+Use VK_PRESENT_MODE_FIFO_KHR and minImageCount=3 to most efficiently utilize the GPU (VK_PRESENT_MODE_MAILBOX_KHR can sometimes help with frame pacing/latency, but often can cost significant battery and generate significant heat for no benefit, as it may renders frames that are not presented to the player)
+
+Vulkan: use prerotation
+
+Triangle Screen Size
+
+Ideally every triangle rasterized shades at least 4 pixels; tune level-of-detail (LOD) systems and content accordingly.
+
+If a triangle spans multiple tiles in binning mode, the full triangle will be rasterized per tile – there are no added vertices at tile boundaries. Therefore, many triangles much larger than the bin size in screenspace can be inefficient.
+
+Features to avoid for performance reasons
+Vulkan:
+
+VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT: since the driver doesn’t know which view formats will be paired with the image, this often reduces performance. Additionally this flag usually degrades or disables UBWC
+
+VK_EXT_conditional_rendering is unlikely to improve performance unless it’s skipping a large amount work, as its overhead is substantial
+
+VK_EXT_vertex_input_dynamic_state should be used minimally – static pipelines are strictly more performant
+
+Avoid VkPipelineInputAssemblyStateCreateInfo::primitiveRestartEnable – simply performing multiple draws will almost always outperform this approach
+
+Tessellation hardware stages (hull shader, tessellator, domain shader)
+
+Client-side vertex arrays
+
+User clip planes
+
+Tile-based Rendering
+Bin Minimization
+
+Some performance bottlenecks for a render target can be alleviated by reducing the number of bins the driver generates (which, in turn, often increases the number of pixels each bin contains). The developer has several options:
+
+reduce frame buffer resolution
+
+use Variable Rate Shading (including foveated rendering) to render fewer fragments
+
+use fewer MSAA samples. In particular, MSAAx2 is likely to be practically free (while this can generate more bins, and lots of small draws in the extra bins may incur more binning overhead, this and the additional resolve time are usually small enough to be hidden by other bottlenecks)
+
+render to fewer render targets at once
+
+FlexRender™ technology (Hybrid Deferred and Direct Rendering mode)
+
+The driver heuristics that determine when to run binned or direct mode are not exposed to the developer, but generally these scenarios trigger direct mode:
+
+High ratio of texture samples in vertex shaders to vertices
+
+Small number of vertices and/or draws
+
+Use of tessellation or geometry shaders
+
+Concurrent Binning
+
+No additional steps are required to activate concurrent binning – but care should be taken to maximize its benefits.
+
+Sequential render passes with dependencies might require synchronous binning – concurrent binning is only possible when there are “bubbles” in the render graph. Consider the renderpass chain:
+
+Pass C uses binning but – unfortunately – its binning process depends on Pass B, which depends on Pass A.
+
+If we remove the binning dependencies from Pass B – so Pass C’s vertex shader doesn’t require any inputs from Pass B (perhaps by revisiting renderpass setup and barriers) – the driver might asynchronously perform binning during PassB and/or PassC on the concurrent binning pipe:
+
+Another way concurrent binning can be prevented is reusing the same Z-buffer attachment with clears within a frame (you might issue these clears if, for example, the Z-buffer is being used for multiple purposes within a frame). These clears define dependencies, and thus prevent concurrent binning for every render pass or compute operation that uses this Z-buffer attachment.
+
+Try to use the same Z-buffer – without clears or invalidations – over multiple render passes to allow concurrent binning. (If this is not possible, giving each renderpass its own Z-buffer also allows concurrent binning, though this risks using more memory bandwidth and costs memory)
+
+Another common case that fails to leverage concurrent binning is when the application is VSYNC limited, and the first surface processes all the geometry. In such a scenario, try to schedule some independent work before submitting that geometry-heavy render pass so both the independent work and the first surface’s geometry binning can happen in parallel.
+
+If your app is CPU-bound and you’re willing to accept up to one extra frame of latency, another approach is to continue issuing rendering work until your synchronization primitives indicate that the CPU is ready to submit work from frame N+2 but the GPU has not yet completed frame N. In this way, the driver is encouraged to perform frame N+1’s binning work concurrently with frame N’s non-binning work – particularly if most of the binning work occurs early in the frame.
+
+Tile Shading Vulkan Extensions
+
+Minimizing renderpasses is often critical to maximizing the benefits of using the tile shading Vulkan extensions, since this enables the developer to minimize synchronization and system memory usage in favor of GMEM.
+
+VK_QCOM_tile_memory_heap
+
+When your images and/or buffers fit the device’s tile memory constraints and are used over several render passes (as in deferred rendering), consider using VK_QCOM_tile_memory_heap to allocate images and/or buffers on GMEM and have them stay resident as long as possible.
+
+Use VkTileMemorySizeInfoQCOM to specify the amount of tile memory in use during the relevant render passes.
+
+If an image/buffer is used only to hold intermediate results, allocate them in GMEM for as long as they are needed. This saves bandwidth, which can translate into battery and/or performance savings.
+
+If a render pass is to use one resource in tiled memory – and then stop using that resource and start using another resource – consider using VkTileMemorySizeInfoQCOM to allocate just enough memory to accommodate the largest of the resources and then alias each resource, reading and storing as needed.
+
+VK_QCOM_tile_shading
+
+Always enable VK_QCOM_tile_memory_heap as well as VK_QCOM_tile_shading so the driver efficiently uses whatever GMEM you leave unallocated. Using just VK_QCOM_tile_shading alone is never recommended, because then the driver tends to use far less GMEM than it otherwise could.
+
+Always use VK_DEPENDENCY_BY_REGION_BIT for subpass dependencies and pipeline barriers that might execute during per-tile blocks – omitting VK_DEPENDENCY_BY_REGION_BIT will probably deactivate VK_QCOM_tile_shading and remove all associated benefits.
+
+In the unlikely event that you find the driver employing “Direct” Render Mode on a surface that uses a per-tile block, performance on the per-tile block commands is likely very poor. Every effort should be made to discourage the driver from using “Direct” Render Mode during per-tile blocks.
+
+Attachment Limitations
+
+A developer might reasonably think to use VK_QCOM_tile_shading to perform stores on a color attachment from a fragment shader to ensure that GMEM is used instead of system memory. However, the typical fragment shading pattern is practically guaranteed to be as – and typically much more – performant than this approach, so using VK_QCOM_tile_shading to bind a color attachment as a storage image and access it through image load/store ops is not supported via fragment shader.
+
+Similarly, neither compute nor fragment shaders may store to depth/stencil attachments, resolve attachments or input attachments – for such operations, the typical fragment shading pattern should be used.
+
+On the other hand, storing to a color attachment from a compute shader is supported, and may perform acceptably.
+
+Optimizing Per-Tile Draws
+
+Draws executed within a per-tile block (per-tile draws) are optimized for GPU-driven rendering – specifically the case where a per-tile dispatch invokes a per-tile compute shader that writes data to an indirect buffer, followed by a per-tile vkCmdDrawIndirect* that consumes that same buffer.
+
+Other than such GPU-driven rendering, per-tile draws may not perform well – for CPU-driven rendering, we recommend standard execution (where, in a single draw call, the render pass or dynamic rendering scope’s entire render area is accessible and is optionally stored in GMEM by the VK_QCOM_tile_memory_heap extension).
+
+Given this, hopefully it’s clear how per-tile draws are specifically for GPU-driven draws with tile-dependent draw data – regular draws will likely see a performance loss if executed within per-tile blocks.
+
+Finally, you should ensure that each per-tile draw contains only primitives that cover the current tile, since per-tile draw are not affected by the visibility pass – instead they are executed no matter how the draw rasterizes within the tile (even if the tile’s pixels will not be written to!)
+
+Some empirical results of using the extension are collected here.
+
+Render Surfaces
+sRGB textures and render targets
+
+Use SRGB textures:
+
+VulkanOpenGL ES
+
+Vulkan fully handles sRGB in both textures and swapchain presentable images.
+
+The best-performing color format is:
+
+R10G10B10A2, as the hardware is optimized for this format
+
+R11G11B10A0 if even greater color depth is required, and alpha transparency is not
+
+RGBA16 if graduated transparency is required, or the (considerable) color depth of the above formats is insufficient
+
+Vulkan Sample: Qualcomm TrueHDR
+
+Upscaling
+
+To reduce the load on the rendering hardware, an application can reduce the size of the render target used, e.g., if the native screen resolution is 1080p (1920x1080), it could be rendered to a 720p (1280x720) render target instead. Since the aspect ratio of the two resolutions is identical, the proportions of the image will not be affected.
+
+The reduced-size render target will not completely fill the screen, but there are numerous ways of upscaling the reduced-size render target to match the full native display size.
+
+This technique has been used successfully in console games, many of which make heavy demands on the GPU and, if rendering were done at full HD resolution, could miss framerate targets due to too much time spent during fragment shading.
+
+Upscale to improve fragment-bound frames with:
+
+Snapdragon Game Super ResolutionAndroid
+
+Snapdragon GSR is a single pass spatially-aware super resolution technique developed by Qualcomm Snapdragon Studios to achieve optimal super scaling quality at the best performance and power savings – it uses optimized image processing to, for most content, achieve a sharper, higher-quality image than the typical bilinear filtering approaches.
+
+You can also do this yourself with your preferred graphics API. The upscaling can be done either at the end of the rendering process or at some point in the rendering pipeline – for example, one approach is to render the geometry at 1:1 resolution, but apply postprocessing effects using render targets of a lower resolution.
+
+VulkanOpenGL ES
+
+vkCmdBlitImage() provides a hardware-accelerated path to upscaling an image prior to display.
+
+On Android, at the end of the frame, if the final render target is a different resolution than the device’s native resolution then SurfaceFlinger will bilinearly rescale the final image to native resolution with efficiency.
+
+Bandwidth Optimization
+
+Applications becoming memory-bandwidth limited can be a bottleneck due to the physical limitation of the GPU’s data access rate. The rate is not constant and varies according to many factors, including but not limited to:
+
+Location of the data: is it stored in RAM, VRAM, or one of the GPU caches?
+
+Type of access: is it a read or a write operation? Is it atomic? Does it have to be coherent?
+
+Viability of caching the data: can the hardware cache the data for subsequent operations that the GPU will be carrying out, and would it make sense to do this?
+
+Cache misses can cause applications to become bandwidth-limited, which significantly reduces performance. These cache misses are often caused when applications draw or generate many primitives, or when shaders need to access many locations within textures.
+
+Here are ways to minimize cache misses:
+
+Reduce the amount of data the GPU needs to access to perform the dispatch or draw call that is hitting this constraint
+
+In OpenGL, ensure that client-side vertex data buffers are used for as few draw calls as possible – ideally, an application should never use them
+
+Graphics APIs provide several methods that developers can use to reduce the bandwidth needed to transfer specific types of data.
+
+The first method is compressed texture internal formats, which sacrifice texture quality for the benefit of reduced size. Many of the compressed texture formats supported divide the input image into 4x4 blocks and perform the compression process separately for each block, rather than operating on the image as a whole. While this seems inefficient from the point of view of data compression theory, doing so has the advantage of each block being aligned on a 4-pixel boundary. This allows the GPU to retrieve more data with a single fetch instruction, because each compressed texture block holds 16 pixels instead of a single pixel, as in the case of an uncompressed texture. Also, the number of texture fetches can be reduced, provided that the shader does not need to sample texels that are too far apart.
+
+The second method is to always use packed vertex data formats, unless the vertex data sets would suffer greatly from a reduction in the precision of their components.
+
+The third method is to always use indexed draw calls, and always use an index type that is as small as possible while still being able to address all the vertices for the mesh being drawn. This reduces the amount of index data that the GPU needs to access for each draw call, at the expense of slightly more complicated application logic.
+
+Universal BandWidth Compression (UBWC)
+
+Graphics APIs must be used correctly to maximize the use of UBWC. For example, VK_IMAGE_TILING_OPTIMAL generally uses UBWC as expected, but these Vulkan features almost certainly disable UBWC:
+
+Compute Shaders
+
+Non-optimal tiling: VK_IMAGE_TILING_LINEAR
+
+Any kind of Cpu readback from the Gpu, including VK_EXT_host_image_copy/VK_IMAGE_USAGE_HOST_TRANSFER_BIT
+
+VK_KHR_fragment_shading_rate
+
+VK_EXT_fragment_density_map
+
+Aliased images: VK_IMAGE_CREATE_ALIAS_BIT
+
+Mutable images: VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT
+
+Sparse residency of any kind: VK_IMAGE_CREATE_SPARSE_RESIDENCY_BIT, VK_IMAGE_CREATE_SPARSE_BINDING_BIT, VK_IMAGE_CREATE_SPARSE_ALIASED_BIT
+
+Z-Buffer
+
+The best-performing depth format is:
+
+D16, if stencil is unnecessary and this provides sufficient precision – which, in many cases where the developer is tuning a z-reverse implementation appropriately to content, it will
+
+D24_S8, if stencil is required
+
+D32, if stencil is not required and D16 does not provide sufficient precision
+
+UBWC supports all these formats.
+
+LRZ, Early-Z and Fast-Z
+Low Resolution Z pass
+
+The ways in which LRZ (Low Resolution Z-Buffer) and Early Z Rejection optimizations can be disabled are complex.
+
+Broadly speaking: blending, stencil use, manually writing to the depth buffer or UAVs, alpha-to-coverage use, the “discard” shader keyword, changing the depth comparison operator, reading from the framebuffer, or masked writes (whether to color channels or a subset of multiple render targets) all might disable LRZ (Low Resolution Z-Buffer), Early Z Rejection or both – so if any of these operations must be done, perform them as near the end of the frame as possible (or see if the details below allow any such operations for your specific case).
+
+Warning
+
+Several conditions cause the driver to disable LRZ for a period of time between two operations.
+
+LRZ (test and write operations) will be disabled until the next API-surface-clear by performing any of the below, and then executing a depth-write:
+
+changing the depth direction (eg the sign of the forward axis)
+
+setting the depth function to ALWAYS or NOT_EQUAL
+
+LRZ write operations will be disabled until next API-surface-clear (note that test operations on the existing LRZ buffer will still be enabled) by performing:
+
+any of the below, and then later performing a depth-write in the same draw:
+
+blending implemented with:
+
+the fixed-function pipeline
+
+logical operations that read from the framebuffer
+
+a color-masked write (eg writing to a subset of a buffer’s color channels using graphics API calls rather than shader code)
+
+a partial Multiple Render Target (MRT) write (eg writing to a subset of all specified render targets)
+
+in any subpass, a depth-write and reading from any attachment modified in any prior subpass of this renderpass (the order of operations is irrelevant – it doesn’t matter if the depth-write happens before or after the read from the previously-modified-attachment)
+
+any stencil operation (reads or writes) in almost any situation
+
+a framebuffer fetch
+
+“advanced” blending with extensions
+
+LRZ (test and write operations) will be disabled for the current draw (note that by default the next draw will fully re-enable LRZ) if the fragment shader writes to:
+
+a UAV (any kind of buffer)
+
+depth or stencil
+
+LRZ write operations will be disabled for the current draw (note that test operations on the existing LRZ buffer will still be enabled, and that by default the next draw will fully re-enable LRZ) if:
+
+the draw’s active pipeline has alpha-to-coverage enabled
+
+a fragment-shader:
+
+uses discard
+
+outputs sample coverage
+
+Vulkan: LRZ (test and write operations) will be disabled if secondary command buffers are used (this limitation applies only for devices prior to Adreno650)
+
+LRZ is fully active during direct rendering (presuming it isn’t disabled for some other reason), but typically produces much less performance benefit than with binned rendering
+
+Early Z rejection
+
+Warning
+
+Early Z-rejection is disabled if:
+
+Z-Buffer is written to from a fragment shader
+
+“Discard” shader instruction is used
+
+A fragment shader writes depth or stencil values – if these writes are necessary, perform them as late in the frame as possible
+
+Alpha-to-Coverage is enabled (minimize the use of this feature)
+
+Adreno GPUs can reject occluded pixels at up to 4x the drawn pixel fill rate.
+
+Fast-Z
+
+Hint the driver to engage Fast-Z by using an empty fragment shader and disabling frame buffer write masks for renderpasses that modify Z values only.
+
+If fast-Z doesn’t activate by default for indirect draws, it can be switched on with glsl.
+
+Vertex and Index Buffers
+Vertex buffer layout
+
+Pass a single vertex buffer to the vertex shader.
+
+The vertex buffer should begin with an interleaved array of all attributes that are used by the vertex shader to calculate final vertex positions – often this is nothing more than vertex positions arranged like: (xyz|xyz) – followed by one interleaved array of all other attributes.
+
+Compress all attributes as much as possible.
+
+For any asset with a coordinate range known in advance, try to map the data onto one of the supported, packed vertex data formats. Taking normal data as an example, it is possible to map XYZ components onto the GL_UNSIGNED_INT_2_10_10_10_REV (OpenGL ES) format by normalizing the 10-bit unsigned integer data range of <0, 1024> onto the floating-point range <-1, 1>.
+
+VulkanOpenGL ES
+
+Vulkan does not yet support half-precision in vertex shaders.
+
+The compiler will usually optimize the binning vertex shader to use only the vertex attributes the vertex shader – called a position-only vertex shader – that needs to compute final vertex positions – any attributes that are simply forwarded to the fragment shader (by Vulkan’s “layout”/”out” or OpenGL’s “varying/flat”) will be “refactored” into code that runs immediately before the fragment shader, resulting in better performance.
+
+In addition to the above, vertex information can be laid out in a cache-friendly way over a range of devices, such that triangles sharing the same vertex are more often clustered together – doing so can reduce vertex cache misses and increase performance.
+
+Batching vertex buffer object updates
+
+If you must modify Vertex Buffer Object contents on-the-fly when rendering a frame, batch as many of the VBO updates as possible before issuing any draw calls that use the modified VBO region. If using multiple VBOs, batch the updates for all the VBOs first, and then issue all the draw calls.
+
+Not doing so might cause the driver to maintain multiple copies of an entire VBO, which reduces performance.
+
+Index types
+
+A geometry mesh can be represented by two separate arrays. One array holds the vertices, and the other holds sets of three indices into that array. Together, they define a set of triangles.
+
+Adreno GPUs natively support 8-bit, 16-bit, and 32-bit index types.
+
+Prefer 8-bit indices when possible, 16-bit indices when necessary, and try to avoid 32-bit indices.
+
+Texture Features
+Sampling in Vulkan
+
+Use VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER to access the GPU’s more performant Bindless mode. We’ve seen separate samplers exhibit 2-5% less fill rate compared to combined samplers.
+
+Multiple textures
+
+Multiple texturing or multitexturing is the use of more than one texture at a time on a polygon.
+
+Effective use of multiple textures significantly reduces overdraw, saves ALU cost for fragment shaders, and avoids unnecessary vertex transforms.
+
+Texture compression
+
+See Texture Compression Examples.
+
+Floating point textures
+
+Adreno GPUs support floating point texturing features including the following:
+
+Texturing and linear filtering of FP16 textures via the GL_OES_texture_half_float and GL_OES_texture_half_float_linear extension
+
+Texturing from FP32 textures via GL_OES_texture_float
+
+For a complete listing of supported texture and surface formats, refer to the Texture formats Feature Table.
+
+Video textures
+
+Video textures are a standard API feature in Android (Honeycomb or later versions). Refer to Android documentation for additional details on surface textures at http://developer.android.com/reference/android/graphics/SurfaceTexture.html.
+
+Apart from using the standard Android API as suggested, the standard OpenGL ES extension can also be used, e.g., if an application requires video textures. For more information, refer to http://www.khronos.org/registry/gles/ extensions/OES/OES_EGL_image.txt.
+
+Shaders
+Half-Precision
+
+Adreno’s scalar architecture can be twice as power-efficient and deliver twice the performance while processing a fragment shader – if that fragment shader uses medium-precision 16-bit floating point (mediump) processing instead of high-precision 32-bit (highp) floating point.
+
+Use strict half-precision types as much as possible. When necessary, relaxed-precision will often produce 16-bit floating point code.
+
+Instruction count
+
+A shader’s instruction count fitting the instruction cache is usually critical for avoiding shader stalls and thus achieving optimal performance.
+
+If a shader must exceed a target device’s instruction limit (particularly if that shader rarely stalls on texture fetches and other slow operations that might allow the driver to swap in a different shader), consider splitting the shader into multiple parts.
+
+Compute shaders that run on LPAC have a slightly higher instruction limit than other shaders. Compute shaders than run on the Graphics Pipeline have the typical (slightly lower) limit.
+
+A low % Wave Context Occupancy can indicate long shaders thrashing the instruction cache.
+
+GPR minimization
+
+Keeping every shader’s register usage (called GPRs or General Purpose Registers) under the device limits will ensure that the maximum number of simultaneous waves execute, maximizing performance.
+
+Modifying GLSL to save even a single instruction can save a GPR. Not unrolling loops can also save GPRs, but that is up to the shader compiler. Always profile shaders to make sure the final solution chosen is the most efficient one for the target platform. Unrolled loops tend to put texture fetches toward the shader top, resulting in a need for more GPRs to hold the multiple texture coordinates and fetched results simultaneously.
+
+For example, if unrolling the loop presented below:
+
+for (i = 0; i < 4; ++i) {
+    diffuse += ComputeDiffuseContribution(normal, light[i]);
+}
+
+The code snippet would be replaced with:
+
+diffuse += ComputeDiffuseContribution(normal, light[0]);
+diffuse += ComputeDiffuseContribution(normal, light[1]);
+diffuse += ComputeDiffuseContribution(normal, light[2]);
+diffuse += ComputeDiffuseContribution(normal, light[3]);
+
+Use Vulkan specialization constants to implement “uber-shaders” (shaders that combine multiple shaders into a single shader that use static branching) or avoid the “uber-shader” design altogether. Using “uber-shaders” (without Vulkan specialization constants) can sometimes reduce state changes and batch draw calls – but this often increases GPR count, which can reduce performance overall.
+
+If GPR usage is too high, consider splitting the shader into multiple parts.
+
+A low % Wave Context Occupancy can indicate thrashing GPRs with too much register usage.
+
+Split up draw calls
+
+If a shader has too many instructions to fit the Instruction Cache, or uses too many GPRs, splitting it into multiple shaders may improve performance.
+
+Vulkan’s subpasses, correctly authored, keep intermediate results in GMEM, and is often the fastest approach. Vulkan tile shading extensions are another way to keep intermediate results in GMEM.
+
+Alternatively, values generated by ShaderA can be written to a texture or SSBO and later retrieved via by ShaderB – or the results of ShaderA can be alpha-blended into the results of ShaderB. Be aware that this approach risks a memory bandwidth bottleneck, so make sure there is plausible headroom in % Texture Pipes Busy before attempting this optimization, and profile before and after making the change.
+
+Minimize ALU Cost
+
+Even when a shader fits within the instruction cache, instruction choices involving type-casting (including converting floating point values from 32-bit to 16-bit precision), control flow (branches and loops), built-in shader instructions and more all impact ALU efficiency.
+
+Minimize type casting
+
+Minimize the number of type cast operations performed.
+
+For example, assigning a float to a vec4 data type could prevent the compiler from performing optimizations.
+
+For another example, the following code might be suboptimal:
+
+uniform sampler2D ColorTexture;
+in vec2 TexC;
+vec3 light(in vec3 amb, in vec3 diff)
+{
+    vec3 Color = texture(ColorTexture, TexC);
+    Color *= diff + amb;
+    return Color;
+}
+
+Here, the call to the texture function returns a vec4. There is an implicit type cast to vec3, which requires an additional instruction. Changing the code as follows might not require the additional instruction:
+
+uniform sampler2D ColorTexture;
+in vec2 TexC;
+vec4 light(in vec4 amb, in vec4 diff)
+{
+    vec4 Color = texture(ColorTexture, TexC);
+    Color *= diff + amb;
+    return Color;
+}
+
+For another example, the following code should take a single instruction:
+
+int4 ResultOfA(int4 a) {
+    return a + 1;
+}
+
+Now suppose a slight error is introduced into the code. For the example, the floating-point constant value 1.0 is used, which is not the appropriate data type:
+
+int4 ResultOfA(int4 a) {
+    return a + 1.0;
+}
+
+The code could now require eight instructions: the variable a is converted to vec4, then, the addition is done in floating point. Finally, the result is converted back to the return type int4.
+
+This discussion generally applies to converting floating point values from 32-bit to 16-bit precision as well.
+
+Control Flow
+
+Minimizing non-uniform looping and branching often helps reduce GPR and ALU usage.
+
+Every time the branch encounters divergence, or where some elements of the thread branch one way and some elements branch in another, both branches will be taken and the results of the irrelevant branch ignored.
+
+Here are several types of branches, listed from best to worst performance:
+
+Branching on a Vulkan specialization constant (no performance hit – the driver is guaranteed to strip any unused branches at shader-compile-time)
+
+Branching on a constant, known at compile time (possibly no performance hit – the driver might strip any unused branches at shader-compile-time)
+
+Branching on a uniform variable (some performance hit from loading and testing the uniform variable per-wave – and both branches may be executed)
+
+Branching on a variable modified inside the shader (maximum likelihood of a performance hit – the driver will probably execute both branches)
+
+Pack shader interpolators
+
+Shader-interpolated values (GLES varyings or Vulkan out variables) require a GPR (general purpose register) to hold data being fed into a fragment shader. Therefore, minimize their use.
+
+Use constants where a value is uniform. Pack values together as all shader interpolated values have four components, whether they are used or not. Putting two vec2 texture coordinates into a single vec4 value is a common practice, but other strategies employ more creative packing and on-the-fly data compression.
+
+Note
+
+OpenGL ES 3.0 and ES 3.1 introduce various intrinsic functions to carry out packing operations.
+
+Pack scalar constants
+
+Packing scalar constants into 4-vectors – or, failing that, 2-vectors – substantially improves hardware fetch effectiveness.
+
+Consider the following code:
+
+float scale, bias;
+vec4 a = Pos * scale + bias;
+
+By changing the code as follows, fewer total instructions may be generated, because the compiler might replace several instructions with the more efficient “mad” instruction:
+
+vec2 scaleNbias;
+vec4 a = Pos * scaleNbias.x + scaleNbias.y;
+
+In this case, while the compiler might infer that the scale and bias variables should be stored in a single GPR to enable the “mad” instruction, it’s much more likely to store scaleNbias in a single GPR, which in turn increases the likelihood of optimal instruction generation.
+
+Note
+
+OpenGL ES 3.0 and ES 3.1 introduce various intrinsic functions to carry out packing operations.
+
+Use built-in shader instructions
+
+Built-in functions are an important part of the glsl specification and should always be preferred to writing custom implementation. These functions are often optimized for specific shader profiles and for the capabilities of the hardware for which the shader was compiled.
+
+Note
+
+gl_VertexID and gl_InstanceID are removed as per the GL_KHR_vulkan_glsl extension, but gl_InstanceIndex is available.
+
+Note
+
+gl_Position, gl_PointSize, gl_ClipDistance, gl_CullDistance are available in non-fragment stages
+
+Refer to the GL_KHR_vulkan_glsl extension for details on changes to GLSL built-ins in Vulkan.
+
+Avoid discarding pixels in the fragment shader
+
+Some developers believe that manually discarding (also known as killing) pixels in the fragment shader boosts performance. However:
+
+If some pixels in a thread are killed and others are not, the shader still executes
+
+It’s hard to predict how the shader compiler will generate microcode involving discard, so even in the unlikely case where performance is increased on one device or driver, this gain may be reversed on another device or driver
+
+In theory, if all pixels in a thread are killed, the GPU will stop processing that thread as soon as possible. In practice, “as soon as possible” isn’t soon enough to help performance, and discard operations – like modifying depth in fragment shaders often disable hardware optimizations.
+
+If a shader cannot avoid discard operations, the cost can be mitigated by executing the shader after (ideally all) opaque draw calls – generally, the later in the frame a discard operation takes place, the better.
+
+Avoid modifying depth in fragment shaders
+
+Similar to discarding fragments, modifying depth in the fragment shader can disable hardware optimizations.
+
+Stay under performance-optimal resource limits
+
+Stay under target device performance limits with respect to the number of unique resources referenced by a shader:
+
+vertex buffers
+
+uniform buffers
+
+samplers
+
+textures and SSBOs (textures and SSBOs share hardware resources)
+
+Minimize texture fetches in vertex shaders
+
+Adreno is based on a unified shader architecture, which means vertex processing performance is similar to fragment processing performance.
+
+However, for optimal performance it is best to minimize texture sampling in vertex shaders – and when this cannot be avoided, it is important to ensure that texture fetches in vertex shaders are localized (eg cache coherent) and always operate on compressed texture data.
+
+One reason for this is that any such texture fetches will generally run twice – once in the position-only shader, and then again in the vertex shader – so you pay that cost twice.
+
+The position-only shader is designed to be very fast – but if it stalls on memory accesses, that often significantly slows the binning phase. If a vertex shader performs too many texture fetches in a vertex shader, the driver will switch to Direct Mode, which is often less performant than Binning Mode.
+
+Latency Hiding, and Load Balancing the Texture Pipe and Shader Pipe
+
+To hide latency, and thus avoid shader stalls and increase performance, the Snapdragon™ Adreno™ GPU shader compiler converts some memory access requests into texture fetches.
+
+To allow this, the data buffer must be read-only and a storage type – in Vulkan, this means a SSBO or Shader Storage Buffer Object (VK_DESCRIPTOR_TYPE_STORAGE_BUFFER) – as the texture pipe is capable only of reading. (The shader pipe can read and write).
+
+Even with a read-only storage buffer, the Adreno driver will sometimes choose a global memory access over a texture fetch if it decides that the texture pipe is a bottleneck.
+
+Snapdragon Profiler can be used to monitor the effects of your changes on the texture pipe and shader pipe.
+
+Texture Fetch Bottleneck Optimization
+
+If texture fetches are a performance bottleneck, here are some optimization strategies:
+
+When possible, use vertex buffer objects instead of storage buffers. Note that most GPU-driven rendering architectures are more likely to bottleneck the texture pipe, since they typically use storage buffers instead of vertex buffers
+
+Use uniform buffers objects instead of textures or storage buffers if the data fits in the optimal uniform buffer size.
+
+Minimize texture fetches
+
+Minimize texture cache misses by rewriting shaders to access one cluster of data before moving to the next – texture cache misses significantly contribute to any texture pipe bottleneck. Hardware operates on blocks of 2x2 fragments, so shaders are more efficient if they access neighboring texels within a single block
+
+Avoid 3D textures, since fetching data from volume textures is expensive due to the complex filtering that needs to be performed to compute the result value
+
+Don’t exceed the performance limit the number of samplers, as well as the sum of textures and SSBOs referenced by the shader (textures and SSBOs share hardware resources)
+
+Compress all textures to reduce memory usage and texture stalls
+
+Use mipmaps to better coalesce texture fetches and thus improve performance – at the cost of increased memory usage
+
+Texture filtering can influence the speed of texture sampling. Filter performance is architecture/chip dependent, and you might see a benefit by using bilinear or nearest filtering over trilinear or anisotropic. Mipmap clamping may reduce the cost of using trilinear filtering, so the average cost might be lower in real-world cases. Nonetheless, adding anisotropic filtering multiplies with the degree of anisotropy – in other words, a 16x anisotropic lookup can be 16 times slower than a regular isotropic lookup. However, because anisotropic filtering is adaptive, this hit is taken only on fragments that require anisotropic filtering, which could be only a few fragments altogether. A rule of thumb for real world cases is that anisotropic filtering is, on average, less than double the cost of isotropic.
+
+Shader-specific gradients, based on the dFdx and dFdy functions, cost more than a regular texture sample. These shader-specific gradients cannot be stored across lookups, so if a texture lookup is done again with the same gradients in the same sampler, it will incur the cost again.
+
+In summary: usage of trilinear, anisotropic filtering, wide texture formats, 3D textures, texture lookup with gradients of different Lod, or gradients across a pixel quad may increase texture sampling time. The driver can be encouraged to load-balance the texture pipe with the shader pipe. Snapdragon Profiler can be used to monitor the effects of your changes on the texture pipe and shader pipe.
+
+DXC and Glslang and the Texture Pipe
+
+Many games and engines generate their shaders in one language and use conversion tools to translate these shaders into other languages – for example, HLSL can be converted to SPIRV using DXC or glslang.
+
+These conversion tools might convert HLSL buffer types to GLSL storage buffers and vice versa – and, since storage buffers utilize the texture pipe, this can result in unexpected increases in texture usage.
+
+The DXC documentation details what to expect when converting from HLSL to SPIRV: https://github.com/Microsoft/DirectXShaderCompiler/blob/main/docs/SPIR-V.rst#constanttexturestructuredbyte-buffers
+
+DXC’s texture format conversion is specifically documented as well: https://github.com/microsoft/DirectXShaderCompiler/blob/main/docs/SPIR-V.rst#textures.
+
+Aside from texture and buffer conversions, while most code generated from these tools works well on our hardware (and whenever possible we engage the creators of these tools to maintain and improve such code generation), sometimes these tools use instructions and idioms that perform well on PC and console, but have suboptimal performance on mobile GPUs.
+
+Compiling and linking during initialization
+
+The compilation and linking of shaders is a time-consuming process that can produce framerate hitches if performed naively at runtime. It is recommended that shaders are loaded and compiled during initialization.
+
+VulkanOpenGL ES
+
+Performing all calls to vkCreateGraphicsPipelines() and vkCreateComputePipelines() during initialization should eliminate any framerate hitches due to shader compilation.
+
+Compute Shaders
+
+Prefer fragment shaders to compute shaders when possible, since compute shaders require kernel output to be written to memory before the next kernel can begin execute. By comparison fragment shaders use Adreno’s concurrent resolve hardware, which can write the results of a fragment program while allowing another fragment program to begin executing simultaneously.
+
+Keep instruction counts below device limits like any other shader (although issuing shaders to LPAC has a slightly higher instruction limit).
+
+Tune workgroup number (depending on whether shaders read each other’s memory) and workgroup sizes (depending on whether or not the shader significantly stalls in ways that cannot be optimized away) to avoid potential performance bottlenecks. Note the driver may not be able to execute the requested workgroup number or size optimally if the shader’s GPR usage or instruction count is too large to accommodate the simultaneous execution of the requested number of workgroups.
+
+Warning
+
+OpenGL ES: When calling glDispatchIndirect() with any workgroup size smaller than 64 – for example (32, 1, 1) = 32x1x1 = 32 – the Cpu may wait on the Gpu as a result of the driver mapping the indirect buffer to a larger workgroup size, since doing so involves a command buffer flush. To avoid this, use a workgroup size that is at least 64 – for example (64, 1, 1) = 64x1x1 = 64.
+
+layout(local_size_x = 32, local_size_y = 1, local_size_z = 1) in; //workgroup size = local_size_x*local_size_y*local_size_z = 32x1x1 = 32 -- make sure this equation produces at least 64 to avoid a Cpu-wait-on-Gpu
+
+Avoid synchronizing compute threads if possible – if synchronization is required, prefer atomic operations between local groups to shader barriers.
+
+Separate graphics submits and compute dispatches as much as possible.
+
+GPU-Driven Rendering
+Geometry instancing
+
+Geometry instancing calls include:
+
+VulkanOpenGL ES
+
+vkCmdDraw, vkCmdDrawIndexed, vkDrawIndirectCommand, and vkDrawIndexedIndirectCommand support instanced rendering.
+
+Indirect draw calls
+
+For example, if the renderer uses a scene graph, it is possible to cache the draw call arguments necessary to render a mesh’s nodes in a buffer object created at loading time. The buffer can then be used at render-time as an input to the glDrawArraysIndirect or glDrawElementsIndirect functions.
+
+To ensure fast-z mode for depth-only renderpasses that use indirect draws and SSBOs, activate SPIR-V ExecutionMode 4 (EarlyFragmentTest) by adding this qualifier in your GLSL shader:
+
+layout(early_fragment_tests) in;
+
+VK_QCOM_tile_shading can allow for efficient Gpu-driven implementations if tile-based draws suit your algorithm.
+
+Vertex streaming versus attribute fetching
+
+Vertex streaming is more performant than attribute fetching when architecting your renderer in the GPU-driven style.
+
+Low Priority Asychronous Compute (LPAC)
+
+LPAC is available on A740 devices and higher.
+
+Running a compute shader on LPAC requires extension VK_KHR_global_priority. Then you must request a queue that supports only compute and transfer and has VkQueueGlobalPriority VK_QUEUE_GLOBAL_PRIORITY_LOW_EXT. This queue is the LPAC queue: it will run concurrently (and at a lower priority, generally taking longer to complete) than the graphics/compute/transfer queue (the Graphics Pipe).
+
+LPAC has a slightly larger instruction cache than shaders than run on the Graphics Pipe.
+
+Mesh Shading
+
+Avoid amplification shaders unless necessary – while they often perform well, they also incur a nonzero performance cost.
+
+Set the optimal wave count when possible.
+
+Per-vertex attributes typically perform better than per-primitive attributes (even when per-primitive attributes might theoretically result in a smaller attribute memory footprint) – many if not most algorithms can entirely avoid the PerPrimitiveEXT keyword.
+
+Keep mesh shader payload sizes under device limits to avoid a performance bottleneck.
+
+Consider using LPAC to load-balance with the Graphics Pipe.
+
+Raytracing
+Hit detection
+
+Vulkan implements hit detection with the VK_KHR_acceleration_structure extension. This structure can be constructed on the CPU or GPU (we recommend constructing it on the GPU). Unless your scene is entirely static, the structure will need to be updated as geometry and/or lights move. While this updating cost can be substantial, it can also be amortized over several frames, often with few or zero artifacts.
+
+Developers can query ray-hit information during any shader stage via the VK_KHR_ray_query extension – any algorithm that requires ray-occlusion information likely starts here:
+
+Application example: shadow generation
+
+With a rasterization-only pipeline, shadow generation can be expensive and may not generate consistently good visual results.
+
+With ray tracing, shadows can be added with a few lines of shader code and a reasonably optimal acceleration structure. Fine detail can be achieved without requiring intermediate surfaces or other algorithms – just querying per-pixel visibility provides precise occlusion information, the results of which can be further manipulated by other post-processing techniques.
+
+This sample generates a shadowmap in a subpass by raytracing from the main light source (a point-light). This query logic and the acceleration structure management are the only additions raytracing needs to determine pixel occlusion – the surrounding code remains the traditional rasterization approach.
+
+// Initialize the query object
+rayQueryEXT rayQuery;
+rayQueryInitializeEXT(
+    rayQuery,
+    accelStructure,
+    gl_RayFlagsTerminateOnFirstHitEXT,
+    cullMask,
+    WorldPos,
+    minDistance,
+    DirectionToLight,
+    LightDistance);
+
+    // Traverse the query -- do once for the first hit
+    while(rayQueryProceedEXT(rayQuery))
+    {
+        // Hit something! Logic can be added here depending on the type of intersection
+    }
+
+    // Get the last intersection information
+    if(rayQueryGetIntersectionTypeEXT(rayQuery, true) != gl_RayQueryCommittedIntersectionNoneEXT)
+    {
+         // Got an intersection -- this pixel is occluded, so retrieve distance
+         float intersectionDistance = rayQueryGetIntersectionTEXT(rayQuery, true);
+
+         // ...
+    }
+
+Optimization
+General Considerations
+Instruction cache
+
+Good instruction cache practices are even more important than usual for ray tracing shaders – remove dead code, factor away non-uniform branches and looping and shrink each shader’s total instruction size so it fits target devices’ instruction cache.
+
+16-bit Precision
+
+Half-precision is, as ever, an easy performance win that often involves few to no additional artifacts. The Vulkan API supports this with VK_KHR_shader_float16_int8.
+
+Culling
+
+Simplifying acceleration structures speeds raytracing. Aggressively cull your geometry as much as your content allows – frustum culling, portal culling, level-of-detail, and other techniques may apply.
+
+Acceleration structures
+
+Building on the GPU
+
+Acceleration structures are typically built fastest on the GPU with vkCmdBuildAccelerationStructuresKHR, vkCmdBuildAccelerationStructuresIndirectKHR, vkCmdCopyAccelerationStructureToMemoryKHR and vkCmdCopyMemoryToAccelerationStructureKHR – as opposed to API calls that execute on the CPU.
+
+Pass the optimal number of acceleration structures when possible.
+
+Prefer concurrently operating on acceleration structures with LPAC (rather than using any CPU approaches such as VkDeferredOperationKHR) whenever concurrent processing of acceleration structures is desired.
+
+Deformable Raytraced Meshes: Refitting vs Rebuilding
+
+Try to cache as much of your acceleration structure as long as you can, amortizing any refitting (with VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_UPDATE_BIT_KHR) and/or rebuilds (with VK_BUILD_ACCELERATION_STRUCTURE_ALLOW_BUILD_BIT_KHR) over multiple frames to stay within your frame budget.
+
+Generally, refitting will be more efficient than rebuilding when a mesh hasn’t deformed much from the mesh’s original geometry (at the moment its acceleration structure was first built). Once the mesh’s deformation causes the originally-built acceleration structure to poorly fit the mesh’s current geometry, a rebuild will be more efficient than a refit. Of course this is highly content-dependent.
+
+Prefer ray queries to ray pipelines
+
+A8x and higher supports ray tracing pipelines. However, when possible, we recommend using only ray queries, as they are often comparatively more performant. But when ray queries alone are not expressive enough – or when porting an existing raytracing codebase to Adreno – ray pipeline support is ready to go, and performs well for many types of content.
+
+Ray Queries
+Minimize calls to rayQueryProceed()
+
+Our Vulkan SPIR-V compiler currently does not support function calls – therefore all calls to rayQueryProceed() are inlined. For example, if the application wraps calls to rayQueryProceed() in a ClosestHitTrace() function, and then calls ClosestHitTrace() in 10 different places in the code, the compiler could generate 10 copies of the traversal loop. The traversal loop might be 300 instructions, so this can easily result in shaders that don’t fit the instruction cache and consequently perform poorly.
+
+We’ve found that typically a couple of calls to proceed() doesn’t hurt performance. However, for larger numbers of traversal loops it becomes more challenging for our compiler to achieve reasonable register allocation, which results in GPR spilling and other performance degradations.
+
+Reuse one minimally-sized ray query object
+
+Reuse the single ray query object as needed. A ray query object costs enough GPRs that the concurrent wave count for the shader may be reduced. Thus make every effort to avoid more then one ray query object, reusing that one object across different calls to rayQueryProceed(). This reuse should be possible unless recursion is used – which itself is usually avoidable. Minimize the size of the ray query object.
+
+Access ray query data through intrinsics
+
+Avoid copying data from a ray query into large, custom data structures – this will increase GPR usage. Instead, use intrinsics to access the query object’s data.
+
+Avoid proceed() calls in loops for non-opaque traversal that “accept first fit”
+
+When using gl_RayFlagsTerminateOnFirstHitEXT or gl_RayFlagsCullOpaqueEXT, there is no need to call rayQueryProceedEXT in a while loop – this easy simplification helps the compiler generate code with fewer branches.
+
+For example:
+
+rayQueryEXT rayQuery;
+rayQueryInitializeEXT(rayQuery, rayTraceAS, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsCullOpaqueEXT, cullMask, WorldPos, minDistance, DirectionToLight, LightDistance);
+
+// Traverse the query. No need for a while(), since we want first hit or
+// non-opaque intersections only
+rayQueryProceedEXT(rayQuery));
+
+// Determine if the shadow query collided
+if(rayQueryGetIntersectionTypeEXT(rayQuery, true) != gl_RayQueryCommittedIntersectionNoneEXT)
+{
+    // Got an intersection == Shadow, do something
+}
+
+Use the optimal subgroup size
+
+Avoid performance bottlenecks by setting the device-specific optimal subgroup size.
+
+Ray Pipelines
+
+Minimize the size of all user-defined datastructures: ray payload, hit attributes, callable data and pipeline stack size.
+
+Prefer ray queries instead of ray pipelines when possible.
+
+2D operation hardware acceleration
+
+Adreno hardware accelerates common 2D operations:
+
+blits – with Vulkan, use vkCmdBlitImage()
+
+surface clears
+
+Android-phone pre-rotation on Vulkan (recent OpenGL ES drivers do this automatically)
+
+rotation
+
+convolution kernels – for example, with Vulkan’s VK_QCOM_Image_Processing
+
+Graphics APIs like Vulkan and OpenGL ES often map to Adreno’s specialized, high-performance hardware.
+
+Queries
+Occlusion queries performance
+
+The number of queries and their frame-latency should be respected to maximize performance.
+
+The performance of occlusion queries is further affected by the number of bins – the higher the bin count the more expensive the queries.
+
+Run occlusion queries in direct mode whenever possible. One way to ensure this occurs is to issue all the queries for a frame in one batch after a flush; for example: Render Opaque -> Render Translucent -> Flush -> Render Queries -> Switch FBO.
+
+If the driver sees that only queries have been issued to the surface then it switches to direct mode.
+
+Note
+
+The overhead of queries will show up as a higher “% CP Busy” metric in Snapdragon Profiler.
+
+We’ve seen cases where issuing many queries to a binned surface causes a CP overhead increase of 20-40% – and this overhead drops to 4-6% in direct mode.
+
+Timer Query Accuracy
+
+Timer queries should always be issued within a renderpass to maximize accuracy.
+
+Timer queries are calculated over the entire set of binned tiles when in binning mode. For example, let’s assume that we have 50 draw calls and a render target that requires 8 tiles to render. Let’s also assume we want to measure draw call 10 and instrument it with timer queries.
+
+The entire command stream of 50 draws will be captured and run through the binning process to generate the visibility streams. During the rendering pass, the draw calls will be rendered according to the visibility stream of each tile. Even if the geometry for draw call 10 only contributes to one tile, it will incur a small overhead for each tile (while processing the visibility stream). This overhead and the actual rendering time will be accumulated and presented in the resulting timer query.
+
+Note
+
+The overhead mentioned above is small (2-5µs) but can add up if the draw call count is high and draws are present in many tiles. Starting with A5x, GPU optimizations to the visibility stream have been added to reduce this overhead by “trimming” the end of the stream of draw calls that do not contribute to the tile. This optimization can be nullified if something like a full screen pass is issued as the last draw call to a render target.
+
+Qualcomm True HDR setup
+
+To enable Qualcomm True HDR in OpenGL ES, the following extensions must be supported:
+
+EGL_EXT_gl_colorspace_display_p3
+
+EGL_EXT_gl_colorspace_bt2020_pq
+
+EGL_EXT_surface_SMPTE2086_metadata
+
+Note
+
+Vulkan Swapchain/WSI for Android only supports VK_COLOR_SPACE_DISPLAY_P3_NONLINEAR_EXT. For additional information on how to enable this for Vulkan, check out the Enhancing graphics with wide color content guide from the Android Developers Documentation.
+
+Set EGLSurface format
+
+Set the EGLSurface format to R10G10B10A2:
+
+EGLConfig EGLConfigList [1]; int ConfigAttributes [] = {
+    EGL_RED_SIZE,10
+    EGL_GREEN_SIZE,10
+    EGL_BLUE_SIZE,10
+    EGL_ALPHA_SIZE,2
+    EGL_COLOR_COMPONENT_TYPE_EXT,
+EGL_COLOR_COMPONENT_TYPE_FIXED_EXT, EGL_NONE};
+
+eglChooseConfig (eglDisplay,ConfigAttributes,EGLConfigList,1, eglNumConfigs);
+
+Set color space
+
+Set the color space of eglWindowSurface to EGL_GL_COLORSPACE_BT2020_PQ_EXT.
+
+EGLint attribs[] = {EGL_GL_COLORSPACE_KHR,EGL_GL_COLORSPACE_BT2020_PQ_EXT,EGL_NONE };
+EGLSurface eglSurface=eglCreateWidowSurface(eglDisplay,eglConfigParam, InWindow, attribs);
+
+Set metadata
+
+Set the metadata attributes of eglSurface.
+
+EGLint SurfaceAttribs [] = {
+EGL_SMPTE2086_DISPLAY_PRIMARY_RX_EXT,       EGL_SMPTE2086_DISPLAY_PRIMARY_RY_EXT,
+    EGL_SMPTE2086_DISPLAY_PRIMARY_GX_EXT,
+    EGL_SMPTE2086_DISPLAY_PRIMARY_GY_EXT,
+    EGL_SMPTE2086_DISPLAY_PRIMARY_BX_EXT,
+    EGL_SMPTE2086_DISPLAY_PRIMARY_BY_EXT,
+    EGL_SMPTE2086_WHITE_POINT_X_EXT,
+    EGL_SMPTE2086_WHITE_POINT_Y_EXT,
+    EGL_SMPTE2086_MAX_LUMINANCE_EXT,
+    EGL_SMPTE2086_MIN_LUMINANCE_EXT
+};
+static const DisplayChromacities DisplayChromacityList [] = { {{0.70800f, 0.29200f, 0.17000f, 0.79700f, 0.13100f, 0.04600f, 0.31270f, 0.32900f}}, // DG_Rec2020 };
+for (uint32_t i = 0; i < 8; i++)
+{
+    eglSurfaceAttrib(PImplData->eglDisplay,eglSurface, SurfaceAttribs[i],EGLint(DisplayChromacityList[0].ChromaVals[i]* EGL_METADATA_SCALING_EXT));
+}
+
+Get the luminance of display on Android
+
+See: https://developer.android.com/reference/android/view/Display.HdrCapabilities.html#getDesired
+
+…for methods like:
+
+MaxAverageLuminance
+
+MaxLuminance
+
+MinLuminance
+
+Variable Rate Shading (VRS)
+
+Fewer pixels shaded means fewer rays queried – often with few to no additional artifacts. Use VRS as aggressively as your content allows.
+
+VulkanOpenGL ES
+
+VRS is exposed through the VK_KHR_fragment_shading_rate extension. VK_KHR_fragment_shading_rate takes a VkExtent2D argument where developers specify the width and height of the desired fragment size.
+
+Note that VRS interoperates well with foveated rendering – you can seamlessly use them simultaneously.
+
+XR/VR/AR (Extended Reality/Virtual Reality/Augmented Reality)
+Stereographic Rendering
+
+The following API calls supports efficient stereographic rendering – the driver captures issued commands for one eye and replays them for the other. This saves CPU time (but has no impact on the GPU).
+
+VulkanOpenGL ES
+
+VK_KHR_multiview
+
+Foveated Rendering
+
+Use foveated rendering – and note that it interoperates well with VRS ; you can seamlessly use them simultaneously.
+
+Querying the driver version to implement version-specific workarounds
+
+Despite our best efforts, sometimes drivers ship with bugs.
+
+When a future driver fixes some bugs, you may want to implement a workaround for certain versions of a driver and not others. Here’s how:
+
+Vulkan
+
+“driverVersion” can be queried from VkPhysicalDeviceProperties – it returns the complete major/minor/patch number of the driver version.
+
+For Adreno, the 32-bit number of the driverVersion is encoded as major-minor-patch. The first 10 bits is the major version, the second 10 bits is the minor version and the remaining 12 bits is for the patch version.
+
+The major number is usually fixed, while the minor number changes with each release. Patches are the variations of a minor release. We primarily use the minor number to identify different driver versions, while the patch number is generally used to identify workarounds and fixes for a given driver version.
+
+Sample code:
+
+#define VK_VERSION_MAJOR(version) ((uint32_t)(version) >> 22)
+
+#define VK_VERSION_MINOR(version) (((uint32_t)(version) >> 12) & 0x3FFU)
+
+#define VK_VERSION_PATCH(version) ((uint32_t)(version) & 0xFFFU)
+
+// Workarounds for Adreno driver 676
+if (VK_VERSION_MINOR(version) == 676)
+{
+   // Guard for known Adreno issue on patch < 17 and driver 676
+   if (VK_VERSION_PATCH(version) < 17)
+   {
+      doWorkaround();
+   }
+   // After patch 17 we know the issue was addressed by the vendor
+   else
+   {
+      doNormalFlow();
+   }
+}
+
+adb
+
+To check the driver version, run the command:
+
+adb shell dumpsys SurfaceFlinger | grep GLES
+
+Output is of the form:
+
+GLES: Qualcomm, Adreno (TM) 740, OpenGL ES 3.2 V\@0676.0 (GIT\@6f08ddb, I5e1ee3b043, 1669189803) (Date:11/23/22)
+
+Given: V@0676 as above, 676 is the driver promotion/minor number.
+
+Shader stats (like for Snapdragon Profiler) for vulkan needs driver support: 636 promotion/minor number and above qualifies.
+
+Adreno APIs
+
+Adreno GPUs support industry-standard APIs including:
+
+OpenGL ES 1.x (fixed function pipeline)
+
+OpenGL ES 2.0 (programmable shader pipeline)
+
+OpenGL ES 3.0
+
+OpenGL ES 3.1 + AEP
+
+OpenGL ES 3.2
+
+EGL
+
+Vulkan 1.0
+
+Vulkan 1.1
+
+OpenCL 1.1e
+
+OpenCL 2.0 Full Profile
+
+DirectX 11 FL 9.3
+
+DirectX 12 FL 12
+
+Previous
+
+Occlusion queries
+
+Next
+
+Texture Compression Examples
+
+May contain U.S. and international export controlled information
+On this page
+Feature Summary
+Best Practices Summary
+Renderer Architecture
+Tile-based Rendering
+Concurrent Binning
+Render Surface Target
+Z-Buffer
+Vertex and Index Buffers
+Texture Features
+Shaders
+Compute Shaders
+Mesh Shading
+Raytracing
+Queries
+XR/VR/AR (Extended Reality/Virtual Reality/Augmented Reality)
+Renderer Architecture
+Graphics API
+Render Pass
+Shader mode switching
+Images
+Buffer Best Practices
+Vulkan
+Swapchain
+Triangle Screen Size
+Features to avoid for performance reasons
+Tile-based Rendering
+Bin Minimization
+FlexRender™ technology (Hybrid Deferred and Direct Rendering mode)
+Concurrent Binning
+Tile Shading Vulkan Extensions
+VK_QCOM_tile_memory_heap
+VK_QCOM_tile_shading
+Render Surfaces
+sRGB textures and render targets
+Upscaling
+Bandwidth Optimization
+Universal BandWidth Compression (UBWC)
+Z-Buffer
+LRZ, Early-Z and Fast-Z
+Low Resolution Z pass
+Early Z rejection
+Fast-Z
+Vertex and Index Buffers
+Vertex buffer layout
+Batching vertex buffer object updates
+Index types
+Texture Features
+Sampling in Vulkan
+Multiple textures
+Texture compression
+Floating point textures
+Video textures
+Shaders
+Half-Precision
+Instruction count
+GPR minimization
+Split up draw calls
+Minimize ALU Cost
+Minimize type casting
+Control Flow
+Pack shader interpolators
+Pack scalar constants
+Use built-in shader instructions
+Avoid discarding pixels in the fragment shader
+Avoid modifying depth in fragment shaders
+Stay under performance-optimal resource limits
+Minimize texture fetches in vertex shaders
+Latency Hiding, and Load Balancing the Texture Pipe and Shader Pipe
+Texture Fetch Bottleneck Optimization
+DXC and Glslang and the Texture Pipe
+Compiling and linking during initialization
+Compute Shaders
+GPU-Driven Rendering
+Geometry instancing
+Indirect draw calls
+Vertex streaming versus attribute fetching
+Low Priority Asychronous Compute (LPAC)
+Mesh Shading
+Raytracing
+Hit detection
+Application example: shadow generation
+Optimization
+General Considerations
+Prefer ray queries to ray pipelines
+Minimize calls to rayQueryProceed()
+Reuse one minimally-sized ray query object
+Access ray query data through intrinsics
+Avoid proceed() calls in loops for non-opaque traversal that “accept first fit”
+Use the optimal subgroup size
+2D operation hardware acceleration
+Queries
+Occlusion queries performance
+Timer Query Accuracy
+Qualcomm True HDR setup
+Set EGLSurface format
+Set color space
+Set metadata
+Get the luminance of display on Android
+Variable Rate Shading (VRS)
+XR/VR/AR (Extended Reality/Virtual Reality/Augmented Reality)
+Stereographic Rendering
+Foveated Rendering
+Querying the driver version to implement version-specific workarounds
+Vulkan
+adb
+Adreno APIs
+Light
+Dark
+Auto
+Qualcomm relentlessly innovates to deliver intelligent computing everywhere, helping the world tackle some of its most important challenges. Our leading-edge AI, high performance, low-power computing, and unrivaled connectivity deliver proven solutions that transform major industries. At Qualcomm, we are engineering human progress.
+Quick links
+Products
+Support
+Partners
+Contact us
+Developer
+Company info
+About us
+Careers
+Investors
+News & media
+Our businesses
+Email Subscriptions
+Stay connected
+
+Get the latest Qualcomm and industry information delivered to your inbox.
+
+Subscribe
+Manage your subscription
+Terms of Use
+Privacy
+Cookie Policy
+Accessibility Statement
+Responsible AI Policy
+Do Not Sell or Share My Personal Information
+Language: English (US)
+Languages
+English ( United States )
+简体中文 ( China )
+
+© Qualcomm Technologies, Inc. and/or its affiliated companies.
+
+Snapdragon and Qualcomm branded products are products of Qualcomm Technologies, Inc. and/or its subsidiaries. Qualcomm patented technologies are licensed by Qualcomm Incorporated.
+
+Note: Certain services and materials may require you to accept additional terms and conditions before accessing or using those items.
+
+References to "Qualcomm" may mean Qualcomm Incorporated, or subsidiaries or business units within the Qualcomm corporate structure, as applicable.
+
+Qualcomm Incorporated includes our licensing business, QTL, and the vast majority of our patent portfolio. Qualcomm Technologies, Inc., a subsidiary of Qualcomm Incorporated, operates, along with its subsidiaries, substantially all of our engineering, research and development functions, and substantially all of our products and services businesses, including our QCT semiconductor business.
+
+Materials that are as of a specific date, including but not limited to press releases, presentations, blog posts and webcasts, may have been superseded by subsequent events or disclosures.
+
+Nothing in these materials is an offer to sell or license any of the services or materials referenced herein.
+
+This website processes personal data through our and third parties’ online tracking technologies, including analytics and advertising cookies. To learn more about how we and our affiliates within the Qualcomm Group may use your personal data and cookies, please review the Privacy Policy published at the bottom of this website and Qualcomm’s Cookie Policy. If you don’t want to share your website activities, including browsing behavior, with our third-party partners via these tracking technologies, click on “Cookie Settings" below to update your preferences. You can also update your cookie preferences at any time by clicking the Do Not Sell or Share My Personal Information link at the bottom of this website.
+Cookie Settings
+I Understand

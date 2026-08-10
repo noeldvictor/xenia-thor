@@ -1,0 +1,288 @@
+Source: https://docs.qualcomm.com/doc/80-78185-2/topic/gpu.html
+Fetched with Playwright (JS SPA; plain HTTP fetch returns nothing).
+
+Qualcomm Docs
+Game Developer Guide
+Introduction
+GUIDES
+Qualcomm® Adreno™ GPU
+Overview
+Spec Sheets
+Adreno GPU on Mobile: Best Practices
+Texture Compression Examples
+Qualcomm® Oryon™ CPU
+Qualcomm® Kryo™ CPU
+Qualcomm® Hexagon™ DSP
+COMPONENTS
+TUTORIALS
+
+Legal notice
+
+GUIDES
+Qualcomm® Adreno™ GPU
+Download
+Updated: Mar 03, 2026 80-78185-2 Rev: AL
+
+Adreno GPUs are integrated in the all-in-one design of Qualcomm® Snapdragon™ processors to provide sophisticated rendering capabilities to enable the latest games, user interfaces, and web technologies present in mobile devices today. They have been designed purposely for mobile APIs and device constraints, with an emphasis on performance and efficient power use.
+
+This guide outlines the various technologies and subsystems provided by the Adreno GPU to support the graphics developer. Best practices, along with articles going into some technical detail, can be found in the Adreno GPU on Mobile: Best Practices section.
+
+This document strives to cover a breadth of topics relevant to various Adreno GPUs. As the architecture evolves, new functionalities are added to the GPU. Some sections of this guide will only be relevant to the Adreno GPUs that support the given features.
+
+When relevant, the Adreno GPU series in which a feature is present is described. If not specified, it can be assumed such functionality is present on most or all Adreno GPUs.
+
+Contents:
+
+Overview
+Introduction to Snapdragon Adreno™
+Tile-based Rendering
+FlexRender™ technology (Hybrid Deferred and Direct Rendering mode)
+Concurrent Binning
+Position-Only Vertex Shader
+How to use it
+Profiling
+MSAA: Multisample anti-aliasing
+Tile Shading Vulkan Extensions
+VK_QCOM_tile_memory_heap
+VK_QCOM_tile_shading
+Render Surfaces
+sRGB textures and render targets
+Universal bandwidth compression
+Percentage Closer Filtering for depth textures
+LRZ, Early-Z and Fast-Z
+Low Resolution Z pass
+Early Z rejection
+Fast-Z
+Texture Features
+Texture compression
+Floating point textures
+Cube mapping with seamless edges
+Video textures
+Shaders
+Unified shader architecture
+Scalar architecture
+GPU-Driven Rendering
+Geometry instancing
+Indirect draw calls
+Low Priority Asychronous Compute (LPAC)
+Mesh Shading
+Raytracing
+Introduction
+How does raytracing differ from rasterization?
+Hit detection
+Qualcomm True HDR
+Introduction
+High Dynamic Range (HDR)
+Wide Color Gamut (WCG)
+Color volume
+Display technique
+Light-to-display overview
+HDR10
+Color volume mapping
+Traditional Game HDR
+True HDR
+True HDR pipeline
+Academy Color Encoding System (ACES) Tonemapping
+ACES pipeline
+Variable Rate Shading (VRS)
+How does Variable Rate Shading work?
+Effective ways to modify Shading Rate
+Spec Sheets
+Introduction
+Renderer Architecture
+Tile-based Rendering
+Tile Shading Vulkan Extensions
+VK_QCOM_tile_memory_heap
+Render Surface Target
+Vertex and Index Buffers
+Texture Features
+Texture formats
+Shaders
+Compute Shaders
+Mesh Shaders
+Raytracing
+Queries
+Occlusion queries
+Adreno GPU on Mobile: Best Practices
+Feature Summary
+Best Practices Summary
+Renderer Architecture
+Tile-based Rendering
+Concurrent Binning
+Render Surface Target
+Z-Buffer
+Vertex and Index Buffers
+Texture Features
+Shaders
+Compute Shaders
+Mesh Shading
+Raytracing
+Queries
+XR/VR/AR (Extended Reality/Virtual Reality/Augmented Reality)
+Renderer Architecture
+Graphics API
+Render Pass
+Shader mode switching
+Images
+Buffer Best Practices
+Vulkan
+Swapchain
+Triangle Screen Size
+Features to avoid for performance reasons
+Tile-based Rendering
+Bin Minimization
+FlexRender™ technology (Hybrid Deferred and Direct Rendering mode)
+Concurrent Binning
+Tile Shading Vulkan Extensions
+VK_QCOM_tile_memory_heap
+VK_QCOM_tile_shading
+Render Surfaces
+sRGB textures and render targets
+Upscaling
+Bandwidth Optimization
+Universal BandWidth Compression (UBWC)
+Z-Buffer
+LRZ, Early-Z and Fast-Z
+Low Resolution Z pass
+Early Z rejection
+Fast-Z
+Vertex and Index Buffers
+Vertex buffer layout
+Batching vertex buffer object updates
+Index types
+Texture Features
+Sampling in Vulkan
+Multiple textures
+Texture compression
+Floating point textures
+Video textures
+Shaders
+Half-Precision
+Instruction count
+GPR minimization
+Split up draw calls
+Minimize ALU Cost
+Minimize type casting
+Control Flow
+Pack shader interpolators
+Pack scalar constants
+Use built-in shader instructions
+Avoid discarding pixels in the fragment shader
+Avoid modifying depth in fragment shaders
+Stay under performance-optimal resource limits
+Minimize texture fetches in vertex shaders
+Latency Hiding, and Load Balancing the Texture Pipe and Shader Pipe
+Texture Fetch Bottleneck Optimization
+DXC and Glslang and the Texture Pipe
+Compiling and linking during initialization
+Compute Shaders
+GPU-Driven Rendering
+Geometry instancing
+Indirect draw calls
+Vertex streaming versus attribute fetching
+Low Priority Asychronous Compute (LPAC)
+Mesh Shading
+Raytracing
+Hit detection
+Application example: shadow generation
+Optimization
+General Considerations
+Instruction cache
+16-bit Precision
+Culling
+Acceleration structures
+Prefer ray queries to ray pipelines
+Ray Queries
+Minimize calls to rayQueryProceed()
+Reuse one minimally-sized ray query object
+Access ray query data through intrinsics
+Avoid proceed() calls in loops for non-opaque traversal that “accept first fit”
+Use the optimal subgroup size
+Ray Pipelines
+2D operation hardware acceleration
+Queries
+Occlusion queries performance
+Timer Query Accuracy
+Qualcomm True HDR setup
+Set EGLSurface format
+Set color space
+Set metadata
+Get the luminance of display on Android
+Variable Rate Shading (VRS)
+XR/VR/AR (Extended Reality/Virtual Reality/Augmented Reality)
+Stereographic Rendering
+Foveated Rendering
+Querying the driver version to implement version-specific workarounds
+Vulkan
+adb
+Adreno APIs
+Texture Compression Examples
+Diffuse texture test
+ATC Compression
+ETC1 Compression
+ETC2 Compression
+Normal texture test
+ATC Compression
+ETC1 Compression
+ETC2 Compression
+
+Previous
+
+Guides
+
+Next
+
+Overview
+
+May contain U.S. and international export controlled information
+Light
+Dark
+Auto
+Qualcomm relentlessly innovates to deliver intelligent computing everywhere, helping the world tackle some of its most important challenges. Our leading-edge AI, high performance, low-power computing, and unrivaled connectivity deliver proven solutions that transform major industries. At Qualcomm, we are engineering human progress.
+Quick links
+Products
+Support
+Partners
+Contact us
+Developer
+Company info
+About us
+Careers
+Investors
+News & media
+Our businesses
+Email Subscriptions
+Stay connected
+
+Get the latest Qualcomm and industry information delivered to your inbox.
+
+Subscribe
+Manage your subscription
+Terms of Use
+Privacy
+Cookie Policy
+Accessibility Statement
+Responsible AI Policy
+Do Not Sell or Share My Personal Information
+Language: English (US)
+Languages
+English ( United States )
+简体中文 ( China )
+
+© Qualcomm Technologies, Inc. and/or its affiliated companies.
+
+Snapdragon and Qualcomm branded products are products of Qualcomm Technologies, Inc. and/or its subsidiaries. Qualcomm patented technologies are licensed by Qualcomm Incorporated.
+
+Note: Certain services and materials may require you to accept additional terms and conditions before accessing or using those items.
+
+References to "Qualcomm" may mean Qualcomm Incorporated, or subsidiaries or business units within the Qualcomm corporate structure, as applicable.
+
+Qualcomm Incorporated includes our licensing business, QTL, and the vast majority of our patent portfolio. Qualcomm Technologies, Inc., a subsidiary of Qualcomm Incorporated, operates, along with its subsidiaries, substantially all of our engineering, research and development functions, and substantially all of our products and services businesses, including our QCT semiconductor business.
+
+Materials that are as of a specific date, including but not limited to press releases, presentations, blog posts and webcasts, may have been superseded by subsequent events or disclosures.
+
+Nothing in these materials is an offer to sell or license any of the services or materials referenced herein.
+
+This website processes personal data through our and third parties’ online tracking technologies, including analytics and advertising cookies. To learn more about how we and our affiliates within the Qualcomm Group may use your personal data and cookies, please review the Privacy Policy published at the bottom of this website and Qualcomm’s Cookie Policy. If you don’t want to share your website activities, including browsing behavior, with our third-party partners via these tracking technologies, click on “Cookie Settings" below to update your preferences. You can also update your cookie preferences at any time by clicking the Do Not Sell or Share My Personal Information link at the bottom of this website.
+Cookie Settings
+I Understand

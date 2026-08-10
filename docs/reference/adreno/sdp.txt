@@ -1,0 +1,314 @@
+Source: https://docs.qualcomm.com/doc/80-78185-2/topic/sdp.html
+Fetched with Playwright (JS SPA; plain HTTP fetch returns nothing).
+
+Qualcomm Docs
+Game Developer Guide
+Introduction
+GUIDES
+COMPONENTS
+Snapdragon Profiler
+Realtime
+Trace
+Snapshot
+Vulkan in Snapdragon Profiler
+Quick Start with Performance Analysis
+TUTORIALS
+
+Legal notice
+
+COMPONENTS
+Snapdragon Profiler
+Snapdragon Profiler
+Download
+Updated: Mar 03, 2026 80-78185-2 Rev: AL
+
+To quick-start your performance analysis, go here.
+
+Improving performance of a 3D application is a challenging process. Without the proper tools, developers often find themselves resorting to trial and error to identify a bottleneck or the source of a visual glitch. Each attempt forces an application rebuild. This is a time-consuming and cumbersome process.
+
+Developers rarely have access to a raw list of the graphics API commands that an application issues. This makes the optimization process tricky. The developer is likely to know and understand what their application does in general, but might not have complete visibility into the rendering process.
+
+The reason for poor rendering performance is often unclear at first. Having real-time insight into detailed GPU utilization, texture cache misses, or pipeline stall statistics would make it easier to identify the reason for a slowdown. Sometimes the rendering process consists of many draw calls, making it difficult to identify specifically which of those draw calls is responsible for rendering a broken mesh. The ability to highlight the geometry that was drawn because of any specific draw call is helpful.
+
+The following figures show how the tool works in three different modes, each suiting a different purpose.
+
+Realtime
+
+Real-time performance visualization allows for a wide range of both system and per-process metrics and counters to be graphed in real time. Categories of metrics include:
+
+CPU
+
+EGL
+
+GPU
+
+Memory
+
+Network
+
+Power
+
+Primitive processing
+
+System memory
+
+Thermal
+
+Trace
+
+Trace creates a performance capture that shows a detailed visualization of the system and driver work being performed during a specific time.
+
+After capture, the user can zoom in, inspect, and measure detailed attributes. Traces can be captured from the following Android components:
+
+Vulkan
+
+OpenGL ES
+
+DSP
+
+Activity Manager
+
+Audio
+
+Camera
+
+CPU
+
+Dalvik VM
+
+Disk I/O
+
+Graphics
+
+Hardware modules
+
+Input
+
+Kernel Workqueues
+
+RenderScript
+
+Resource Loading
+
+Synchronization Manager
+
+Video
+
+View
+
+WebView
+
+Window manager
+
+Snapshot
+
+Snapshot mode provides the user with a complete view of a rendered frame. There is a detailed draw call list, resources (framebuffers, textures, shaders), shader complexity analysis, pixel history, overdraw analysis, texture preview, frame statistics, and more.
+
+Vulkan in Snapdragon Profiler
+
+A Vulkan application can be profiled with Snapdragon Profiler to get insights on Vulkan-specific rendering information. The user creates a trace and selects both Vulkan Rendering stages and Vulkan API trace metrics.
+
+After a capture is made, a detailed graph is presented with the surface and rendering stages information, as well as a detailed table containing Vulkan API calls, parameters, and timing information.
+
+You can find out more about Snapdragon Profiler and download a copy from the Qualcomm Developer Network at https://developer.qualcomm.com/software/snapdragon-profiler.
+
+Quick Start with Performance Analysis
+
+For your initial analysis, we recommend Tracing with the following metrics. (We also provide some metric values that are reasonable for many applications on many devices).
+
+This will probably provide a good overview of any performance problems.
+
+Metrics marked (Slow To Trace) introduce significant overhead – you might want to omit them from initial traces until they become more obviously relevant.
+
+GPU Primitive Processing:
+
+Average Polygon Area – ideally at least 4, but not much larger than the bin dimensions
+
+% Prims Clipped – Lower is better; ideally less than 2%
+
+% Prims Trivially Rejected – Lower is better; ideally less than 2%
+
+Reused Vertices – Higher is better; usually indicates indexed draws
+
+GPU Shader Processing:
+
+(Slow To Trace): % Linear Filtered – Lower is better; Linear Filtering tends to be expensive
+
+(Slow To Trace): % Nearest Filtered – Higher is better; Nearest Filtering tends to be performant
+
+% Shader ALU Capacity Utilized – Higher is better; ideally 50-100%
+
+% Shaders Busy – Higher is better; ideally 50-100%
+
+% Shaders Stalled – Lower is better; ideally less than 10%
+
+% Texture Pipes Busy – Minimize within aesthetic constraints for battery consumption – even low values like 20%-30% can sometimes bottleneck the system, but values nearing 100% can sometimes not be a bottleneck
+
+% Time ALUs Working – Higher is better; ideally 50%-100%
+
+% Time Compute – Higher is better; when compute is active, ideally this metric might report near 100%. The percentage of the frame compute is active will vary dramatically based on the app
+
+% Time EFUs Working – Higher is better; ideally at least 20%
+
+% Time Shading Fragments – Higher is better; if you’re using a traditional vertex-and-fragment shading pipeline (instead of the compute-heavy GPU-driven approach), ideally this metric might report 100% for at least 60% of the frame
+
+% Time Shading Vertices – Higher is better; if you’re using a traditional vertex-and-fragment shading pipeline (instead of the compute-heavy GPU-driven approach), ideally this metric might report 100% for less than 10%-20% of the frame
+
+% Wave Context Occupancy – Higher is better; ideally at least 50% on average (likely with spikes)
+
+ALU/Fragment – Higher is better (likely with spikes)
+
+ALU/Vertex – Higher is better (likely with spikes)
+
+Fragment ALU Instructions (Full) – Lower is better (ideally much lower than “Fragment ALU Instructions (Half)”)
+
+Fragment ALU Instructions (Half) – Higher is better (ideally much higher than “Fragment ALU Instructions Full”)
+
+Interpolation Instructions / Fragment – Lower is better (can be a source of stalls)
+
+Textures/Fragment – Lower is better (particularly on a vertex shader)
+
+GPU Stalls:
+
+% Instruction Cache Miss – Lower is better; generally best to minimize, but in some cases even spikes as high as 80% may not bottleneck performance
+
+% Stalled on System Memory – Lower is better; ideally usually less than 2%, perhaps with short spikes up to 30%
+
+% Texture Fetch Stall – Lower is better; ideally usually less than 2%, perhaps with short spikes up to 20% (a sustained ~16% or higher is usually too high)
+
+% Texture L1 Miss – Lower is better; ideally vacillating between 0% and under 50%, with occasional higher spikes
+
+% Texture L2 Miss – Lower is better; ideally vacilliting between 0% and under 40%, with occasional higher spikes
+
+% Vertex Fetch Stall – Lower is better; ideally usually 0%, with occasional spikes not exceeding 70%
+
+Vulkan (for high-level visibility – binning passes are best kept to 10%-20% of renderpass; 30% is usually too much):
+
+Concurrent binning
+
+Per drawcall stages
+
+Rendering stages
+
+Rendering Workloads
+
+GPU General
+
+% CP Overhead – close to 0% at all times; should never exceed 20%
+
+GPU % Bus Busy – Varies:
+
+up to 25% average for a downclocked-GPU/battery-conscious app
+
+up to 90% for a max-performance app
+
+GPU % Utilization – Varies:
+
+up to 40% average for a downclocked-GPU/battery-saver app
+
+up to 90+% for a max-performance app
+
+(Slow To Trace) GPU Memory Stats:
+
+Avg Memory Latency Cycles – Lower is better; large spikes indicate slow shaders
+
+Texture Memory Read BW – Lower is better; large spikes indicate slow shaders
+
+Vertex Memory Read – If binning is slow, this can indicate why (high reads = low bandwidth; low reads = stalls)
+
+Write Total – Lower is better; writes to main memory tend to be expensive
+
+Load-Balancing Texture Pipe and Shader Pipe
+
+If you suspect your shaders are bottlenecking on the Texture Pipe (or, conversely, the Shader Pipe), monitor these values as you experiment to see if you can reduce (or increase) % Texture Pipes Busy – and if doing so increases performance:
+
+GPU Shader Processing:
+
+% Texture Pipes Busy
+
+System:
+
+SP Memory Read
+
+Texture Memory Read BW
+
+Testing Suggestions
+
+Play the game for at least 10 minutes, tracking CPU and GPU clock-rates. If rendering workloads are relatively consistent, but clock-rates on the CPU and GPU get significantly reduced sometime during play (typically either both or neither processors will be affected), your device is probably thermal throttling. Chances are you’ll want to optimize your game enough to avoid such thermal throttling.
+
+If there is no thermal throttling, then after the tenth minute or so try to Trace a few of the most expensive frames for analysis.
+
+Note that Snapdragon Profiler has a roughly 5% CPU overhead while just tracing framerate and nothing else – so keep in mind your frame timings will almost certainly be at least a little bit slower than playing the game without the profiler attached.
+
+We recommending allowing at least 20 minutes of cooldown at room temperature (about 70 degrees F or 21 deg C) between testing sessions, particularly if your last session exhibited thermal throttling.
+
+If your game has loading screens, be aware that loading screens usually have very different performance characteristics than in-game.
+
+Previous
+
+Components
+
+Next
+
+Tutorials
+
+May contain U.S. and international export controlled information
+On this page
+Realtime
+Trace
+Snapshot
+Vulkan in Snapdragon Profiler
+Quick Start with Performance Analysis
+Load-Balancing Texture Pipe and Shader Pipe
+Testing Suggestions
+Light
+Dark
+Auto
+Qualcomm relentlessly innovates to deliver intelligent computing everywhere, helping the world tackle some of its most important challenges. Our leading-edge AI, high performance, low-power computing, and unrivaled connectivity deliver proven solutions that transform major industries. At Qualcomm, we are engineering human progress.
+Quick links
+Products
+Support
+Partners
+Contact us
+Developer
+Company info
+About us
+Careers
+Investors
+News & media
+Our businesses
+Email Subscriptions
+Stay connected
+
+Get the latest Qualcomm and industry information delivered to your inbox.
+
+Subscribe
+Manage your subscription
+Terms of Use
+Privacy
+Cookie Policy
+Accessibility Statement
+Responsible AI Policy
+Do Not Sell or Share My Personal Information
+Language: English (US)
+Languages
+English ( United States )
+简体中文 ( China )
+
+© Qualcomm Technologies, Inc. and/or its affiliated companies.
+
+Snapdragon and Qualcomm branded products are products of Qualcomm Technologies, Inc. and/or its subsidiaries. Qualcomm patented technologies are licensed by Qualcomm Incorporated.
+
+Note: Certain services and materials may require you to accept additional terms and conditions before accessing or using those items.
+
+References to "Qualcomm" may mean Qualcomm Incorporated, or subsidiaries or business units within the Qualcomm corporate structure, as applicable.
+
+Qualcomm Incorporated includes our licensing business, QTL, and the vast majority of our patent portfolio. Qualcomm Technologies, Inc., a subsidiary of Qualcomm Incorporated, operates, along with its subsidiaries, substantially all of our engineering, research and development functions, and substantially all of our products and services businesses, including our QCT semiconductor business.
+
+Materials that are as of a specific date, including but not limited to press releases, presentations, blog posts and webcasts, may have been superseded by subsequent events or disclosures.
+
+Nothing in these materials is an offer to sell or license any of the services or materials referenced herein.
+
+This website processes personal data through our and third parties’ online tracking technologies, including analytics and advertising cookies. To learn more about how we and our affiliates within the Qualcomm Group may use your personal data and cookies, please review the Privacy Policy published at the bottom of this website and Qualcomm’s Cookie Policy. If you don’t want to share your website activities, including browsing behavior, with our third-party partners via these tracking technologies, click on “Cookie Settings" below to update your preferences. You can also update your cookie preferences at any time by clicking the Do Not Sell or Share My Personal Information link at the bottom of this website.
+Cookie Settings
+I Understand

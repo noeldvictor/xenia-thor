@@ -1,0 +1,644 @@
+Source: https://docs.qualcomm.com/doc/80-78185-2/topic/overview.html
+Fetched with Playwright (JS SPA; plain HTTP fetch returns nothing).
+
+Qualcomm Docs
+Game Developer Guide
+Introduction
+GUIDES
+Qualcomm® Adreno™ GPU
+Overview
+Introduction to Snapdragon Adreno™
+Tile-based Rendering
+Render Surfaces
+LRZ, Early-Z and Fast-Z
+Texture Features
+Shaders
+GPU-Driven Rendering
+Low Priority Asychronous Compute (LPAC)
+Mesh Shading
+Raytracing
+Qualcomm True HDR
+Variable Rate Shading (VRS)
+Spec Sheets
+Adreno GPU on Mobile: Best Practices
+Texture Compression Examples
+Qualcomm® Oryon™ CPU
+Qualcomm® Kryo™ CPU
+Qualcomm® Hexagon™ DSP
+COMPONENTS
+TUTORIALS
+
+Legal notice
+
+GUIDES
+Qualcomm® Adreno™ GPU
+Overview
+Overview
+Download
+Updated: Mar 03, 2026 80-78185-2 Rev: AL
+Introduction to Snapdragon Adreno™
+
+The 3D rendering process is a compute-intensive activity. Screen resolutions are growing larger, with some about to reach Ultra HD resolution. This means that GPUs need to rasterize more fragments within the same fixed time period. Assuming a target frame rate of 30 fps, a game must not spend more than 33.3 ms on a single frame. If it does, then the number of screen updates per second will drop, and it will become more difficult for users to immerse themselves fully into the game.
+
+Tile-based Rendering
+
+To optimize rendering for low-power and memory-bandwidth-limited devices, Adreno GPUs use a tiled-based rendering architecture. This rendering mechanism breaks the scene frame buffer into small rectangular regions for rendering. Region sizes are automatically determined (although the developer can influence the number of bins – which also defines bin size) so that they are optimally rendered using local, low-latency memory on the GPU (referred to as GMEM), rather than using a bandwidth-limited bus to system memory.
+
+The Adreno GPU divides a frame into bins and renders them one at a time. During rendering it uses on-chip high performance Graphics Memory (GMEM) to avoid the cost of going to system memory.
+
+In the image below, you see the two passes that are performed over the graphic primitives (Binning and Rendering). In this example there are three triangles that will be rendered in the frame buffer. The Binning Pass marks which bins a triangle is visible in a visibility stream. This stream is stored to system memory.
+
+In the Rendering Pass, only the visible primitives for each tile to be rendered are processed by reading the visibility stream. Using GMEM as a local color and Z-buffer, the primitives are rendered. Once the rendering is complete for the tile, the GMEM color contents are sent back (resolved) to system memory. This process is repeated for all bins.
+
+Vulkan’s Renderpass feature is advantageous for tiling architectures like Adreno, because multiple rendering passes can be done in GMEM. This ultimately minimizes costly resolve operations.
+
+FlexRender™ technology (Hybrid Deferred and Direct Rendering mode)
+
+FlexRender allows Adreno GPUs to switch between tile-based binned rendering and direct rendering to a frame buffer – since depending on workload, direct or binned rendering may provide superior performance. The driver and GPU analyze the rendering parameters for a given render target and selects the mode automatically.
+
+The driver heuristics that determine which mode are not exposed to the developer, but generally these scenarios trigger direct mode.
+
+Concurrent Binning
+
+Concurrent binning was introduced by the Snapdragon A7x series. For each render pass, if no dependencies prohibit it, concurrent binning allows the binning pass to run asynchronously before vertex shader execution.
+
+Position-Only Vertex Shader
+
+As with (traditional) synchronous binning, the compiler generates a position-only vertex shader (a version of the vertex shader that the compiler attempts to simplify to only the instructions that affect vertex positions) that will be used to determine which bin (or bins, in the event a triangle overlaps multiple bins) to place each triangle.
+
+With concurrent binning, the execution of the position-only vertex shader happens asynchronously with other operations.
+
+How to use it
+
+No additional steps are required to activate concurrent binning – but care should be taken not to prevent it.
+
+Profiling
+
+The Snapdragon Profiler can help you determine when concurrent binning is active. When capturing a trace, include the drawcall stages property:
+
+Concurrent binning information will be visible under your Render Pipe as Binning Pipe (if active):
+
+Note that synchronous binning is located on the Render Pipe, and that on some occasions the driver will attempt to start concurrent binning when GPR usage is low – even with sequential dependencies.
+
+SDP will display concurrent binning parameters on a different section (underneath GPU Stages – which is attained after capturing a Trace with Vulkan|OpenGL ES->Rendering Stages checked) for each captured option on your trace capture (which can include things like vertex shader usage, cache misses, texture fetches, etc).
+
+MSAA: Multisample anti-aliasing
+
+Anti-aliasing is an important technique for improving the quality of generated images.
+
+It reduces the visual artifacts of rendering into discrete pixels. Among the various techniques for reducing aliasing effects, multisample anti-aliasing (MSAA) is efficiently supported by Adreno GPUs.
+
+As shown in the following image, multisampling divides every pixel into a set of samples, each of which is treated like a “mini-pixel” during rasterization. Each sample has its own color, depth, and stencil value. Those values are preserved until the image is ready for display. When it is time to compose the final image, the samples are resolved into the final pixel color.
+
+For small-pixel form factors (like mobile phones), some content may get little to no visual benefit from anti-aliasing.
+
+Snapdragon hardware can perform MSAA efficiently by performing it in tile memory – with no unnecessary system memory or blit operations: OpenGL ES MSAA Sample Code
+
+Tile Shading Vulkan Extensions
+
+For Adreno 840 and higher devices, Vulkan extensions make GMEM directly accessible to you.
+
+The DirectX Shader Compiler (DXC) also supports translating HLSL using VK_QCOM_tile_shading and VK_QCOM_tile_memory_heap to SPIR-V.
+
+VK_QCOM_tile_memory_heap interoperates with VK_QCOM_tile_shading, often significantly reducing memory bandwidth and/or memory-access-speed, which frequently improves performance bottlenecks.
+
+The extensions enable scenarios like storing an SSBO in GMEM across several renderpasses while reading and writing to that SSBO from compute dispatches.
+
+Previously, using GMEM was only available to the driver (and was entirely off-limits for compute shaders). These extensions also allow resources to be explicitly allocated from system memory, to preserve limited GMEM for the most intensively used resources.
+
+VK_QCOM_tile_memory_heap
+
+VK_QCOM_tile_memory_heap allows you to allocate images and buffers in GMEM and specify when they persist across renderpasses, and when they don’t (provided they don’t persist beyond certain restrictions that can vary by device, with particular restrictions for images and buffers).
+
+The extension can reduce power usage (by replacing comparatively power-hungry memory bus traffic with cheaper GMEM operations) and improve execution speed (since GMEM is significantly faster than system memory).
+
+VK_QCOM_tile_shading
+
+VK_QCOM_tile_shading allows you to:
+
+use compute shaders within a renderpass (or dynamic rendering scope) and access tiled render attachments stored in GMEM. Now compute shaders can efficiently collaborate with fragment shaders in GMEM – without expensive barriers or unnecessary system memory usage
+
+record and dispatch commands in a GPU-Driven manner using per-tile draws
+
+Many shaders that can operate within the device’s tiled memory constraints and tile-shading-restrictions can reduce power usage (by replacing power-hungry memory bus traffic with less costly GMEM operations) and improve execution speed (since GMEM is significantly faster than system memory).
+
+A per-tile block is a sequence of commands bracketed by vkCmdBeginPerTileExecutionQCOM and vkCmdEndPerTileExecutionQCOM – VK_QCOM_tile_shading is active for every command in this bracket, which means:
+
+tile-based deferred rendering is employed as much as possible, so Snapdragon Profiler should show you the “HwVizBinning” Render Mode on Surfaces corresponding to renderpasses employing VK_QCOM_tile_shading
+
+the order in which commands are executed does not change – it is consistent with typical Adreno tile-based rendering in this regard
+
+draws (called “per-tile draws”) and dispatches are guaranteed to be executed once per tile without being discarded (but no sort of execution loop or other unusual control-flow is involved)
+
+Render Surfaces
+sRGB textures and render targets
+
+sRGB is a standard RGB color space created cooperatively by Hewlett-Packard and Microsoft in 1996 for use on monitors, printers, and the Internet. Smartphone and tablet displays today also assume sRGB (nonlinear) color space. sRGB provides the best viewing experience with correct colors, and ensures that the color space for render targets and textures match the color space for the display.
+
+API support varies, as does the efficiency of different pixel formats.
+
+For more information, see Qualcomm TrueHDR.
+
+Universal bandwidth compression
+
+Universal bandwidth compression (UBWC) is supported by all GPUs since A5x. UBWC is a unique predictive bandwith compression scheme that improves effective throughput to system memory. By minimizing the bandwidth of data, significant power savings can be achieved.
+
+UBWC works across many components in Snapdragon processors including GPU, Display, Video, and Camera. The compression supports YUV and RGB formats, and reduces memory bottlenecks. Snapdragon Profiler typically shows surfaces as being encoded as “Optimal” (UBWC) or “Linear” (much less performant, but laid out like a C-array rather than with Snapdragon’s proprietary compression scheme).
+
+Percentage Closer Filtering for depth textures
+
+Adreno GPUs have hardware support for the OpenGL ES 3.0 and Vulkan Percentage Closer Filtering (PCF) feature.
+
+A hardware bilinear sample is fetched from the shadow map texture, which alleviates the aliasing problems that can be seen with real-time shadow mapping.
+
+LRZ, Early-Z and Fast-Z
+Low Resolution Z pass
+
+A Low Resolution Z (LRZ) pass was added with Adreno 5X (A5x). This pass is also referred to as draw order independent depth rejection.
+
+During the binning pass, a low resolution Z-buffer is constructed, and can reject LRZ-tile-wide contributions to boost binning performance. This LRZ is then used during the rendering pass to reject pixels efficiently before testing against the full resolution Z-buffer.
+
+LRZ costs negligible CPU resources. The binning process is performed in the GPU and the visibility streams generated (which dictate which drawcalls affect which bins) are placed in system memory for the GPU to be consumed in the render pass.
+
+This feature reduces memory access and the number of rendered primitives, lessening an application’s need to draw front to back – and thereby usually improving frame rate.
+
+LRZ cannot be directly used by the developer – not through Vulkan, DirectX, OpenGL ES, or any other public API – but the developer can influence the likelihood of LRZ being executed.
+
+Early Z rejection
+
+For pixels that pass the LRZ test (if active), Early Z rejection mode provides a fast occlusion method that rejects unwanted render passes for objects that are not visible.
+
+The image below shows a color buffer represented as a grid, and each block represented as a pixel. A primitive has been rendered: it’s colored black, and the Z-buffer value for these black pixels is 1.
+
+If a new primitive is rendered onto the same pixels of the color buffer, and that primitive has a Z-buffer value of 2 (second grid with green blocks), the conflicting pixels from the new primitive will be rejected (the third grid represents the final color buffer).
+
+To get the maximum benefit of Early Z, ensure Early Z rejection is executed by the driver. Also, we recommend drawing a scene with primitives sorted front-to-back; i.e., near-to-far – this ensures that the Z-reject rate is higher for the far primitives, which typically optimizes applications with high-depth complexity.
+
+Fast-Z
+
+The GPU has a special mode that writes Z-only pixels at twice the normal rate – this can improve performance when, for example, an application renders to a shadow map, or a z-prepass. The developer can influence the driver’s likelihood of activating Fast-Z.
+
+Texture Features
+Texture compression
+
+Texture compression can significantly improve the performance and load time of graphics applications because it reduces texture memory and bus bandwidth use.
+
+Important compression texture formats supported by Adreno GPUs include (beginning with, generally, the best choice):
+
+ASTC - Texture compression format supported in OpenGL ES (3.0 and later) and Vulkan that allows compression to use a variable block size, and supports sRGB texture data more efficiently than the alternatives
+
+ETC2 - Standard OpenGL ES 3.0 and Vulkan texture compression format supporting R, RG, RGB, and RGBA component layouts, as well as sRGB texture data
+
+ATC - Proprietary Adreno texture compression format (for RGB and RGBA)
+
+ETC - Standard OpenGL ES 2.0 texture compression format (for RGB only)
+
+DXT - DirectX Texture Compression
+
+BC - Block Compression (for DirectX)
+
+Adreno GPUs support both HDR and LDR profiles for ASTC.
+
+Unlike desktop OpenGL, Vulkan does not provide the necessary infrastructure for the application to compress textures at runtime, so texture data needs to be authored off-line.
+
+Here are several methods for converting textures to Adreno hardware:
+
+On-device conversion: a time-consuming one-time conversion of texture assets that occurs when the game starts up
+
+Prepackaging: the most optimized solution, but requires alternative versions of the APK for each GPU
+
+Downloading: requires GPU detection and an internet connection, but allows for even more control on the exact texture format for each GPU
+
+In any case, the first step is to create the compressed textures. The effectiveness of supported compression formats is described here.
+
+Floating point textures
+
+Adreno GPUs support floating point texturing features.
+
+Cube mapping with seamless edges
+
+Cube mapping is a fast and inexpensive way to create graphic effects such as environment mapping. Cube mapping takes a three-dimensional texture coordinate and returns a texel from a given cube map (similar to a sky box).
+
+Adreno GPUs support seamless edge support for cube map texture sampling.
+
+Video textures
+
+Adreno GPUs support video textures, which consist of moving images that are streamed in real-time from a video file.
+
+There is no dedicated video memory which the application developer can control – video textures are allocated from system memory by the graphics driver like other textures.
+
+Shaders
+Unified shader architecture
+
+All Adreno GPUs support the Unified Shader Model, which uses a consistent instruction set across all shader types.
+
+In hardware terms, Adreno GPUs have computational units (e.g., Algorithmic Logic Unit, or ALUs) and fetch resources that support vertex, fragment and compute shaders – so much of the following advice applies to most or all of these shaders.
+
+Shader processing is done within the unified shader architecture, as shown in the following image. This image shows that vertices and pixels are processed in groups of four as a vector, or a thread. When a thread stalls, the shader ALUs can be reassigned.
+
+In unified shader architecture, there is no separate hardware for the vertex and fragment shaders, as shown in the image below. This allows for greater flexibility of pixel and vertex load balances.
+
+The Adreno shader architecture is also multithreaded. If a fragment shader execution stalls due to a texture fetch, another shader is scheduled for execution. Multiple shaders can be “ready to efficiently schedule” as long as there is room in the hardware (primarily GPRs).
+
+No special steps are required to use the unified shader architecture. The Adreno GPU intelligently makes the most efficient use of shader resources depending on scene composition.
+
+Scalar architecture
+
+Adreno GPUs have a scalar component architecture. The smallest component they support natively is a scalar component. This results in more efficient hardware resource use for processing scalar components, as it does not waste a full vector component to process the scalar.
+
+There are numerous ways to make efficient use of the hardware.
+
+GPU-Driven Rendering
+Geometry instancing
+
+Geometry instancing renders multiple copies of the same mesh or geometry in a scene at once. This technique is used primarily for objects like trees, grass, or buildings that can be represented as repeated geometry without appearing unduly repetitive. However, geometry instancing can also be used for characters.
+
+While vertex data is identical across all instanced meshes, each instance can have other differentiating parameters changed to reduce visual repetition – such as color, transforms, or lighting.
+
+As shown in the image below, all barrels in the scene could use a single set of vertex data that is instanced multiple times instead of using unique geometry for each one.
+
+Geometry instancing usually saves memory: it allows the GPU to draw the same geometry multiple times in a single draw call with different positions, while storing only a single copy of the vertex data, a single copy of the index data, and an additional stream containing one copy of a transform for each instance. Without instancing, the GPU would have to store multiple copies of the vertex and index data.
+
+Indirect draw calls
+
+Introduced in OpenGL ES 3.1, indirect draw calls move the draw call overhead from the CPU to the GPU. This can provide a significant performance benefit over regular draw calls.
+
+Low Priority Asychronous Compute (LPAC)
+
+LPAC (Low Priority Asynchronous Compute) is intended to perform less latency-sensitive compute tasks concurrently with other processing on the Graphics Pipe – in other words, somewhat longer-lived (on the scale of multiple milliseconds) compute tasks are often best issued with LPAC, and have somewhat different performance characteristics.
+
+Mesh Shading
+
+A8x supports the Vulkan mesh shading extension, which affords more custom control over geometry generation.
+
+The extension is almost always more efficient than the old geometry, hull, domain and tessellation shaders, and can optimize culling implementations with meshlet-level culling – which can skip all triangles in a meshlet according to whatever criteria you define. Read on to learn how to efficiently implement mesh shading on Adreno.
+
+Raytracing
+Introduction
+
+Ray tracing is a rendering technique that closely approximates the behavior of light in the real-world, and also has applications outside of rendering (path-tracing audio signals and AI line-of-sight, for example). Performance can scale from cinematic quality productions to mobile applications.
+
+Qualcomm is engaged in continuous research and development, in partnership with many other research teams and game studios, to efficiently simulate light rays reflecting and refracting on and through surfaces to deliver beautiful images in real-time on Adreno.
+
+How does raytracing differ from rasterization?
+
+While ray tracing can replace standard rasterization, typically it’s implemented as additional functionality on top of existing rasterization-based pipelines, providing more features (like accurate refraction) and simplifying some effects (like shadows, reflections and subsurface scattering) that a traditional rasterization-only pipeline would realize with less robust tricks and hacks.
+
+Instead of (only) shading the visible pixels of triangles, rays are generated for pixels on screen. These rays can collide with different surfaces and reflect, be absorbed, refract, or some combination thereof. Many rays can be generated from a single intersection, and ray propagation can continue as long as desired, trading off visual quality against performance.
+
+This required changes to all modern graphical APIs. Vulkan is the typical API for raytracing on mobile devices, and provides access to custom acceleration structures, ray-tracing pipelines, and ray queries – among many other supporting extensions outside of the scope of this article.
+
+Hit detection
+
+How can we generate rays efficiently on an HD screen? With a modest geometry budget of 100,000 visible, opaque triangles – even leaving the added complexity of transparency aside – the naive approach of casting a ray per pixel at every triangle results in about 207,360,000,000 intersection tests: unsuitable for offline rendering systems, let alone real-time renderers.
+
+Acceleration structures are driver-optimized spatial partitioning datastructures that drastically reduce the number of intersection tests, with no noticeable degradation in accuracy. Read on to learn how to efficiently implement raytracing on Adreno.
+
+Qualcomm True HDR
+Introduction
+
+HDR displays have been around for a long time in the PC and TV space, and mobile devices featuring OLED screens were introduced in 2018 to support a higher dynamic range and wider color gamut.
+
+To make better use of OLED screens’ wide color gamut and high dynamic range, Qualcomm launched True HDR gaming as part of Snapdragon Elite Gaming – the first end-to-end HDR solution on mobile.
+
+True HDR gaming takes full advantage of Snapdragon’s GPU and Display Process Unit (DPU) capabilities for HDR content (R10G10B10A2 format/BT2020 gamut). Color Volume Mapping is performed by the DPU.
+
+This guide is meant as an overview of HDR in general, as well as the Qualcomm True HDR gaming solution.
+
+High Dynamic Range (HDR)
+
+In the following image, the world’s luminance level is [0, infinite) candela per square meter(cd/m 2). Through the human eye’s rods and cones, we perceive a luminance of around [10 −6, 10 8] cd/m 2.
+
+Real-world luminance levels and the high-level functionality of the Human Visual system – image taken from Perceptual Design for High Dynamic Range Systems. [1]
+
+Standard Dynamic Range (SDR) and High Dynamic Range (HDR) support different luminance levels:
+
+SDR support luminance in [0.0002, 100] cd/m 2
+
+HDR support luminance in [0.00005,1000 or larger] cd/m 2
+
+The change of dynamic range and color gamut in the SDR and HDR pipeline are seen here:
+
+Content delivery in SDR. Image Credit: Dolby Laboratories, Inc.
+
+Content delivery in HDR. Image Credit: Dolby Laboratories, Inc.
+
+Wide Color Gamut (WCG)
+
+The human eye has three types of color sensors that respond to different ranges of wavelengths. The color consists of two parts: brightness and chromaticity. For example, white and grey colors have the same chromaticity but different brightness.
+
+The International Commission on Illumination (CIE) created the CIE 1931 RGB color space to model how we see color. The horseshoe-shaped region represents what a “typical” human can see in response to different light wavelength.
+
+CIE 1931 color space.
+
+The color gamut is a specific, complete subset of colors. It is often referred to as the entire range of colors available on a display device. The following image shows various standards’ color gamuts.
+
+BT.709, DCI-P3, BT.2020.
+
+BT.709, high definition television (HDTV) standard
+
+DCI-P3, used for cinema theater presentations and an intermediate gamut for UHD content
+
+BT.2020, ultra-high-definition television (UHDTV) standard
+
+Color gamut with a larger range than BT.709, such as BT.2020, is often referred as Wide Color Gamut (WCG).
+
+Color volume
+
+Brightness and color gamut define color volume, so a higher dynamic range and wider color gamut means a larger color volume.
+
+The color volume of BT.2020 color gamut and BT.709 color gamut. Image credit: Sony.
+
+Display technique
+
+Modern display technology features increased bit widths, color gamut, and screen brightness:
+
+Maximum bit width support includes 6, 8, 10, 12 bits.
+
+Maximum luminance (brightness) support includes 100 nit, 500 nit, and 1000 nit.
+
+Color gamut support includes BT.709, DCI-P3, and BT.2020.
+
+The evolution of bit, brightness, and color gamut supported by display devices.
+
+Light-to-display overview
+
+Environment photons to display photons.
+
+When a photo is taken using a camera and viewed, the following happens:
+
+The camera converts light to video signal using an Optical to Electrical Transfer Function (OETF)
+
+The display converts video signal to light using the reverse function, Electrical to Optical Transfer Function (EOTF)
+
+For SDR, gamma is used. For HDR, Perceptual Quantization (ST-2084) or Hybrid Log-Gamma (BBC / NHK) are used. ST-2084 defines following:
+
+SMPTE ST 2084 (PQ).
+
+SMPTE ST 2084 PQ EOTF(PQ).
+
+HDR10
+
+HDR10 is an open standard (announced on August 27, 2015). This standard is composed of the following specifications:
+
+Bit depth: 10-bit
+
+Color representation: ITU-R BT.2020
+
+Chromaticity
+
+Electro-Optical Transfer Function (EOTF): SMPTE ST 2084
+
+Maps non-linear signal value into display light
+
+Static metadata: SMPTE ST 2086
+
+SMPTE ST2086 defines the “Master Display Color Volumes” metadata, which is used to describe the capability of the display. It includes:
+
+CIE(x,y) chromaticity coordinates for Color primaries
+
+CIE(x,y) chromaticity coordinates for White point
+
+Min and max luminance
+
+Others such as MaxFALL (Maximum Frame Average Light Level) and MaxCLL (Maximum Content Light Level) static values
+
+Color volume mapping
+
+Color volume mapping is the process of mapping content that was created on a mastering display down to a playback display. It includes tone mapping for Luminance and gamut mapping for Chromaticity.
+
+Tone mapping: The peak luminance of a playback HDR display will often be lower than the peak luminance of the reference display that is used to master HDR content. So tone mapping is necessary to convert the high luminance HDR content to the dynamic range supported by the playback display.
+
+Gamut mapping: The primary colors of a playback HDR display are often less saturated than the reference HDR display. The wider content gamut must be mapped to the corresponding gamut of the playback display.
+
+Note
+
+When applying color volume mapping, the luminance and chromaticity attributes of both the reference display and the content must be passed to the display. These attributes are represented by the static metadata fields that are defined in the SMPTE ST 2086 standard.
+
+Traditional Game HDR
+
+HDR images are more convincing than SDR images:
+
+sdr image(left) and traditional HDR image(right), images taken from Unreal.
+
+Traditional HDR pipeline.
+
+A traditional game HDR pipeline takes the following steps:
+
+RenderedScene: A scene is rendered on Render-Targets with HDR format, such as RGBA16, R11G11B10, R10G10B10A2.
+
+Postprocessing: Bloom, vignette, grain jitter, motion blur, etc.
+
+ColorGrading: Contrast, saturation and gamma, gain, etc.
+
+ToneMapping: Maps the dynamic range data to standard range data (RGBA8888/sRGB). There are many traditional mapping curves:
+
+Reinhard tone mapping: Simple and direct: the light dark, dark light, the overall image bias towards gray.
+
+Crytek tone mapping: CryEngine2 implementation: the power function is used to form an s-curve, which is steeper than the slope of Reinhard tone mapping and sensitive to dark colors. The overall image has a higher contrast and brighter color.
+
+Filmic tone mapping: Uncharted 2 implementation: the results image after tone mapped are close to the effects of manual adjustment, and the overall growth process is longer.
+
+ACES Film: ACES simplified version: sample ODT(RRT(x)) transform and fit a simple curve.
+
+Gamma: Gamma correction is an old, simple approach to brightening or darkening an image
+
+True HDR
+
+Compared to a traditional HDR image, a Qualcomm True HDR image exhibits a heightened contrast, with more details preserved in highlights and shadowed areas. Qualcomm True HDR gaming is compatible with the HDR10 standard; in fact, the DPU expects HDR10 data input.
+
+Traditional HDR image(up), True HDR image(down).
+
+True HDR pipeline
+
+HDR Game content is produced on a reference display with an exceptionally high dynamic range and a wider gamut. The rendered scene is mapped to the dynamic range and color space supported by True HDR in the postprocessing phase – this final step depends on the DPU consuming HDR metadata.
+
+Workflow of a True HDR pipeline for Game
+
+The following provides a detailed overview of the True HDR pipeline and how it functions:
+
+HDR Content: Game content produced on a reference display with large color volume (exceptionally high dynamic range and wider color gamut).
+
+Scene-referred image: Takes HDR content as input and uses a realistic rendering approach (such as physically based rendering (PBR)) to generate a good HDR scene reference image with proper exposure, rich highlights, and shadows.
+
+Postprocessing, ColorGrading: Same as traditional game HDR.
+
+GamutMap and Tonemapper: Maps the dynamic range and color space of the RenderedScene to the dynamic range and color space supported by True HDR.
+
+UIToneMapper: Maps UI render data to HDR.
+
+Adding a scale factor: Adds a scale factor to the UI to match with the main rendered scene.
+
+Composite: Blends the scene HDR and UI HDR inputs. If the game relies on a lot of transparent UI, it would be easier to render the entire UI to a render target and then blend that render target with the back-buffer, rather than directly render UI to the back-buffer.
+
+ST-2084-PQ(OETF): The data required for a backbuffer using True HDR is called ST-2084-PQEncoded. The backbuffer should be encoded by ST-2084-PQ, and the encoded value mapped to the normalized range – [0.0,1.0].
+
+EOTF/Tonemapping/GamutMapping: Handled by Qualcomm DPU.
+
+ST-2084-PQ(EOTF): Inverse of ST-2084-PQ(OETF).
+
+Tonemapping: Maps output of EOTF to the actual color space used by the screen and the actual dynamic range.
+
+GamutMapping: Maps one color space to another. The usual method is linear stretch or compression. The color space required by HDR10 standard is BT2020, but the actual screen cannot meet this requirement. The Qualcomm DPU will perform the color gamut conversion.
+
+Academy Color Encoding System (ACES) Tonemapping
+
+Even with HDR screens, the dynamic range of support is limited. Scene-referred images can generate very high dynamic range images. A SceneToneMapper might map an input HDR scene of up to 10000 nits to a 1000 nit True HDR scene, with a UIToneMapper performing a similar mapping for the UI data.
+
+The Academy Color Encoding System (ACES) is often used in games.
+
+ACES pipeline
+
+There are two color gamuts in ACES: AP0 and AP1.
+
+AP0 and AP1 contain BT.709 and BT.2020, which means that ACES can handle several types of tone mapping and gamut mapping:
+
+Color gamut comparison among BT.2020, BT.709 and AP0/AP1 used by ACES.
+
+ACES pipeline.
+
+For games, images after scene rendering are called a Scene-Referred image. The ACES pipeline involves these components:
+
+Color grading: According to the ACES Color Space.
+
+Reference Rendering Transform (RRT): Converts Scene-Referred colorimetry to Display-Referred: The color space is converted to the ACES defined AP0 color space and dynamic range is converted to 0-10000 nits, so the image can be renderered to any output device.
+
+Figure 18 RRT curve.
+
+Output Device Transform (ODT): Converts the color space into the ACES defined AP1 color space: both the dynamic range and the color space is mapped to the dynamic range and color space supported by the device. There are many ODTs: ODT_48nits, ODT_1000nits, ODT_2000nits, and others.
+
+RRT+ODT_1000 nits (left) and RRT+ODT_48 nits (right)
+
+OpenGL ES: Here is a guide to setting up TrueHDR.
+
+[1]
+
+Kunkel, T & Daly, Scott & Miller, S & Froehlich, Jan. (2016). Perceptual Design for High Dynamic Range Systems. 10.1016/B978-0-08-100412-8.00015-2.
+
+Variable Rate Shading (VRS)
+
+Variable Rate Shading (VRS) allows a fragment shader to color one or more pixels at a time, such that a fragment can represent one pixel or a group of pixels. Think of VRS as performing the inverse of what anti-aliasing techniques do: anti-aliasing techniques sample each pixel more frequently to avoid aliasing and jagged edges by smoothing content with high variation – but if images do not have a high color variation or will be blurred on a subsequent pass (eg, with motion blur), we may be able to sample fewer pixels without harming visual quality.
+
+VRS allows developers to specify shading rates where only one shader computation is performed for a fragment and the result is applied to the specified pixel group configuration. When used properly, this results in no visual quality degradation while significantly reducing the GPU’s work to render a frame, thus conserving power and improving performance. With several high display rate mobile devices commercially available, like those powered by our Qualcomm® Snapdragon™ mobile platforms and their embedded Qualcomm® Adreno™ GPU’s, the need for shading every pixel for all surfaces being rendered is diminished.
+
+The following screenshot from our Variable Rate Shading demo shows how higher rate (per-pixel) shading should be used on highly detailed areas, while lower rates (shading fragments comprising groups of pixels) can be done on lower detail areas.
+
+How does Variable Rate Shading work?
+
+When the GPU renders and rasterizes objects into a surface, it does so at a rate of one sample per pixel (assuming multisampling is not used, although this concept can be applied to multisampling as well). Through graphics API extensions, a developer can modify the shading rate of a given surface to be coarser than a pixel, as shown:
+
+Effective ways to modify Shading Rate
+
+These extensions can improve performance on heavy fragment-bound draw calls such as:
+
+Surfaces where the color variance is low
+
+Surface areas that do not require per-pixel shading accuracy, such as color targets that will be downscaled through motion blur and areas that have significant changes in their velocity fields. If depth of field is used, there will be areas outside of the focus point that will be blurred and consequently will also be good candidates for VRS
+
+Effects like motion volumetric rendering, where a portion of the scene is processed at full shading rate and a portion can be processed at a reduced shading rate
+
+Note
+
+Reducing shading rate can impact the visual quality of a rendered object if used inappropriately. On mobile devices where performance and power are tightly coupled, the use of coarser shading rates can also improve power consumption and reduce the thermal profile of your game, ultimately increasing the user’s play time.
+
+Previous
+
+Adreno
+
+Next
+
+Spec Sheets
+
+May contain U.S. and international export controlled information
+On this page
+Introduction to Snapdragon Adreno™
+Tile-based Rendering
+FlexRender™ technology (Hybrid Deferred and Direct Rendering mode)
+Concurrent Binning
+MSAA: Multisample anti-aliasing
+Tile Shading Vulkan Extensions
+Render Surfaces
+sRGB textures and render targets
+Universal bandwidth compression
+Percentage Closer Filtering for depth textures
+LRZ, Early-Z and Fast-Z
+Low Resolution Z pass
+Early Z rejection
+Fast-Z
+Texture Features
+Texture compression
+Floating point textures
+Cube mapping with seamless edges
+Video textures
+Shaders
+Unified shader architecture
+Scalar architecture
+GPU-Driven Rendering
+Geometry instancing
+Indirect draw calls
+Low Priority Asychronous Compute (LPAC)
+Mesh Shading
+Raytracing
+Introduction
+How does raytracing differ from rasterization?
+Hit detection
+Qualcomm True HDR
+Introduction
+Light-to-display overview
+HDR10
+Traditional Game HDR
+True HDR
+Variable Rate Shading (VRS)
+How does Variable Rate Shading work?
+Effective ways to modify Shading Rate
+Light
+Dark
+Auto
+Qualcomm relentlessly innovates to deliver intelligent computing everywhere, helping the world tackle some of its most important challenges. Our leading-edge AI, high performance, low-power computing, and unrivaled connectivity deliver proven solutions that transform major industries. At Qualcomm, we are engineering human progress.
+Quick links
+Products
+Support
+Partners
+Contact us
+Developer
+Company info
+About us
+Careers
+Investors
+News & media
+Our businesses
+Email Subscriptions
+Stay connected
+
+Get the latest Qualcomm and industry information delivered to your inbox.
+
+Subscribe
+Manage your subscription
+Terms of Use
+Privacy
+Cookie Policy
+Accessibility Statement
+Responsible AI Policy
+Do Not Sell or Share My Personal Information
+Language: English (US)
+Languages
+English ( United States )
+简体中文 ( China )
+
+© Qualcomm Technologies, Inc. and/or its affiliated companies.
+
+Snapdragon and Qualcomm branded products are products of Qualcomm Technologies, Inc. and/or its subsidiaries. Qualcomm patented technologies are licensed by Qualcomm Incorporated.
+
+Note: Certain services and materials may require you to accept additional terms and conditions before accessing or using those items.
+
+References to "Qualcomm" may mean Qualcomm Incorporated, or subsidiaries or business units within the Qualcomm corporate structure, as applicable.
+
+Qualcomm Incorporated includes our licensing business, QTL, and the vast majority of our patent portfolio. Qualcomm Technologies, Inc., a subsidiary of Qualcomm Incorporated, operates, along with its subsidiaries, substantially all of our engineering, research and development functions, and substantially all of our products and services businesses, including our QCT semiconductor business.
+
+Materials that are as of a specific date, including but not limited to press releases, presentations, blog posts and webcasts, may have been superseded by subsequent events or disclosures.
+
+Nothing in these materials is an offer to sell or license any of the services or materials referenced herein.
+
+This website processes personal data through our and third parties’ online tracking technologies, including analytics and advertising cookies. To learn more about how we and our affiliates within the Qualcomm Group may use your personal data and cookies, please review the Privacy Policy published at the bottom of this website and Qualcomm’s Cookie Policy. If you don’t want to share your website activities, including browsing behavior, with our third-party partners via these tracking technologies, click on “Cookie Settings" below to update your preferences. You can also update your cookie preferences at any time by clicking the Do Not Sell or Share My Personal Information link at the bottom of this website.
+Cookie Settings
+I Understand

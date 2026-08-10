@@ -727,6 +727,64 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🟢🟢🟢 **THE QUALCOMM GPU MANUAL IS IN-REPO AT LAST (2026-08-10) - PLAYWRIGHT CRACKED THE SPA, AND IT NAMES A CHEAPER FIX THAN THE PORT WE HAVE BEEN DEBATING**
+**This file said twice that Adreno documentation was unobtainable: *"their docs site is a JS SPA and will not
+fetch - a real Adreno GPU manual is NOT obtainable the way the Arm SWOGs were"*. That was wrong, and the fix was
+the tool the user kept naming: a headless browser renders the SPA.** Now in-repo at `docs/reference/adreno/`:
+```
+mobile_best_practices.txt   77,437 chars   "Adreno GPU on Mobile: Best Practices"
+overview.txt                38,697         feature/extension overview (tile shading, VRS, mesh)
+cpu.txt / gpu.txt / sdp.txt / vk_adreno_layer.txt / landing.txt
+```
+**THE URL SHAPE, so nobody re-derives it:** the guessable `.../bundle/publicresource/topics/80-78185-2/<x>.html`
+paths 404. The real one is **`https://docs.qualcomm.com/doc/80-78185-2/topic/<page>.html`**, discovered by
+rendering the bundle root and reading its links. Plain HTTP returns nothing; `playwright` + `chromium`, ~5s
+settle time per page.
+**🔥🔥 THE FINDING THAT MATTERS, VERBATIM FROM QUALCOMM - AND IT DOES *NOT* NEED THE
+DYNAMIC-RENDERING PORT:**
+> *"A properly structured renderpass allows Vulkan to instruct the GPU to execute all subpasses on a per-tile
+> basis. That is, the full subpass chain can be executed for each tile, **thus avoiding the need to resolve
+> subpasses to system memory after each pass**. Proper setup of these subpasses is required for the Vulkan
+> driver to 'merge' the subpasses into one. **This can result in gains of over 10% frametime** depending on
+> subpass chain complexity and configuration."*
+**SUBPASS MERGING IS A TRADITIONAL-RENDER-PASS MECHANISM.** It is not `dynamic_rendering_local_read`, it needs
+none of the ~115-site port, and the vendor quantifies it at **>10% frametime**. Our measured problem is 25
+EDRAM resolve passes per frame that each open and tear down a **separate render pass** to do a copy with no
+draws - and Qualcomm's prescribed remedy for exactly that is to express the chain as **subpasses of one pass**
+so the driver merges them and the resolve never reaches system memory.
+**✅ AND WE ARE NOT DOING IT - CHECKED, NOT ASSUMED:**
+```
+subpassCount = 1   swap gamma, fsi, main RT pass (:3266), :5667      <- the main paths
+subpassCount = 2   only :3477 and :3627 (feedback / custom-resolve variants)
+```
+**The main render path is single-subpass, so the driver has nothing to merge.** That is the gap between what we
+do and what the vendor says to do, and it is the first time this project has had the vendor's own words on it.
+**✅ SECOND CONCRETE ITEM, ALSO ZERO USES IN OUR TREE:**
+> *"use `VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT` for buffers that are not read from outside of the renderpass
+> (especially MSAA attachments...). For example, a Z-buffer that exists only to be cleared and used for typical
+> z-buffering within a single renderpass should use this flag."*
+```
+LAZILY_ALLOCATED     : 0 hits across src/xenia/gpu/vulkan + src/xenia/ui/vulkan
+TRANSIENT_ATTACHMENT : 0 hits
+```
+**On a TBDR a lazily-allocated transient attachment may never be backed by system memory at all** - the tile
+memory suffices. We back every attachment fully. Bounded, never considered, and it is a bandwidth/allocation
+win rather than a correctness risk.
+**🔧 A DIAGNOSTIC WE CAN TURN ON, from the same doc:** the **Vulkan Adreno Layer** logs
+**`VKDBGUTILWARN003`** when subpasses were NOT merged properly, and Snapdragon Profiler's *Rendering Stages*
+metric shows merge status per surface. **We already bundle a validation layer** (`vulkan_validation` cvar), so
+adding the Adreno layer is the same plumbing. **That turns "are our passes merging?" from a guess into a log
+line** - and it is the measurement that should gate any subpass work.
+**⚠ WHAT IS NOT ESTABLISHED:** none of this is measured on our tree. Qualcomm's >10% is THEIR number for
+THEIR recommended structure, and our resolves are EDRAM emulation, which may not be expressible as subpasses of
+the producing pass without the same attachment-compatibility constraints that make the port hard. **Rule 4
+applies: enable the Adreno layer and read `VKDBGUTILWARN003` before restructuring anything.**
+**✅ AND THE OLD "NO QUALCOMM MANUAL EXISTS" CLAIM IS NOW PROPERLY BOUNDED.** It is still true that there is
+no SM8550 **CPU** TRM - the 8 Gen 2 uses stock Arm cores and the four Arm SWOGs are authoritative for those, and
+the 2-page product brief in `docs/reference/snapdragon/` really is marketing. **But a substantial Adreno GPU
+optimization guide does exist and is now in the repo.** The two claims were conflated; only the CPU half was
+ever right.
+
 ## ↩️↩️ **I REVERSED MY OWN VERDICT SAME-SESSION: THE 27 rt_change PASSES *ARE* THE EDRAM RESOLVES, SO THE IN-PASS RESOLVE CHAIN IS BACK ON TARGET (2026-08-10)**
 **Two commits earlier I wrote "DO NOT START THE ~115-SITE DYNAMIC-RENDERING PORT EXPECTING IT TO COLLAPSE 27
 BREAKS/FRAME". That was based on a ping-pong test I flagged at the time as too narrow. It was too narrow, and
@@ -902,8 +960,9 @@ path. If pass COST (not just count) is ever needed, that is the gap to close fir
 ## 🎯 **THE GPU TARGET, SCOPED 2026-08-10 — IT IS PASS COUNT, AND IT IS *NOT* THE LOAD/STORE HINTS**
 **Given BD is now GPU-bound (section directly below), the obvious first suspect is Qualcomm's own top complaint.
 Checked it; we are already clean. Recording so the next session does not spend a day there.**
-**QUALCOMM'S RULE, from their developer forum** (their docs site is a JS SPA and will not fetch — a real Adreno
-GPU manual is NOT obtainable the way the Arm SWOGs were):
+**QUALCOMM'S RULE, from their developer forum** (❌ the parenthetical here used to read *"their docs site is a
+JS SPA and will not fetch - a real Adreno GPU manual is NOT obtainable"*. **THAT IS RETRACTED**: Playwright
+renders the SPA and the guide is now in `docs/reference/adreno/` - see the section above):
 > *"Unresolves or GMEM Loads are operations … where memory is Loaded (unresolve) or Stored (resolve) to and from
 > main memory. **Unresolves are typically unintentional** and can usually be caused by **lack of proper hints to
 > the driver** and removing them usually results in **significant performance increases**."*
