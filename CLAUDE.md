@@ -1247,7 +1247,39 @@ AAudio DataCallback  (real-time, every few ms)
 - **Already checked and NOT applicable:** `366f38da8` ("fill the whole AAudio request instead of one guest block
   per callback") — our `FillAudio` already loops over queued frames and zero-fills on underrun.
 
-## 🔬🔬 **a64-vs-LLVM VMX FLOAT SEMANTICS DIFF (2026-08-09) — TWO CONFIRMED DIVERGENCES ON THE SHIPPING BACKEND**
+## 🔬🔬 **a64-vs-LLVM VMX FLOAT SEMANTICS DIFF (2026-08-09) — FIVE DIVERGENCES, FOUR OF THEM WRONG ARITHMETIC**
+**⚡ THE ONE-LINE VERSION: the LLVM backend was doing INTEGER add/sub/mul/neg on VMX FLOAT vectors.** Not a
+rounding difference — `IsFloat()` is true only for FLOAT32/FLOAT64, VEC128 fails it, and four lowerings used the
+ternary `IsFloat(t) ? float_op : integer_op`. a64 implements **all nine** V128 arithmetic ops as VMX float
+(`EmitVmxFpBinOp_V128` / `EmitWithVmxFpcr` + fneg/fabs/fsqrt/fmax/fmin).
+| op | a64 | LLVM before | |
+|---|---|---|---|
+| `MUL` V128 | VmxFpBinOp::Mul | **`CreateMul`** integer | ❌ fixed, unconditional |
+| `ADD` V128 | VmxFpBinOp::Add | **`CreateAdd`** integer | ❌ fixed, unconditional |
+| `SUB` V128 | VmxFpBinOp::Sub | **`CreateSub`** integer | ❌ fixed, unconditional |
+| `NEG` V128 | fneg | **`CreateNeg`** = `0 - x`, not a sign flip | ❌ fixed, unconditional |
+| `vmaxfp`/`vminfp` | native fmax (propagates NaN, = PPC) | `llvm.maxnum` = IEEE maxNum, returns the NUMBER | ❌ fixed, `cpu_llvm_vmx_fmax_nan` |
+| `vaddfp`/`vsubfp` denormals | FPCR.FZ hardware flush | no flush, FPCR never set | ❌ fixed, `cpu_llvm_vmx_float_flush` |
+| DIV / ABS / SQRT / MAX / MIN | float | `if (IsFloat)` -> **falls through to a64** | ✅ safe by accident |
+**🔑 THE SIGNATURE, which is worth more than the five instructions: a type predicate that does not know about
+VEC128, used in a TERNARY WITH A PLAUSIBLE INTEGER FALLBACK, fails SILENTLY and compiles clean. The `if
+(IsFloat) {...}` form of the identical check fails SAFELY into the a64 fallback.** Same intent, opposite failure
+mode. Prefer the guard form, and grep for the ternary form whenever a new type reaches an old lowering.
+**✅ SEMANTICS VALIDATED DEVICE-FREE by differentials that already existed in `tools/qemu/`:**
+- `vmx_nan_arith_differential` — ARM `fadd`/`fmul` PROPAGATE NaN and match PPC on the propagated half, so
+  fadd/fsub/fmul + `VmxNanFixup` (which supplies PPC's NEGATIVE default NaN for the generated half) is the
+  correct reference shape.
+- `fmax_nan_differential` — `fmin` returns QNaN in ALL NaN cases, confirming FMAX/FMIN propagate, which is what
+  `llvm.maximum`/`llvm.minimum` lower to. Validates the `maxnum` -> `maximum` direction.
+**⚠️ That validates the SEMANTICS, not our emitter** — the harness runs hand-written asm under qemu and
+structurally cannot see LLVM's instruction selection or register allocation. **A pixel check is still owed.**
+**⇒ AND THIS IS NOW THE LEADING CYAN-BUG HYPOTHESIS.** `bd-llvm-postload-3d-cyan-bug` forces **1,019 functions
+off LLVM including Blue Dragon's hottest**, appears only when vmaddfp is lowered ALONGSIDE OTHER VECTOR OPS, and
+"those other vector ops were doing integer arithmetic on floats" is a mechanism that fits that conditionality
+exactly. **Retest `cpu_backend_llvm_lower_vmaddfp` with these fixes on — that is the highest-value single
+experiment in the tree**, because recovering those functions restores LLVM *and* its register residency.
+
+## 🔬 (superseded) a64-vs-LLVM VMX FLOAT SEMANTICS DIFF (2026-08-09) — TWO CONFIRMED DIVERGENCES ON THE SHIPPING BACKEND**
 **The a64 backend has had three separate float-semantics fixes researched, manual-cited and qemu-validated. NONE
 of them were carried across to the LLVM backend — which is the one that ships and runs ~80% of guest entries.
 Found by diffing the two backends op-by-op rather than one instruction at a time.**
