@@ -3024,6 +3024,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "rt_transfer_calls={} rt_transfers={} rt_xfers_dropped={} "
         "rt_xfers_executed={} rt_resolve_clears={} "
         "pass_break_barrier={} pass_break_rt_change={} "
+        "rtchg[fbonly={} passcfg={} pingpong={}] "
+        "endpass_draws[0={} 1={} 2+={}] "
         "xfer_same_fmt={} xfer_diff_fmt={} "
         "inpass[x={} skip_fmt={} skip_oth={}] "
         "deint[elig_draws={} elig_verts={} redir_draws={} redir_verts={} "
@@ -3079,6 +3081,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
              : 0),
         rt_resolve_clears_,
         rt_pass_break_barrier_, rt_pass_break_rt_change_,
+        rt_change_fb_only_, rt_change_pass_cfg_, rt_change_pingpong_,
+        rt_pass_ended_0draw_, rt_pass_ended_1draw_, rt_pass_ended_multidraw_,
         rt_transfer_same_format_, rt_transfer_diff_format_,
         rt_inpass_transfer_dests_, rt_inpass_skipped_format_,
         rt_inpass_skipped_other_, draw_outcomes_deint_elig_draws_,
@@ -3409,6 +3413,18 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_skip_no_view_ = 0;
     frame_resolve_edges_.clear();
     rt_pass_break_barrier_ = 0;
+    rt_change_fb_only_ = 0;
+    rt_change_pass_cfg_ = 0;
+    rt_change_pingpong_ = 0;
+    rt_pass_ended_0draw_ = 0;
+    rt_pass_ended_1draw_ = 0;
+    rt_pass_ended_multidraw_ = 0;
+    // rt_prev_framebuffer_ and rt_pass_draws_ are NOT reset here: they describe
+    // the pass currently OPEN, which straddles the frame boundary, and both are
+    // maintained only at pass transitions. An earlier version indexed into
+    // draw_outcomes_rendered_ instead, which IS reset per frame - in a different
+    // block from these counters - and the resulting skew made every break report
+    // zero draws. Keep per-pass state on a per-pass lifecycle.
     rt_pass_break_rt_change_ = 0;
     brk_open_breaks_ = 0;
     brk_buffer_barriers_ = 0;
@@ -4628,6 +4644,31 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // the pending concatenation run (it belongs to the old pass) before ending it.
     FlushPendingMergeRun();
     ++rt_pass_break_rt_change_;
+    // Classify the break and price the pass it is ending. See the counter block
+    // in the header for why: this decides whether the dynamic-rendering port is
+    // worth its ~115 sites, and it costs nothing but arithmetic on a path that
+    // already ends a render pass.
+    if (current_render_pass_ == render_pass) {
+      ++rt_change_fb_only_;
+    } else {
+      ++rt_change_pass_cfg_;
+    }
+    // A->B->A. Checked against the framebuffer we left ONE break ago, not the
+    // current one (which is by definition different or we would not be here).
+    if (framebuffer != nullptr && framebuffer == rt_prev_framebuffer_) {
+      ++rt_change_pingpong_;
+    }
+    // Draws recorded since this pass was entered. Unsigned-safe: the mark is only
+    // ever set from this same counter, but the counter resets per frame while a
+    // pass can straddle that reset, which would otherwise wrap to ~4 billion.
+    if (rt_pass_draws_ == 0) {
+      ++rt_pass_ended_0draw_;
+    } else if (rt_pass_draws_ == 1) {
+      ++rt_pass_ended_1draw_;
+    } else {
+      ++rt_pass_ended_multidraw_;
+    }
+    rt_prev_framebuffer_ = current_framebuffer_;
     // gpu_vulkan_retro_depth_none: this direct end bypasses EndRenderPass() -
     // apply the hindsight depth-none patch for the ending pass here too.
     RetroPatchDepthNoneAtPassEnd();
@@ -4651,6 +4692,10 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   }
   current_render_pass_ = render_pass;
   current_framebuffer_ = framebuffer;
+  // Mark where this pass starts in the draw stream so its draw count is known
+  // when it ends. Set unconditionally here, which is the ONLY place the tracker
+  // is assigned on this path - a mark set anywhere else could disagree with it.
+  rt_pass_draws_ = 0;
   // LEVEL 4 color-only native HLE (gpu_bd_native_color_lifetime_hle >= 4): if
   // this guest pass's framebuffer carries a private native color producer, SEED
   // it (LLE color -> native) now - BEFORE BeginRenderPass is recorded, while no
@@ -8573,6 +8618,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   }
 
   ++draw_outcomes_rendered_;
+  // Draws in the CURRENTLY OPEN render pass. Deliberately its own counter rather
+  // than a mark into draw_outcomes_rendered_: that counter is zeroed in a
+  // different per-frame reset block from the pass-break counters, so the two
+  // skew within a frame and the subtraction underflowed to 0 on every break
+  // (device-observed as "26.9 zero-draw passes in a 1,201-draw frame", twice).
+  // This one is reset only where a pass is entered, so it cannot desync from
+  // the thing it measures.
+  ++rt_pass_draws_;
   // (Removed 2026-08-07 with its consumer: the Blue Dragon full-native
   // per-draw CAPTURE, gated on gpu_bd_full_native = DEFINE_int32(..., 0),
   // which reads 0 in the live device config. It built a per-draw FNV-1a

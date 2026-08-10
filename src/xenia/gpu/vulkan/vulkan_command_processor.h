@@ -2274,6 +2274,39 @@ class VulkanCommandProcessor : public CommandProcessor {
   // render pass / framebuffer changed (RT reconfiguration).
   uint32_t rt_pass_break_barrier_ = 0;
   uint32_t rt_pass_break_rt_change_ = 0;
+  // WHY each rt_change break happened, and how much work the pass it ended did.
+  // rt_change is 60% of this frame's pass breaks (27 of 45, measured 2026-08-10),
+  // and the fix everyone assumes - the in-pass resolve chain, gated on a ~115-site
+  // dynamic-rendering port - only collapses breaks of a PARTICULAR shape. These
+  // counters say whether BD's breaks actually have it, BEFORE the port is started.
+  //   _fbonly   : same VkRenderPass, different VkFramebuffer. Same attachment
+  //               config, different target -> the RT churn local_read addresses.
+  //   _passcfg  : a different VkRenderPass entirely (format/samples/attachment
+  //               count changed). Dynamic rendering removes the OBJECT but the
+  //               attachment set still genuinely changes; expect less from it.
+  //   _pingpong : the pass being entered is the one we left one break ago (A->B->A).
+  //               That is the draw-resolve-draw-again oscillation in its purest
+  //               form and is the single strongest signal FOR the resolve chain.
+  // Draw histogram of the ENDING pass: a pass that draws 0 or 1 times paid a full
+  // TBDR tile store+reload for almost nothing. This file's GPU plan rests on
+  // "45 of 61 passes are single-draw", measured on a much older build - re-taking
+  // it is the cheap half of validating the whole plan.
+  uint32_t rt_change_fb_only_ = 0;
+  uint32_t rt_change_pass_cfg_ = 0;
+  uint32_t rt_change_pingpong_ = 0;
+  uint32_t rt_pass_ended_0draw_ = 0;
+  uint32_t rt_pass_ended_1draw_ = 0;
+  uint32_t rt_pass_ended_multidraw_ = 0;
+  // The framebuffer BEFORE the current one, for the A->B->A test above.
+  // Same type as current_framebuffer_ (the RT cache's wrapper, NOT a raw
+  // VkFramebuffer) so the A->B->A comparison is against the identical identity
+  // the break site itself tests.
+  const VulkanRenderTargetCache::Framebuffer* rt_prev_framebuffer_ = nullptr;
+  // Draws recorded into the currently open render pass. A DEDICATED counter,
+  // not a mark into draw_outcomes_rendered_ - that one is zeroed in a different
+  // per-frame reset block, and the skew silently made every break read as a
+  // zero-draw pass. Reset only where a pass is entered.
+  uint32_t rt_pass_draws_ = 0;
   uint32_t rt_transfer_same_format_ = 0;
   uint32_t rt_transfer_diff_format_ = 0;
   uint32_t rt_inpass_transfer_dests_ = 0;

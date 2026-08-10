@@ -727,6 +727,67 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🧪📏 **rt_change BREAKS CLASSIFIED 2026-08-10 - AND THEY ARE *NOT* THE SHAPE THE RESOLVE CHAIN FIXES**
+**Rule 4 applied to the biggest remaining GPU decision: before spending multiple sessions on the ~115-site
+dynamic-rendering port, measure whether BD's 27 rt_change breaks/frame actually have the shape
+`dynamic_rendering_local_read` collapses. Added a classifier at the break site. They do not.**
+```
+BD gameplay, warm cache, uncontended, averaged over 847 frames (verts > 150,000):
+  draws/frame        = 1,200        gpu_frame_us = 60,676  (16.5 fps)
+  PASS BREAKS/frame  = 43.4         barrier 16.5  +  rt_change 26.9
+      rt_change fbonly   =  0.0     same VkRenderPass, different framebuffer
+      rt_change passcfg  = 26.9     a DIFFERENT VkRenderPass entirely
+      rt_change pingpong =  1.0     A->B->A, the draw-resolve-draw-again oscillation
+```
+**CONFIRMED, and it re-validates the older census on a current build:** 43.4 breaks/frame against the
+previously recorded 45, with the same split (rt_change ~60%). That number is now trustworthy.
+**THE FINDING: `fbonly = 0.0` and `pingpong = 1.0`.** Every single rt_change break is a full render-pass
+CONFIGURATION change - never "same config, different target" - and immediate ping-pong between two targets is
+~1 per frame out of 26.9. **`local_read` exists to let a shader read the CURRENT attachment on-tile so a resolve
+does not have to END the pass. The oscillation that mechanism removes is ~4% of rt_change breaks here.**
+**=> DO NOT START THE ~115-SITE DYNAMIC-RENDERING PORT EXPECTING IT TO COLLAPSE 27 BREAKS/FRAME.** It may
+still be worth doing for other reasons (it deletes the render-pass/framebuffer/subpass objects, and XenDroid
+ships it), but the fps case this file has been building for it is **not supported by BD's actual break shape**.
+**HONEST LIMIT ON THE PINGPONG TEST - IT IS NARROWER THAN "no resolve chains exist".** It only detects
+returning to the framebuffer left ONE break ago. A resolve chain that goes A(draw) -> B(resolve dest) -> C(next)
+never returns to A and would read as three `passcfg` breaks. **So this refutes immediate oscillation, not
+resolve chains in general.** A wider test would hash the framebuffer sequence over a whole frame.
+**ONE RESULT MEASURED TWICE AND STILL UNINTERPRETED, recorded rather than explained away: at EVERY rt_change
+break the pass being ended had recorded ZERO draws** (26.9 of 26.9), in a frame that performs 1,200. Two
+independent implementations agree (a mark into `draw_outcomes_rendered_`, then a dedicated `rt_pass_draws_`
+reset only at pass entry), so it is almost certainly REAL rather than the skew I blamed it on twice.
+**The plausible reading, NOT established:** the rt_change breaks are transitions between passes that do no
+drawing - resolve/clear plumbing - while the scene's 1,200 draws sit in passes ended by the BARRIER path or by
+an explicit `EndRenderPass()` elsewhere, neither of which this classifier instruments. **If that is right it is
+a bigger finding than the classification itself** (the dominant break category would not be the drawing passes
+at all). **To settle it, instrument the other two pass-end paths the same way** - that is the next cheap run,
+and it needs no new concept, just the same counters at `EndRenderPass()` and the SubmitBarriers exit.
+**AND TWO INSTRUMENTATION BUGS WORTH THE WARNING, because both compiled clean and produced confident
+nonsense:** (1) the first version marked into `draw_outcomes_rendered_`, which is zeroed in a **different
+per-frame reset block** from the pass-break counters - the two skew inside a frame and every subtraction
+underflowed to the clamp. (2) Fixing the reset did nothing, because the diagnosis was wrong.
+**=> THE RULE: per-pass state must live on a per-pass lifecycle, never as an index into a per-FRAME counter.**
+And the tell that caught it was arithmetic, not a crash - *26.9 zero-draw passes in a 1,201-draw frame is
+impossible*. **Sanity-check a new counter against a quantity you already know before believing it.**
+
+## 💿 **A REBUILD THAT RECOMPILES `llvm_assembler.cc` COSTS ONE THROWAWAY ~150s RUN (2026-08-10)**
+**Cost a full route run today, and the mechanism is by design - recording it as an operational rule.** The
+object cache directory carries a hash of `LlvmLoweringBuildStamp()` (`__DATE__ " " __TIME__` of
+`llvm_assembler.cc`), and `PruneSupersededCacheDirs()` **deletes the old directory on the next startup**:
+```
+LLVM objcache: pruned superseded cache dir 'objcache_v3_opt2_b87E5FC40' (45,728 files)
+AOT object cache enabled at '.../objcache_v3_opt2_bC0D2C603'
+-> LLVMobjload = 0, LLVMbegin = 8,153, ZERO frames in 135s. The route VOIDed.
+```
+**BUT IT IS NARROWER THAN "every rebuild":** a later build touching only `vulkan_command_processor.{h,cc}`
+left the directory at `bC0D2C603` and the cache stayed warm. **The stamp moves only when that TU is actually
+recompiled** - so GPU-only work is free, and CPU/lowering work costs a warming run.
+**=> AFTER A BUILD THAT TOUCHES THE LLVM BACKEND: check `ls files/objcache/` first.** A new directory name
+means the next route run is a cache-warming run, not a measurement - budget it, and let AOT finish (watch
+`LLVMbegin` stop climbing) rather than stopping at the resume line, which leaves it half-populated.
+**The pruner makes this one-way: the old cache is gone the moment the new binary starts.** There is no rolling
+back to the warm one, so do not plan an A/B that spans a lowering rebuild.
+
 ## 📏 **PASS CENSUS RE-MEASURED 2026-08-10 — 45 PASS BREAKS/FRAME, AND *RT CHANGES* DOMINATE (27 vs 18)**
 **The 61/45 figure predated the Edge kernel merge and the BD-native-renderer removal, so it was re-taken before
 anyone builds against it. It holds, and it now names WHICH break to attack.** No new code was needed — the
