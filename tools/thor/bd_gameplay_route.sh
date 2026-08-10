@@ -83,6 +83,9 @@ require_device() {
 
 # --- pre-flight. Must ABORT, not print: the device is SHARED with an rpcs3
 # --- session and a contended or hot run produces numbers that look valid.
+# Reachability FIRST - every check below reads a value, and on an offline
+# device those reads come back empty and silently pass.
+require_device
 busy=$("$ADB" -s "$DEV" shell 'ps -A -o NAME 2>/dev/null | grep -icE "rpcs"' | tr -d '\r')
 [ "$busy" = "0" ] || { echo "ABORT: rpcs3 is running - device is shared"; exit 1; }
 t=$(temp); [ "$t" -lt 50000 ] || { echo "ABORT: GPU $((t/1000))C, need <50C"; exit 1; }
@@ -116,6 +119,13 @@ for i in $(seq 1 "$SAMPLES"); do
   tt=$(temp)
   printf "%4d  %8d  %5s  %3dC\n" "$(( $(date +%s) - T0 ))" "$d" \
          "$(awk "BEGIN{printf \"%.1f\", $d/10}")" "$((tt/1000))"
+  # A MID-RUN disconnect must end the run. The pre-flight is point-in-time, and
+  # temp() returns the 99999 sentinel when the device is unreachable - without
+  # this the loop would keep sampling nothing while the emulator it launched
+  # stays running on shared hardware (exactly what happened 2026-08-10).
+  if [ "$tt" -ge 99999 ]; then
+    echo "ABORT: lost the device mid-run"; break
+  fi
   if [ "$tt" -ge 70000 ]; then
     echo "THERMAL LIMIT 70C - force-stopping"; break
   fi
