@@ -1340,6 +1340,57 @@ already, but by someone else** - XenDroid's counter study is Geometry Wars on a 
 reached the same "fragment-shader ALU bound" verdict. **Two titles, two devices, two instruments.** That is the
 strongest evidence available that the diagnosis generalises even though our own measurements cannot yet show it.
 
+## ❌📐 **CORRECTION: "INCREMENT 2" IS *NOT* ONE BOUNDED FUNCTION. THE DOWNSCALE CVAR BREAKS A TREE-WIDE INVARIANT (2026-08-10)**
+**The entry directly below calls increment 2 "one function, one factor, and the factor is already a global cvar"
+and "the highest-value piece of work left in this file". The first half is WRONG, and I only found out by reading
+the resolve path instead of trusting my own scoping. Correcting it here because the next session would have
+patched `Resolve()`, measured no change, and had no idea why.**
+**🔑 THE INVARIANT, WHICH IS THE THING THAT ACTUALLY BREAKS:** everywhere in the GPU tree, the HOST pixel
+size of a render target is computed from the guest key, not read from the image:
+```
+host_width  = key.GetWidth() * draw_resolution_scale_x()
+host_height = GetRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples) * draw_resolution_scale_y()
+```
+**`gpu_resolution_downscale_pct` shrinks the actual `VkImage` extent at creation
+(`vulkan_render_target_cache.cc:4010`) and the framebuffer (`:4485`) and the per-draw viewport
+(`vulkan_command_processor.cc:10563`) - and leaves `draw_resolution_scale_x()` UNTOUCHED.** So from the moment
+the cvar is set, **every consumer of that invariant computes a size the image no longer has.**
+```
+exact "GetWidth() * draw_resolution_scale_x()" sites .... 6
+companion height computations in the RTC ............... 8
+total draw_resolution_scale_[xy]() references:
+    vulkan_render_target_cache.cc  46      render_target_cache.cc   8
+    vulkan_command_processor.cc     6      texture_cache.cc         3
+    vulkan_texture_cache.cc         6      -> 69 in the five main .cc
+    (122 counting headers + the d3d12 backend)
+```
+**⇒ THAT IS THE MISALIGNMENT MECHANISM, NAMED AT LAST - AND IT IS NOT "RESOLVE FORGOT A MULTIPLY".**
+`DumpRenderTargets` (`:12019`) is the RT->EDRAM bridge every copy resolve goes through, and it sizes its reads
+with `rt_image_key.GetWidth() * draw_resolution_scale_x()`. With `pct=71` the image is 71% as wide and the dump
+still reads full-width coordinates - **so it samples past the image and writes the wrong texels into EDRAM
+tiles.** Patching `Resolve()` alone cannot fix that; `Resolve()` is upstream of the dump and the dump is where
+the coordinates are wrong.
+**❌ AND THE OBVIOUS CLEAN FIX IS BLOCKED BY A TYPE: `draw_resolution_scale_x_` / `_y_` ARE `uint32_t`**
+(`render_target_cache.h:641-642`). They express INTEGER UPSCALE (1x, 2x, 3x) and **cannot represent 0.71x**. So
+"just route the downscale through the native mechanism every consumer already respects" - which would have been
+the right answer - **is not expressible without adding a denominator to the invariant**, and that denominator
+would have to reach the dump/transfer/resolve SHADER CONSTANTS too, not just the C++.
+**⇒ THE REAL DESIGN, and it is the same shape as a fix this file has already demanded four times: MAKE THE
+INVARIANT SINGLE-SOURCED.** Add `GetHostRenderTargetWidth(key)` / `GetHostRenderTargetHeight(key)` that fold
+BOTH the integer upscale and the fractional downscale, then funnel the ~14 direct dimension sites through them
+so a size can never be computed two ways again. **That is exactly the `XE_LLVM_LOWERING_CVARS` lesson** - the
+object-cache key broke four times because it was hand-maintained in two places, and the fix was one table. This
+is the same defect class in the GPU tree: a derived quantity recomputed at 14 sites, one of which now lies.
+**⚠ AND NOTE WHAT THIS MEANS FOR THE 1.38x / 1.79x NUMBERS: THEY ARE STILL REAL, AND STILL NOT SHIPPABLE.**
+The frame-time measurements stand (fewer fragments really were shaded). What is now understood is that the
+correctness hole is **structural rather than a missing line**, so the distance from "measured 1.79x" to
+"shippable slider" is a bounded refactor of the size invariant plus its shader constants - **not the one-function
+change recorded below.** Budget it as such.
+**📌 THE PROCESS POINT, and it is the third time today: I SCOPED A TASK FROM A GREP AND NOT FROM THE
+CALL PATH.** "Zero references to the downscale cvar in `Resolve()`" is TRUE and it is the wrong question - the
+cvar is absent from `DumpRenderTargets` too, and from all 14 dimension sites, which is the actual problem.
+**Counting where a symbol is ABSENT tells you nothing until you know where it OUGHT to be.**
+
 ## 🔧 **"INCREMENT 2" SCOPED IN CODE: WHAT IT WOULD TAKE TO SHIP THE RESOLUTION WIN (2026-08-10)**
 **The measured win (1.38x at 71%, 1.79x at 50%) is gated on one correctness question, and it is answerable
 from the source rather than by staring at the screen. It is real.**
