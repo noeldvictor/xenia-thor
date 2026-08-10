@@ -727,6 +727,44 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ❌ **THE LRZ SPIKE IS A DOUBLE REGRESSION TOO (+13.1%, VISUALLY WRONG) - AND LRZ IS STRUCTURALLY BLOCKED BY EDRAM EMULATION (2026-08-10)**
+**LRZ mattered more than any other lever on paper, because unlike downscale and VRS, LRZ rejection is EXACT -
+it costs no image quality. Measured it. It costs both.**
+```
+BASELINE                              61,831 us   16.17 fps   1.00x
+gpu_lrz_spike_depth_clear
+  + gpu_foliage_lrz_force_depth       69,929 us   14.30 fps   0.88x   (+13.1% SLOWER)
+```
+**User watching the panel: "hmm blurry weirdness?" and "like 11 fps".** Both halves confirmed - the visual
+corruption is the cvar's OWN documented failure mode (*"Discards EDRAM-resident depth at pass start = may be
+visually incorrect"*), and the slowdown is measured.
+**🔑 WHY IT CANNOT WORK, AND THIS IS THE STRUCTURAL POINT: the reason LRZ is dead is EDRAM emulation
+itself.** The diagnosis already in this tree is exact - *"Turnip disables LRZ when depth enters via
+LOAD_OP_LOAD, which xenia uses every pass"* - and **xenia uses LOAD_OP_LOAD because the guest's depth lives in
+EDRAM and must be loaded.** The spike "fixes" LRZ by throwing that depth away, which is why it corrupts the
+image; and with depth wrong, occlusion rejects the wrong fragments, so it does not even pay for itself.
+**⇒ RESTORING LRZ IS NOT A CVAR, IT IS AN ARCHITECTURE PROBLEM: keep depth VALID without LOAD_OP_LOAD**, i.e.
+never let depth leave the tile between the writes and the uses. That is the same tile-residency problem the
+whole EDRAM emulation has, and `VK_QCOM_tile_memory_heap` - the one Vulkan mechanism that addresses it - **is
+not exposed by Turnip** (device-enumerated today). **Do not retry the depth-clear spike; it is measured at
++13.1% and visually broken.**
+**📉 AND THE STRATEGIC PATTERN THIS COMPLETES, WHICH IS THE MOST USEFUL OUTPUT OF THE WHOLE GPU DAY:
+EVERY QUALITY-FREE LEVER FAILED, AND ONLY THE QUALITY-COSTING ONES WON.**
+| lever | quality cost | result |
+|---|---|---|
+| pass-break reduction (inpass transfers) | none | -0.27% (flat) |
+| renderArea clamp | none | **+18% worse** |
+| RT UBWC / texture UBWC | none | flat / void |
+| shmem upload hoist | none | +0.4% (flat) |
+| FP16 shaders | some | **+40% worse, and uglier** |
+| **LRZ restore via depth-clear** | **none intended** | **+13.1% worse, and visually broken** |
+| VRS 2x2 all draws | **structural artifacts** | **-21.1%** ✅ |
+| **resolution downscale 71 / 50** | **uniform softness** | **-27.7% / -44.2%** ✅ |
+**⇒ ON THIS HARDWARE, FOR THIS TITLE, THERE IS NO FREE FRAGMENT-COST REDUCTION LEFT.** The fragment work is
+real work on visible pixels, not waste - which is exactly what "92% of SP busy is ALU working cycles" (XenDroid's
+counters) said. **Speed here is bought with pixels or with shading rate, and the honest product decision is a
+per-title resolution slider, not another lever hunt.**
+
 ## 🚀🚀🚀 **THE RESOLUTION CURVE - AND BD's FIELD HITS 29 fps (1.79x) AT QUARTER AREA (2026-08-10)**
 **The closest anything in this project has come to the goal. Same route, same build, one arm per cooldown,
 every arm gameplay-tier confirmed, 0 faults.**
