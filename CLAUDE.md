@@ -727,6 +727,44 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🚨 **I BROKE RULE 1 AND THE ENGAGEMENT COUNTER CAUGHT IT - THE TEXTURE-UBWC A/B IS VOID (2026-08-10)**
+**Shipped `gpu_vulkan_tex_keep_ubwc`, ran the A/B, got +0.70% and was one step from filing "flat". Then the
+`TEXubwc` counter printed NOTHING.** The lever never ran: **I never added the cvar to the `--ez` allowlist in
+`EmulatorActivity.java`**, so the extra silently no-opped. That is **rule 1 of the shipping loop in this very
+file** - *"NEW cvar -> allowlist it in EmulatorActivity.java ... or `--ez/--ei/--es` silently no-ops -> you
+measure the wrong thing"* - and I broke it on the same day I wrote three separate entries about unvalidated
+levers.
+```
+TEX_UBWC=on   766 frames   63,140 us (15.84 fps)   vs baseline 62,700   ->  +0.70%
+TEXubwc engagement lines: 0        <- THE LEVER NEVER EXECUTED. Result is VOID, not flat.
+```
+**✅ THE COUNTER IS THE ONLY REASON THIS IS NOT NOW A FALSE "MEASURED FLAT" ENTRY.** I added it specifically
+because the sibling `gpu_vulkan_rt_keep_ubwc` lacks one - and within an hour it caught a real error in my own
+work. **Every new lever gets an engagement counter. No exceptions.** A lever without one cannot produce a
+negative result, only an ambiguous one.
+**⚠ AND IT RETROACTIVELY WEAKENS THE `gpu_vulkan_rt_keep_ubwc` RESULT recorded above (-0.43%, "flat").** That
+cvar IS allowlisted (line 459), so it plausibly applied - but it has no counter, so "flat" there still rests on
+inference. **Treat the RT UBWC verdict as UNCONFIRMED until it gets a counter too.**
+**Fixed: `copyBooleanExtra(intent, launchArguments, "gpu_vulkan_tex_keep_ubwc")` added next to its sibling.
+The texture-UBWC question is UNANSWERED and needs a re-run.**
+
+## 🐌 **"XENIA THOR ISN'T RESPONDING" (user-reported again, 2026-08-10): IT IS THE AOT COMPILE. TAP WAIT.**
+**Not a hang and not a regression - this file already diagnoses it** (*"~85 functions/sec, GPU 1%, 41C - all
+CPU, nothing rendering yet. Do not force-close it."*). The UI thread blocks >5s in
+`Presenter::PaintFromUIThread` while the emulator thread compiles, so Android fires an ANR and the AOT progress
+overlay cannot draw even though its logcat watcher is correct.
+**⚠ IT IS WORSE RIGHT NOW FOR A REASON THAT IS MY FAULT AND IS FIXABLE BY WAITING:** several rebuilds today
+recompiled `llvm_assembler.cc`, which changes the build-stamped object-cache directory and makes the pruner
+**delete the warm cache** (45,728 files, device-observed). **The first launch after such a rebuild recompiles
+~14-18k functions and can take 150s+ with the ANR dialog appearing repeatedly.** Subsequent launches are ~5s.
+**⇒ WHAT THE USER SHOULD DO: press WAIT, not CLOSE.** Force-closing mid-AOT leaves the cache half-populated,
+which makes the NEXT launch slow too (and is exactly what produces the "void run" the route harness catches).
+**⇒ WHAT WE SHOULD FIX, still open:** the two real options recorded here are (a) make the paint non-blocking so
+the overlay can draw, or (b) honour the AOT budget - `drain_frontier=true` currently overrides the stated
+1500ms budget and runs to completion. **(b) is the smaller change and directly removes the ANR**, at the cost of
+more runtime compilation later. Note the async-handler route is already REFUTED (sync and async latencies were
+identical at 2921ms, proving no Looper barrier) - do not retry it.
+
 ## 🔧🔧 **NOVEL HARDWARE ACCELERATION: WHAT THE THOR ACTUALLY OFFERS, AND TWO FALSE CLAIMS IN THIS FILE CORRECTED (2026-08-10)**
 **User asked for novel uses of the crypto hardware for emulation. The real precedent is using AES/PMULL as
 MIXING and BIT-MANIPULATION primitives rather than for crypto (meow hash, aHash, falkhash). Checked what we
