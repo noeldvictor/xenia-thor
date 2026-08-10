@@ -727,6 +727,43 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ❌❗ **CORRECTION, SAME SESSION: THE "FOLIAGE-ONLY" ARM WAS ALPHA-TEST **+ BLENDED**. SO THE ENTIRE 21% IS IN *OPAQUE* DRAWS (2026-08-10)**
+**I read the cvar's name and called the flat arm "foliage-only", then proposed porting XenDroid's blended-only
+VRS as the next step. Both were wrong - I had not read the gating code. It already does blended:**
+```cpp
+bool vrs_foliage = cvars::gpu_vrs_all_draws || is_alphatest_draw;
+if (!vrs_foliage) {                                  // not alpha-test? check the BLEND state
+  auto bc_vrs = register_file_->Get<reg::RB_BLENDCONTROL>();
+  vrs_foliage = !(/* trivial one/zero/add blend */); // -> true for any REAL blending
+}
+```
+and the comment above it says so outright: *"coarse-shade the overdraw-heavy foliage class
+(**alpha-test OR blended**)"*.
+**⇒ SO THE THREE ARMS ARE ACTUALLY:**
+```
+all draws        (opaque + alphatest + blended)   -21.1%
+alphatest+blended (NOT opaque)                    +0.1%   <- what I mislabelled "foliage only"
+=> the entire win is OPAQUE
+```
+**⇒ BD's FRAGMENT COST IS IN THE 228 OPAQUE DRAWS (61,145 verts), NOT IN THE 787 ALPHA-TEST + 296 BLENDED
+ONES.** Coarsening 1,083 transparent/foliage draws is worth nothing; coarsening 228 opaque draws is worth 21%.
+**⇒ AND THAT KILLS THE OBVIOUS SHIPPABLE PLAN.** XenDroid's approach (blended -> 2x1) is the right instinct in
+general and **we already implement its superset** - it just does not pay on this title. **The only VRS
+configuration that wins on BD is the one that coarsens the main opaque scene, which is the most visible thing
+on screen** and is exactly why VRS was pulled from Burnout after "gfx are busted". **There is no free lunch in
+the VRS family here.**
+**⇒ WHAT THIS REDIRECTS TO, and it is the standard answer for a fragment-bound mobile title - Qualcomm's own
+guide says it in the Best Practices Summary:**
+> *"Use the lowest render target resolution that looks good and upscale: prefer SGSR when possible, or frame
+> buffer blits otherwise. On Android, consider relying on SurfaceFlinger's efficient bilinear rescale."*
+**Resolution scaling is quality-tunable by the USER (a slider), degrades uniformly and predictably, and scales
+fragment cost directly - unlike VRS, whose artifacts are structural and non-negotiable.** For a title measured
+at 82% in-pass / fragment-ALU bound, that is the lever with the best quality-per-fps on the table.
+**📌 THE PROCESS LESSON, AND IT IS THE THIRD INSTANCE TODAY: I INFERRED BEHAVIOUR FROM A NAME.** The
+`vsel` operand order (`tv`/`fv` naming vs a64's real `bit=1 -> src3` contract) and the `EmulateDotProduct4`
+helper (a definition I assumed was called) were the other two. **`gpu_vrs_foliage_rate` does not mean "foliage
+only" any more than `tv` means "true value".** Read the gate, not the identifier.
+
 ## 🎯 **AND THE COST IS *NOT* THE FOLIAGE: VRS ON ALPHA-TEST DRAWS ALONE IS FLAT (+0.1%) (2026-08-10)**
 **Ran the shippable, quality-preserving form - `gpu_vrs_foliage_rate 2` WITHOUT `all_draws`, same
 matched-scene helper, same route.**
