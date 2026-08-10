@@ -727,6 +727,43 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🔎 **WENT LOOKING FOR "SOMETHING BIG" - CHASED XENDROID'S ROOT CAUSE B, AND IT IS FLAT TOO (2026-08-10)**
+**User: "i think we missing osmething big." Chased the best available candidate - the one root cause in
+XenDroid's counter study that we had not tested - and it is another clean negative that reinforces the ALU
+verdict.**
+**THE CANDIDATE:** their §7, *"the HDR target is stored at double width"* - guest `k_2_10_10_10_FLOAT` (Xenos
+7e3) is **32 bpp**, we store `VK_FORMAT_R16G16B16A16_SFLOAT` = **64 bpp**. On a tiler that halves how much
+framebuffer fits in GMEM, so **~1.5x the tiles**, more binning and more GMEM traffic.
+**AND IT APPLIES TO US BY OUR OWN ADMISSION** - the lever already exists, and its help calls 7e3 *"the dominant
+Blue Dragon color format"*:
+```
+gpu_fp10_color_as_unorm10  (default off, allowlisted, never tested)
+  7e3 -> A2B10G10R10_UNORM_PACK32 (32 bpp) instead of R16G16B16A16_SFLOAT (64 bpp)
+```
+**❌ MEASURED FLAT:**
+```
+BASELINE                 277 frames   61,831 us   16.17 fps
+gpu_fp10_color_as_unorm10 370 frames  61,169 us   16.35 fps   -1.1%   0 faults
+```
+**⇒ HALVING THE DOMINANT COLOUR RENDER TARGET'S BYTES-PER-PIXEL BUYS NOTHING.** Not bandwidth, not tile count,
+not binning.
+**🔑 AND XENDROID PREDICTED THIS WITHOUT KNOWING IT: their own text says Root Cause B *"lands on the
+SAME cost centre as Root Cause A rather than on ALU"* - and Root Cause A (render area / over-binning) was
+refuted by their counters.** So B was always going to share A's fate. **Both are now measured dead on our
+workload too**, which is a second independent confirmation that **tile/bandwidth cost is not the limiter -
+shader ALU is.**
+**⇒ THE SEARCH FOR A HIDDEN STRUCTURAL WIN IS NOW EXHAUSTED, AND THE LIST IS LONG:** pass-break count,
+renderArea, RT allocation height, RT UBWC, texture UBWC, shared-memory upload hoist, in-pass EDRAM transfers,
+LRZ restoration, FP16 shader precision, and now colour-format width. **Ten structural/bandwidth levers, every
+one flat or worse.** The only two that move the frame are the two that reduce actual shading work: fewer pixels
+(resolution) or fewer shaded samples (VRS).
+**⇒ SO THE HONEST ANSWER TO "ARE WE MISSING SOMETHING BIG": ON THIS TITLE, NO - AND THAT IS ITSELF THE
+FINDING.** BD's field is spending its GPU time doing real per-pixel shading work on visible pixels, at 99% GPU
+busy on the max clock. **There is no large pool of emulation waste left to reclaim in the render path.** The
+remaining levers are product decisions (internal resolution) rather than engineering defects - **which is a
+very different project state from "we must be doing something stupid", and it took ten measured negatives to
+establish.**
+
 ## ⏳ **THE GEARS STALL DIAGNOSTIC IS BLOCKED BY THE OBJECT CACHE, NOT BY THE BUG (2026-08-10)**
 **Went to run the already-scoped Gears diagnostic (raise log to Debug, grep the five stalled handles for their
 `typeid`, which names the subsystem that owes the signal). It never got that far, and the reason is
