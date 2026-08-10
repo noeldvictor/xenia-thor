@@ -727,6 +727,34 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🔍 **THE GEARS OOM: TWO HYPOTHESES, ONE REFUTED BY MEASUREMENT (2026-08-10) - CAUSE STILL OPEN**
+**The revert below is settled and correct. The MECHANISM is not, and I want the next session to inherit the
+eliminated options rather than re-derive them.**
+**❌ HYPOTHESIS 1 - `vm.max_map_count` EXHAUSTION. REFUTED.** It fit beautifully on paper: the limit is
+**65,530**, Gears loads **30,559 objects**, and at 2-3 mappings per object (text/rodata/data) that is
+61k-92k - straddling the limit exactly, size-dependent, and it would explain a 1 MB request failing on a 16 GB
+device. **Measured instead of asserted:**
+```
+/proc/sys/vm/max_map_count = 65,530
+process mappings after 7,477 functions compiled = 2,177
+```
+**LLJIT batches objects into slabs**, so mappings grow far slower than object count. **Not the cause.**
+**⚠ HYPOTHESIS 2 - CODE-SIZE BLOWUP (the 19-vs-8-instruction scalar FMA) is still the leading explanation** and
+is consistent with the size-dependence, but **it is not yet proven either** - I have not measured actual RSS or
+the app's cgroup limit during a Gears run.
+**⇒ THE NEXT DIAGNOSTIC, and it is cheap: sample RSS during a Gears load with the lowerings ON vs OFF.**
+```
+adb shell run-as <pkg> cat /proc/<pid>/status | grep -E 'VmRSS|VmSize|VmPeak'
+```
+If the ON arm's RSS climbs materially above the OFF arm's before the abort, the code-size story is confirmed
+and the branchy/outlined scalar-FMA fix is the answer. If RSS is comparable, the cause is elsewhere (an
+Android cgroup cap, or fragmentation in Scudo's allocator) and the fix is different. **Do not implement a
+codegen change until that fork is resolved** - one wrong assumption already cost a shipped regression today.
+**📌 AND NOTE HOW HYPOTHESIS 1 FAILED, because it is the useful part: it was arithmetically perfect and
+still wrong.** 30,559 objects x 2-3 mappings vs a 65,530 limit is exactly the kind of reasoning that feels
+like evidence. **One `wc -l /proc/<pid>/maps` cost nothing and killed it.** Measure the mechanism, not just the
+symptom - the same lesson the counter-vs-wall-clock entry already records for the GPU side.
+
 ## 🚨🚨🚨 **REVERTED SAME SESSION: THE FIVE DEFAULTS **OOM GEARS OF WAR**. TWO-TITLE VALIDATION WAS NOT ENOUGH (2026-08-10)**
 **I flipped all five float lowerings default-ON after validating on Blue Dragon and Burnout. Then I ran Gears -
 the title this file itself named as the required third check - and it CRASHES. Reverted.**
