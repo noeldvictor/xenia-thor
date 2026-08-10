@@ -84,6 +84,7 @@ namespace xe {
 namespace cpu {
 namespace backend {
 namespace llvm_backend {
+
 // Compile stamp of THIS translation unit - the one that owns every lowering.
 // Declared in llvm_object_cache.h; see that header for why the cache directory
 // is keyed on it rather than on a hand-maintained version constant.
@@ -197,6 +198,44 @@ DEFINE_bool(
     "cannot alter results - it only changes how many times the identical "
     "function is called. Set false to A/B the call overhead.",
     "CPU");
+
+DEFINE_string(
+    cpu_llvm_target_cpu, "",
+    "Scheduling model the LLVM JIT compiles guest code for, e.g. "
+    "'cortex-a710', 'cortex-a715', 'cortex-x3'. Empty = leave whatever "
+    "JITTargetMachineBuilder::detectHost() picked. "
+    "WHY THIS EXISTS: detectHost() calls setCPU(sys::getHostCPUName()), and on "
+    "AArch64 that is derived from /proc/cpuinfo MIDR. This SoC is big.LITTLE "
+    "and cpu0-2 are Cortex-A510 LITTLE cores (thor_topology.h), so the detected "
+    "CPU is very likely 'cortex-a510' - while manual review #4 deliberately "
+    "moved every guest thread onto the BIG cluster (guest 0 -> X3, guest 1-5 -> "
+    "cpu3-6). If so, the backend that compiles ~80% of guest code is scheduling "
+    "for the wrong microarchitecture, and the two differ enormously: the A510 "
+    "shares a VPU across the complex (A510 SWOG 4.8) while the X3 has FOUR "
+    "FP/ASIMD pipes and the A710/A715 have two (Table 2-1). "
+    "This is the JIT-side twin of the host -mtune gap already fixed in "
+    "premake5.lua - and note the JIT can target cores clang 14 CANNOT: the "
+    "vendored libLLVM is 20.1.8, so cortex-a715 and cortex-x3 are both valid "
+    "here even though the NDK compiler rejects them. "
+    "The effective CPU is logged once at init as 'LLVMtargetcpu', so ONE launch "
+    "shows what detectHost actually chose. Recommended value if it reports a "
+    "little core: cortex-a710, matching the host build's -mtune and the "
+    "lowest-common-denominator big core. "
+    "DEFAULT EMPTY (no behaviour change) pending that one log line.",
+    "CPU");
+
+// FNV-1a of cpu_llvm_target_cpu, folded into the object-cache key. target-cpu
+// selects the SCHEDULING MODEL, so it changes emitted machine code and a warm
+// hit under a different value would serve code scheduled for another core.
+// Hashed rather than inlined because it is a free-form string.
+static uint32_t LlvmTargetCpuKeyHash() {
+  uint32_t h = 2166136261u;
+  for (char c : cvars::cpu_llvm_target_cpu) {
+    h ^= static_cast<uint8_t>(c);
+    h *= 16777619u;
+  }
+  return h;
+}
 
 DEFINE_bool(
     cpu_llvm_vector_qload, false,
@@ -2941,9 +2980,9 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // A/B reads flat and the conclusion is "the lever does nothing", which is
     // the most expensive possible way to be wrong about a lever. The build
     // stamp in the DIRECTORY does not help here - both arms are the same build.
-    char keybuf[128];
+    char keybuf[160];
     std::snprintf(keybuf, sizeof(keybuf),
-                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%d",
+                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dm%08X",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
@@ -2955,7 +2994,8 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_llvm_batch_lane_calls ? 1 : 0,
                   cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
                   cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
-                  cvars::cpu_llvm_vector_qload ? 1 : 0);
+                  cvars::cpu_llvm_vector_qload ? 1 : 0,
+                  LlvmTargetCpuKeyHash());
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
         ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
@@ -3030,6 +3070,11 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   // the device supports. This is what unblocks MEMSET (and any future op LLVM
   // would otherwise vectorize via SVE) instead of falling back to a64.
   fn->addFnAttr("target-features", GetLlvmTargetFeatures());
+  // target-cpu selects the SCHEDULING MODEL. Set alongside target-features so
+  // it rides in the cached IR exactly the same way.
+  if (!cvars::cpu_llvm_target_cpu.empty()) {
+    fn->addFnAttr("target-cpu", cvars::cpu_llvm_target_cpu);
+  }
 
   Lowerer lowerer(ctx, mod.get(), fn, function->address());
   if (!lowerer.Run(builder)) {
@@ -3161,9 +3206,9 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // '...o2r0w0a0p0f0.o' but dir has '...o2r0w0a0.o'", and ~14k functions
     // recompiled every single launch (the 60-150s hot startup that was eating
     // the thermal budget of every measurement).
-    char idbuf[144];
+    char idbuf[176];
     std::snprintf(idbuf, sizeof(idbuf),
-                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%d",
+                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dm%08X",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
@@ -3176,7 +3221,8 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_llvm_batch_lane_calls ? 1 : 0,
                   cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
                   cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
-                  cvars::cpu_llvm_vector_qload ? 1 : 0);
+                  cvars::cpu_llvm_vector_qload ? 1 : 0,
+                  LlvmTargetCpuKeyHash());
     mod->setModuleIdentifier(idbuf);
   }
 

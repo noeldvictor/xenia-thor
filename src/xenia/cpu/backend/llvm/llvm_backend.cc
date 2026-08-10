@@ -878,6 +878,16 @@ bool LLVMBackend::Initialize(Processor* processor) {
       },
       nullptr);
 
+  // Report the scheduling model the JIT will actually use. detectHost() sets
+  // the CPU from sys::getHostCPUName(), which on AArch64 comes from
+  // /proc/cpuinfo MIDR - and on this big.LITTLE SoC cpu0-2 are A510 LITTLE
+  // cores while every guest thread runs on the BIG cluster (review #4). If this
+  // logs a little core, the JIT is scheduling ~80% of guest code for the wrong
+  // microarchitecture; override with cpu_llvm_target_cpu.
+  XELOGI("LLVMtargetcpu: host CPU detected as '{}' (override with "
+         "cpu_llvm_target_cpu; guest threads run on the BIG cluster)",
+         std::string(llvm::sys::getHostCPUName()));
+
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
   llvm::orc::LLJITBuilder builder;
