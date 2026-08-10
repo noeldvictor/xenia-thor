@@ -394,6 +394,31 @@ x19/x22-x28 and full q8-q15, or it needs a guarantee the callee is LLVM-compiled
 AAPCS64 work rediscovered it independently — the new value is the manual now being in `docs/reference/arm/` and
 the ceiling being derived for stage 3, not the fact itself.
 
+## 🎯📕 **THE XENOS PRIMARY SOURCE IS PUBLIC AND LOCATED: R400 SEQUENCER SPECIFICATION, IPR2015-00325 (2026-08-10)**
+**Searched for the document `xenos.h:771` cites. It exists, it is public, and the court said so explicitly.**
+```
+Case      IPR2015-00325   LG Electronics, Inc. v. ATI Technologies ULC
+Title     "Multi-thread Graphics Processing System"
+Exhibits  R400 SEQUENCER SPECIFICATION, v0.1 (2001-05-07) .. v1.2 (2001-09)
+          plus ATI's official emulator code
+Portal    https://portal.unifiedpatents.com/ptab/case/IPR2015-00325
+          https://ptacts.uspto.gov  (PTAB direct)
+```
+**🔓 THE MOTION TO SEAL WAS DENIED.** The board found *"a strong public policy interest in making all
+information filed in an inter partes review publicly available"*. **So this is not a leak and not grey - it is
+public record.** Xenos is ATI "C1", of the R400 family, so the R400 sequencer spec IS the Xenos shader
+sequencer.
+**🔥 WHY THE *SEQUENCER* SPEC IS THE RIGHT DOCUMENT FOR OUR MEASURED BOTTLENECK.** The sequencer is the
+unit that issues shader work - thread/wave management, GPR allocation, and interleaving. **Our bottleneck is
+fragment-shader ALU with a suspected occupancy component** (XenDroid measured 26% NOPs overall, 40-57% in many
+shaders). **The sequencer spec states what the original hardware's GPR budget and wave behaviour were**, which
+is exactly the comparison we cannot make today: is our SPIR-V asking the Adreno for more registers than the
+Xenos needed, and collapsing occupancy as a result?
+**⇒ FETCH IT INTO `docs/reference/xbox360/`. Use Playwright if the portal needs a browser.** The Adreno guide
+needed exactly that after this file called it unobtainable twice.
+**⇒ AND IT SETTLES THE GUESSES.** `xenos.h:282` says *"there seems to be no true early Z on the Xenos"* - a
+comment, load-bearing for our LRZ work, which measured +13.1% WORSE. **A primary source replaces that guess.**
+
 ## 📕🎮 **WE HAVE NO XENOS GPU MANUAL - AND OUR OWN HEADER NAMES WHERE ONE IS (2026-08-10)**
 **User asked for more information on the Xbox 360 GPU. Checked the repo first. There is a real gap.**
 ```
