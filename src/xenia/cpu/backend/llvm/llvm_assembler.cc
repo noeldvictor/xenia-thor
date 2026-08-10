@@ -200,6 +200,29 @@ DEFINE_bool(
     "CPU");
 
 DEFINE_bool(
+    cpu_llvm_vmx_fmax_nan, false,
+    "vmaxfp / vminfp in the LLVM backend: use llvm.maximum/llvm.minimum "
+    "(propagate NaN, lower to FMAX/FMIN) instead of llvm.maxnum/llvm.minnum "
+    "(IEEE maxNum - return the NUMBER when one operand is NaN, lower to "
+    "FMAXNM). "
+    "THE LLVM BACKEND STILL HAS THE EXACT BUG THE a64 BACKEND WAS FIXED FOR. "
+    "PPC vmaxfp PROPAGATES NaN - PEM 3.2.5.1, verbatim: 'if the element in "
+    "register vA is a NaN then the result is that NaN, else if the element in "
+    "register vB is a NaN then the result is that NaN'. ARM FMAX propagates "
+    "and therefore matches PPC; FMAXNM does not. That is precisely why "
+    "a64_vmx_native_fmax_nan was flipped DEFAULT TRUE after "
+    "tools/qemu/fmax_nan_differential.c showed ARM fmax matching PPC in all 8 "
+    "cases including (QNaN1,QNaN2) and (SNaN,num). "
+    "So today a64 returns the NaN and LLVM returns the number for the same "
+    "guest instruction - a semantic divergence on the SHIPPING backend, with "
+    "the primary sources already in-repo. "
+    "DEFAULT OFF only because it changes float results and needs a pixel check; "
+    "the expected direction is LLVM converging onto the validated a64 "
+    "behaviour. Measure separately from cpu_llvm_vmx_float_flush - two distinct "
+    "divergences that happen to live in the same lowering.",
+    "CPU");
+
+DEFINE_bool(
     cpu_llvm_vmx_float_flush, false,
     "Software-flush denormals around VMX float ADD/SUB (vaddfp / vsubfp) in the "
     "LLVM backend, matching a64. "
@@ -2174,8 +2197,37 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* cv = b_.CreateBitCast(c, lt);
       llvm::Value* r;
       if (pt == FLOAT32_TYPE) {
-        r = b_.CreateBinaryIntrinsic(
-            mx ? llvm::Intrinsic::maxnum : llvm::Intrinsic::minnum, av, cv);
+        // NaN SEMANTICS. PPC vmaxfp PROPAGATES NaN (PEM 3.2.5.1: "if the
+        // element in register vA is a NaN then the result is that NaN, else if
+        // the element in vB is a NaN then the result is that NaN"). ARM FMAX
+        // propagates too and therefore MATCHES PPC - that is exactly why
+        // a64_vmx_native_fmax_nan was flipped default-true after
+        // tools/qemu/fmax_nan_differential.c showed ARM fmax matching PPC in
+        // all 8 cases.
+        //
+        // llvm.maxnum/minnum are IEEE-754 maxNum/minNum: they return the
+        // NUMBER when one operand is NaN, and lower to FMAXNM - the OTHER
+        // instruction. So the LLVM backend still has the exact bug the a64
+        // backend was fixed for. llvm.maximum/minimum are the IEEE-2019
+        // maximum/minimum forms, which propagate NaN and lower to FMAX/FMIN.
+        auto id_nan_correct =
+            mx ? llvm::Intrinsic::maximum : llvm::Intrinsic::minimum;
+        auto id_legacy = mx ? llvm::Intrinsic::maxnum : llvm::Intrinsic::minnum;
+        auto id = cvars::cpu_llvm_vmx_fmax_nan ? id_nan_correct : id_legacy;
+        if (cvars::cpu_llvm_vmx_float_flush) {
+          // Same VMX denormal flush gap as vaddfp/vsubfp - a64 gets it from
+          // FPCR.FZ via EmitWithVmxFpcr, LLVM sets FPCR never.
+          auto* i32x4 = T(VEC128_TYPE);
+          auto* fa = b_.CreateBitCast(
+              VmxFlushDenorm(b_.CreateBitCast(av, i32x4)), lt);
+          auto* fb = b_.CreateBitCast(
+              VmxFlushDenorm(b_.CreateBitCast(cv, i32x4)), lt);
+          auto* raw = b_.CreateBinaryIntrinsic(id, fa, fb);
+          r = b_.CreateBitCast(
+              VmxFlushDenorm(b_.CreateBitCast(raw, i32x4)), lt);
+        } else {
+          r = b_.CreateBinaryIntrinsic(id, av, cv);
+        }
       } else {
         bool uns = (i->flags & ARITHMETIC_UNSIGNED) != 0;
         auto id = mx ? (uns ? llvm::Intrinsic::umax : llvm::Intrinsic::smax)
@@ -3027,7 +3079,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // stamp in the DIRECTORY does not help here - both arms are the same build.
     char keybuf[160];
     std::snprintf(keybuf, sizeof(keybuf),
-                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dm%08X",
+                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dx%dm%08X",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
@@ -3041,6 +3093,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
                   cvars::cpu_llvm_vector_qload ? 1 : 0,
                   cvars::cpu_llvm_vmx_float_flush ? 1 : 0,
+                  cvars::cpu_llvm_vmx_fmax_nan ? 1 : 0,
                   LlvmTargetCpuKeyHash());
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
@@ -3254,7 +3307,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // the thermal budget of every measurement).
     char idbuf[176];
     std::snprintf(idbuf, sizeof(idbuf),
-                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dm%08X",
+                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dx%dm%08X",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
@@ -3269,6 +3322,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
                   cvars::cpu_llvm_vector_qload ? 1 : 0,
                   cvars::cpu_llvm_vmx_float_flush ? 1 : 0,
+                  cvars::cpu_llvm_vmx_fmax_nan ? 1 : 0,
                   LlvmTargetCpuKeyHash());
     mod->setModuleIdentifier(idbuf);
   }
