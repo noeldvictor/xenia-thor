@@ -727,6 +727,43 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🧠 **"SMARTER XENOS EMULATION" - RESEARCHED, AND THE DATA SAYS THE COST IS THE GAME, NOT THE EMULATION (2026-08-10)**
+**User: "we are missing smarter emulation of xenos." Good instinct, and the strongest remaining hypothesis -
+so it was worth testing properly rather than agreeing. It does not survive the measurements.**
+**🔍 HYPOTHESIS 1 - WE ARE TILING A TILED RENDERER.** The Xbox 360 is itself a tiler: games render into
+10 MB EDRAM and, when a surface does not fit, split the frame into PREDICATED TILES and resolve each. Adreno is
+also a tiler. If BD were predicated-tiling, we would be binning a tiled renderer twice, and the two dominant
+passes would be the guest's two EDRAM tiles.
+**❌ REFUTED BY THE FRAME DATA: `msaa=0`, `surf_pitch=1280`.** At 1280x720x4 that is ~3.7 MB colour + ~3.7 MB
+depth = **~7.4 MB, which FITS in 10 MB EDRAM**. **BD does not need predicated tiling and is not doing it**, so
+there is no double-tiling to remove. (It WOULD apply at 2xMSAA - 14.7 MB - which is why this file's older
+"1280x720 2xMSAA" note matters: the field is 1x today.)
+**🔍 HYPOTHESIS 2 - THE SECOND DOMINANT PASS IS BLOOM.** Both dominant passes are full-pitch 1280x2048
+surfaces, and BD is bloom-heavy (this file carries `gpu_skip_bloom`, a user-approved "lower bloom is
+acceptable" lever).
+**❌ REFUTED TWICE, INDEPENDENTLY.** (a) `gpu_skip_bloom` was already measured on device (2026-06-29) and left
+`gpu_frame_us` **FLAT**; (b) today's VRS split showed alpha-test **+ blended** draws coarsened 4x is worth
+**+0.1%** - and bloom composites are blended. **Bloom is not the cost.**
+**⇒ WHAT THE CONVERGING EVIDENCE ACTUALLY SAYS: THE FRAGMENT COST IS THE GAME'S OWN OPAQUE SCENE GEOMETRY.**
+228 opaque draws / 61,145 vertices carry the entire measurable win; the 787 alpha-test and 296 blended draws
+carry none of it. **That is not emulation scaffolding - it is Blue Dragon shading its world.**
+**🔑 AND XENDROID REACHED THE IDENTICAL CONCLUSION INDEPENDENTLY, ON A DIFFERENT TITLE, WITH HARDWARE
+COUNTERS:** they explicitly REFUTED the hypothesis that 7e3 pack/unpack scaffolding was inflating their
+fragment shaders, and concluded *"the ~47 ALU ops/pixel are **the game's own bloom/glow shaders, not emulation
+scaffolding**."* **Two investigations, two titles, two instruments, same verdict: the shader work is real.**
+**⇒ SO "SMARTER XENOS EMULATION" IS NOT WHERE THE FRAME IS.** It would be the right answer if we were
+synthesising work the Xenos did in fixed-function hardware - and we checked the obvious candidates: EDRAM
+tiling (not happening), 7e3 packing (not emitted on this path), colour format width (measured flat), resolve
+copies (measured flat), pass structure (measured flat). **The emulation is not adding a large fragment tax.**
+**⇒ THE ONE PLACE THIS QUESTION IS STILL OPEN, AND IT IS WORTH SAYING: WE HAVE NEVER COMPARED A TRANSLATED
+PIXEL SHADER AGAINST ITS XENOS ORIGINAL.** XenDroid measured shader instruction counts and occupancy per
+variant (`tu_variant`: 40 FS variants, worst two at **2195 instrs @ 4 waves / 31 GPRs** and **2228 @ 6 waves**,
+**NOPs 26% overall and 40-57% in many shaders**). **If our SPIR-V translation inflates instruction count or GPR
+pressure versus what the Xenos ran, occupancy collapses and the SP is "busy" while half-idle** - which would
+look exactly like fragment-ALU bound. **That is the one form of "smarter emulation" the evidence has NOT
+excluded, and measuring it needs the shader-variant dump, i.e. the instrumented Turnip build.** Same tool as
+the counter sampler; same reason it is the top infrastructure item.
+
 ## ✅✅ **THE x64 -> ARM64 REVIEW, CONSOLIDATED AND CLOSED (2026-08-10): EIGHT AXES SWEPT, THE BACKEND IS CLEAN**
 **The standing user ask - "really review code where x64 shit needs to be rethought for arm64" - has been
 approached piecemeal across many sessions. Consolidating every axis and its verdict, because the useful output
