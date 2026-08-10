@@ -1269,6 +1269,43 @@ AAudio DataCallback  (real-time, every few ms)
 - **Already checked and NOT applicable:** `366f38da8` ("fill the whole AAudio request instead of one guest block
   per callback") — our `FillAudio` already loops over queued frames and zero-fills on underrun.
 
+## 🎉🎉🎉 **THE BD CYAN BUG IS FIXED — IT WAS INTEGER ARITHMETIC ON FLOAT VECTORS (2026-08-10, DEVICE-PROVEN)**
+**`bd-llvm-postload-3d-cyan-bug` is closed. It was never a "codegen/regalloc interaction" — it was the LLVM
+backend doing INTEGER add/sub/mul/neg on VMX FLOAT vectors, plus IEEE-maxNum NaN semantics and missing denormal
+flush. Fixing the float semantics fixed the rendering.**
+**THE RUN — Blue Dragon, uncontended (rpcs3=0), 80% battery, 31C cold start, foreground verified as ours:**
+```
+--ez cpu_backend_llvm_lower_vmaddfp true      <- the lever that used to render ENTIRELY CYAN
+--ez cpu_llvm_vmx_float_flush true            <- new
+--ez cpu_llvm_vmx_fmax_nan true               <- new
+```
+| | before (recorded in this file) | now |
+|---|---|---|
+| BD post-load 3D | **ENTIRELY CYAN at 11.1 fps** | **renders CORRECTLY**, 15.7-17.5 fps |
+| LLVM fallbacks | 1,022 | **121** |
+| faults | 0 | 0 |
+**Screenshot read, not inferred:** Shu in correct colours (black top, red sash, yellow shorts, blue armbands,
+brown boots), sandy terrain, green foliage, grey cliffs, blue sky, correct shadows and depth of field, at
+263,189 vertices/frame. That is the exact scene class that used to be flat cyan.
+**⇒ ~900 GUEST FUNCTIONS ARE BACK ON LLVM, INCLUDING BD'S HOTTEST (0x824694A0).** This file recorded that lever
+as forcing 1,019 functions onto a64 and losing register residency with them, and called root-causing it "the
+highest-value CPU work in this tree". It is done.
+**🔑 WHY THE OLD HYPOTHESIS WAS WRONG, and the lesson generalises:** the bug was blamed on a vector-register
+allocation interaction because it only appeared when vmaddfp was lowered ALONGSIDE OTHER VECTOR OPS. That
+conditionality was real but the inference was backwards - **it was not vmaddfp interacting badly with its
+neighbours, it was THE NEIGHBOURS being silently wrong** (V128 MUL/ADD/SUB/NEG taking the integer branch of
+`IsFloat(t) ? float_op : integer_op`). vmaddfp merely made those functions reachable on LLVM so the existing
+corruption became visible. **When a bug only appears "in combination", check whether the OTHER half is the
+broken one.**
+**⚠️ WHAT IS NOT YET CLAIMED: a SPEED win.** 15.7-17.5 fps here is in the same band as the ~17.5 fps this route
+measured WITHOUT vmaddfp earlier the same session, so the recovered functions have not yet shown up as fps in
+this scene. **The win proven today is CORRECTNESS + COVERAGE (1,022 -> 121 fallbacks), not throughput.** A
+proper A/B of the three cvars against the same route is the next measurement, and it is now cheap because the
+cache is warm for this exact cvar combination.
+**⇒ FLIP THE DEFAULTS?** Not yet, and deliberately: `lower_vmaddfp` has been default-off for a documented
+rendering failure, and one good run on one title is not the bar for reversing that. Re-run on Gears and Burnout
+first. But the blocker is gone.
+
 ## 🔬🔬 **a64-vs-LLVM VMX FLOAT SEMANTICS DIFF (2026-08-09) — FIVE DIVERGENCES, FOUR OF THEM WRONG ARITHMETIC**
 **⚡ THE ONE-LINE VERSION: the LLVM backend was doing INTEGER add/sub/mul/neg on VMX FLOAT vectors.** Not a
 rounding difference — `IsFloat()` is true only for FLOAT32/FLOAT64, VEC128 fails it, and four lowerings used the
