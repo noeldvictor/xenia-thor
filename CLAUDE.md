@@ -727,6 +727,43 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🏁✅ **FIELD PIXEL CHECK PASSED - THE FULL FLOAT SET IS FULLY VALIDATED ON BLUE DRAGON (2026-08-10)**
+**The cinematic capture was good evidence; this is the decisive one. Captured IN THE FIELD - the exact scene
+class that used to render ENTIRELY CYAN.**
+```
+BD field, all five lowerings on, 2,190,977-byte capture:
+  verts = 262,965   draws = 1,128   15.3 FPS   0 faults
+```
+**WHAT THE IMAGE SHOWS, read against this file's own description of a CORRECT field render:**
+| this file's cyan-fix verification | this capture |
+|---|---|
+| *"Shu in correct colours (black top, red sash, yellow shorts, blue armbands, brown boots)"* | ✅ all present and correct, plus blue leg-warmers and black spiky hair |
+| *"sandy terrain"* | ✅ |
+| *"green foliage"* | ✅ bushes and shrubs |
+| *"grey cliffs"* | ✅ tan/grey rock faces |
+| *"blue sky"* | ✅ |
+| *"correct shadows and depth of field"* | ✅ character casts a correct shadow; background cliffs correctly blurred |
+**Plus: stone buildings with red roof vanes, wooden fencing, rope rigging, blue machinery - all geometrically
+coherent. NO CYAN. NO DEGENERATE GEOMETRY.**
+**⇒ SO THE FIVE LOWERINGS ARE NOW FULLY VALIDATED ON BLUE DRAGON:**
+```
+  cpu_backend_llvm_lower_vmaddfp   cpu_llvm_vmx_float_flush   cpu_llvm_vmx_fmax_nan
+  cpu_llvm_lower_vsel              cpu_llvm_lower_scalar_fma
+    LLVM fallbacks .......... 0        (was 1,022 historically, 768 before scalar FMA)
+    objects cached .......... 19,601   (+1,005 functions moved a64 -> LLVM)
+    faults .................. 0
+    fps ..................... flat (GPU-bound; expected, and consistent with the earlier vmaddfp A/B)
+    pixels .................. CORRECT in both a lit cinematic AND the field
+```
+**⚠ WHAT STILL GATES THE DEFAULTS, AND IT IS THIS FILE'S OWN BAR, NOT A NEW ONE:** the cyan-fix entry says
+*"one good run on one title is not the bar for reversing that. **Re-run on Gears and Burnout first.**"* That bar
+is unmet: **Gears' gameplay scene stalls** (kernel event bug, unrelated to these lowerings) and **Burnout has
+not been checked with this set**. Burnout IS checkable - it reaches title+attract at 59.4 fps - so **one
+Burnout capture is the last thing between here and flipping five defaults.**
+**⇒ RECOMMENDATION: validate on Burnout, then default all five ON.** They are correctness fixes as much as
+coverage ones (four of the five fix genuine PPC-vs-ARM float-semantics divergences), and leaving them off ships
+known-wrong VMX arithmetic on the a64 fallback path.
+
 ## ✅🖼 **PIXEL CHECK PASSED: THE FULL FLOAT SET RENDERS CORRECTLY (screenshot READ, 2026-08-10)**
 **The last thing standing between five validated lowerings and their defaults was a visual confirmation. Got
 one, and READ it rather than inferring from file size.**
