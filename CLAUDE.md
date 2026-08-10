@@ -394,6 +394,52 @@ x19/x22-x28 and full q8-q15, or it needs a guarantee the callee is LLVM-compiled
 AAPCS64 work rediscovered it independently — the new value is the manual now being in `docs/reference/arm/` and
 the ceiling being derived for stage 3, not the fact itself.
 
+## 🔥🔥🔥 **THE XENOS SPECS ARE IN THE REPO, AND THEY GIVE THE OCCUPANCY HYPOTHESIS A HARD NUMBER (2026-08-10)**
+**7 PDFs now in `docs/reference/xbox360/`, from IPR2015-00325. Provenance verified from Paper 63
+("Denying ATI's Motions to Seal", 2016-04-14), which orders these exhibits public.**
+```
+r400-sequencer-specification-v2.11.pdf   482 KB  54pp   <- v2.11, NOT v1.2. Changelog: "Adding R500 modifications"
+r400-sequencer-specification-v2.10.pdf   484 KB  56pp
+r400-top-level-specification-v0.2.pdf    305 KB  32pp
+r400-shader-processor-specification.pdf  200 KB  12pp
++ architecture proposal, sequencer v0.1, emulator perforce history
+```
+### 🎯 THE HEADLINE: ATI BUDGETED **UNDER 8 GPRs** FOR A TYPICAL XENOS PIXEL SHADER. WE MEASURE **31**.
+Shader-processor spec p5, verbatim:
+> *"There is a direct tradeoff between the number of registers each program/vector needs and the number of
+> vectors that can be simultaneously resident. **If there are too few vectors resident, then the latency of
+> memory accesses can no longer be hidden and performance suffers.** ... **Most pixel programs are expected to
+> have less than eight registers**, vertex programs are expected to have less than sixteen."*
+**XenDroid measured our worst fragment variants at 31 GPRs / 4 waves. That is ~4x the register footprint the
+hardware's own designers planned for.**
+**⇒ THE OCCUPANCY HYPOTHESIS NOW HAS A DOCUMENTED BASELINE INSTEAD OF AN INTUITION.** It is a strong hint, NOT
+proof - the two register files differ in width and the Adreno allocates differently. **But it is the first
+number in this whole effort that says our generated shaders may be structurally heavier than the originals.**
+### 📐 THE HARDWARE, from the sequencer spec
+| item | Xenos | source |
+|---|---|---|
+| register file | **128 GPRs x 128 bits, SHARED between pixel and vertex threads** (not per-thread) | seq §8 p26; 7-bit GPR addresses p44 |
+| **wave size** | **64** - "vectors of 64 vertices ... and vectors of 16 quads (**64 pixels**)" | seq p6; 64 predicate + 64 valid bits p22 |
+| in flight | 16 vertex + 48 pixel thread-buffer entries | seq p21 |
+| latency hiding | **two ALU threads interleaved to hide the 8-clock ALU latency** | seq p6, p27 |
+| allocation | two round-robins over one file, movable pixel/vertex boundary | seq p25-26 |
+| **the occupancy rule** | *"**The sequencer will not start the next vector until the needed space is available in the GPRs**"* | seq p6 |
+**💡 AND NOTE THE WAVE SIZE: XENOS IS WAVE-64. Turnip exposes `IR3_SHADER_DEBUG=thread64`
+("Prefer 64-thread wave size (when available)")** - already present in the shipped driver. **That is a free
+one-run experiment nobody has tried, and the guest content was authored for 64-wide waves.**
+### ⚠ TWO THINGS THE DOCUMENTS DO **NOT** SETTLE - recorded so nobody over-reads them
+1. **Early-Z: the SEQUENCER spec says nothing** (0 hits for early-Z / hierarchical / hi-Z). The **top-level**
+   spec DOES describe hierarchical-Z with 8x8 tile rejection before the detail walker (pp11, 24-28) - **but it
+   is Morein's v0.2 from March 2001, the PC part: 500 MHz, 4 pipelines, NO eDRAM.** Xenos was redesigned around
+   eDRAM afterwards. **So the R400 LINEAGE had hier-Z; this does not tell us what shipped in C1.**
+   `xenos.h:282`'s guess is still neither confirmed nor refuted.
+2. **Fixed-function resolve is NOT described.** "Resolve" appears once in passing (p42). The top-level spec's
+   §8.18 Render Backend is **a heading with empty subsections**. **Our ~23 resolves/frame question is not
+   answered by this exhibit set.**
+**📌 ALSO CORRECTED: ATI's emulator SOURCE is not in the record.** Exhibit 2048 is the Perforce FOLDER
+HISTORY - commit messages only. It is still worth having: it repeatedly records integrations *"from Xenos"*
+into the R400 emulator, which is independent evidence of the shared codebase.
+
 ## 🎯📕 **THE XENOS PRIMARY SOURCE IS PUBLIC AND LOCATED: R400 SEQUENCER SPECIFICATION, IPR2015-00325 (2026-08-10)**
 **Searched for the document `xenos.h:771` cites. It exists, it is public, and the court said so explicitly.**
 ```
