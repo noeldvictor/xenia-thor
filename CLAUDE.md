@@ -727,6 +727,33 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ✅🔧 **THE OBJECT-CACHE KEY IS NOW STRUCTURALLY UNBREAKABLE - ONE TABLE, BOTH SITES (2026-08-10)**
+**This file has demanded this fix four times** (*"the real fix is to derive the key from ONE table of lowering
+cvars so omission is impossible"*) after the key was broken three times in a single day, plus once more by me
+this session. **Done.**
+```cpp
+#define XE_LLVM_LOWERING_CVARS(X)                   X('r', cpu_backend_llvm_context_residency)        X('w', cpu_backend_llvm_residency_writeback)      X('a', cpu_backend_llvm_residency_abi)            X('p', cpu_llvm_vperm_tbx)                        X('f', cpu_llvm_lower_scalar_fma)                 X('b', cpu_llvm_batch_lane_calls)                 X('v', cpu_backend_llvm_lower_vmaddfp)            X('c', cpu_llvm_guest_call_clobber_barrier)       X('q', cpu_llvm_vector_qload)                     X('n', cpu_llvm_vmx_float_flush)                  X('x', cpu_llvm_vmx_fmax_nan)                     X('s', cpu_llvm_lower_vsel)
+
+static std::string LlvmLoweringKeySuffix();   // expands the table
+```
+**Both key sites collapsed from a 12-argument hand-written list to one call:**
+```
+"g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dx%ds%dm%08X"  + 12 cvar args   (x2 sites)
+   ->  "g%08X_%016llX_o%d%sm%08X"  +  LlvmLoweringKeySuffix()                   (x2 sites)
+```
+**⇒ ADDING A LOWERING CVAR NOW UPDATES BOTH SITES AUTOMATICALLY.** The failure mode this kills is specific and
+nasty: a lowering cvar missing from the key means a warm cache **serves objects compiled under the OTHER
+setting**, so the A/B measures nothing and reads FLAT - silently. That has already invalidated real experiments
+here.
+**✅ AND IT IS CACHE-COMPATIBLE: the table order (r w a p f b v c q n x s) reproduces the previous format string
+exactly, so generated keys are BYTE-IDENTICAL.** This refactor invalidates nothing.
+**🐞 TWO COMPILE FAILURES ON THE WAY, BOTH THE SAME TRAP THIS FILE ALREADY RECORDS ("DEFINE placed after
+its use"):** the table must sit after **every** cvar it names - which means after the local `DEFINE_bool`s AND
+after the `DECLARE_bool`s for the four that live in `llvm_backend.cc`
+(`context_residency`, `residency_writeback`, `residency_abi`, `lower_vmaddfp`). Final position is immediately
+below `DECLARE_bool(cpu_backend_llvm_residency_abi)`, with a comment saying why. **A future cvar added to the
+table must also be declared above it.**
+
 ## 🎯🎯🎯 **ZERO LLVM FALLBACKS: THE FULL FLOAT-LOWERING SET TAKES BD FROM ~95% TO 100% LLVM COVERAGE (2026-08-10)**
 **"Dig deep on Xenon" / "we have major issues with Xenon emulation" - here is a real, measured one, and it was
 hiding behind a default-off flag whose blocking concern had already been fixed.**

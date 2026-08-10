@@ -328,6 +328,8 @@ DEFINE_bool(
     "design in CLAUDE.md review #10 is needed after all.",
     "CPU");
 
+
+
 DEFINE_bool(
     cpu_llvm_vperm_tbl2_probe, false,
     "DIAGNOSTIC, NOT AN OPTIMISATION - EXPECT IT TO CRASH. Emits the two-table "
@@ -382,6 +384,59 @@ DECLARE_string(cpu_backend_llvm_skip_addrs);
 DECLARE_bool(cpu_backend_llvm_context_residency);
 DECLARE_bool(cpu_backend_llvm_residency_writeback);
 DECLARE_bool(cpu_backend_llvm_residency_abi);
+
+// (The lowering-cvar table lives HERE, after every DEFINE_bool it names.
+//  Placing it earlier fails to compile with "no member named ... in namespace
+//  cvars" - the DEFINE-after-use trap this project has hit before.)
+// ============================================================================
+// THE OBJECT-CACHE LOWERING-CVAR TABLE - THE SINGLE SOURCE OF TRUTH.
+//
+// 🚨 THIS EXISTS BECAUSE THE HAND-MAINTAINED KEY WAS BROKEN FOUR TIMES.
+// The cache key must change whenever a cvar changes the GENERATED CODE, or a
+// warm cache serves objects built under the OTHER setting - so an A/B of that
+// cvar measures nothing and reads FLAT. That failure is silent and has already
+// invalidated real experiments in this tree (lower_vmaddfp among them).
+//
+// It used to require editing FOUR places in agreement: two format strings and
+// two argument lists (the `opath` build and setModuleIdentifier). Divergence
+// between those two sites is itself a recorded bug - the fast path looked for a
+// filename the cache never wrote.
+//
+// ➡ ADD A LOWERING CVAR HERE AND BOTH KEY SITES UPDATE AUTOMATICALLY.
+//    Pick an unused letter; the letter is part of the on-disk filename, so
+//    changing an existing one invalidates that cvar's cached objects (harmless,
+//    they regenerate). Order is preserved from the original hand-written format
+//    so this refactor does NOT invalidate any existing cache entry.
+//
+// ⚠ ONLY cvars that change EMITTED CODE belong here. A diagnostic that only
+//    logs must NOT be added - it would needlessly invalidate the whole cache.
+#define XE_LLVM_LOWERING_CVARS(X)                 \
+  X('r', cpu_backend_llvm_context_residency)      \
+  X('w', cpu_backend_llvm_residency_writeback)    \
+  X('a', cpu_backend_llvm_residency_abi)          \
+  X('p', cpu_llvm_vperm_tbx)                      \
+  X('f', cpu_llvm_lower_scalar_fma)               \
+  X('b', cpu_llvm_batch_lane_calls)               \
+  X('v', cpu_backend_llvm_lower_vmaddfp)          \
+  X('c', cpu_llvm_guest_call_clobber_barrier)     \
+  X('q', cpu_llvm_vector_qload)                   \
+  X('n', cpu_llvm_vmx_float_flush)                \
+  X('x', cpu_llvm_vmx_fmax_nan)                   \
+  X('s', cpu_llvm_lower_vsel)
+
+// Builds the "<letter><0|1>..." run that both key sites embed verbatim.
+static std::string LlvmLoweringKeySuffix() {
+  std::string out;
+  char pair[4];
+#define XE_LLVM_KEY_APPEND(letter, cvar)                       \
+  pair[0] = (letter);                                          \
+  pair[1] = cvars::cvar ? '1' : '0';                           \
+  pair[2] = '\0';                                              \
+  out += pair;
+  XE_LLVM_LOWERING_CVARS(XE_LLVM_KEY_APPEND)
+#undef XE_LLVM_KEY_APPEND
+  return out;
+}
 DECLARE_bool(cpu_llvm_object_cache);
 DECLARE_string(cpu_llvm_object_cache_path);
 DECLARE_bool(cpu_llvm_object_cache_skip_lowering);
@@ -3220,22 +3275,11 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // stamp in the DIRECTORY does not help here - both arms are the same build.
     char keybuf[160];
     std::snprintf(keybuf, sizeof(keybuf),
-                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dx%ds%dm%08X",
+                  "g%08X_%016llX_o%d%sm%08X",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
-                  cvars::cpu_backend_llvm_context_residency ? 1 : 0,
-                  cvars::cpu_backend_llvm_residency_writeback ? 1 : 0,
-                  cvars::cpu_backend_llvm_residency_abi ? 1 : 0,
-                  cvars::cpu_llvm_vperm_tbx ? 1 : 0,
-                  cvars::cpu_llvm_lower_scalar_fma ? 1 : 0,
-                  cvars::cpu_llvm_batch_lane_calls ? 1 : 0,
-                  cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
-                  cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
-                  cvars::cpu_llvm_vector_qload ? 1 : 0,
-                  cvars::cpu_llvm_vmx_float_flush ? 1 : 0,
-                  cvars::cpu_llvm_vmx_fmax_nan ? 1 : 0,
-                  cvars::cpu_llvm_lower_vsel ? 1 : 0,
+                  LlvmLoweringKeySuffix().c_str(),
                   LlvmTargetCpuKeyHash());
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
@@ -3449,23 +3493,12 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // the thermal budget of every measurement).
     char idbuf[176];
     std::snprintf(idbuf, sizeof(idbuf),
-                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dx%ds%dm%08X",
+                  "%sg%08X_%016llX_o%d%sm%08X",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
-                  cvars::cpu_backend_llvm_context_residency ? 1 : 0,
-                  cvars::cpu_backend_llvm_residency_writeback ? 1 : 0,
-                  cvars::cpu_backend_llvm_residency_abi ? 1 : 0,
-                  cvars::cpu_llvm_vperm_tbx ? 1 : 0,
-                  cvars::cpu_llvm_lower_scalar_fma ? 1 : 0,
-                  cvars::cpu_llvm_batch_lane_calls ? 1 : 0,
-                  cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
-                  cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
-                  cvars::cpu_llvm_vector_qload ? 1 : 0,
-                  cvars::cpu_llvm_vmx_float_flush ? 1 : 0,
-                  cvars::cpu_llvm_vmx_fmax_nan ? 1 : 0,
-                  cvars::cpu_llvm_lower_vsel ? 1 : 0,
+                  LlvmLoweringKeySuffix().c_str(),
                   LlvmTargetCpuKeyHash());
     mod->setModuleIdentifier(idbuf);
   }
