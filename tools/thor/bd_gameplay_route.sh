@@ -55,7 +55,31 @@ SEQ='start@20000:1500;a@28000:1500;a@34000:1500;a@40000:1500;start@46000:1500;a@
 EXTRA="${EXTRA:-}"          # e.g. EXTRA='--ez cpu_llvm_vperm_tbx true'
 SAMPLES="${SAMPLES:-15}"
 
-temp() { "$ADB" -s "$DEV" shell 'cat /sys/class/kgsl/kgsl-3d0/temp' | tr -d '\r'; }
+# ⚠️ RETURNS A SENTINEL, NEVER AN EMPTY STRING. If the device drops off adb the
+# read yields "" and every numeric comparison downstream becomes a shell error
+# that evaluates as FALSE - so `until [ $(temp) -lt 42000 ]` spins forever on a
+# disconnected device instead of failing. That burned a full 10-minute timeout
+# on 2026-08-10, and worse, the emulator it had launched was left RUNNING on a
+# shared device because the script never reached its force-stop.
+#
+# 99999 is deliberately above every threshold: a missing read now reads as
+# "too hot", so callers abort rather than proceed blind.
+temp() {
+  local t
+  t=$("$ADB" -s "$DEV" shell 'cat /sys/class/kgsl/kgsl-3d0/temp' 2>/dev/null | tr -d '\r')
+  case "$t" in
+    ''|*[!0-9]*) echo 99999 ;;
+    *) echo "$t" ;;
+  esac
+}
+
+# Abort if the device is not reachable. Call before anything that launches or
+# writes - "offline" must stop the run, not be treated as a slow read.
+require_device() {
+  local st
+  st=$("$ADB" devices 2>/dev/null | awk -v d="$DEV" '$1==d {print $2}')
+  [ "$st" = "device" ] || { echo "ABORT: device state '${st:-absent}'"; exit 1; }
+}
 
 # --- pre-flight. Must ABORT, not print: the device is SHARED with an rpcs3
 # --- session and a contended or hot run produces numbers that look valid.
