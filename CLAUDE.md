@@ -727,6 +727,57 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ❌⚠ **THE GEARS-OOM SETTLING TEST DID NOT RUN - THREE WARM-CACHE ARMS ALL HIT THE *STARTUP STALL* INSTEAD (2026-08-10)**
+**Went to run the fragmentation discriminator named in the entry below (dump `/proc/<pid>/maps` at the abort and
+compare the largest free gap). It never reached the abort, and the reason is a DIFFERENT known bug. Recording the
+attempt in full because I briefly published the wrong conclusion from it.**
+```
+three consecutive Gears runs, lowerings ON, WARM cache:
+  run 1   compiled=489     alive through t=480s
+  run 2   objload=30,564   alive through t=300s
+  run 3   objload=30,564   alive through t=360s
+                           "Title name" lines = 0
+                           RSS = 95,124 kB, IDENTICAL TO THE BYTE at t=60/120/180/240/300/360
+                           64,838 xenia log lines, so the process was NOT idle-on-launch
+```
+**❌❌ I FIRST READ "alive at t=300s" AS "warm cache survives, so the OOM is in the COMPILATION path" AND
+SAID SO. THAT IS WITHDRAWN.** An RSS frozen to the byte for five minutes is not a running emulator, and **`Title
+name` never appears** - this is the STARTUP STALL this file already documents at length (guest main thread parks
+at its first wait; 0 ticks; GPU threads healthily idle). **The original OOM fired AFTER `Title name: Gears of
+War`**, so the honest reading is that all three arms survived *because the guest never ran*, not because a warm
+cache is safe.
+**🔑 THE TELL I WALKED PAST, AND IT IS THE SAME SHAPE AS EVERY OTHER MEASUREMENT TRAP HERE: I CHECKED
+LIVENESS (`pidof`) AND NOT PROGRESS.** `pidof` non-empty is satisfied by a stalled process, a compiling process
+and a rendering process alike. **The run-2 capture keyed on `objload > 20000` fired at t=60s and I read that as
+"loaded and running" - it means the OBJECTS loaded, which a stalled boot also does.** The cheap discriminator was
+one grep for `Title name` and I did not run it until the third attempt.
+**⚠ AND NOTE WHAT THE WARM CACHE DOES TO THE OLD DIAGNOSTIC:** with the cache warm, `compiled` sits at 489
+and stops climbing, so **a capture trigger keyed on compile count can never fire.** Key the trigger on
+`objload`, on elapsed time, or on `Title name` - not on compilation, once a title has been run once.
+**📐 WHAT THE RUN DID PRODUCE, AND IT IS A BASELINE WORTH KEEPING: the address space of a HEALTHY-ish
+Gears process is nowhere near fragmented.**
+```
+/proc/<pid>/maps, warm cache, lowerings ON (STALLED process - NOT the failing state):
+  mappings                 2,173
+  largest free gap       362.0 GB   after 0xebad7000
+  next three            106.0 GB / 25.5 GB / 1.2 GB
+  gaps >= 1 MB               6
+```
+**⚠ THIS IS NOT THE DISCRIMINATOR AND MUST NOT BE QUOTED AS ONE** - it is a 95 MB stalled process, not the
+888 MB one that died. **It is a CONTROL**: it establishes what the map looks like before the JIT churn, so the
+failing arm's capture has something to be compared against. The fragmentation hypothesis is still untested.
+**⇒ WHAT THE NEXT ATTEMPT MUST DO DIFFERENTLY, in order:**
+1. **Gate the whole run on `Title name` appearing.** No title within ~120s = ABORT and retry, exactly as the BD
+   route harness voids a run with 0 frames. Do not sample anything before that line exists.
+2. **Then** sample `/proc/<pid>/maps` on a timer, keeping the LAST capture before the process disappears - the
+   abort is the event of interest and it gives no warning.
+3. Compare the largest free gap against the 362 GB control above. **Below ~1 MB = fragmentation confirmed and the
+   fix is an arena/slab for JIT allocations; still tens of GB = fragmentation is dead and the cause is elsewhere.**
+**⚠ OPERATIONAL COST, so this is budgeted rather than discovered again: Gears is ~28.5k functions and the
+startup stall is intermittent, so expect to burn runs that produce nothing.** Three consecutive attempts here
+produced zero usable samples and took the battery from charging to 33%. **This does not fit in the tail of a
+session.**
+
 ## 📈 **GEARS OOM, MEASURED: RSS 888 MB / VSZ 30 GB / NO RLIMIT - AND THE ARMS DIFFER BY 26% MORE COMPILATION (2026-08-10)**
 **Sampled the failing arm to resolve the code-size-vs-something-else fork. Three more explanations die, and the
 one clean discriminator is not the one I expected.**
