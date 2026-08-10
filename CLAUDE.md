@@ -1152,6 +1152,55 @@ wrong (the Adreno docs were "unobtainable" and were not; BCAX "fuses automatical
 real gap (Adreno) was closed this session with Playwright after being written off twice. **Do not re-run this
 search.**
 
+## 🎉🎉🎉 **NO MESA BUILD IS NEEDED - THE SHIPPED TURNIP ALREADY HAS THE FULL ir3 SHADER-DEBUG FACILITY (2026-08-10)**
+**The entry below says "the next session's first task is a MESA BUILD, not an experiment" and budgets a whole
+session for it. That is WRONG, and the error is one grep: it searched the driver for `shaderdb` and found 0.
+`shaderdb` DOES NOT EXIST IN MESA'S TURNIP AT ALL** - zero hits in `src/freedreno/vulkan/` on current main
+(`8faf71d`). **A zero for a token that was never a Turnip option is not evidence about the build.**
+**✅ WHAT THE SHIPPED DRIVER ACTUALLY CONTAINS** (`assets/drivers/turnip.zip`, `libvulkan_freedreno.so`,
+14,371,728 bytes, 42,947 distinct strings - extracted with python, see the tooling note below):
+```
+IR3_SHADER_DEBUG env var string ................. PRESENT
+all 15 ir3 option tokens ........................ 15/15
+   vs tcs tes gs fs cs internal disasm optmsgs forces2en nouboopt nofp16
+   nocache spillall nopreamble fullsync fullnop noearlypreamble nodescprefetch
+   expandrpt noaliastex noaliasrt asmroundtrip thread64
+the HELP TEXT itself .............................. PRESENT
+   "Print shader disasm for fragment shaders"
+   "Dump NIR and adreno shader disassembly"
+ir3 DISASSEMBLER linked (not just the words) ...... PRESENT
+   bary.f  shps  getone  chmask  (ss)  (ul)  (rpt%d)  (jp)  isam  ldib  resinfo
+TU_DEBUG option table ............................. PRESENT
+   dumpas perfc perfcraw startup nir gmem layout syncdraw forcebin nolrz sysmem ...
+```
+**⇒ BOTH INSTRUMENTS THIS FILE HAS BEEN WAITING ON ARE ALREADY ON THE DEVICE.** `IR3_SHADER_DEBUG=fs` gives the
+per-variant fragment disassembly (instruction count, register pressure, the NOP proportion XenDroid measured at
+26% overall / 40-57% in many shaders), and `TU_DEBUG=perfc` is the performance-counter path their §11 recipe
+uses. **The "instrumented Turnip build" task collapses from a session to two `setprop`s and one run.**
+**⇒ THE RECIPE, and it needs no rebuild of anything:**
+```
+adb shell setprop log.redirect-stdio true                  # ir3 disasm goes to STDOUT/STDERR,
+adb shell setprop wrap.jp.xenia.emulator.github.debug '"IR3_SHADER_DEBUG=fs"'
+   ... launch, reach the field, then read logcat ...
+```
+**🚨 THE STDERR TRAP IS ALREADY DOCUMENTED IN THIS FILE AND APPLIES HERE: on Android, stdout/stderr are
+NOT in logcat by default** - the tbl2 probe entry records losing an LLVM `report_fatal_error` message for exactly
+this reason. **`log.redirect-stdio true` is the fix, and without it this run produces nothing and looks like the
+option did not work.** Set it FIRST and confirm with a known-noisy option.
+**⚠ AND ONE REAL CAVEAT BEFORE BUDGETING THE RUN: `IR3_SHADER_DEBUG=fs` DUMPS EVERY FRAGMENT VARIANT.** BD
+compiles dozens; XenDroid counted 40 FS variants with the worst at 2,195 instructions. That is a very large
+logcat volume, and this file already records logcat EVICTING earlier lines under heavy logging (the AOT
+progress-bar diagnosis). **Use a big buffer (`logcat -G 64M`), clear immediately before the scene, and pull
+continuously rather than with a single `-d` at the end.**
+**🔧 TOOLING NOTE THAT COST ME TWO WRONG READINGS, worth more than the finding: `strings` IS BROKEN IN
+THIS GIT-BASH ENVIRONMENT - it returns ZERO lines on a 14 MB ELF.** My first two checks reported `dumpas 0`,
+`perfc 0` and even `TU_DEBUG 0`, which I nearly wrote up as "the driver has no debug support". The tell was that
+`TU_DEBUG` read 0 while this file already recorded 12 hits for it - **a disagreement with a previously recorded
+measurement is a reason to doubt the TOOL, not the record.**
+**⇒ EXTRACT STRINGS WITH PYTHON, NOT `strings`:** `re.finditer(rb'[ -~]{3,}', open(so,'rb').read())`. And note
+the second-order trap: `grep -cx` (exact whole-line match) also under-reports, because option tokens can sit in
+a merged string table. Match as substrings, then confirm with the help text.
+
 ## 🛠 **THE INSTRUMENTED-TURNIP PATH, SCOUTED (2026-08-10): THE DELIVERY MECHANISM IS ALREADY AVAILABLE, ONLY THE DRIVER BUILD IS MISSING**
 **Both remaining open questions - "is the SP doing useful work or starved by occupancy?" and "does our SPIR-V
 translation inflate shaders vs the Xenos original?" - need the same tool. Scouted what it actually takes,
