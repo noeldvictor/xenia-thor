@@ -727,6 +727,34 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 📊 **THE FRAGMENT-COST CEILING, MEASURED: 1.46x - AND THE TWO LEVERS DO *NOT* STACK (2026-08-10)**
+**Stacked the only two levers that won, to find the ceiling of the fragment-cost attack. Same route, same
+build, gameplay-tier confirmed, 0 faults.**
+```
+baseline                          61,831 us   16.17 fps    1.00x
+VRS 2x2 all draws                 48,790 us   20.50 fps    1.27x   (-21.1%)
+downscale_pct 71                  44,695 us   22.37 fps    1.38x   (-27.7%)
+downscale 71 + VRS 2x2 all draws  42,499 us   23.53 fps    1.46x   (-31.3%)
+```
+**⇒ THEY DO NOT ADD. VRS buys 21% alone and only 3.6 more points on top of downscale.** That is the expected
+shape and it is worth stating precisely: **downscale cuts fragment AREA, VRS cuts fragment RATE, and once the
+area is halved there is far less rate left to coarsen.** Anyone planning to sum these two numbers should not.
+**⇒ AND IT SIZES THE WHOLE FRAGMENT ATTACK: ~1.46x IS THE CEILING**, reached only with a quality-destructive
+VRS setting on top of a half-area render. **2x needs -49% frame time; both fragment levers together give
+-31.3%.** So **fragment cost alone cannot deliver 2x on this scene** - even taking the maximum quality hit both
+levers can inflict.
+**🔍 WHICH RAISES THE QUESTION THAT SHOULD DRIVE THE NEXT SESSION: at 42,499 us with fragment cost
+roughly halved, WHAT IS THE FRAME NOW?** The per-pass split (`vulkan_trace_pass_timestamps`) answers it
+directly and cheaply - re-run it WITH downscale+VRS on and compare the inside/between-passes ratio against the
+baseline's 82%/17%. **If "inside passes" is still dominant, there is more fragment/shader work to find; if
+"between" has grown to dominate, the residual is transfers/barriers and the structural levers become relevant
+again for the FIRST time** (they were flat only because fragment cost was swamping them).
+**⇒ AND THE HONEST STRATEGIC READ: the 30 fps target for BD's field is ~1.86x, and the best measured
+configuration is 1.46x WITH visible quality loss.** Closing the rest needs either a second, independent cost
+centre (the question above), or accepting a lower internal resolution than 71%, or per-title content
+reduction. **It is not going to come from another instruction-level lever - this session priced most of those
+at zero.**
+
 ## 🏆🏆 **BEST RESULT OF THE SESSION: `gpu_resolution_downscale_pct 71` = -27.7% FRAME TIME, 16.17 -> 22.37 fps (2026-08-10)**
 **Qualcomm's own prescription for a fragment-bound title, and it is the only lever today that both WON and is
 plausibly shippable.**
