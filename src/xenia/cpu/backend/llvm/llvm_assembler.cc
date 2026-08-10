@@ -199,6 +199,34 @@ DEFINE_bool(
     "CPU");
 
 DEFINE_bool(
+    cpu_llvm_vector_qload, false,
+    "Emit ONE q-load/q-store for guest VEC128 memory access instead of FOUR "
+    "volatile 32-bit words plus three insertelements. "
+    "WHY THIS MIGHT BE FREE: the a64 backend ALREADY emits a single q-load for "
+    "the identical operation (a64_seq_memory.cc:574) and ships that way every "
+    "day without crashing. The 4-word split exists in the LLVM path only, "
+    "justified by a comment about the access-violation handler being unable to "
+    "decode a faulting q-load - but MMIOHandler::EmulateWatchedStore, the "
+    "consumer that needs the decode, is called ONLY from x64_backend.cc, and "
+    "ZERO x64_ sources compile into the Android APK. The a64 watch-page handler "
+    "is separately gated behind cpu_watch_guest_write_page, a default-off "
+    "RE/debug tool. So the two backends disagree about a supposedly shared "
+    "constraint and the permissive one is the one that ships. "
+    "WHAT IT COSTS TODAY: 4 LDR + 3 lane inserts vs 1 LDR, on a FP/ASIMD pipe "
+    "that is only 2 wide on the A710/A715 mid cores, plus the 3-cycle dispatch "
+    "stall the A710 SWOG §4.2 charges for a quad-word source previously written "
+    "as single words. On the SHIPPING backend, for every guest vector access. "
+    "THE RESIDUAL RISK, stated honestly: MMIO is live on ARM64 "
+    "(MMIOHandler::Install, memory.cc:249) and TryDecodeLoadStore only decodes "
+    "32-bit LDR/STR, so a guest VECTOR access landing on an MMIO page would be "
+    "undecodable. Whether that can happen is the open question - but it is the "
+    "SAME risk a64 already takes, not a new one. "
+    "DEFAULT OFF: one launch decides it. Stable -> flip the default and the 4x "
+    "cost is gone for free. Hangs -> the comment is right and the side-table "
+    "design in CLAUDE.md review #10 is needed after all.",
+    "CPU");
+
+DEFINE_bool(
     cpu_llvm_vperm_tbl2_probe, false,
     "DIAGNOSTIC, NOT AN OPTIMISATION - EXPECT IT TO CRASH. Emits the two-table "
     "aarch64.neon.tbl2 for VPERM, which this tree records as crashing the "
@@ -547,6 +575,11 @@ class Lowerer {
   // on a GPU write-watch / MMIO page can't be decoded -> BD hangs); volatile
   // stops LLVM re-merging them into a q-store. Mirrors the 4-load vector LOAD.
   void StoreVec128AsWords(llvm::Value* val, llvm::Value* base) {
+    if (cvars::cpu_llvm_vector_qload) {
+      // ONE q-store, matching the a64 backend. See cpu_llvm_vector_qload.
+      b_.CreateStore(val, base, /*isVolatile=*/true);
+      return;
+    }
     auto* v = b_.CreateBitCast(val, LaneVecTy(INT32_TYPE));
     for (int k = 0; k < 4; k++) {
       auto* p = b_.CreateGEP(b_.getInt8Ty(), base, b_.getInt64(4 * k));
@@ -1652,6 +1685,14 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* ea = V(i->src1.value);
       if (!ty || !ea) return false;
       if (ty->isVectorTy()) {
+        if (cvars::cpu_llvm_vector_qload) {
+          // ONE q-load, exactly what the a64 backend emits (a64_seq_memory.cc:
+          // 574: `e.ldr(i.dest, mem)`). See the cvar help for why the 4-word
+          // split below is suspected to be over-conservative ON THIS PLATFORM.
+          auto* v = b_.CreateLoad(ty, MemPtr(ea), /*isVolatile=*/true);
+          Def(i->dest, MaybeByteSwap(v, ty, i->flags));
+          return true;
+        }
         // 128-bit vector load as FOUR volatile 32-bit loads (base+0/4/8/12).
         // Each is a single decodable LDR for the access-violation handler (a
         // single q-load that faults can't be decoded). volatile => LLVM won't
@@ -2902,7 +2943,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // stamp in the DIRECTORY does not help here - both arms are the same build.
     char keybuf[128];
     std::snprintf(keybuf, sizeof(keybuf),
-                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%d",
+                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%d",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
@@ -2913,7 +2954,8 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_llvm_lower_scalar_fma ? 1 : 0,
                   cvars::cpu_llvm_batch_lane_calls ? 1 : 0,
                   cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
-                  cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0);
+                  cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
+                  cvars::cpu_llvm_vector_qload ? 1 : 0);
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
         ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
@@ -3121,7 +3163,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // the thermal budget of every measurement).
     char idbuf[144];
     std::snprintf(idbuf, sizeof(idbuf),
-                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%d",
+                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%d",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
@@ -3133,7 +3175,8 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_llvm_lower_scalar_fma ? 1 : 0,
                   cvars::cpu_llvm_batch_lane_calls ? 1 : 0,
                   cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
-                  cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0);
+                  cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
+                  cvars::cpu_llvm_vector_qload ? 1 : 0);
     mod->setModuleIdentifier(idbuf);
   }
 
