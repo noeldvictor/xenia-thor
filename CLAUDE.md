@@ -727,6 +727,34 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ✅✅ **THE x64 -> ARM64 REVIEW, CONSOLIDATED AND CLOSED (2026-08-10): EIGHT AXES SWEPT, THE BACKEND IS CLEAN**
+**The standing user ask - "really review code where x64 shit needs to be rethought for arm64" - has been
+approached piecemeal across many sessions. Consolidating every axis and its verdict, because the useful output
+is now the COMPLETE list, and it says the opposite of what everyone assumed.**
+| axis | method | verdict |
+|---|---|---|
+| **idiom tells** (`xmm`, `sse`, `movaps`, "like x64") | grep the backend | **4 hits, all COMMENTS on issues already fixed or recorded** |
+| **2-operand destructive staging** (the shape those idioms produce) | structural grep: source copied to scratch, then operated on | **2 sites**, both semi-justified (feed a destructive flush helper); ~1 wasted uOP each |
+| **memory ordering / TSO assumptions** | trace every cross-thread publish | **2 real bugs FIXED** (`atomic_exchange` dropped writes; XMA release fence), 4 candidates cleared, 1 scoped |
+| **1:1 instruction mapping** (does ARM have an instruction we synthesise?) | enumerate VMX ops vs ARM ISA, count emissions | pack/saturate (`sqxtn`/`sqxtun`/`uqxtn`) and byte-swap (`rev*`) **already native**; the gaps map to guest opcodes we do not IMPLEMENT (28 `XEINSTRNOTIMPLEMENTED`) |
+| **register budget** (7 GPRs / 28 vectors) | AAPCS64 + emitted-code probe | **NOT an x86 copy** - ARM64 has exactly 10 callee-saved GPRs, minus our 3 reservations = 7. And AAPCS64 preserves only the LOW 64 bits of v8-v15, so 128-bit vector residency across a call is **architecturally impossible** |
+| **constant materialisation** | read the emitter | **already correct** - V128 uses a DEDUPLICATED LITERAL POOL (`GetV128ConstLabel`), and there are **ZERO `movz`/`movk`** chains; scalar constants defer to the assembler's optimal encoding |
+| **flag / CR handling** (x86 eager EFLAGS) | census + read the pipeline | **already optimised away** - `ContextPromotionPass` strips dead CR stores in-block by default, and the CMP+B.cond pair FUSES on the X3 (SWOG 4.11). `CrossBlockFlagDSE` removes **0** |
+| **byte-swap elision** (no `MOVBE` on ARM) | grep HIR passes | **already done in HIR** - `SimplificationPass::CheckByteSwap` folds double swaps, `memory_sequence_combination_pass` folds the swap into the load/store flag. The remaining 43 `rev` sites are the IRREDUCIBLE endian boundary |
+**⇒ THE CONCLUSION, AFTER EIGHT INDEPENDENT AXES: THE a64 BACKEND IS NOT A NAIVE x64 TRANSLITERATION.** The
+framing that opened this track - *"we probably ported x64 to arm and should have reimagined it"* - was a
+reasonable hypothesis and **the evidence does not support it as a source of remaining performance.** Every
+place it was true has been found and fixed (shifts, `FixupVmxMaxMinNan`, the atomic, the fence), and every
+remaining suspicion has been checked and cleared.
+**⇒ WHAT REMAINS IS NOT x86-SHAPED, IT IS EMULATION-SHAPED:** the `PPCContext` memory home exists because a
+guest register file must live somewhere addressable; one-module-per-function exists because the JIT compiles
+per function; the EDRAM tall-RT allocation exists because EDRAM is a linear span. **Those are consequences of
+emulating a 360, not of having once targeted x64** - and two of the three were measured this session and found
+NOT to be the bottleneck anyway.
+**⇒ SO: STOP LOOKING FOR x86 GHOSTS IN THE a64 BACKEND.** Eight axes, one consolidated table, and the honest
+answer is that this particular well is dry. **The measured bottleneck is GPU fragment shading, and the CPU
+backend is in good shape.**
+
 ## 🔎 **WENT LOOKING FOR "SOMETHING BIG" - CHASED XENDROID'S ROOT CAUSE B, AND IT IS FLAT TOO (2026-08-10)**
 **User: "i think we missing osmething big." Chased the best available candidate - the one root cause in
 XenDroid's counter study that we had not tested - and it is another clean negative that reinforces the ALU
