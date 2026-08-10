@@ -727,6 +727,35 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ✅🖼 **PIXEL CHECK PASSED: THE FULL FLOAT SET RENDERS CORRECTLY (screenshot READ, 2026-08-10)**
+**The last thing standing between five validated lowerings and their defaults was a visual confirmation. Got
+one, and READ it rather than inferring from file size.**
+```
+BD with vmaddfp + vmx_float_flush + vmx_fmax_nan + lower_vsel + lower_scalar_fma
+screencap via `adb exec-out screencap -p > file`  ->  1,439,703 bytes (a real frame)
+```
+**WHAT THE IMAGE SHOWS, read not assumed:** BD's opening windmill scene - **blue sky with a correct gradient,
+maroon/red sail canvas, wooden lattice and rope rigging all geometrically coherent, a brass hub, sun bloom with
+lens-flare sprites, a cloud layer, a bird sprite, and legible "Microsoft Game Studios" text. OSD reads 29.7
+FPS.**
+**⇒ NONE OF THE FAILURE MODES THAT DISABLED `lower_scalar_fma` ARE PRESENT.** It was pulled for a **black
+screen / degenerate geometry**; the geometry here is intact and correctly lit. **No cyan** either - the other
+float-semantics failure this file has chased for months.
+**⚠ HONEST SCOPE: THIS IS THE OPENING CINEMATIC (t=45s, 237,861 verts), NOT THE FIELD.** The capture fired as
+soon as vertices crossed the gameplay threshold. It is genuine 3D content with lighting, texturing, alpha and
+text - a real float-correctness test - but **a field capture would be stronger**, and the field is where the
+cyan bug historically appeared. The same config DID run the full route to the field (215,193 verts, 0 faults)
+in the previous entry; only the screenshot is from the earlier scene.
+**🔧 AND A TOOLING FIX WORTH KEEPING: `adb shell screencap -p /sdcard/x.png` FAILS UNDER GIT BASH** -
+MSYS rewrites `/sdcard/...` into `C:/Program Files/Git/sdcard/...`, so the file is never written and the
+subsequent `pull` reports "No such file or directory" for a path that was never valid.
+**⇒ USE `adb exec-out screencap -p > local.png`** - it streams the PNG to stdout with no device path at all, so
+there is nothing for MSYS to mangle. **That is also why this file's older "screencap never works / always
+returns ~15 KB" impression was partly a PATH bug, not a SurfaceView bug** - the exec-out form produced a
+1.4 MB frame on the first try.
+**⇒ REMAINING BEFORE DEFAULTING THE FIVE: a field-scene capture.** Everything else is done - 0 fallbacks,
++1,005 functions on LLVM, 0 faults, fps flat (GPU-bound, expected), and correct pixels in a lit 3D scene.
+
 ## 🧪 **THE FULL FLOAT-LOWERING SET RUNS CLEAN ON DEVICE - 100% LLVM COVERAGE, FPS FLAT (2026-08-10)**
 **Ran the whole set together on a properly warmed cache. It is a COVERAGE result, and the fps outcome is the
 one the rest of this file predicts.**
