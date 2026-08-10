@@ -727,6 +727,87 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🚨🚨🚨 **XENDROID ALREADY DID TODAY'S GPU INVESTIGATION WITH *HARDWARE COUNTERS*, AND IT KILLS OUR NEXT LEVER BEFORE WE RUN IT (2026-08-10)**
+**`reference/XenDroid` commit `4ae33425b` ships a 505-line study, `docs/gw-gpu-bottleneck-investigation.md`
+(Geometry Wars on a Retroid Pocket 5, instrumented Turnip with Adreno perf counters). They reached the SAME
+diagnosis I reached today by wall-clock alone - and then went one step further and REFUTED it.**
+### ✅ THE ANSWER TO "WHERE DOES THE FRAME GO", FROM HARDWARE COUNTERS
+```
+GPU 93.3% busy.  Unit busy (summed over instances):
+  SP  (shader cores) 489   <- THE BOTTLENECK
+  TP  (texture)      347   <- but STARVED BY SP
+  RB                 150     CCU 105     CP 93 (front end not limiting)
+
+  92% of SP busy is ALU WORKING CYCLES (447.7 of 489.3)
+  HLSQ is blocked by the fragment shader 94% of the time
+  UCHE reads only 3.29 GB/s
+```
+**⇒ VERDICT: FRAGMENT-SHADER **ALU** BOUND.** Not passes, not tile traffic, not bandwidth, not texture.
+**This is the answer to the question this file has been circling all day**, and it was obtained with counters we
+do not have.
+### ❌ AND IT PREDICTS `gpu_max_rt_height` IS DEAD - DO NOT SPEND A RUN ON IT WITHOUT READING THIS
+They implemented render-area shrinking, **verified it firing** (`240x8192 -> 240x160` = 51x less area,
+`80x8192 -> 32x32` = **512x** less), and A/B'd it with the counter sampler:
+```
+metric/rb_pix   shrink ON   OFF      delta     run noise (1sd)
+RB busy          0.18485   0.18668   -1.0%       13.3%
+CCU busy         0.11247   0.11414   -1.5%       16.2%
+UBWC read        0.00133   0.00125   +6.9%       39.9%   <- wrong direction
+SP alu           0.55797   0.56006   -0.4%       22.0%
+Pass times identical to two decimals across builds.
+```
+> *"**Turnip already skips empty tiles; the declared render area is not what it bins.** Lever 1 is dead rather
+> than deferred, and phase 2 inherits the same dead premise - not worth building."*
+**⇒ THIS EXPLAINS MY -18% RESULT EXACTLY: clamping `renderArea` ADDED work and removed none, because Turnip
+derives binning from actual draw coverage.** And **the same dead premise applies to `gpu_max_rt_height`** - if
+the driver never processes those tiles, shrinking the ALLOCATION cannot help either. **My built-and-untested
+lever is predicted dead by a stronger instrument than I have.** Run it if you like, but expect nothing, and do
+not build phase 2 of anything in this family.
+**🔑 THE METHODOLOGICAL POINT IS THE BEST THING IN THE DOCUMENT, AND IT INDICTS EVERY FLAT RESULT I
+RECORDED TODAY:**
+> *"**Why the wall-clock null result was not enough:** it cannot distinguish 'no work removed' from 'work
+> removed off the critical path'. Only the unit counters can - RB/CCU/UBWC are not gated by the shading
+> critical path, so if real tile or GMEM work had been removed they would have dropped regardless of the SP.
+> They did not."*
+**Every "flat" verdict I produced today (hoist, inpass transfers, RT UBWC) rests on wall-clock and therefore
+cannot separate those two cases.** Getting the counter sampler is worth more than the next five levers.
+**Their §11 gives the full recipe:** `echo 1 > /sys/class/kgsl/kgsl-3d0/perfcounter` (no root, resets on
+reboot), an instrumented a6xx Turnip build, then `turnip_perf_sampler` / `_period_ms` / `_file` cvars. Their
+commit `c2ab879a4` adds the driving cvars.
+### 🎯 VRS IS NOW THE *RIGHT* LEVER, AND XENDROID HAS ALREADY BUILT IT (answers the user's question)
+**If the GPU is fragment-ALU bound, the lever that directly reduces fragment-shader invocations is Variable
+Rate Shading.** XenDroid's VRS series, in order:
+```
+a979f7cf6 [Vulkan] Add a fragment shading rate PROBE to price VRS before building it   <- rule 4, done right
+1a51d62bc [Vulkan] Offer coarse shading rates up to 4x4 and default BLENDED draws to 2x1
+81cfbe17c [Vulkan] Clamp the coarse rate to what the device supports at the current sample count
+23830e49a [Vulkan] Declare the fragment shading rate DYNAMIC so per-draw rates apply
+```
+**⚠ AND THIS IS THE SECOND TIME VRS HAS COME UP HERE - THE FIRST TIME WE REMOVED IT FOR QUALITY.** This file
+records VRS 4x4 being pulled from Burnout on a user report of *"gfx are busted"*, alongside the fp10 bloom clamp
+and an MSAA cap. **The difference is granularity: we applied a coarse rate broadly; XenDroid applies 2x1 to
+BLENDED DRAWS ONLY, per-draw, via dynamic state, clamped to device support.** Blended draws are where coarse
+shading is least visible and where overdraw concentrates.
+**⇒ SO THE RE-TRY IS NOT "turn VRS back on", it is "port the per-draw, blend-gated, dynamic-state form and
+price it with their probe first".** That is a real lead aimed at the measured bottleneck, and it is the first
+GPU lever in this file whose target (fragment ALU) is backed by hardware counters rather than inference.
+**⚠ TRANSFER CAVEATS, honestly:** their study is **Geometry Wars on a Retroid Pocket 5** (different title,
+different Adreno generation) and GW's profile is 55 single-draw 8192-tall strips, where BD's is two dominant
+passes at 1280x2048. **The DRIVER behaviour (Turnip binning from draw coverage) transfers because we run the
+same driver; the workload conclusion (fragment-ALU bound) needs confirming on BD with counters before we bet
+on it.** Do not treat "ALU bound" as established for Blue Dragon yet - treat it as the best-supported
+hypothesis and the reason to build the counter sampler.
+**📌 FOUR OF THEIR METHODOLOGY TRAPS WE HAVE NOT RECORDED, all earned the same way ours were:**
+1. **Pipeline-cache warm-up: the FIRST run after installing a build recompiles pipelines during gameplay and
+   reads several fps low. "Always run twice; take the second run."** A correct fix once looked 4-5 fps short
+   purely from this. **We reinstall before nearly every A/B.**
+2. **SPIR-V opcode histograms are NOT a cost model on Adreno** - a build with strictly FEWER instructions
+   measured SLOWER. Total shader SIZE tracked reality; instruction mix did not.
+3. **Generated bytecode headers are untracked and survive `git checkout`** - wipe `shaders/bytecode/` before a
+   bisect build or it silently links bytecode from another commit.
+4. **Counter selectors are generation-specific** - a renumbered selector reports plausible numbers under the
+   wrong name, which is worse than no data.
+
 ## 🎬 **VIDEO ITEM 6/7 APPLIED: V128 `vsel` NOW LOWERS IN LLVM - A TOP-3 FALLBACK CAUSE, FIXED BY WRITING THE IR IDIOMATICALLY (2026-08-10)**
 **The talk's item 6 is "LLVM completely dropped the ball on a compare/select chain; only inline assembly fixed
 it, 15 -> 7 insns", and item 7 is the same class ("LLVM scalarized the whole vector op; fix = write the IR
