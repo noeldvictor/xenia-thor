@@ -727,6 +727,38 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🔧 **"INCREMENT 2" SCOPED IN CODE: WHAT IT WOULD TAKE TO SHIP THE RESOLUTION WIN (2026-08-10)**
+**The measured win (1.38x at 71%, 1.79x at 50%) is gated on one correctness question, and it is answerable
+from the source rather than by staring at the screen. It is real.**
+```
+gpu_resolution_downscale_pct is applied in exactly TWO places:
+  vulkan_render_target_cache.cc:4003-4017   shrink the RT IMAGE extent
+  vulkan_render_target_cache.cc:4482-4487   match the FRAMEBUFFER to it
+  (+ vulkan_command_processor.cc:10556-10591  scale each draw's viewport/scissor)
+
+VulkanRenderTargetCache::Resolve()  (line 2376)  ->  ZERO references to it.
+```
+**⇒ SO A RESOLVE READS A SHRUNKEN IMAGE USING UNSCALED, PIXEL-EXACT COORDINATES.** That is precisely the hole
+the cvar's own help declares (*"Pixel-exact EDRAM copies / resolves are NOT rescaled here (increment 1), so
+titles that resolve the RT by copy will misalign"*) - now confirmed against the code rather than taken on
+faith. **BD performs ~23 `copy=` resolves per frame, so BD is in the affected class and misalignment should be
+EXPECTED at 71% and 50%, not merely feared.**
+**🔑 WHY IT STILL LOOKS PLAUSIBLE ON SCREEN, AND WHY THAT IS A TRAP:** composites that sample the RT as
+a TEXTURE with normalized [0,1] UVs upscale transparently and look correct - those are the majority of what you
+notice. **Only the pixel-exact copy path misaligns**, so the failure is localized (a ghosted or offset
+composite, a shifted HUD element) rather than a whole-screen corruption. **"It looked fine" is therefore NOT
+sufficient evidence; the specific artifacts have to be looked for.**
+**⇒ INCREMENT 2, SCOPED: scale the resolve's SOURCE rectangle by the same factor in `Resolve()`.** The
+destination (guest memory / texture) must stay full-size - the guest owns that layout - so this is a
+source-side sampling change, i.e. read the smaller region and upscale into the full-size destination, exactly
+as the composites already do implicitly. **One function, one factor, and the factor is already a global
+cvar.** The risk is that some resolves are genuinely pixel-exact by contract (EDRAM->EDRAM ownership
+transfers), which must keep 1:1 - so the scale applies to RT->texture resolves, not to every path through
+`Resolve()`.
+**⇒ AND THAT IS THE WHOLE REMAINING DISTANCE BETWEEN "MEASURED 1.38x" AND "SHIPPABLE PER-TITLE SLIDER".** No
+new research, no device time to design it, one bounded function. **It is the highest-value piece of work left
+in this file.**
+
 ## ❌ **THE LRZ SPIKE IS A DOUBLE REGRESSION TOO (+13.1%, VISUALLY WRONG) - AND LRZ IS STRUCTURALLY BLOCKED BY EDRAM EMULATION (2026-08-10)**
 **LRZ mattered more than any other lever on paper, because unlike downscale and VRS, LRZ rejection is EXACT -
 it costs no image quality. Measured it. It costs both.**
