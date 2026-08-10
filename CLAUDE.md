@@ -699,7 +699,42 @@ desktop Vulkan — minimize passes/GMEM flushes, GMEM-resident RT, Turnip extens
 PPC→native) for CPU/thermal. Blueprint: `docs/research/20260705-native-vulkan-renderer-plan.md`. Be creative,
 novel, research (arxiv/DXVK/Cemu). Convert the WHOLE pipeline at once — do NOT do one lever at a time (all dead).
 
-## 🚨🚨🚨 DECISIVE (2026-07-08, on clean Thor): BD FIELD IS **CPU-BOUND**, NOT GPU-BOUND — the whole GPU/EDRAM era was the wrong processor
+## 🔄🔄🔄 **REVERSED 2026-08-10: BD FIELD IS NOW *GPU-BOUND*. 99% BUSY AT MAX CLOCK.**
+**The section below is the load-bearing premise of this entire file — "BD's field is CPU-bound, so the GPU work
+was optimising the wrong processor". IT IS NO LONGER TRUE, measured with that section's own criteria.**
+```
+BD gameplay, 2026-08-10, uncontended, 200k+ verts/frame:
+  t=40s   fps 29.3   GPU busy  99%   clock 680 MHz   <- MAX (Adreno 740 tops out ~680)
+  t=50s   fps 17.7   GPU busy  99%   clock 680 MHz
+  t=60s   fps 17.4   GPU busy  99%   clock 680 MHz
+  t=70s   fps 17.7   GPU busy  99%   clock 680 MHz
+  t=80s   fps 17.5   GPU busy  99%   clock 680 MHz
+(title/loading for contrast: 31-47% busy at 615 MHz)
+```
+**The 2026-07-08 section defines the test itself: *"A GPU-bound title would show ~99% busy + boosted clock."*
+That is exactly what we now measure.** Then: 10-48% busy at the 401 MHz MINIMUM clock. Now: 99% at maximum.
+**⇒ THIS EXPLAINS EVERY FLAT CPU RESULT IN THIS FILE, INCLUDING TODAY'S.** Moving ~900 functions onto
+LLVM+residency measured ~0% fps because **the CPU is no longer the limiter** — the GPU is saturated and the
+guest thread is waiting on it. Every CPU lever measured since the GPU became the bottleneck was destined to read
+flat regardless of how good it was.
+**🔑 AND THE GENEROUS READING IS PROBABLY THE RIGHT ONE: THE CPU WORK WORKED.** BD's field was 9.9 fps and
+CPU-bound; it is now ~17.5 fps and GPU-bound. **The CPU effort plausibly carried it from 9.9 to the point where
+the GPU became the wall.** That is a success that looked like a failure, because the metric everyone kept
+checking (a CPU lever's fps delta) went flat precisely BECAUSE the earlier CPU work had succeeded.
+**⇒ WHAT THIS MEANS FOR THE 2x GOAL, stated plainly: FURTHER CPU WORK CANNOT DELIVER IT ON THIS TITLE.** At 99%
+GPU busy on the max clock, the next fps has to come from the GPU side — fewer passes, fewer draws (1,219/frame
+measured), less overdraw, cheaper resolves. **The in-pass resolve chain and the dynamic-rendering prerequisite,
+shelved as "the wrong processor", are back on the critical path.**
+**⚠️ CAVEATS, because this reverses a headline finding:** (1) ONE scene on ONE title — Gears and Burnout are
+unmeasured and may still be CPU-bound; (2) the 2026-07-08 reading was on a very different build (pre-Edge-kernel,
+pre-LLVM, BD-native-renderer era), so this is not a contradiction of that measurement, it is a CHANGE since it;
+(3) 99% busy at max clock can also mean the GPU is doing WASTED work (redundant passes/overdraw), which is a
+reason to attack the GPU workload rather than to conclude the hardware is maxed.
+**⇒ NEXT MEASUREMENT, and it is cheap: run the same GPU-busy probe on GEARS and BURNOUT.** If they are also
+99%/max, the whole CPU track is done for now and the project is a GPU project. If they are not, the answer is
+per-title and the CPU work still matters where it is still the limiter.
+
+## 🚨🚨 (SUPERSEDED — see the reversal directly above) DECISIVE (2026-07-08, on clean Thor): BD FIELD IS **CPU-BOUND**, NOT GPU-BOUND — the whole GPU/EDRAM era was the wrong processor
 **MEASURED on the clean Thor (busycheck.ps1, Turnip, field rendering): GPU busy% = 10-48% (avg ~28%) at the
 MINIMUM clock 401MHz (Adreno 740 max ~680MHz). The GPU is IDLE 60-85% of every frame + downclocked = it has
 nothing to do = the CPU can't feed it fast enough. THIS IS CPU-BOUND.** Confirmed by every GPU lever being inert
