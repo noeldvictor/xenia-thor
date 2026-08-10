@@ -1152,6 +1152,62 @@ wrong (the Adreno docs were "unobtainable" and were not; BCAX "fuses automatical
 real gap (Adreno) was closed this session with Playwright after being written off twice. **Do not re-run this
 search.**
 
+## 🔭🔭🔭 **THE SHIPPED DRIVER CAN TELL US, PER RENDER PASS, WHETHER WE ARE EVEN TILING - AND WHY LRZ IS OFF (2026-08-10)**
+**Followed the TU_DEBUG finding one step further and hit the single best instrument available to this project.
+Turnip emits a `u_trace` tracepoint at the end of EVERY render pass carrying exactly the fields this file has
+spent the whole GPU effort guessing at** (`tu_cmd_buffer.cc:3053`, `trace_end_render_pass`):
+```
+gmem                        <- TRUE = binning/GMEM mode, FALSE = direct/sysmem
+gmem_disable_reason         <- WHY it fell out of GMEM
+drawcall_count              <- draws in this pass
+avg_per_sample_bandwidth
+lrz.valid                   <- was LRZ actually on
+lrz_disable_reason          <- WHY LRZ was disabled
+lrz_disabled_at_draw        <- and at WHICH draw
+lrz_write_disable_reason
+```
+**✅ AND IT IS ALL IN THE SHIPPED DRIVER - NO BUILD, verified by string extraction:**
+```
+MESA_GPU_TRACES ....... YES     TU_GPU_TRACEPOINT ..... YES     end_render_pass ..... YES
+every gmem_disable_reason VALUE is present:
+   "Can't fit attachments into gmem"                  "Autotune selected sysmem"
+   "Too many tiles and HW binning is not possible"    "Non-framebuffer-space barrier"
+   "Uses tessellation shaders"
+```
+**🔥 WHY THIS COULD BE THE BIGGEST THING LEFT: TWO OF THOSE REASONS ARE LIVE HYPOTHESES FOR *OUR*
+RENDER TARGETS.** This file measured our passes as `1280x2048`, `320x8192`, `80x8192` - EDRAM-span surfaces, not
+screen-sized. **"Can't fit attachments into gmem" and "Too many tiles and HW binning is not possible" are
+exactly the failure modes an 8192-row attachment invites.**
+**⇒ IF BD's DOMINANT PASSES ARE RUNNING IN SYSMEM/DIRECT MODE, THEN EVERY TILE-RELATED NULL RESULT IN THIS FILE
+HAS ONE COMMON EXPLANATION: WE WERE NEVER TILING.** That would retro-explain, in one stroke, the pass-break
+reduction (-0.27%), the renderArea clamp (**+18% WORSE**, which is bizarre under binning and unsurprising if the
+declared area only changes sysmem work), RT and texture UBWC (flat), the shmem hoist (+0.4%), and LRZ being
+unrecoverable. **Six independent flat results with one candidate root cause is worth a run before any further
+lever.** *(Stated as a HYPOTHESIS. It is equally possible we bin fine and the reason string comes back empty -
+which would be just as valuable, because it retires the whole family.)*
+**⇒ AND IT SETTLES THE LRZ QUESTION WITH A REASON STRING INSTEAD OF INFERENCE.** This file currently concludes
+LRZ is *"structurally blocked by EDRAM emulation"* from reading Turnip's behaviour. **`lrz_disable_reason` says
+so directly, per pass, at the draw where it happened** - no inference, no depth-clear spike (measured +13.1% and
+visually broken).
+**⇒ THE RECIPE, and it needs no rebuild of anything:**
+```
+adb shell setprop log.redirect-stdio true                  # REQUIRED - see the stderr trap below
+adb shell setprop wrap.jp.xenia.emulator.github.debug '"MESA_GPU_TRACES=print"'
+   ... launch, reach the BD field, read logcat ...
+adb shell setprop wrap.jp.xenia.emulator.github.debug '""'   # UNSET IT AFTERWARDS
+```
+**⚠ THREE OPERATIONAL WARNINGS, all earned elsewhere in this file:**
+1. **`log.redirect-stdio true` is not optional.** Android does not route stdout/stderr to logcat; the tbl2 probe
+   lost an LLVM fatal-error message to exactly this. Without it the run is silent and looks like the option is
+   unsupported.
+2. **This traces EVERY render pass, and BD runs ~74 passes/frame at ~16 fps = ~1,200 trace records/second.**
+   Use `logcat -G 64M`, clear immediately before the scene, and stream rather than a single `-d` at the end -
+   this file already records logcat EVICTING lines under heavy logging.
+3. **UNSET the `wrap.` property when done.** It persists until reboot, applies to every launch of that package,
+   and would silently contaminate the next session's measurements on a SHARED device.
+**⇒ THIS IS THE NEXT RUN. It is cheap, it is zero-code, and it can invalidate a large amount of recorded
+work** - which is exactly the shape of experiment this file says to prefer.
+
 ## 🎉🎉🎉 **NO MESA BUILD IS NEEDED - THE SHIPPED TURNIP ALREADY HAS THE FULL ir3 SHADER-DEBUG FACILITY (2026-08-10)**
 **The entry below says "the next session's first task is a MESA BUILD, not an experiment" and budgets a whole
 session for it. That is WRONG, and the error is one grep: it searched the driver for `shaderdb` and found 0.
