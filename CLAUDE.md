@@ -727,6 +727,40 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🛠 **THE INSTRUMENTED-TURNIP PATH, SCOUTED (2026-08-10): THE DELIVERY MECHANISM IS ALREADY AVAILABLE, ONLY THE DRIVER BUILD IS MISSING**
+**Both remaining open questions - "is the SP doing useful work or starved by occupancy?" and "does our SPIR-V
+translation inflate shaders vs the Xenos original?" - need the same tool. Scouted what it actually takes,
+device-side, so the next session does not start from zero.**
+```
+app is DEBUGGABLE                          -> flags=[ DEBUGGABLE HAS_CODE ... ]   ✅
+TU_DEBUG present in shipped Turnip         -> 12 hits in libvulkan_freedreno.so   ✅
+  (driver: mesa-turnip-v26.3.0-20260803-r7-vulkan-1.4.354-7, 14.3 MB)
+"startup" option string present            -> 1 hit                               ✅
+"shaderdb" option string                   -> 0 hits                              ❌ NOT COMPILED IN
+```
+**⇒ TWO HALVES, AND ONLY ONE IS MISSING.**
+1. **DELIVERY IS SOLVED AND NEEDS NO CODE.** The app is debuggable, so Android's
+   **`setprop wrap.jp.xenia.emulator.github.debug '"TU_DEBUG=..."'`** injects environment variables into the
+   process at launch. **No emulator change, no rebuild, no root.** That is the mechanism XenDroid's recipe
+   assumes but does not spell out for a non-rooted device.
+2. **THE OPTIONS WE WANT ARE NOT IN THE SHIPPED BUILD.** `shaderdb` (per-variant instruction count / GPR /
+   wave occupancy) is absent, which matches XenDroid needing an **instrumented a6xx driver** for both the
+   counter sampler and their `tu_variant` lines. **The stock AdrenoTools Turnip will not produce shader stats
+   however it is invoked.**
+**⇒ SO THE NEXT SESSION'S FIRST TASK IS A MESA BUILD, NOT AN EXPERIMENT.** This tree already records the
+prerequisite (*"Mesa source at WSL `/root/mesa` (build-android works) for driver patches"*), and XenDroid's §11
+gives the rest: `adb shell "echo 1 > /sys/class/kgsl/kgsl-3d0/perfcounter"` (no root, resets on reboot), build,
+install alongside the existing driver, then point `gpu_vulkan_driver_path` at it.
+**⚠ AND NOTE THE GENERATION MISMATCH BEFORE COPYING THEIR SCRIPT: theirs is `build-turnip-a6xx.sh` and the Thor
+is an Adreno 740 = A7xx.** Their counter-selector caveat applies doubly - *"counter selectors are
+generation-specific; a renumbered selector reports plausible numbers under the wrong name, which is worse than
+no data."* **Verify the selector table against a7xx before trusting a single number.**
+**⇒ WHY IT IS WORTH A WHOLE SESSION: it is the ONLY instrument that can distinguish the three remaining
+explanations for "fragment-ALU bound"** - (a) the shading work is genuinely irreducible, (b) occupancy is
+collapsed by GPR pressure so the SP is busy-but-idle (XenDroid measured **26% NOPs overall, 40-57% in many
+shaders**), or (c) our SPIR-V translation emits materially more work than the Xenos original. **(a) means ship
+the resolution slider and stop; (b) and (c) are fixable and would be worth far more than 1.38x.**
+
 ## 🧠 **"SMARTER XENOS EMULATION" - RESEARCHED, AND THE DATA SAYS THE COST IS THE GAME, NOT THE EMULATION (2026-08-10)**
 **User: "we are missing smarter emulation of xenos." Good instinct, and the strongest remaining hypothesis -
 so it was worth testing properly rather than agreeing. It does not survive the measurements.**
