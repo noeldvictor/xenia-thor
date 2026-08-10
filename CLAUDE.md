@@ -727,6 +727,51 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 📐🧩 **THE 1:1 INSTRUCTION GAPS ARE A *COMPATIBILITY* STORY, NOT A SPEED ONE - AND THE MANUALS SAY THEY WOULD BE CHEAP TO CLOSE (2026-08-10)**
+**Followed the unused-instruction survey through to the guest side, and the answer inverted: the ARM
+instructions we never emit correspond to guest opcodes we never IMPLEMENT.**
+```
+InstrEmit_vmhraddshs  -> XEINSTRNOTIMPLEMENTED()
+InstrEmit_vsumsws     -> XEINSTRNOTIMPLEMENTED()
+InstrEmit_vsum2sws    -> XEINSTRNOTIMPLEMENTED()
+InstrEmit_vsum4sbs / vsum4shs / vsum4ubs -> XEINSTRNOTIMPLEMENTED()
+   ...28 unimplemented VMX emitters in ppc_emit_altivec.cc
+```
+**⚠ AND `XEINSTRNOTIMPLEMENTED` IS NOT A GRACEFUL FALLBACK:**
+```cpp
+#define XEINSTRNOTIMPLEMENTED()                      \
+  XELOGE("Unimplemented instruction: {}", __func__); \
+  assert_always("Instruction not implemented");
+```
+**It logs and then ASSERTS.** So a title using any of these 28 does not run slowly - it dies (or trips an assert
+in a debug build). **This is a compatibility cliff, not a performance one**, and it belongs with the
+XenDroid-compat track rather than the speed track.
+**✅ BLUE DRAGON HITS NONE OF THEM.** Grepped three separate full-run logs from today: **0** occurrences of
+"Unimplemented instruction". So this is not a BD issue and is not on the 2x path - it is latent risk for other
+titles.
+**📐 WHAT THE MANUALS ADD, AND IT IS THE USEFUL PART: IF THESE ARE EVER IMPLEMENTED, ARM64 DOES THEM IN
+ONE INSTRUCTION EACH, AND THE PRICES ARE GOOD.** From the A710 and X3 SWOG instruction tables:
+| guest op | ARM64 instruction | A710 lat/tput/pipe | X3 lat/tput/pipe |
+|---|---|---|---|
+| `vsumsws`, `vsum2sws`, `vsum4*` (horizontal sums) | **`ADDV` / `SADDLV` / `UADDLV`** (4H/4S) | **2 / 1 / V1** | 2 / 2 / V13 |
+| same, byte forms | `ADDV` 16B | 4 / 1 / V1 | 4 / 1 / V13 |
+| `vmhraddshs` (saturating **rounding** multiply-add high) | **`SQRDMULH`** | **4 / 1 / V0** | 4 / 2 / V02 |
+**`ADDV` on 4x32 is ONE instruction at latency 2** - cheaper than any hand-built sum tree (`addp`+`addp` is 2
+instructions and a longer chain). **`SQRDMULH` costs exactly what a plain ASIMD multiply costs**, so it is not
+a "special" expensive instruction - it is free relative to the multiply you would emit anyway.
+**⇒ SO THE VERDICT IS: DO NOT BUILD THESE FOR SPEED (BD never executes them, and BD is GPU-bound anyway), BUT
+IF A TITLE EVER ASSERTS ON ONE, THE IMPLEMENTATION IS A ONE-INSTRUCTION LOWERING WITH A KNOWN PRICE.** That
+turns a scary-looking "28 unimplemented instructions" into a bounded, pre-costed job. **Note the pipe
+restriction for whoever writes them:** on the 2-wide mid cores `ADDV` issues only on **V1** and `SQRDMULH` only
+on **V0**, so a loop doing both can dual-issue, but a loop doing many of one cannot.
+**📌 AND THE HONEST FRAMING FOR THE WHOLE "NOVEL HARDWARE" QUESTION, after pricing everything:** the
+pack/saturate family is already native, byte-swap is already native, EOR3 is automatic, dot product is already
+inline NEON with exact f64 intermediates, FPCR needs no ISB, LD4/ST4 are absent, and the crypto units have no
+hot call site. **The a64 backend is in much better shape than "there must be hardware we are not using"
+suggests.** The remaining unexploited instructions map to guest opcodes that are either unimplemented (these
+28) or measured cold (EOR3/BCAX/XAR, SHA, CRC). **On current evidence there is no CPU-side hardware win
+available that BD would notice - which is consistent with BD being GPU-bound.**
+
 ## 🧮 **NOVEL-HARDWARE CODE EVALUATION (2026-08-10): WHICH 1:1 ARM64 INSTRUCTIONS WE LEAVE ON THE TABLE - AND A WRONG ALARM I RAISED AND WITHDREW**
 **Method: list the ARM64 instructions that map ONE-TO-ONE onto a VMX operation, then count how many we
 actually emit. That is a different question from "is there an x86 idiom left" (answered, 2 sites) and from
