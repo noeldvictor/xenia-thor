@@ -727,6 +727,32 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 📕✅ **THE SNAPDRAGON CPU MANUAL QUESTION, VERIFIED INDEPENDENTLY RATHER THAN INHERITED (2026-08-10)**
+**This file has asserted "there is no SM8550 CPU TRM" for weeks and I had been repeating it. Checked it myself
+with a real search rather than trusting the prior claim - the same discipline applied to everything else this
+session. It holds.**
+```
+Search for an SM8550 / Snapdragon 8 Gen 2 CPU technical reference or register manual returns:
+  - the 2-page Product Brief          (already in docs/reference/snapdragon/)
+  - spec-aggregator sites (PhoneDB, PhoneMore, DeviceBeast, Notebookcheck)
+  - an FCC/device.report listing
+  - NOTHING resembling a CPU TRM or register document
+```
+**⇒ CONFIRMED: Qualcomm TRMs are NDA-restricted and no public SM8550 CPU manual exists.** The claim is now
+VERIFIED rather than inherited, which matters because this session has repeatedly found inherited claims to be
+wrong (the Adreno docs were "unobtainable" and were not; BCAX "fuses automatically" and does not;
+`gpu_vrs_foliage_rate` was "foliage-only" and is not).
+**⇒ AND THE SUBSTITUTES ARE THE RIGHT ONES, NOT CONSOLATION PRIZES:**
+| what was wanted | what is authoritative, and why |
+|---|---|
+| SM8550 **CPU** manual | **The four Cortex SWOGs** (`docs/reference/arm/`). The 8 Gen 2 uses **stock Arm cores** - X3 / A715 / A710 / A510 - so Arm's own optimization guides ARE the CPU documentation, per-core and per-instruction. Nothing Qualcomm-specific is missing |
+| SM8550 **GPU** manual | **The Adreno Game Developer Guide** (`docs/reference/adreno/`, fetched via Playwright this session, 162 KB). This was the genuinely missing document, and it is the one that produced today's wins |
+| instruction semantics | **Arm ARM A-profile** (65.9 MB, in-repo) - the "17,000-page manual" the video refers to |
+| cache sizes / topology | **the DEVICE** (`/sys/devices/system/cpu/cpu*/cache/`) - integrator choices, never in an Arm SWOG |
+**⇒ SO THE MANUAL HUNT IS CLOSED ON EVIDENCE, NOT ASSERTION.** Everything obtainable has been obtained; the one
+real gap (Adreno) was closed this session with Playwright after being written off twice. **Do not re-run this
+search.**
+
 ## 🛠 **THE INSTRUMENTED-TURNIP PATH, SCOUTED (2026-08-10): THE DELIVERY MECHANISM IS ALREADY AVAILABLE, ONLY THE DRIVER BUILD IS MISSING**
 **Both remaining open questions - "is the SP doing useful work or starved by occupancy?" and "does our SPIR-V
 translation inflate shaders vs the Xenos original?" - need the same tool. Scouted what it actually takes,
