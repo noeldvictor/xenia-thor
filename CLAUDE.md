@@ -727,6 +727,50 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🎯🎯🎯 **THE REAL PASS ECONOMICS, MEASURED WITH A SELF-CHECK 2026-08-10: 74 PASSES/FRAME, 47% DRAW NOTHING, 13 PASSES CARRY 98% OF THE WORK**
+**This supersedes the "61 passes, 45 single-draw" figure the whole GPU plan rests on, and unlike that one it
+reconciles against a known quantity: every draw is accounted to the pass that contained it.**
+```
+BD gameplay, warm cache, uncontended, averaged over 1,174 frames (verts > 150,000):
+  draws/frame              = 1,187
+  RENDER PASSES PER FRAME  = 74.4      (EndRenderPass 47.6  +  rt_change 26.9)
+
+    draw NOTHING           = 35.0   (47%)
+    draw EXACTLY ONCE      = 26.3   (35%)
+    draw 2+                = 13.1   (18%)  <- these carry 1,161 of 1,187 draws
+
+    => 82% OF RENDER PASSES ISSUE <= 1 DRAW
+  SELF-CHECK: draws accounted to ended passes = 1,187 vs rendered 1,187 (100.00%)
+```
+**THE SELF-CHECK IS THE POINT AND IT SHOULD BE COPIED.** Two earlier versions of this instrumentation reported
+confident nonsense and compiled clean. The fix was not more care, it was forcing the counters to RECONCILE:
+draws summed over every pass ended by BOTH teardown paths must equal `draw_outcomes_rendered_`. It comes out at
+exactly 100.00%, which is what makes the rest of the numbers trustworthy. **Any future per-frame census should
+carry an accounting identity like this one; without it, a wrong counter is indistinguishable from a finding.**
+**🔑 THE STRUCTURE, and it is not what the plan assumed.** There are TWO pass-teardown paths and they do
+completely different jobs:
+| path | passes/frame | draws in them |
+|---|---|---|
+| `EndRenderPass()` (master teardown) | 47.6 | **ALL 1,187** |
+| raw `CmdVkEndRenderPass` at the rt_change break | 26.9 | **ZERO** |
+**So the 27 rt_change breaks - the category this file named as the dominant one and the target of the
+dynamic-rendering port - end passes that DRAW NOTHING.** That earlier "26.9 zero-draw passes in a 1,200-draw
+frame" reading was not an instrumentation bug after all; it was the answer, and it only became interpretable
+once the other path was counted too.
+**⇒ THE TARGET IS NOW SPECIFIC AND IT IS NOT THE RESOLVE CHAIN: 35 PASSES PER FRAME ISSUE NO DRAW COMMANDS AT
+ALL.** On a TBDR each of those still pays a full tile store + reload. Add the 26 single-draw passes and **61 of
+74 passes pay full tile traffic for at most one draw**, while **13 passes do 98% of the actual drawing**.
+**⇒ WHAT TO ATTACK, in order, and none of it needs the ~115-site dynamic-rendering port:**
+1. **The 35 zero-draw passes.** Find out what they ARE (clear-only? resolve/transfer? a pass opened
+   speculatively by state setup and torn down before any draw?). A pass that never draws is either doing
+   fixed-function work that could be batched, or should not have been begun. **This is the single biggest
+   category in the frame and nobody has ever looked at it.**
+2. **The 26 single-draw passes.** Same question, one draw of headroom.
+3. Only then the resolve chain, whose measured target (ping-pong) is ~1 break/frame.
+**⚠ DO NOT ASSUME ZERO-DRAW MEANS FREE TO DELETE.** A pass with no `vkCmdDraw` can still carry a `loadOp` clear
+or a resolve, which is real work the guest asked for. The finding is that the WORK IS NOT DRAWING, so it is
+plausibly expressible without opening a render pass per operation - not that the operations are unnecessary.
+
 ## 🧪📏 **rt_change BREAKS CLASSIFIED 2026-08-10 - AND THEY ARE *NOT* THE SHAPE THE RESOLVE CHAIN FIXES**
 **Rule 4 applied to the biggest remaining GPU decision: before spending multiple sessions on the ~115-site
 dynamic-rendering port, measure whether BD's 27 rt_change breaks/frame actually have the shape

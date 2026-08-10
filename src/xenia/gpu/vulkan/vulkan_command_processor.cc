@@ -3026,6 +3026,7 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         "pass_break_barrier={} pass_break_rt_change={} "
         "rtchg[fbonly={} passcfg={} pingpong={}] "
         "endpass_draws[0={} 1={} 2+={}] "
+        "endhere[n={} 0={} 1={} 2+={}] acct[here={} rtchg={}] "
         "xfer_same_fmt={} xfer_diff_fmt={} "
         "inpass[x={} skip_fmt={} skip_oth={}] "
         "deint[elig_draws={} elig_verts={} redir_draws={} redir_verts={} "
@@ -3083,6 +3084,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         rt_pass_break_barrier_, rt_pass_break_rt_change_,
         rt_change_fb_only_, rt_change_pass_cfg_, rt_change_pingpong_,
         rt_pass_ended_0draw_, rt_pass_ended_1draw_, rt_pass_ended_multidraw_,
+        rt_endhere_total_, rt_endhere_d0_, rt_endhere_d1_, rt_endhere_dm_,
+        rt_endhere_draws_, rt_rtchg_draws_,
         rt_transfer_same_format_, rt_transfer_diff_format_,
         rt_inpass_transfer_dests_, rt_inpass_skipped_format_,
         rt_inpass_skipped_other_, draw_outcomes_deint_elig_draws_,
@@ -3419,6 +3422,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_pass_ended_0draw_ = 0;
     rt_pass_ended_1draw_ = 0;
     rt_pass_ended_multidraw_ = 0;
+    rt_endhere_total_ = 0;
+    rt_endhere_d0_ = 0;
+    rt_endhere_d1_ = 0;
+    rt_endhere_dm_ = 0;
+    rt_endhere_draws_ = 0;
+    rt_rtchg_draws_ = 0;
     // rt_prev_framebuffer_ and rt_pass_draws_ are NOT reset here: they describe
     // the pass currently OPEN, which straddles the frame boundary, and both are
     // maintained only at pass transitions. An earlier version indexed into
@@ -4661,6 +4670,7 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // Draws recorded since this pass was entered. Unsigned-safe: the mark is only
     // ever set from this same counter, but the counter resets per frame while a
     // pass can straddle that reset, which would otherwise wrap to ~4 billion.
+    rt_rtchg_draws_ += rt_pass_draws_;
     if (rt_pass_draws_ == 0) {
       ++rt_pass_ended_0draw_;
     } else if (rt_pass_draws_ == 1) {
@@ -5375,6 +5385,19 @@ void VulkanCommandProcessor::EndRenderPass() {
   if (current_render_pass_ == VK_NULL_HANDLE) {
     return;
   }
+  // Price the pass being torn down here (see the header). Placed after the
+  // early-return so it counts real pass ends only, and before anything that
+  // could itself end a pass.
+  ++rt_endhere_total_;
+  rt_endhere_draws_ += rt_pass_draws_;
+  if (rt_pass_draws_ == 0) {
+    ++rt_endhere_d0_;
+  } else if (rt_pass_draws_ == 1) {
+    ++rt_endhere_d1_;
+  } else {
+    ++rt_endhere_dm_;
+  }
+  rt_pass_draws_ = 0;
   // gpu_vulkan_retro_depth_none: hindsight depth-none patch for the ending pass.
   RetroPatchDepthNoneAtPassEnd();
   // Lever 2 (vulkan_merge_draws): the pending draw-concatenation run's draws

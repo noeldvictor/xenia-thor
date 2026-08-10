@@ -2307,6 +2307,22 @@ class VulkanCommandProcessor : public CommandProcessor {
   // per-frame reset block, and the skew silently made every break read as a
   // zero-draw pass. Reset only where a pass is entered.
   uint32_t rt_pass_draws_ = 0;
+  // Passes ended through EndRenderPass() - the MASTER teardown, which the
+  // rt_change site deliberately bypasses with a raw CmdVkEndRenderPass. The
+  // rt_change classifier alone saw only its own breaks and reported every ending
+  // pass as zero-draw in a 1,200-draw frame; these cover the other path so the
+  // two together account for every pass, and therefore every draw.
+  uint32_t rt_endhere_total_ = 0;
+  uint32_t rt_endhere_d0_ = 0;
+  uint32_t rt_endhere_d1_ = 0;
+  uint32_t rt_endhere_dm_ = 0;
+  // Draws summed over every pass ended by each path. THIS IS THE SELF-CHECK:
+  // endhere_draws + rtchg_draws must equal draw_outcomes_rendered_ for the frame
+  // (modulo the one pass still open at the frame boundary). If it does not, the
+  // instrumentation is wrong - which is exactly what went unnoticed twice today,
+  // because nothing forced the counters to reconcile against a known quantity.
+  uint32_t rt_endhere_draws_ = 0;
+  uint32_t rt_rtchg_draws_ = 0;
   uint32_t rt_transfer_same_format_ = 0;
   uint32_t rt_transfer_diff_format_ = 0;
   uint32_t rt_inpass_transfer_dests_ = 0;
