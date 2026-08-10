@@ -1176,6 +1176,50 @@ wrong (the Adreno docs were "unobtainable" and were not; BCAX "fuses automatical
 real gap (Adreno) was closed this session with Playwright after being written off twice. **Do not re-run this
 search.**
 
+## ❌🧮 **"WE ARE NOT TILING" IS REFUTED BY ARITHMETIC. I KILLED MY OWN HYPOTHESIS WITHOUT A DEVICE RUN (2026-08-10)**
+**One entry earlier I proposed that BD's EDRAM-span render targets fall out of GMEM. I said it could explain six
+flat results at once. I read Turnip's tiling code and computed it. The hypothesis is wrong.**
+### THE ALGORITHM (`tu_util.cc:229`, `tu_tiling_config_update_tile_layout`)
+Turnip tries each tile width. It computes a tile height for each width. It keeps the best result.
+```
+tile_size.height = pass->gmem_pixels / (tile_size.width * layers)
+tile_size.height = MIN2(tile_size.height, max_tile_height)
+tile_size.height = ROUND_DOWN_TO(tile_size.height, tile_align_h)
+if (!tile_size.height) continue;          <- the ONLY way to fail
+tiling->possible = true;
+```
+**`possible` becomes false only if NO tile width gives a height of at least `tile_align_h`.** A tall render
+target does not fail this test. **A tall render target makes MORE TILES. It does not make tiling impossible.**
+### THE ARITHMETIC, for a7xx and our measured geometry
+```
+a7xx:  tile_align_w = 64   tile_align_h = 32   tile_max_w = 1024
+BD:    color R16G16B16A16_SFLOAT = 8 B/px  +  depth 4 B/px  =  12 B/px
+GMEM on the Adreno 740 >= 1 MB (2 MB is the common figure)
+
+gmem_pixels        = 1,048,576 / 12   = 87,381      (using the PESSIMISTIC 1 MB)
+tile 64 wide       -> height 1,365 -> 1,344 after alignment   -> NON-ZERO -> possible = TRUE
+
+pass 1280x2048, tile 320x544  ->   4 x  4 =  16 tiles
+pass  320x8192, tile 320x544  ->   1 x 16 =  16 tiles
+pass   80x8192, tile 128x1344 ->   1 x  7 =   7 tiles
+```
+**Every measured pass tiles into 16 tiles or fewer. Even four colour attachments (36 B/px) keep `possible`
+true.** The second reason also needs `tiles_per_pipe > 32` (`is_hw_binning_possible`), and 16 tiles cannot
+exceed 32 per pipe.
+**⇒ VERDICT: "Can't fit attachments into gmem" and "Too many tiles" are BOTH refuted for our geometry. The
+tall EDRAM-span render targets do NOT stop binning.**
+**⇒ SO THE SIX FLAT TILE RESULTS DO NOT HAVE THIS COMMON CAUSE.** The fragment-ALU verdict stands. Do not
+re-open the tile family on this argument.
+### ⚠ ONE CANDIDATE SURVIVES, AND IT IS THE ONE I DID NOT THINK OF
+`"Autotune selected sysmem"`. **Turnip has a heuristic that chooses sysmem over GMEM per render pass.** It is
+not a capacity limit, so no arithmetic refutes it. **The trace still answers this, and it is now the only
+reason worth the run.**
+**📌 THE PROCESS POINT: THE ARITHMETIC COST NOTHING AND THE RUN COSTS A CHARGED DEVICE.** I proposed a
+hypothesis with a large blast radius, and the code that decides it was already on disk. **Compute a driver
+decision before you measure it. The driver is deterministic and the source is in WSL at `/root/mesa`.**
+**This is the same lesson as the `vm.max_map_count` refutation:** a hypothesis can be arithmetically convincing
+and still wrong, and one calculation settles it faster than a device run.
+
 ## 🔧📏 **THE u_trace RUN: THREE DEVICE FACTS FOUND, NO TRACE DATA YET (2026-08-10)**
 *(First entry written in ASD-STE100. See the writing rule near the top of this file.)*
 **I ran the u_trace experiment three times. I did not get trace data. I found three device facts. The recipe is
