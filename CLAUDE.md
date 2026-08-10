@@ -727,6 +727,45 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ✅ **x86-SHAPED CODE SWEEP, SYSTEMATIC AND CLOSED (2026-08-10): THE 2-OPERAND STAGING SHAPE IS ESSENTIALLY GONE - 2 SITES LEFT, BOTH SEMI-JUSTIFIED**
+**The standing user ask is "review code where x64 shit needs to be rethought for ARM64". Previous sweeps looked
+for IDIOM tells (`xmm`, `sse`, `movaps`, "like x64") and found 4 comments. This one searched for the STRUCTURAL
+tell instead - the thing those idioms produce - and it is a much better test.**
+**THE SHAPE:** x86 SSE is 2-operand and destructive, so a source must be copied to a scratch before being
+operated on. ARM64 NEON is 3-operand and never needs it. Every confirmed x86-shaped defect in this file is an
+instance (`a64_three_operand_shifts`, `PrepareVmxFpSources`, the shift staging fixed in `02ae6ec83`).
+**SWEPT `a64_seq*.cc` + `a64_sequences.cc` for "copy a source into scratch v0-v3, then operate on the scratch":**
+```
+staging-copy sites outside PrepareVmxFpSources : 2
+   a64_sequences.cc:6557  RECIP_V128   e.mov(VReg(1).b16, VReg(src).b16)
+   (one sibling with the identical copy-then-conditionally-flush shape)
+```
+**⇒ THE STRUCTURAL x86 INHERITANCE IN THE a64 BACKEND IS EFFECTIVELY CLEARED.** Two sites, against a backend of
+thousands of emitted sequences. **Do not go looking for more of this shape - it has now been searched for
+structurally, not just by comment text.**
+**🔍 AND BOTH REMAINING SITES ARE ONLY *PARTLY* WASTE, WHICH IS WHY THEY SURVIVED:** the copy exists
+because `FlushDenormals_V128(e, 1)` is **destructive** - it rewrites v1 in place, so the caller's register must
+not be passed directly. That is a real constraint, not an x86 habit.
+**🐞 BUT THE COPY IS UNCONDITIONAL WHILE THE FLUSH IS NOT:**
+```cpp
+if (i.src1.is_constant) { LoadV128Const(e, 1, ...); }
+else { e.mov(VReg(1).b16, VReg(src).b16); }          // <- ALWAYS
+if (!e.IsFeatureEnabled(kA64FZFlushesInputs)) {
+  FlushDenormals_V128(e, 1);                          // <- the only consumer that needs the copy
+}
+```
+**`kA64FZFlushesInputs` is RUNTIME-DETECTED** (`platform_arm64.cc:113` adds two denormals under FPCR.FZ and
+checks for zero) and the comment there says *"Modern cores (Cortex-A76+, Apple M1+) flush inputs"* - **the
+A710/A715/X3 are all A76+, so on the Thor this is almost certainly TRUE**, the flush is skipped, and the copy
+is pure waste: we emit `mov v1,src; fmov v0,1.0; fdiv d,v0,v1` where `fdiv d,v0,src` would do.
+**⇒ COST: exactly ONE wasted ASIMD uOP per op, at 2 sites, on the 2-wide V pipe.** The fix is to make the copy
+conditional on the same flag as the flush.
+**⛔ NOT DONE, DELIBERATELY, AND THE REASONING IS THE POINT: (a) it is 1 uOP at 2 sites - rule 4 says count
+before building, and nothing suggests `vrefp` is hot; (b) BD is GPU-BOUND, so CPU uOPs are not the frame; (c)
+the device was held by the other session's rpcs3, and a codegen change whose failure mode is WRONG FLOATS must
+not ship unvalidated.** Recorded precisely so it can be taken in five minutes when someone is already editing
+that file with a device free.
+
 ## 🛠 **`gpu_max_rt_height` - THE LEVER AIMED AT THE MEASURED 37 ms. BUILT, ALLOWLISTED, *NOT YET TESTED* (2026-08-10)**
 **Follows directly from the per-pass measurement below: the cost is the EDRAM-span ALLOCATION, and clamping
 `renderArea` was the wrong end of it (-18%, the cost moves into the gaps). This shrinks the allocation.**
