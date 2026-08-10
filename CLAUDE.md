@@ -727,6 +727,44 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ↩️↩️ **I REVERSED MY OWN VERDICT SAME-SESSION: THE 27 rt_change PASSES *ARE* THE EDRAM RESOLVES, SO THE IN-PASS RESOLVE CHAIN IS BACK ON TARGET (2026-08-10)**
+**Two commits earlier I wrote "DO NOT START THE ~115-SITE DYNAMIC-RENDERING PORT EXPECTING IT TO COLLAPSE 27
+BREAKS/FRAME". That was based on a ping-pong test I flagged at the time as too narrow. It was too narrow, and
+the correct answer is the opposite. Correcting it here rather than leaving both claims in the file.**
+**THE DISCRIMINATOR, from data already captured - no extra device run:**
+```
+per gameplay frame:  copy = 23.1     resolve_clears = 2.0     skipped draws = 0.0
+                     rt_change zero-draw passes = 26.9
+
+rt_change_zerodraw - (copy + resolve_clears), computed PER FRAME over 1,174 frames:
+     +0 :    11 frames ( 1%)
+     +1 :   216 frames (18%)
+     +2 :   946 frames (81%)
+     +3 :     1 frame  ( 0%)
+  mean +1.80, range +0..+3
+```
+**A difference bounded in [0,3] across 1,174 frames, with 81% sitting on exactly +2, is not a coincidence -
+it is an identity plus a constant.** The ~27 rt_change passes are the **EDRAM copy/resolve operations** (23
+copies + 2 resolve clears) plus ~2 fixed per-frame passes. `skipped_no_vs`/`skipped_no_rast` are both **0**, so
+these are definitively not draws that got dropped.
+**🔑 SO EVERY EDRAM RESOLVE OPENS AND TEARS DOWN ITS OWN RENDER PASS TO PERFORM A COPY WITH NO DRAWS,
+AND ON A TBDR EACH ONE PAYS A FULL TILE STORE + RELOAD.** That is precisely and exactly the thing
+`VK_KHR_dynamic_rendering_local_read` + the XenDroid in-pass resolve chain exist to remove: let the shader read
+the CURRENT attachment on-tile so the resolve does not have to END the pass.
+**⇒ CORRECTED VERDICT: the resolve chain targets ~25 of 74 passes/frame (~34%), and the dynamic-rendering
+prerequisite is justified after all.** It remains a multi-session track, but the fps case for it is now
+MEASURED rather than assumed - which is more than it had before either of my two verdicts.
+**🔁 WHY MY EARLIER TEST GOT IT BACKWARDS, and the lesson is about choosing the discriminator:** I tested
+for A->B->A ping-pong and found ~1/frame. But a resolve chain does **not** return to the framebuffer it just
+left - it goes draw-pass -> resolve-pass -> NEXT draw-pass, so every one of them registers as a plain `passcfg`
+break and ping-pong stays near zero **whether or not resolves dominate**. **My test could not have detected the
+thing I was using it to rule out.** I wrote that limitation down when I published the verdict and still let the
+verdict stand on it. **A null result only means something if the test could have produced a positive one** -
+state what the test would have shown if the hypothesis were TRUE before trusting a negative.
+**⇒ AND THE CHEAP MOVE THAT SETTLED IT WAS CORRELATION AGAINST A COUNTER WE ALREADY PRINT.** `copy=` has been
+in the frame trace all along. Matching a new counter against an existing one, per frame rather than on
+averages, cost nothing and was decisive where a purpose-built structural test failed.
+
 ## 🎯🎯🎯 **THE REAL PASS ECONOMICS, MEASURED WITH A SELF-CHECK 2026-08-10: 74 PASSES/FRAME, 47% DRAW NOTHING, 13 PASSES CARRY 98% OF THE WORK**
 **This supersedes the "61 passes, 45 single-draw" figure the whole GPU plan rests on, and unlike that one it
 reconciles against a known quantity: every draw is accounted to the pass that contained it.**
@@ -789,9 +827,12 @@ previously recorded 45, with the same split (rt_change ~60%). That number is now
 CONFIGURATION change - never "same config, different target" - and immediate ping-pong between two targets is
 ~1 per frame out of 26.9. **`local_read` exists to let a shader read the CURRENT attachment on-tile so a resolve
 does not have to END the pass. The oscillation that mechanism removes is ~4% of rt_change breaks here.**
-**=> DO NOT START THE ~115-SITE DYNAMIC-RENDERING PORT EXPECTING IT TO COLLAPSE 27 BREAKS/FRAME.** It may
-still be worth doing for other reasons (it deletes the render-pass/framebuffer/subpass objects, and XenDroid
-ships it), but the fps case this file has been building for it is **not supported by BD's actual break shape**.
+**❌❌ THIS VERDICT WAS WRONG AND IS RETRACTED - SEE THE REVERSAL SECTION ABOVE.** It read: *"do not start
+the ~115-site dynamic-rendering port expecting it to collapse 27 breaks/frame."* The ping-pong test it rested on
+**structurally could not detect a resolve chain** (a resolve goes A -> resolve -> B and never returns to A), and
+correlating against the `copy=` counter showed those 27 breaks ARE the EDRAM resolves. **The port is justified.**
+The classification numbers below (fbonly=0, passcfg=26.9) are still accurate; only the conclusion drawn from
+them was wrong.
 **HONEST LIMIT ON THE PINGPONG TEST - IT IS NARROWER THAN "no resolve chains exist".** It only detects
 returning to the framebuffer left ONE break ago. A resolve chain that goes A(draw) -> B(resolve dest) -> C(next)
 never returns to A and would read as three `passcfg` breaks. **So this refutes immediate oscillation, not
