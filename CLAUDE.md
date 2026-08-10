@@ -394,6 +394,32 @@ x19/x22-x28 and full q8-q15, or it needs a guarantee the callee is LLVM-compiled
 AAPCS64 work rediscovered it independently — the new value is the manual now being in `docs/reference/arm/` and
 the ceiling being derived for stage 3, not the fact itself.
 
+## 📕🎮 **WE HAVE NO XENOS GPU MANUAL - AND OUR OWN HEADER NAMES WHERE ONE IS (2026-08-10)**
+**User asked for more information on the Xbox 360 GPU. Checked the repo first. There is a real gap.**
+```
+docs/reference/xbox360/  = 3 files, ALL CPU/system papers:
+   hotchips17-andrews-baker.pdf     ieee-micro-2006.pdf     cis501-lecture.pdf
+Xenos / R400 / GPU document          NONE
+```
+**Every GPU fact in this file comes from the Adreno guide, from Turnip source, or from our own measurements.
+There is no guest-GPU reference.** That is the opposite of the CPU side, which has 12 PDFs.
+**🔥 THE LEAD IS ALREADY IN OUR SOURCE. `src/xenia/gpu/xenos.h:771`:**
+```
+// IPR2015-00325 R400 Document Library Folder History:
+```
+**IPR2015-00325 is a USPTO Inter Partes Review. The "R400 Document Library" is ATI/AMD INTERNAL R400 (Xenos)
+DOCUMENTATION entered as public evidence.** R400 is the Xenos family. **This is a primary source, it is public
+through the PTAB, and xenia's own header cites it - so upstream used it.**
+**⇒ NEXT SESSION: fetch the IPR2015-00325 exhibit set from the USPTO PTAB (`ptacts.uspto.gov`) and put the R400
+documents in `docs/reference/xbox360/`.** Use Playwright if the portal needs a browser - the Adreno guide needed
+exactly that and this file wrongly called it unobtainable for weeks.
+**⇒ WHY IT MATTERS FOR SPEED, not just for correctness:** every "smarter Xenos emulation" question this file has
+asked was answered by INFERENCE - whether BD predicated-tiles, what the resolve hardware did in fixed function,
+what 7e3 cost, whether early-Z existed (`xenos.h:282` says *"there seems to be no true early Z on the Xenos"* -
+a GUESS, in a comment, load-bearing for our LRZ work). **A primary source turns those guesses into facts, and
+the fragment-ALU bottleneck is exactly where a fixed-function-vs-shader question decides whether work is
+reducible.**
+
 ## 📚❌ **BOX64 CLONED AND READ: OUR OWN CVAR HELP MIS-CITES IT. "CALLRET" IS NOT REGISTER RESIDENCY (2026-08-10)**
 **`reference/Box64` = github.com/ptitSeb/box64, an x86->ARM64 dynamic recompiler. This file cites it twice and
 nobody had read it. `cpu_backend_llvm_residency_abi`'s help says:**
