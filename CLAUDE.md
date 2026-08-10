@@ -727,6 +727,46 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ✅✅✅ **CORRECTION + THE BEST GPU NUMBER OF THE SESSION: ~21 TRANSFERS/FRAME ARE FORMAT-COMPATIBLE FOR RENDER-PASS REUSE, AND IT IS EXACTLY WHAT QUALCOMM SAYS TO FIX (2026-08-10)**
+**I reported `rt_transfer_same_format_` / `rt_transfer_diff_format_` as "all zero" and used that to say the
+addressable resolve set was unmeasured. WRONG - they print as `xfer_same_fmt` / `xfer_diff_fmt`, they live PAST
+THE LOGCAT WRAP, and they are not remotely zero.** Re-read with a field grep on data already captured:
+```
+BD gameplay, 1,527 trace lines:
+  xfer_same_fmt = 20.8 / frame      xfer_diff_fmt = 10.8 / frame
+  (dominant modes: "18 / 8" on 817 frames, "24 / 14" on 704 frames)
+```
+**🔑 WHAT `xfer_same_fmt` MEANS, from the counter's own definition in
+`vulkan_command_processor.h`:** *"Per dest-RT transfer pass: **would it be format-compatible with the guest
+draw pass (eligible for render-pass reuse to avoid a tile flush)?**"*
+**⇒ SO ~21 OF THE ~31 EDRAM TRANSFERS PER FRAME - TWO THIRDS - ARE ALREADY KNOWN BY OUR OWN CODE TO BE
+ELIGIBLE FOR RENDER-PASS REUSE.** That is the addressable set, it is large, and it has been printed every frame
+for as long as the counter has existed. **Nobody had read it, and I published it as zero.**
+**📖 AND IT CONVERGES EXACTLY WITH THE QUALCOMM GUIDE'S FIRST RENDER-PASS RULE, verbatim:**
+> *"**Minimize the number of render passes** - for example, **any time several consecutive passes use the same
+> formatted color buffer, combine them** (disabling depth and/or stencil if one or both are unused). Snapdragon
+> Profiler shows how renderpasses and subpasses are (or are not) merged on its Rendering Stages metric."*
+**Qualcomm says: combine consecutive passes that share a colour-buffer format. Our own instrumentation says
+that condition holds for ~21 transfers per frame.** The vendor rule and our measured population are the same
+thing, arrived at independently, and this is the first time the two have been put side by side.
+**⇒ THIS IS A DIFFERENT LEVER FROM THE ONE THAT JUST DIED, AND THE DISTINCTION MATTERS.** The
+input-attachment/`subpassLoad` idea needs **same-pixel** access, and `sr_fscomp = 0` killed it. **Render-pass
+REUSE does not need same-pixel access at all** - it needs format compatibility, which is precisely what
+`xfer_same_fmt` counts. **A transfer that is format-compatible can be recorded into the SAME render pass
+instead of forcing a new one**, which is the tile flush we are paying 21+ times a frame.
+**⇒ NEXT STEP, and it is now well-posed instead of speculative:** find where a format-compatible transfer still
+forces a new render pass, and make that case reuse the open pass. The counter already identifies the
+population; `gpu_vulkan_inpass_edram_transfers` exists as the intended lever and reads
+`inpass[x=0 skip_fmt=0 skip_oth=0]` - **it is default-off and does literally nothing today**, so the 21
+eligible transfers are all still taking the slow path. **Turn it on and measure** with the 40-frame
+`gpu_frame_us` protocol before writing any new code.
+**🚨 AND THE PROCESS LESSON, which is the same one twice in one session: I DECLARED A ZERO WITHOUT
+CONFIRMING THE FIELD WAS EVEN IN MY INPUT.** The `rt_inpass_*` reading (`inpass[x=0 skip_fmt=0 skip_oth=0]`) IS
+genuinely zero - that lever is off. But `xfer_same_fmt` was never in the grepped text at all, and I reported
+both as the same kind of zero. **"Absent from my grep" and "measured as zero" are different facts and must be
+distinguished before either is written down** - check that the field NAME appears somewhere in the capture
+before quoting its value.
+
 ## 🚨🚨🚨 **LOGCAT *WRAPS* THE FRAME-TRACE LINE - EVERY `grep "GPU draw outcomes"` ANALYSIS READ A TRUNCATED PREFIX (2026-08-10)**
 **Found while chasing why `brk_img_sr` read 0. It is not 0 - it is 42.2 per frame, and it was never in the text
 being grepped.** The per-frame trace is far longer than logcat's per-message limit, so it is emitted as MULTIPLE
