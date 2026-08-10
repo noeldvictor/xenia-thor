@@ -727,6 +727,87 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🧱🧱🧱 **EDRAM -> GMEM: QUALCOMM SHIPS AN EXTENSION THAT *IS* EDRAM, AND THREE THINGS WE PROBABLY DO THAT KILL TILING (read from the Adreno guide, 2026-08-10)**
+**The Xbox 360's EDRAM is a 10 MB on-chip scratch the game renders into and then resolves out. Adreno's GMEM is
+on-chip tile memory. They are the same shape, and Qualcomm documents a Vulkan extension for exactly that
+mapping. This is the closest thing to a purpose-built EDRAM mechanism this project has ever found.**
+### 1. `VK_QCOM_tile_memory_heap` - allocate images ON GMEM and keep them resident ACROSS passes
+Verbatim:
+> *"When your images and/or buffers fit the device's tile memory constraints and are used over several render
+> passes (as in deferred rendering), consider using **`VK_QCOM_tile_memory_heap` to allocate images and/or
+> buffers on GMEM and have them stay resident as long as possible**."*
+> *"If an image/buffer is used only to hold intermediate results, allocate them in GMEM for as long as they are
+> needed. This saves bandwidth, which can translate into battery and/or performance savings."*
+**And the aliasing clause is the 360's EDRAM partitioning, described by Qualcomm as a feature:**
+> *"If a render pass is to use one resource in tiled memory - and then stop using that resource and start using
+> another resource - consider using **`VkTileMemorySizeInfoQCOM`** to allocate just enough memory to accommodate
+> the largest of the resources and then **alias each resource**, reading and storing as needed."*
+**⇒ A guest EDRAM tile allocation is an aliased resource in a fixed on-chip budget that outlives a single pass.
+That is precisely what this extension exposes.** Every EDRAM design in this repo's archive fought the fact that
+Vulkan gave no way to say "keep this in tile memory across passes". This says it.
+**🛑🛑 BUT GATE IT BEFORE GETTING EXCITED - THREE FACTS, CHECKED NOT ASSUMED:**
+```
+QCOM extension references in our tree            : 0
+VK_QCOM_tile_memory_heap / tile_shading in our headers : ABSENT (VK_HEADER_VERSION 278 = ~1.3.278; these are newer)
+Turnip (Mesa) support                            : UNVERIFIED - and these are QUALCOMM-PROPRIETARY extensions
+```
+**We MANDATE Turnip** (`TURNIP IS MANDATORY`), and an open-source Mesa driver implementing a proprietary
+Qualcomm extension is not something to assume. **THE FIRST STEP IS ONE LINE OF DEVICE WORK: enumerate the device
+extension list and grep for `VK_QCOM_tile`.** This file already records a 174-extension enumeration on Turnip
+26.3.0 - redo it and look. **If Turnip does not expose them, this whole section is a Qualcomm-blob-only path and
+is dead for us** (and the blob is a downgrade for other reasons already recorded). Do not design against it
+until that grep comes back positive.
+### 2. THREE THINGS THAT SILENTLY DISABLE TILING, AND EDRAM EMULATION PLAUSIBLY DOES ALL THREE
+**(a) Z-buffer clears between passes prevent CONCURRENT BINNING.** Verbatim:
+> *"Another way concurrent binning can be prevented is **reusing the same Z-buffer attachment with clears within
+> a frame**... These clears define dependencies, and thus **prevent concurrent binning for every render pass or
+> compute operation that uses this Z-buffer attachment**."*
+> *"Try to use the same Z-buffer - **without clears or invalidations** - over multiple render passes... (If this
+> is not possible, giving each renderpass its own Z-buffer also allows concurrent binning...)"*
+**EDRAM emulation clears constantly.** `rt_resolve_clears` is in our own frame trace. **This is a concrete,
+checkable hypothesis for why a 74-pass frame might be getting no binning overlap at all.**
+**(b) FlexRender can drop a surface to DIRECT (system-memory) mode mid-frame, and vertex texture fetch triggers
+it.** Verbatim:
+> *"Tile-based Rendering: FlexRender, mid-frame, constantly chooses between binning/GMEM and
+> direct/system-memory mode: optimize for both"*
+> *"if a vertex shader performs **too many texture fetches** in a vertex shader, the driver will **switch to
+> Direct Mode**, which is often less performant than Binning Mode."*
+**Xbox 360 titles use vertex texture fetch.** In Direct Mode there is no GMEM residency and every tiling
+optimisation in this section is moot. **Snapdragon Profiler's "Rendering Stages" metric reports which mode each
+surface used - that is the check.**
+**(c) Subpass merging only happens in binning mode** (already recorded above), so (a) and (b) also gate the
+>10% subpass win.
+### 3. 🛑 TWO TRAPS THAT WOULD HAVE BURNED A SESSION, STATED BY QUALCOMM OUTRIGHT
+- **Per-tile draws are for GPU-DRIVEN rendering ONLY.** *"per-tile draws may not perform well - for CPU-driven
+  rendering, we recommend standard execution"*, and *"regular draws will likely see a **performance loss** if
+  executed within per-tile blocks."* **Ours are CPU-driven (PM4 stream -> vkCmdDraw). The obvious idea - "do
+  EDRAM resolves inside per-tile blocks" - is explicitly the wrong shape.**
+- **You cannot use tile shading to write a colour attachment as a storage image.** *"using `VK_QCOM_tile_shading`
+  to bind a color attachment as a storage image and access it through image load/store ops is **not supported**
+  via fragment shader."* That kills the other obvious EDRAM-on-tile design.
+- **If you ever do enable them:** *"Always enable `VK_QCOM_tile_memory_heap` as well as `VK_QCOM_tile_shading`...
+  Using just `VK_QCOM_tile_shading` alone is **never recommended**"*, and *"**Always use
+  `VK_DEPENDENCY_BY_REGION_BIT`** for subpass dependencies and pipeline barriers that might execute during
+  per-tile blocks - omitting it will probably **deactivate** `VK_QCOM_tile_shading`."* **We already pass
+  BY_REGION in 12 places** - keep that invariant.
+### 4. 📐 A MEASUREMENT CAVEAT THAT AFFECTS OUR OWN PER-PASS TIMING WORK
+> *"Timer queries are calculated over the **entire set of binned tiles** when in binning mode... Even if the
+> geometry for draw call 10 only contributes to one tile, it will incur a small overhead for each tile... The
+> overhead mentioned above is small (2-5us) but **can add up if the draw call count is high and draws are present
+> in many tiles**."*
+**This file records `gpu_pass_us` reading 0 and flags per-pass timing as the gap to close. When it is closed,
+the numbers will include per-tile accumulation** - so a per-pass timing is not a per-pass cost, and a
+1,200-draw frame is exactly the "draw call count is high" case they warn about. Also noted: a full-screen pass
+issued LAST defeats the driver's visibility-stream trimming.
+**⇒ THE ORDER OF WORK THIS IMPLIES, cheapest first, and none of it is the ~115-site port:**
+1. **Enumerate device extensions, grep `VK_QCOM_tile`** - decides whether section 1 exists for us at all.
+2. **Enable the Vulkan Adreno Layer and read `VKDBGUTILWARN003`** - are our passes merging? (see the section
+   above).
+3. **Check whether our Z-buffer clears are serialising binning** - (a) above, testable by removing clears in a
+   scratch build.
+4. **Confirm we are in Binning and not Direct mode** via Snapdragon Profiler Rendering Stages - (b) above.
+**All four are measurements, not rewrites, and every one of them can invalidate a large piece of planned work.**
+
 ## 🟢🟢🟢 **THE QUALCOMM GPU MANUAL IS IN-REPO AT LAST (2026-08-10) - PLAYWRIGHT CRACKED THE SPA, AND IT NAMES A CHEAPER FIX THAN THE PORT WE HAVE BEEN DEBATING**
 **This file said twice that Adreno documentation was unobtainable: *"their docs site is a JS SPA and will not
 fetch - a real Adreno GPU manual is NOT obtainable the way the Arm SWOGs were"*. That was wrong, and the fix was
