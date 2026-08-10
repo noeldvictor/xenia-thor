@@ -727,6 +727,42 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 📉 **TEXTURE UBWC RESOLVED BY READING, NOT RUNNING: THE HOLE IS REAL BUT THE POPULATION IS TINY (2026-08-10)**
+**After allowlisting the cvar (verified present in the APK's dex) the re-run STILL logged zero `TEXubwc` lines
+and measured +0.31%. Two separate causes, and the second is the answer.**
+**🐞 CAUSE 1 - MY COUNTER REPEATED THE EXACT TRAP I HAD JUST PRAISED THE SHA CENSUS FOR AVOIDING.** It
+logged on `(c & 63) == 0`, i.e. **first output at the 64th call**, so "zero lines" means *fewer than 64*, not
+"never ran" - and I read it as never-ran. **The guest SHA census announces on the FIRST call precisely so an
+empty result is unambiguous.** Fixed to `c == 1 || (c & 63) == 0`. **Rule: an engagement counter MUST fire on
+the first event. A bare modulo throttle cannot prove a negative.**
+**✅ CAUSE 2 - AND IT SETTLES THE QUESTION WITHOUT ANOTHER DEVICE RUN: the MUTABLE_FORMAT path on textures is
+NARROW BY CONSTRUCTION.** `formats[1]` - the sole trigger for the flag - is assigned in exactly one place
+(`vulkan_texture_cache.cc:1192`) and only when a format has **both** unsigned and signed host variants that are
+**different but compatible**, and `IsSignedVersionSeparateForFormat()` is false:
+```
+formats[0] = host_format.format_unsigned.format;
+if (host_format.format_signed.format != host_format.format_unsigned.format) {
+  assert_not_zero(host_format.unsigned_signed_compatible);
+  formats[1] = host_format.format_signed.format;   // <- the ONLY assignment
+}
+```
+**Most 360 texture formats (DXT1/3/5, 8888, and anything using `signed_separate`) never reach it.** So the
+claim I wrote one commit earlier - *"every texture needing a second view lost UBWC silently"* - is true as
+stated and **badly misleading about scale**: the qualifier "needing a second view" is doing almost all the
+work, and that set is small on this workload.
+**⇒ VERDICT: the fix is CORRECT and worth keeping (it costs nothing and removes a real, if rare, UBWC
+disable), but it is NOT a bandwidth lever on Blue Dragon and must not be sold as one.** +0.31% is consistent
+with almost nothing changing, which is what the code says should happen.
+**⇒ AND IT LEAVES THE BANDWIDTH HYPOTHESIS UNTESTED, NOT REFUTED.** UBWC on the RENDER TARGETS is the larger
+surface (colour RTs whose transfer alias differs from the base format - a much commoner case), and that lever
+(`gpu_vulkan_rt_keep_ubwc`) measured -0.43% **with no engagement counter**. **Give the RT lever an
+announce-on-first counter and re-run it before concluding anything about bandwidth.** That is the open item.
+**📌 THE META-LESSON, THREE INSTANCES IN ONE SESSION: EVERY ONE OF MY "IT READ ZERO" MOMENTS HAD A
+DIFFERENT CAUSE, AND NONE WAS "THE THING IS ZERO".** (1) `brk_img_sr=0` - the field was past the logcat wrap.
+(2) `TEXubwc=0` first time - the cvar was not allowlisted. (3) `TEXubwc=0` second time - the throttle hides the
+first 63. **Before believing a zero: confirm the field is IN the capture, the cvar is IN the allowlist, and the
+counter fires on the FIRST event.**
+
 ## 🚨 **I BROKE RULE 1 AND THE ENGAGEMENT COUNTER CAUGHT IT - THE TEXTURE-UBWC A/B IS VOID (2026-08-10)**
 **Shipped `gpu_vulkan_tex_keep_ubwc`, ran the A/B, got +0.70% and was one step from filing "flat". Then the
 `TEXubwc` counter printed NOTHING.** The lever never ran: **I never added the cvar to the `--ez` allowlist in

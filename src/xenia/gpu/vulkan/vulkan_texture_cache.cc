@@ -1251,10 +1251,17 @@ std::unique_ptr<TextureCache::Texture> VulkanTextureCache::CreateTexture(
       // "never ran" - the exact ambiguity that has made a dozen results in this
       // project unreadable. Log periodically so a flat result here is a real
       // refutation instead of another maybe.
+      // ⚠ ANNOUNCE ON THE **FIRST** CALL, then throttle. The first version of this
+      // logged only every 64th (`(c & 63) == 0`), so "zero lines" meant "fewer
+      // than 64", NOT "never ran" - and it was read as the latter, which is
+      // exactly the log-cap-looks-like-a-count trap recorded elsewhere in this
+      // tree. The guest SHA census gets this right by announcing on first call;
+      // copy that, never the bare modulo.
       static std::atomic<uint32_t> ubwc_list_count{0};
       uint32_t c = ubwc_list_count.fetch_add(1, std::memory_order_relaxed) + 1;
-      if ((c & 63u) == 0) {
-        XELOGI("TEXubwc: attached format list to {} mutable-format textures", c);
+      if (c == 1 || (c & 63u) == 0) {
+        XELOGI("TEXubwc: attached format list to {} mutable-format texture(s)",
+               c);
       }
     }
   }
