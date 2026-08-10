@@ -29,6 +29,30 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **run anything on the Thor** | `DEVICE HYGIENE`, `tools/thor/bd_fma_fps_ab.sh` | it is SHARED with an rpcs3 session; the idle check must ABORT, not print; force-stop before AND after; a run that never prints `Title name:` must abort, not report zeros |
 | **edit this file with a script** | `Config + git rules` | I truncated it to 0 bytes and pushed it once - encode before opening, gate `git add` on size |
 
+## ✍️✍️✍️ **WRITING RULE (user, 2026-08-10): WRITE THIS FILE IN ASD-STE100 SIMPLIFIED TECHNICAL ENGLISH**
+**Write all new entries in Simplified Technical English (ASD-STE100). Apply the rules below.**
+| rule | do this | do not do this |
+|---|---|---|
+| sentence length | Use a maximum of 20 words in an instruction. Use a maximum of 25 words in a description. | Do not write long sentences with many clauses. |
+| one meaning | Use one word for one meaning. Use "start", not "kick off", "fire", "spin up". | Do not use synonyms for variety. |
+| voice | Use the active voice. Write "The dump shader reads the image." | Do not write "The image is read by the dump shader." |
+| tense | Use the simple present, past, or future tense. | Do not use the perfect or progressive tense. |
+| articles | Use "the" and "a". Write "Read the log." | Do not write "Read log." |
+| noun clusters | Use a maximum of three nouns together. | Do not write "render target cache image extent value". |
+| one idea | Write one instruction in one sentence. Use a list for more than one step. | Do not join steps with "and" or ";". |
+| paragraphs | Use a maximum of six sentences in a paragraph. | Do not write large blocks of text. |
+**Keep these, because they carry the value of this file:**
+1. **Keep the numbers.** A measurement is the point of an entry. STE controls the words, not the data.
+2. **Keep the verdict markers** (✅ ❌ ⚠ ⇒ 🔑). They let a reader find the result quickly.
+3. **Keep the tables.** A table is better than a paragraph in STE.
+4. **Keep the honesty rules.** Write "This is not measured." Write "I was wrong." STE makes these shorter.
+**Do NOT rewrite the existing file.** The file has more than 571,000 characters of measured results. A rewrite
+risks the loss of data, and this file records one truncation to 0 bytes already. **Convert an old entry only
+when you edit it for another reason.**
+**⚠ ONE CONFLICT TO KNOW: STE prefers short sentences, but this file needs the WHY.** A result without its
+reason gets re-derived later, and that costs device time. **Use more short sentences. Do not delete the
+reason.**
+
 ## 🚨🚨🚨 TOP PRIORITY (user, 2026-08-08): **POWERPC/GPU → ARM64 DIRECTLY. KILL THE x86-SHAPED MIDDLE.**
 *"make sure it's our top priority to remove powerpc to x64/x86 to arm64 shit — we want emulate powerpc/gpu to
 arm64"* — this now outranks the individual lever hunts below.
