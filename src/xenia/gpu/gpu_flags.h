@@ -142,6 +142,7 @@ DECLARE_bool(spirv_debug_identity_ndc);
 DECLARE_bool(spirv_pos_binning_passthrough);
 DECLARE_bool(spirv_pos_collapse_only);
 DECLARE_bool(gpu_force_tiny_draws);
+DECLARE_uint32(gpu_max_rt_height);
 DECLARE_bool(gpu_clamp_renderarea_to_scissor);
 DECLARE_bool(gpu_trace_resolve_timing);
 DECLARE_bool(gpu_collapse_alphatest_coverage);

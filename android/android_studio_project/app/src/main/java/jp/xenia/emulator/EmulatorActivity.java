@@ -441,6 +441,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_present_fxaa");
             copyBooleanExtra(intent, launchArguments, "gpu_rt_as_texture");
             copyBooleanExtra(intent, launchArguments, "gpu_clamp_renderarea_to_scissor");
+            copyIntExtra(intent, launchArguments, "gpu_max_rt_height");
             copyBooleanExtra(intent, launchArguments, "gpu_trace_resolve_timing");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_skip_unused_depth_store");
             copyBooleanExtra(intent, launchArguments, "gpu_vulkan_classify_img_sr_breaks");

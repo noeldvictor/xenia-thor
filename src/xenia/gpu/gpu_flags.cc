@@ -1058,6 +1058,22 @@ DEFINE_bool(
     "fewer verts / bindless vertex fetch). BREAKS RENDERING - timing diagnostic "
     "only. Default off.",
     "GPU");
+DEFINE_uint32(
+    gpu_max_rt_height, 0,
+    "BD-30 GPU lever (the measured one): cap the HOST render-target height. RT "
+    "height is derived as kEdramTileCount / pitch - the rows needed to span the "
+    "whole 10 MB EDRAM at that pitch - so a 1280x720 guest allocates a 1280x2048 "
+    "image (1280*2048*4 = exactly 10,485,760 = EDRAM) and narrow pitches allocate "
+    "320x8192 / 80x8192. On the Adreno TBDR those off-screen rows are binned, "
+    "loaded and stored every pass; per-pass timestamps (2026-08-10) measured TWO "
+    "passes costing 37ms of a 57ms frame, and clamping renderArea instead was -18%% "
+    "because the cost merely moves between passes. This shrinks the ALLOCATION, "
+    "feeding the existing host-limit clamp in GetRenderTargetHeight. 0 = device "
+    "limit (current behaviour). Try 1024 for a 720p title. WARNING: a guest that "
+    "really renders taller than the cap at some EDRAM base/pitch gets CLIPPED - "
+    "pixel-check per title before defaulting on.",
+    "GPU");
+
 DEFINE_bool(
     gpu_clamp_renderarea_to_scissor, false,
     "BD-30 GPU lever: set the render pass renderArea to the guest scissor's max "

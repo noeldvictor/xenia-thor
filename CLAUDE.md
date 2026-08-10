@@ -727,6 +727,36 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🛠 **`gpu_max_rt_height` - THE LEVER AIMED AT THE MEASURED 37 ms. BUILT, ALLOWLISTED, *NOT YET TESTED* (2026-08-10)**
+**Follows directly from the per-pass measurement below: the cost is the EDRAM-span ALLOCATION, and clamping
+`renderArea` was the wrong end of it (-18%, the cost moves into the gaps). This shrinks the allocation.**
+```
+RenderTargetCache::GetRenderTargetHeight() = kEdramTileCount / pitch_tiles_at_32bpp
+  -> the rows needed to span the ENTIRE 10 MB EDRAM at that pitch
+  -> 1280x720 guest  =>  1280x2048 host image   (1280*2048*4 = 10,485,760 = EDRAM exactly)
+  -> narrow pitches  =>  320x8192, 80x8192
+```
+**Why this is a 3-line lever and not a rewrite: `GetRenderTargetHeight` ALREADY clamps to
+`GetMaxRenderTargetHeight()`** (*"clamp to ... the host limit (tile padding mustn't exceed it)"*), and that
+function currently returns only the DEVICE limit. Capping its return value therefore feeds an **existing,
+supported** clamp path. `gpu_max_rt_height` (uint32, **0 = device limit = today's behaviour**), declared,
+defined and **allowlisted** (rule 1, which I broke earlier today and am not repeating).
+**⚠ CORRECTNESS RISK, stated plainly: a guest that genuinely renders taller than the cap at some EDRAM
+base/pitch gets CLIPPED.** 720p titles should not, but this is a wrong-pixels failure mode, so it is default-0
+and needs a **screenshot check per title**, not just a fps number.
+**🛑 STATUS: BUILD GREEN, NEVER RUN. The device was taken by the other session's rpcs3 (pre-flight
+aborted correctly, before any launch).** The test is one run:
+```
+EXTRA='--ez vulkan_trace_pass_timestamps true --ei gpu_max_rt_height 1024'
+```
+**What to check, in this order:** (1) the `PASS fb=` lines should report **1280x1024 instead of 1280x2048** and
+**320x1024 instead of 320x8192** - that is the engagement proof, and without it the run means nothing;
+(2) `top_pass_us` should fall (baseline 22,087 / 14,984); (3) `gap_us` must NOT balloon the way it did under the
+renderArea clamp (10,070 -> 43,763) - **if it does, the allocation fix has the same flaw as the renderArea fix
+and the whole EDRAM-span approach needs rethinking rather than tuning**; (4) a screenshot, for clipping.
+**Baseline to beat, same route, filtered by `total_vertices > 150000`: 56,925 us / 17.57 fps, inside 46,856,
+between 10,070.**
+
 ## 🎯🎯🎯 **WHERE THE FRAME ACTUALLY GOES, MEASURED AT LAST (2026-08-10): 82% INSIDE PASSES, AND *TWO* PASSES ARE ~65% OF IT - THE RTs ARE EDRAM-SPAN, NOT SCREEN-SIZED**
 **This is the measurement this file has been asking for since BD went GPU-bound. `gpu_pass_us` was never
 broken - it is gated on `vulkan_trace_pass_timestamps`, another default-off diagnostic nobody had run.**

@@ -3945,8 +3945,30 @@ uint32_t VulkanRenderTargetCache::GetMaxRenderTargetWidth() const {
 uint32_t VulkanRenderTargetCache::GetMaxRenderTargetHeight() const {
   const ui::vulkan::VulkanDevice::Properties& device_properties =
       command_processor_.GetVulkanDevice()->properties();
-  return std::min(device_properties.maxFramebufferHeight,
-                  device_properties.maxImageDimension2D);
+  uint32_t max_height = std::min(device_properties.maxFramebufferHeight,
+                                 device_properties.maxImageDimension2D);
+  // 🎯 THE MEASURED 37 ms TARGET (per-pass timestamps, 2026-08-10). RT height is
+  // derived from kEdramTileCount / pitch - the rows needed to span the WHOLE
+  // 10 MB EDRAM at that pitch - so a 1280x720 guest gets a 1280x2048 host image
+  // (1280*2048*4 = exactly 10,485,760 = EDRAM), and narrow pitches get 320x8192
+  // or 80x8192. On a TBDR the driver bins/loads/stores those off-screen rows
+  // every pass, and per-pass timing showed TWO passes costing 37 ms of a 57 ms
+  // frame. Clamping renderArea instead was measured at -18% (the cost simply
+  // moves into the gaps), so the allocation is the thing to shrink.
+  //
+  // This cap feeds the EXISTING clamp in RenderTargetCache::GetRenderTargetHeight
+  // ("clamp to ... the host limit (tile padding mustn't exceed it)"), so it
+  // exercises a supported path rather than a new one - which is why it is a
+  // 3-line lever and not a rewrite.
+  //
+  // ⚠ CORRECTNESS: a guest that genuinely renders taller than the cap at some
+  // EDRAM base/pitch would be clipped. 720p titles do not, but this is why it is
+  // default-0 (device limit = today's behaviour) and needs a pixel check per
+  // title before it is ever defaulted on.
+  if (cvars::gpu_max_rt_height != 0) {
+    max_height = std::min(max_height, uint32_t(cvars::gpu_max_rt_height));
+  }
+  return max_height;
 }
 
 RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
