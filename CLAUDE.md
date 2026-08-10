@@ -727,6 +727,62 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🎯🎯🎯 **WHERE THE FRAME ACTUALLY GOES, MEASURED AT LAST (2026-08-10): 82% INSIDE PASSES, AND *TWO* PASSES ARE ~65% OF IT - THE RTs ARE EDRAM-SPAN, NOT SCREEN-SIZED**
+**This is the measurement this file has been asking for since BD went GPU-bound. `gpu_pass_us` was never
+broken - it is gated on `vulkan_trace_pass_timestamps`, another default-off diagnostic nobody had run.**
+```
+BD gameplay, 370 frames (total_vertices > 150,000):
+  INSIDE render passes : 46,856 us   (82%)
+  BETWEEN passes       : 10,070 us   (17%)   <- transfers / compute / barriers / stalls
+  head+tail            :    447 us    (1%)
+  TOTAL                : 56,925 us          (17.6 fps)
+
+  top_pass_us = [22,087   14,984   ~2,000 ]   <- TWO passes = 37,071 us = 65% of in-pass time
+  passes/frame = 76.7
+```
+**⇒ IT WAS NEVER PASS COUNT. 74-77 passes exist and TWO of them are two thirds of the GPU frame.** Every
+"minimize render passes" lever this project has built or planned was aimed at the wrong 72 passes.
+**🔥 AND THE PASS IDENTITIES NAME THE ROOT CAUSE OUTRIGHT - the framebuffer dimensions are absurd:**
+```
+PASS fb=d411 1280x2048     PASS fb=8c7b  720x1824     PASS fb=d43d 320x8192
+PASS fb=d503   80x8192     PASS fb=ccc3  360x1824     PASS fb=d243 1280x2048
+```
+**`1280 x 2048 x 4 bytes = 10,485,760 = EXACTLY the Xbox 360's 10 MB EDRAM.`** The RT cache allocates every
+host render target at the **EDRAM-tile-rounded height**, so a 1280x720 game renders into a 1280x2048 surface -
+**2.8x the pixels** - and some surfaces are 8192 rows tall. On a TBDR the driver then bins, loads and stores
+those off-screen rows every pass.
+**✅ THE DIAGNOSIS IS CONFIRMED, NOT INFERRED: clamping `renderArea` to the guest scissor HALVED in-pass time.**
+`gpu_clamp_renderarea_to_scissor` (implemented, default-off, never validated - its own help already said *"a
+1-draw pass over a 720x1824 RT cost 51ms"*):
+```
+                       BASELINE          CLAMP=on
+  inside passes        46,856 us   ->    23,513 us   (-50%)   <- mechanism works exactly as predicted
+  top1 pass            22,087 us   ->    12,659 us   (-43%)
+  top2 pass            14,984 us   ->     2,654 us   (-82%)
+  BETWEEN passes       10,070 us   ->    43,763 us   (+335%)  <- and this eats it whole
+  TOTAL                56,925 us   ->    67,276 us   (+18% SLOWER)
+  fps                    17.57     ->      14.86             0 faults
+```
+**⇒ SO: THE OVERSIZED-RT DIAGNOSIS IS RIGHT AND THE CLAMP IS THE WRONG FIX.** Halving in-pass time proves the
+off-screen rows really are being tiled and really are the cost. But a `renderArea` smaller than the attachment
+pushes the cost into the gaps - the driver can no longer treat the pass as covering its attachment, so
+store/resolve of the untouched region (or a fall out of the optimal binning path) reappears between passes,
+larger. **Do not ship the clamp.**
+**⇒ THE REAL FIX IS THE ALLOCATION, NOT THE RENDER AREA: make host render targets SCREEN-SIZED instead of
+EDRAM-span.** The attachment should be the size the guest actually draws into, so the pass covers all of it and
+there are no off-screen rows to tile OR to reconcile afterwards. That is a real change to
+`GetRenderTargetHeight` / the RT key, it interacts with EDRAM aliasing (the whole point of the tall surface is
+that EDRAM is addressed as a linear span), and it is the first GPU work in this file with a measured 37 ms
+target behind it.
+**🚨🚨 METHODOLOGY TRAP THAT INVERTED THIS RESULT, AND IT IS A NASTY ONE: I FIRST FILTERED
+FRAMES BY `pass_us + gap_us >= threshold` - I.E. BY THE OUTCOME I WAS MEASURING.** That is selection on the
+dependent variable, and it reported the clamp as **+12% FASTER**. Filtering by SCENE CONTENT instead
+(`total_vertices > 150,000`, which this file's protocol already prescribes) gives **-18% SLOWER**. Same two
+logs, opposite conclusions.
+**⇒ RULE: NEVER FILTER FRAMES BY A FUNCTION OF THE METRIC UNDER TEST.** Filter by scene (vertices, draws), then
+compare times. A threshold on time silently changes which frames each arm contributes, and the two arms do not
+even have the same frame population.
+
 ## 📉 **TEXTURE UBWC RESOLVED BY READING, NOT RUNNING: THE HOLE IS REAL BUT THE POPULATION IS TINY (2026-08-10)**
 **After allowlisting the cvar (verified present in the APK's dex) the re-run STILL logged zero `TEXubwc` lines
 and measured +0.31%. Two separate causes, and the second is the answer.**
