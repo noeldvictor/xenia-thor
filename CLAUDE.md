@@ -699,6 +699,39 @@ desktop Vulkan — minimize passes/GMEM flushes, GMEM-resident RT, Turnip extens
 PPC→native) for CPU/thermal. Blueprint: `docs/research/20260705-native-vulkan-renderer-plan.md`. Be creative,
 novel, research (arxiv/DXVK/Cemu). Convert the WHOLE pipeline at once — do NOT do one lever at a time (all dead).
 
+## 🎯 **THE GPU TARGET, SCOPED 2026-08-10 — IT IS PASS COUNT, AND IT IS *NOT* THE LOAD/STORE HINTS**
+**Given BD is now GPU-bound (section directly below), the obvious first suspect is Qualcomm's own top complaint.
+Checked it; we are already clean. Recording so the next session does not spend a day there.**
+**QUALCOMM'S RULE, from their developer forum** (their docs site is a JS SPA and will not fetch — a real Adreno
+GPU manual is NOT obtainable the way the Arm SWOGs were):
+> *"Unresolves or GMEM Loads are operations … where memory is Loaded (unresolve) or Stored (resolve) to and from
+> main memory. **Unresolves are typically unintentional** and can usually be caused by **lack of proper hints to
+> the driver** and removing them usually results in **significant performance increases**."*
+**"Hints to the driver" = `loadOp`/`storeOp`. AUDITED, and we are NOT the naive case:**
+```
+vulkan_render_target_cache.cc:
+  loadOp  DONT_CARE  x6      <- no unresolve
+  loadOp  LOAD       x3      <- unresolve, but EDRAM emulation genuinely needs prior contents here
+  storeOp STORE      x5   DONT_CARE x3   NONE x1
+  VK_ATTACHMENT_*_OP_NONE used in 11 places across the RTC + command processor
+```
+**⇒ NOT THE WIN.** The hints are already predominantly DONT_CARE and the Turnip `load_store_op_none` extension
+is actually used. Do not "optimise" this.
+**⇒ THE REAL TARGET IS THE ONE THIS FILE ALREADY MEASURED: 61 RENDER PASSES IN A BD FIELD FRAME, 45 OF THEM
+SINGLE-DRAW.** On a TBDR every pass begin/end is a GMEM store+reload of the whole tile. **45 passes that draw
+ONCE each are paying full tile traffic for one draw**, and at 99% GPU busy that is where the frame goes. The
+newly measured frame is **1,219 draws / 263k vertices / copy=23**, so the draw count is real work but the PASS
+count is overhead.
+**⇒ WHICH PUTS THE SHELVED WORK BACK ON THE CRITICAL PATH.** `VK_KHR_dynamic_rendering_local_read` +
+the XenDroid in-pass resolve chain exists precisely to stop the pass breaking for a resolve. It was shelved as
+"optimising the wrong processor" when BD was CPU-bound. **BD is not CPU-bound any more, so that justification is
+void and the chain is the highest-value GPU work available.** Its prerequisite (porting dynamic rendering, ~115
+API sites) is a real multi-session track, sized in the XenDroid section below.
+**⚠️ AND RE-MEASURE THE 61/45 FIRST.** That count predates the Edge kernel merge, the BD-native-renderer removal
+(~2,511 lines) and everything since. **Rule 4: count before building.** The frame trace already reports what is
+needed (`--ez vulkan_trace_draw_outcomes_per_frame true` gives rendered/copy per frame); a pass-count census is
+the missing half.
+
 ## 🔄🔄🔄 **REVERSED 2026-08-10: BD FIELD IS NOW *GPU-BOUND*. 99% BUSY AT MAX CLOCK.**
 **The section below is the load-bearing premise of this entire file — "BD's field is CPU-bound, so the GPU work
 was optimising the wrong processor". IT IS NO LONGER TRUE, measured with that section's own criteria.**
