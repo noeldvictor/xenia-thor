@@ -123,7 +123,7 @@ DEFINE_bool(
     "CPU");
 
 DEFINE_bool(
-    cpu_llvm_lower_scalar_fma, true,
+    cpu_llvm_lower_scalar_fma, false,
     "Lower SCALAR f32/f64 MUL_ADD/MUL_SUB in the LLVM backend instead of "
     "falling back to a64. Recovers ~830 functions (LLVM fallbacks 1,022 -> 194, "
     "device-measured) which then also keep LLVM register residency. DEFAULT OFF "
@@ -200,7 +200,7 @@ DEFINE_bool(
     "CPU");
 
 DEFINE_bool(
-    cpu_llvm_vmx_fmax_nan, true,
+    cpu_llvm_vmx_fmax_nan, false,
     "vmaxfp / vminfp in the LLVM backend: use llvm.maximum/llvm.minimum "
     "(propagate NaN, lower to FMAX/FMIN) instead of llvm.maxnum/llvm.minnum "
     "(IEEE maxNum - return the NUMBER when one operand is NaN, lower to "
@@ -223,7 +223,7 @@ DEFINE_bool(
     "CPU");
 
 DEFINE_bool(
-    cpu_llvm_vmx_float_flush, true,
+    cpu_llvm_vmx_float_flush, false,
     "Software-flush denormals around VMX float ADD/SUB (vaddfp / vsubfp) in the "
     "LLVM backend, matching a64. "
     "THE BUG THIS FIXES: PPC VMX flushes denormals (VSCR.NJ). a64 gets that "
@@ -286,7 +286,7 @@ static uint32_t LlvmTargetCpuKeyHash() {
 }
 
 DEFINE_bool(
-    cpu_llvm_lower_vsel, true,
+    cpu_llvm_lower_vsel, false,
     "Lower V128 per-bit SELECT (PPC vsel) in LLVM instead of falling back to "
     "the a64 backend. `select` was a top-3 fallback cause (137 functions in one "
     "census) and every one lost LLVM plus its register residency for the WHOLE "

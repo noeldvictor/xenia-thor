@@ -727,6 +727,45 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🚨🚨🚨 **REVERTED SAME SESSION: THE FIVE DEFAULTS **OOM GEARS OF WAR**. TWO-TITLE VALIDATION WAS NOT ENOUGH (2026-08-10)**
+**I flipped all five float lowerings default-ON after validating on Blue Dragon and Burnout. Then I ran Gears -
+the title this file itself named as the required third check - and it CRASHES. Reverted.**
+```
+GEARS, lowerings ON  (WARM cache, only 498 functions compiled, 30,559 objloads):
+    Title name: Gears of War        <- reached
+    59 log lines later:  Scudo ERROR: internal map failure (NO MEMORY) requesting 1028KB
+                         Fatal signal 6 (SIGABRT) in tid "Main XThread"   -> PROCESS DEAD
+
+GEARS, same five FORCED OFF (COLD cache, 24,843 functions compiled):
+    Title reached at t=330s,  scudo = 0,  no crash,  121 fallbacks
+```
+**⇒ THE CONTROL ARM COMPILED 50x MORE AND DID NOT OOM.** So this is **not** compilation memory pressure - it is
+the lowerings themselves. **Enabling them kills the largest title.**
+**🔑 THE MECHANISM IS ALREADY DOCUMENTED IN THIS FILE, AND I WALKED PAST IT: THE LLVM SCALAR-FMA
+SEQUENCE IS 2.4x THE CODE SIZE OF a64's.** The scalar-FMA entry says it outright - *"a64 today: ~8 insns on the
+no-NaN fast path ... new LLVM lowering: **19 insns, ALWAYS**"*. Multiply that across a ~31,000-function title
+where **0% now falls back** (previously 121+ functions took the compact a64 path) and the JIT code cache grows
+enough to exhaust address space. **BD (~19.6k functions) fits; Gears (~31k) does not.**
+**⇒ SO THE FAILURE IS SIZE-DEPENDENT, WHICH IS EXACTLY WHY TWO TITLES WAS THE WRONG BAR.** BD and Burnout both
+passed - pixels correct, 0 faults, 0 fallbacks. **A third, larger title fails outright.** This file's own
+instruction was *"Re-run on Gears and Burnout first"*; I treated Gears as excused because its GAMEPLAY stalls,
+but **the OOM happens at the TITLE SCREEN, long before the stall** - Gears was checkable all along and I
+rationalised skipping it.
+**⇒ REVERTED: all five are DEFAULT-FALSE again in source, and the device's `xenia.config.toml` restored to
+false.** (Backup: `files/xenia.config.toml.bak-20260810-floatset`.)
+**✅ WHAT SURVIVES, AND IT IS NOT NOTHING:** the lowerings are still **correct** - pixel-validated on BD's field
+and Burnout, 0 fallbacks, 4 of 5 fixing real PPC-vs-ARM float divergences. **They remain valid per-title
+opt-ins.** What is refuted is only "safe as a global default".
+**⇒ THE REAL FIX, AND IT IS NOW WELL-POSED: MAKE THE SCALAR-FMA LOWERING COMPACT.** The scalar-FMA entry
+already names the remedy - *"IF THE IN-GAME A/B SHOWS A REGRESSION, THE FIX IS KNOWN AND CHEAP: emit the
+BRANCHY form - an early-out on 'no source is NaN' around a bare `llvm.fma`, mirroring a64"* (~8 insns instead
+of 19). **That would cut the code-size blowup at its source and is the prerequisite to defaulting these on.**
+Alternatively gate the set per-title via `GameProfiles` for titles under some function count - but shrinking
+the sequence is the better fix.
+**📌 THE PROCESS LESSON, AND IT IS THE MOST EXPENSIVE ONE OF THE SESSION: "VALIDATED ON TWO TITLES" DID
+NOT COVER A SIZE-DEPENDENT FAILURE.** Both passing titles were smaller than the failing one. **When a change
+affects generated CODE SIZE, the validation set must include the LARGEST title, not merely more than one.**
+
 ## 🚀🚀🚀 **SHIPPED: ALL FIVE FLOAT LOWERINGS ARE NOW DEFAULT-ON. ZERO LLVM FALLBACKS OUT OF THE BOX (2026-08-10)**
 **Validated on two titles, pixel-checked in the scene that used to break, and flipped. This is the first time
 every guest function compiles on LLVM by default.**
