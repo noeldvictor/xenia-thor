@@ -699,6 +699,32 @@ desktop Vulkan — minimize passes/GMEM flushes, GMEM-resident RT, Turnip extens
 PPC→native) for CPU/thermal. Blueprint: `docs/research/20260705-native-vulkan-renderer-plan.md`. Be creative,
 novel, research (arxiv/DXVK/Cemu). Convert the WHOLE pipeline at once — do NOT do one lever at a time (all dead).
 
+## 📏 **PASS CENSUS RE-MEASURED 2026-08-10 — 45 PASS BREAKS/FRAME, AND *RT CHANGES* DOMINATE (27 vs 18)**
+**The 61/45 figure predated the Edge kernel merge and the BD-native-renderer removal, so it was re-taken before
+anyone builds against it. It holds, and it now names WHICH break to attack.** No new code was needed — the
+per-frame trace already counts pass breaks; nobody had read those fields.
+```
+BD gameplay frame (uncontended, verts 225k at capture time):
+  rendered              = 521 draws
+  copy                  = 24                 <- resolve copies
+  pass_break_barrier    = 18
+  pass_break_rt_change  = 27                 <- DOMINANT
+  => 45 pass breaks / frame
+  gpu_frame_us          = 65,250             (65.25 ms = ~15.3 fps, matches the fps trace)
+```
+**⇒ 45 breaks per frame, and RENDER-TARGET CHANGE causes 60% of them (27/45), not barriers (18/45).** On a TBDR
+each break is a full-tile GMEM store + reload. At 99% GPU busy on the max clock, this is where the frame goes.
+**🔑 THE REFINEMENT THAT MATTERS: attacking barriers would address at most 40% of the breaks.** The bigger half
+is the render-target churn the EDRAM emulation performs — bind a target, draw, resolve, bind another. That is
+precisely what `VK_KHR_dynamic_rendering_local_read` + the XenDroid in-pass resolve chain exists to collapse:
+`local_read` lets a shader read the CURRENT attachment on-tile, so a resolve no longer has to END the pass.
+**⇒ SO THE ORDER IS: (1) dynamic rendering port (~115 API sites, its own track), (2) in-pass resolve chain,
+(3) re-census. And the metric to watch is `pass_break_rt_change`, which is already printed every frame** — no
+instrumentation to build, and it gives a per-frame regression signal rather than an fps number that drift can
+swallow.
+**⚠️ `gpu_pass_us` READ 0** in this capture, so per-pass GPU timing is either not enabled or not wired on this
+path. If pass COST (not just count) is ever needed, that is the gap to close first.
+
 ## 🎯 **THE GPU TARGET, SCOPED 2026-08-10 — IT IS PASS COUNT, AND IT IS *NOT* THE LOAD/STORE HINTS**
 **Given BD is now GPU-bound (section directly below), the obvious first suspect is Qualcomm's own top complaint.
 Checked it; we are already clean. Recording so the next session does not spend a day there.**
