@@ -1176,6 +1176,60 @@ wrong (the Adreno docs were "unobtainable" and were not; BCAX "fuses automatical
 real gap (Adreno) was closed this session with Playwright after being written off twice. **Do not re-run this
 search.**
 
+## 🔧📏 **THE u_trace RUN: THREE DEVICE FACTS FOUND, NO TRACE DATA YET (2026-08-10)**
+*(First entry written in ASD-STE100. See the writing rule near the top of this file.)*
+**I ran the u_trace experiment three times. I did not get trace data. I found three device facts. The recipe is
+now correct. The next run needs a charged device.**
+### ❌ FACT 1. AN ANDROID PROPERTY VALUE HAS A LIMIT OF 92 BYTES
+```
+setprop wrap.jp.xenia.emulator.github.debug   '"MESA_GPU_TRACEFILE=/data/user/0/jp.xenia.emulator.github.debug/files/utrace.txt MESA_GPU_TRACES=print"'
+-> Value '...' is too long, 101 bytes vs a max of 92
+```
+**The `setprop` failed. The property stayed empty. The run started and looked normal.** The route reached
+gameplay. It recorded no trace data. **A failed `setprop` does not stop the run.**
+**⇒ Check the property after you set it. Use `getprop`. Do not assume the value applied.**
+**⇒ The package name is 37 characters. The app files path is 48 characters. A files-dir path does not fit.**
+### ❌ FACT 2. `log.redirect-stdio` DOES NOT CAPTURE A WRAPPED APP's STDOUT
+The third run applied the wrap correctly. `getprop` returned `MESA_GPU_TRACES=print`. The log had 2 lines of
+`Wrapped process has pid`. The app rendered gameplay at 290,314 vertices per frame.
+```
+end_render_pass in logcat ....... 0
+System.out lines in logcat ...... 0
+```
+**`log.redirect-stdio` was `true`. The log has no application stdout.** u_trace writes to `stdout` by default
+(`u_trace.c`, `trace_file = stdout`). **The output went nowhere.**
+**⇒ Do not use `log.redirect-stdio` for u_trace. Use `MESA_GPU_TRACEFILE`.**
+### ✅ THE CORRECT RECIPE, and it fits in 92 bytes
+```
+adb shell setprop wrap.jp.xenia.emulator.github.debug   '"MESA_GPU_TRACEFILE=/sdcard/u.txt MESA_GPU_TRACES=print"'        # 53 bytes
+adb shell getprop wrap.jp.xenia.emulator.github.debug               # CONFIRM IT APPLIED
+   ... run the route ...
+adb shell setprop wrap.jp.xenia.emulator.github.debug '""'          # UNSET IT
+adb pull /sdcard/u.txt
+```
+**The app reads ISOs from `/storage`, so it has storage permission. `/sdcard/u.txt` is 16 characters.**
+### ⚠ FACT 3. BLUE DRAGON's OBJECT CACHE WAS COLD, AND NOBODY REBUILT
+```
+run 1:  LLVMobjload = 0     LLVMbegin = 8,860     AOT 9,472 / ~16,954 at t=154s
+        Title name = 0      -> the route reported VOID
+```
+**This file says a cold cache follows an LLVM-backend rebuild. There was no rebuild in this session.** The
+cause is not known. **The earlier runs in this session used Gears with five `--ez` lowerings. Those objects use
+a different key suffix.**
+**⇒ Check `LLVMobjload` before you trust a route run. A value of 0 means the run warms the cache. It does not
+measure anything.**
+**⇒ A warm run took 2 minutes and reached the title. After the warm run, the route reached gameplay twice.**
+### 📊 WHAT THE THREE RUNS DID ESTABLISH
+| item | result |
+|---|---|
+| route reaches gameplay | ✅ 2,135 draws, 290,314 vertices/frame |
+| faults | 0 |
+| thermal | the route hits 70C in 53-64s from a 43-46C start |
+| battery | 33% -> 30% across the runs, **and the level fell while USB power was connected** |
+**⚠ USB POWER DID NOT HOLD THE LEVEL. The emulator draws more than USB supplies.** This file records a battery
+floor of 30%. **"USB powered: true" is not the same as "charging". Read the level, not the flag.**
+**⇒ THE NEXT RUN IS ONE COMMAND AWAY. The cache is warm. The recipe is correct. The device needs charge.**
+
 ## 🔭🔭🔭 **THE SHIPPED DRIVER CAN TELL US, PER RENDER PASS, WHETHER WE ARE EVEN TILING - AND WHY LRZ IS OFF (2026-08-10)**
 **Followed the TU_DEBUG finding one step further and hit the single best instrument available to this project.
 Turnip emits a `u_trace` tracepoint at the end of EVERY render pass carrying exactly the fields this file has
