@@ -727,6 +727,53 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🧮 **NOVEL-HARDWARE CODE EVALUATION (2026-08-10): WHICH 1:1 ARM64 INSTRUCTIONS WE LEAVE ON THE TABLE - AND A WRONG ALARM I RAISED AND WITHDREW**
+**Method: list the ARM64 instructions that map ONE-TO-ONE onto a VMX operation, then count how many we
+actually emit. That is a different question from "is there an x86 idiom left" (answered, 2 sites) and from
+"is a lever hot" (rule 4) - it asks whether the hardware has an instruction for a thing we are synthesising.**
+```
+emitted in the a64 backend:   sqxtn 2   sqxtun 2   uqxtn 4   clz 4   rev16 5   rev32 24   rev64 6
+NEVER emitted (0 uses):       sqrdmulh  sqdmulh  addv  saddlv  uaddlv  smaxv  uminv
+                              cnt  cls  shrn  rshrn  urecpe  ursqrte  frint32  frint64  fjcvtzs
+```
+**⇒ THE PACK/SATURATE FAMILY IS ALREADY NATIVE** (`sqxtn`/`sqxtun`/`uqxtn` are emitted - that is
+`vpkshss`/`vpkuhus`/etc. done right), and byte-swapping uses the `rev*` family properly. **Those were the two
+most likely misses and both are clean.**
+**⇒ THE REAL GAPS, none of them yet sized:**
+| unused ARM instruction | the VMX op it would serve |
+|---|---|
+| `SQRDMULH` / `SQDMULH` | `vmhraddshs` - saturating **rounding** multiply-add high halfword, an exact match |
+| `ADDV` / `SADDLV` / `UADDLV` | the `vsum*` family (`vsumsws`, `vsum4sbs`, `vsum2sws`) - horizontal sums |
+| `CNT` | vector population count |
+| `CLS` | count leading sign bits |
+| `SHRN` / `RSHRN` | pack-with-shift forms |
+**⚠ RULE 4 BEFORE ANY OF THEM.** This file has now killed FIVE plausible levers on frequency alone (EOR3, the
+per-draw FNV chain, `eieio`, guest SHA, BCAX/XAR). **Count the guest occurrences of `vmhraddshs` and the
+`vsum*` family before writing a sequence.** And note the framing that matters more: **BD is GPU-bound**, so
+even a perfect CPU sequence cannot move the frame today.
+### ❌ AND A WRONG ALARM I RAISED AND WITHDREW IN THE SAME BREATH - THE PROCESS FAILURE IS THE LESSON
+I found `static void EmulateDotProduct4(void*, void*)` - a **host C++ helper** computing `vmsum4fp` with
+double intermediates - and concluded we were paying **a guest->host call per dot product in 3D vertex math**,
+the same shape as the documented `frsqrte` finding but far more frequent. **That was wrong.**
+**`DOT_PRODUCT_4_V128::Emit` emits INLINE NEON with exact f64 intermediates**, which is precisely the sequence
+I was about to propose:
+```
+fcvtl2 v2.2d, s1.4s ; fcvtl2 v3.2d, s2.4s ; fcvtl v0.2d, s1.2s ; fcvtl v1.2d, s2.2s
+fmul v0.2d ; fmul v2.2d ; fadd v0.2d ; faddp d1, v0.2d ; fcvt s0, d1   (+ inf->QNaN fixup)
+```
+**⇒ I INFERRED A CALL FROM THE EXISTENCE OF A HELPER WITHOUT READING THE EMITTER** - the same
+"read the enclosing block, not a grep hit" mistake this file already records from the BD-removal null-deref
+sweep. **Grep finds definitions; only the call site tells you what runs.**
+**✅ WHAT THE FALSE ALARM DID TURN UP, small but real: `EmulateDotProduct3` and `EmulateDotProduct4` ARE DEAD
+CODE** - `refs=1` each, i.e. only their own definition (the sole other mention is a comment in
+`hir/value.cc:1514` citing them as the constant-folding reference, which is a docs dependency, not a call).
+**~30 lines removable**, and worth removing precisely so the next person does not repeat my inference.
+**✅ AND THE SAME COUNT FOUND WHAT *IS* STILL A HOST CALL: `EmulatePow2` and `EmulateLog2` have `refs=2`
+(definition + one call).** `POW2_V128`'s own comment says *"No hardware FP emitted - the C++ helper does all
+math."* So VMX `vexptefp` / `vlogefp` still pay a guest->host transition on the a64 path. **The LLVM backend
+already batches these** (`xe_llvm_exp2_vec` / `_log2_vec`, whole-vector rather than per-lane), so the fix
+pattern exists - but rule 4 applies here too, and nothing has counted `vexptefp`/`vlogefp` frequency.
+
 ## 🚨🚨🚨 **XENDROID ALREADY DID TODAY'S GPU INVESTIGATION WITH *HARDWARE COUNTERS*, AND IT KILLS OUR NEXT LEVER BEFORE WE RUN IT (2026-08-10)**
 **`reference/XenDroid` commit `4ae33425b` ships a 505-line study, `docs/gw-gpu-bottleneck-investigation.md`
 (Geometry Wars on a Retroid Pocket 5, instrumented Turnip with Adreno perf counters). They reached the SAME
