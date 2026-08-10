@@ -727,6 +727,67 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🚦🚦🚦 **DEVICE-CHECKED THE TILE EXTENSIONS (2026-08-10): THE GMEM-HEAP PATH IS DEAD ON TURNIP - BUT AN IN-PASS RESOLVE EXTENSION IS SITTING THERE UNUSED**
+**The section below says to grep the device extension list before designing against `VK_QCOM_tile_memory_heap`.
+Did it. It cost nothing - the list is already logged unconditionally on every launch
+(`vulkan_device.cc:288`, "Vulkan device supported extension: {}") and 170 lines were still in the logcat buffer
+from the last route run. No new device time at all.**
+```
+QCOM extensions Turnip 26.3.0 actually exposes on the Thor (170 total device extensions):
+  VK_QCOM_fragment_density_map_offset
+  VK_QCOM_image_processing
+  VK_QCOM_multiview_per_view_render_areas
+  VK_QCOM_multiview_per_view_viewports
+  VK_QCOM_render_pass_shader_resolve      <-- !!
+ABSENT: VK_QCOM_tile_memory_heap, VK_QCOM_tile_shading
+```
+**❌ SO THE "ALLOCATE IMAGES ON GMEM AND KEEP THEM RESIDENT" EDRAM PATH IS DEAD FOR US.** Both tile extensions
+are Qualcomm-proprietary and **Turnip does not implement them**, exactly as the caution below suspected. Since
+Turnip is mandatory here (the Qualcomm blob is a downgrade for other, already-recorded reasons), that section is
+closed unless Mesa implements them later. **Do not design against `VK_QCOM_tile_memory_heap`.** Recheck after a
+Turnip bump; `tools/update_turnip.py` tracks upstream.
+**🔥🔥 BUT THE SAME ONE-MINUTE CHECK TURNED UP `VK_QCOM_render_pass_shader_resolve`, AND IT IS
+THE SHAPE WE HAVE BEEN LOOKING FOR ALL SESSION:**
+| | |
+|---|---|
+| exposed by Turnip on the Thor | **YES** - device-confirmed above |
+| in our Vulkan headers (v278) | **YES** - `VK_SUBPASS_DESCRIPTION_SHADER_RESOLVE_BIT_QCOM = 0x8`, `vulkan_core.h:2767` |
+| uses in our tree | **ZERO** |
+| needs the ~115-site dynamic-rendering port | **NO - it is a `VkSubpassDescription` FLAG**, i.e. traditional render passes |
+**It lets a subpass perform its resolve IN A SHADER, inside the render pass, instead of ending the pass for a
+fixed-function resolve.** Our measured problem is **25 EDRAM resolve passes per frame, each opening and tearing
+down a separate render pass to do a copy with no draws** - and this is an in-pass resolve mechanism that our
+mandated driver already advertises and that our headers already declare.
+**🔑 AND THE MORE GENERAL POINT, WHICH NEEDS NO EXTENSION AT ALL: A RESOLVE EXPRESSED AS A SECOND
+SUBPASS WITH AN INPUT ATTACHMENT RUNS ON-TILE BY CONSTRUCTION.** Input attachments are the canonical Vulkan
+TBDR mechanism for "read what the previous subpass wrote, at this pixel, without leaving tile memory" - plain
+Vulkan 1.0, no extension, and it is precisely what Qualcomm's *"the full subpass chain can be executed for each
+tile, thus avoiding the need to resolve subpasses to system memory after each pass"* (>10% frametime) describes.
+**We are single-subpass on the main path, so we get none of it.**
+**⚠⚠ THE CONSTRAINT THAT DECIDES HOW MUCH OF THIS APPLIES, AND IT IS A REAL ONE: INPUT ATTACHMENTS ARE
+FRAMEBUFFER-LOCAL.** A subpass input attachment can only read **the same pixel coordinate** it is writing -
+that is exactly why it stays on-tile. An EDRAM resolve that **scales, offsets, re-tiles or changes extent**
+cannot be expressed this way and must stay a separate pass. This tree already carries mapped-rect resolve logic
+and a `1f24328cf`-style "reject resolves whose mapped rect leaves the render area" check, so **the population
+splits into same-extent resolves (candidates) and everything else (not).**
+**⇒ THE MEASUREMENT THAT SIZES THIS, and it is cheap because the counters already exist:** of the ~23 `copy=`
+operations per frame, **how many are same-extent, same-sample-count, full-render-area?** That count is the
+actual addressable set. `rt_transfer_same_format_` / `rt_inpass_transfer_dests_` / `rt_inpass_skipped_format_` /
+`rt_inpass_skipped_other_` are ALREADY in the per-frame trace and already printed - **nobody has read them.**
+Read those four before writing any subpass code.
+**⇒ REVISED ORDER FOR THE GPU TRACK, cheapest first:**
+1. **Read the four `rt_inpass_*` / `rt_transfer_*` counters already in the trace** - sizes the addressable
+   resolve set from data we are already emitting.
+2. **Enable the Vulkan Adreno Layer, read `VKDBGUTILWARN003`** - confirms whether anything merges today.
+3. **Prototype ONE same-extent resolve as a second subpass** (input attachment, `BY_REGION`), measured with the
+   40-frame `gpu_frame_us` protocol.
+4. `VK_QCOM_render_pass_shader_resolve` if the plain-subpass form is insufficient.
+5. The ~115-site dynamic-rendering port only if 1-4 prove the mechanism and something still blocks it.
+**📌 AND A PROCESS NOTE WORTH MORE THAN THE FINDING: THE ANSWER WAS ALREADY IN A LOG WE HAD.** I was
+about to spend a device run enumerating extensions that the emulator prints on every single launch, and the
+lines were still in the buffer from an hour earlier. **Before scheduling device time, grep the logcat you
+already have** - this project logs far more than it reads.
+
 ## 🧱🧱🧱 **EDRAM -> GMEM: QUALCOMM SHIPS AN EXTENSION THAT *IS* EDRAM, AND THREE THINGS WE PROBABLY DO THAT KILL TILING (read from the Adreno guide, 2026-08-10)**
 **The Xbox 360's EDRAM is a 10 MB on-chip scratch the game renders into and then resolves out. Adreno's GMEM is
 on-chip tile memory. They are the same shape, and Qualcomm documents a Vulkan extension for exactly that
