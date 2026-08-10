@@ -727,6 +727,47 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🧨🧨🧨 **REVIEWS #1/#2/#3 ARE REFUTED ON DEVICE: WE DO NOT SPILL. 0.1 SPILL REQUESTS PER FUNCTION (2026-08-10)**
+**"Dig deep on Xenon." The deepest Xenon->ARM64 claim in this file is the register squeeze - 32 guest GPRs and
+**128 guest VMX registers** crammed into 7 host GPRs and 28 host vectors, with "everything else spilled to a
+2 KB PPCContext block", labelled in the x86-shaped table as **"THE BIG ONE - reviews #1/#2/#3, unfixed"**. This
+file also says the measurement already exists and to **"USE THE EXISTING AUDIT FIRST"**. Nobody ever ran it.
+Ran it.**
+```
+arm64_register_allocation_audit, Blue Dragon, full a64 AOT, 58,884 audit lines:
+
+  set      fns     dest_values   spill_requests   max_active_registers   peak
+  vec    19,639        7.8            0.1                 0.3             28
+  int    19,625      194.7            0.2                 2.8              7
+  float  19,620       17.1            0.0                 0.5             28
+```
+**⇒ 0.1-0.2 SPILL REQUESTS PER FUNCTION. AVERAGE SIMULTANEOUS LIVENESS IS 2.8 INTEGER AND 0.3 VECTOR VALUES.**
+The allocator is nowhere near its limits: **integer peaks at 7 of 7 only rarely and averages 2.8; vector
+averages 0.3 of 28.**
+**⇒ THE 128-INTO-28 SQUEEZE DOES NOT BITE, AND THE 7-GPR BUDGET BARELY DOES.** Review #2's framing - *"we are
+running a 128-register in-order vector ISA on a 32-register one, and every value the guest kept live costs a
+6-cycle reload"* - is **empirically wrong as a description of what our allocator faces.** The guest's 128
+registers never arrive as 128 simultaneously-live HIR values.
+**🔑 AND THE REASON IS THE SUBTLE PART, WHICH MAKES THIS A REFRAME RATHER THAN JUST A NEGATIVE: LIVENESS
+IS LOW *BECAUSE* OF THE CONTEXT-MEMORY MODEL.** Every guest register access is `LOAD_CONTEXT -> use ->
+STORE_CONTEXT`, so HIR values are born and die within a few instructions. **There is no pressure precisely
+because nothing is being kept resident.** So the correct statement is not "the budget is fine" and not "the
+budget is the bottleneck" - it is:
+> **The register budget cannot be the bottleneck TODAY, because the residency that would fill it does not
+> exist. Widening the budget would change nothing; only residency would - and residency measured FLAT twice.**
+**⇒ WHICH CLOSES THE LOOP WITH THE OTHER CPU MEASUREMENTS RATHER THAN CONTRADICTING THEM:**
+- `cpu_backend_llvm_context_residency` + `_writeback`: **measured flat** (+0.7%, title-tier)
+- `ppc_cross_block_dead_gpr_elim`: **12,942 dead stores removed, +0.8% = noise**
+- RexGlue ships all six residency flags **default OFF**
+- the AAPCS64 ceiling: **0 of 82 guest vectors can survive a call** - architecturally
+- and now: **0.1 spills/function, so there is no spill cost to recover in the first place**
+**Five independent lines of evidence, all saying the same thing: the "guest state lives in memory" structure is
+NOT costing measurable throughput.** This file has treated it as the #1 CPU lever for months.
+**⇒ ACTION: DEMOTE REVIEWS #1/#2/#3 FROM "THE BIG ONE" TO "MEASURED, NOT A LEVER".** Do not build a two-class
+allocator, do not widen the register sets, do not resurrect stage-3 residency on the strength of the register
+argument. **If anyone reopens this, the bar is a measurement showing spills above ~1/function in a hot scene -
+today it is 0.1.**
+
 ## 📕✅ **THE SNAPDRAGON CPU MANUAL QUESTION, VERIFIED INDEPENDENTLY RATHER THAN INHERITED (2026-08-10)**
 **This file has asserted "there is no SM8550 CPU TRM" for weeks and I had been repeating it. Checked it myself
 with a real search rather than trusting the prior claim - the same discipline applied to everything else this
