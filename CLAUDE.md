@@ -727,6 +727,36 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🔥🔥🔥 **PROVEN ON DEVICE: BLUE DRAGON IS FRAGMENT-SHADER BOUND. 2x2 VRS ON ALL DRAWS = -21.1% FRAME TIME (2026-08-10)**
+**The first measured SPEED win of the session, and more importantly the first DIRECT confirmation of what the
+frame is actually limited by. Same build, same route, one arm per cooldown, both arms gameplay-tier confirmed.**
+```
+BASELINE (same build) : 277 frames   61,831 us   16.17 fps   (249,304 verts/frame)
+VRS 2x2, ALL DRAWS    : 415 frames   48,790 us   20.50 fps   (260,905 verts/frame)
+                        -21.1% frame time   +26.8% fps   0 faults
+```
+**🔑 WHAT THIS ESTABLISHES, AND IT IS BIGGER THAN THE NUMBER: THE GPU IS LIMITED BY FRAGMENT-SHADER
+WORK.** 2x2 coarse shading runs the fragment shader once per 2x2 block instead of per sample - roughly 4x fewer
+invocations - and it bought 21% of the frame. **Nothing else tried today moved the frame at all**: pass-break
+count (-0.27%), renderArea clamp (+18% WORSE), RT UBWC (-0.43%), shmem hoist (+0.4%), texture UBWC (void).
+**⇒ THIS INDEPENDENTLY CORROBORATES XENDROID'S HARDWARE-COUNTER RESULT** (`docs/gw-gpu-bottleneck-investigation.md`:
+SP busy 489, 92% of it ALU, HLSQ blocked by the FS 94% of the time, "**fragment-shader ALU bound**") - reached
+there with Adreno perf counters on Geometry Wars, reached here with a VRS A/B on Blue Dragon. **Two titles, two
+devices, two completely different instruments, same answer.** That is as close to settled as this project gets.
+**⚠⚠ BUT `gpu_vrs_all_draws` IS A DIAGNOSTIC, NOT A SHIPPABLE LEVER - DO NOT DEFAULT IT ON.** Its own help says
+"Quality-destructive for the whole scene; default off, diagnostic only." It coarsens *everything*, including
+UI and text. **This file already records VRS being pulled from Burnout on a user report of "gfx are busted".**
+The -21.1% is the CEILING of the VRS family, measured to prove the bottleneck - not a shippable configuration.
+**⇒ THE SHIPPABLE QUESTION IS HOW MUCH OF THE 21% SURVIVES SELECTIVITY**, i.e. `gpu_vrs_foliage_rate 2` WITHOUT
+`all_draws` (alpha-test/foliage only), and XenDroid's variant (blended draws at 2x1, per-draw dynamic state,
+clamped to device support - commits `a979f7cf6`/`1a51d62bc`/`81cfbe17c`/`23830e49a`). **That is the next run and
+it is the one that decides whether this ships.**
+**📌 METHOD NOTE - THE MATCHED-SCENE HELPER IS WHY THIS WORKED.** `gpu_vrs_enable_after_guest_ms 60000`
+suppresses VRS until the guest is 60s in, so the route NAVIGATES with VRS off (identical wall-clock pacing,
+reaching the same scene) and VRS engages only in the field. Without it, VRS changes frame pacing and the route
+lands somewhere else - the cvar's help says outright "Blue Dragon can't reach its field with VRS on". **A
+scene-matched A/B on a timing-driven route needs that kind of helper, and someone had already built it.**
+
 ## 📐🧩 **THE 1:1 INSTRUCTION GAPS ARE A *COMPATIBILITY* STORY, NOT A SPEED ONE - AND THE MANUALS SAY THEY WOULD BE CHEAP TO CLOSE (2026-08-10)**
 **Followed the unused-instruction survey through to the guest side, and the answer inverted: the ARM
 instructions we never emit correspond to guest opcodes we never IMPLEMENT.**
