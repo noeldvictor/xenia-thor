@@ -727,6 +727,57 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🧨🧨🧨 **THE PASS-BREAK THEORY IS DEAD: WE REMOVED 36% OF PASS BREAKS AND THE FRAME TIME DID NOT MOVE (2026-08-10)**
+**This is the most consequential GPU measurement in the file, because it invalidates the premise the entire GPU
+plan has been built on - including the ~115-site dynamic-rendering port.**
+**`gpu_vulkan_inpass_edram_transfers` (default 0, EXPERIMENTAL, never validated) performs EDRAM
+ownership-transfer draws INSIDE the guest render pass instead of in dedicated transfer passes. Turned it on.
+IT WORKS EXACTLY AS DESIGNED:**
+```
+                inpass x   pass_break_barrier   pass_break_rt_change   TOTAL BREAKS
+  BASELINE        0.0            16.9                  26.8               43.7
+  INPASS=1       22.0            17.0                  11.0               28.0   (-36%)
+```
+**22 transfers per frame moved in-pass and rt_change breaks fell 26.8 -> 11.0, a 59% cut** - matching the
+`xfer_same_fmt = 24` eligibility prediction almost exactly. **The mechanism is real and the instrumentation
+agrees with the model.**
+**❌❌ AND THE FRAME TIME IS FLAT. 40-frame-plus averages, one arm per cooldown, both arms landing on the same
+scene (249,432 vs 249,472 vertices/frame):**
+```
+  BASELINE   272 frames   mean gpu_frame_us = 62,786   (15.93 fps)
+  INPASS=1   274 frames   mean gpu_frame_us = 62,619   (15.97 fps)
+                                                        +0.27%  = NOISE
+```
+**⇒ REMOVING 15.8 RENDER-PASS BREAKS PER FRAME - MORE THAN A THIRD OF THEM - BOUGHT 0.27%.**
+**🔑 SO "PASS BREAKS ARE WHERE THE FRAME GOES" IS FALSE ON BLUE DRAGON, AND THAT CLAIM IS LOAD-BEARING
+ALL OVER THIS FILE.** The reasoning was: BD is GPU-bound at 99% on the max clock; a TBDR pays a full tile
+store+reload per pass break; BD has ~45 breaks/frame; therefore breaks dominate. **The first two premises are
+still true and the conclusion is still wrong.** Whatever saturates the Adreno at 680 MHz, it is not
+render-pass transitions.
+**⇒ WHAT THIS KILLS, and it should be said plainly:**
+- **The ~115-site dynamic-rendering port** - its entire justification was collapsing these breaks. **A cheaper
+  lever already collapsed 59% of them for nothing.** Do not start that port.
+- **The in-pass resolve chain** as an fps lever (it was already wounded by `sr_fscomp = 0`).
+- **`VK_QCOM_tile_memory_heap` / explicit GMEM control** as a priority. Its value is avoiding tile traffic
+  around passes; we just proved tile traffic around passes is not costing us. **(It is also absent from Turnip -
+  device-enumerated, and Mesa 26.1 adds only `VK_QCOM_image_processing` - so the question was moot anyway.)**
+- **By extension, most of the "minimize renderpasses" advice from the Adreno guide.** It is sound vendor
+  guidance; it is not our bottleneck.
+**✅ WHAT SURVIVES, AND IT IS WORTH KEEPING:** `gpu_vulkan_inpass_edram_transfers=1` is **functionally correct
+and structurally better** - fewer passes, fewer breaks, same output, 0 faults, same scene. It costs nothing.
+**But it is NOT a speed win and must not be shipped as one.** Leave it default-off unless a title is found
+where breaks DO dominate; the counter (`inpass[x=..]`) makes engagement checkable.
+**⇒ WHERE THE FRAME ACTUALLY GOES IS NOW THE OPEN QUESTION, AND WE STILL CANNOT ANSWER IT** - because
+`gpu_pass_us` reads **0**. This file has flagged that gap repeatedly and it is now the ONLY thing standing
+between us and knowing the answer. **Fix per-pass GPU timing before proposing one more GPU lever.** Candidates
+that remain unexcluded: fragment/overdraw cost (1,200 draws, 250k verts), texture bandwidth/UBWC, shader ALU,
+and the 35 zero-draw passes' fixed-function work (clears/resolves) as opposed to their pass overhead.
+**📌 METHOD NOTE - THIS IS WHY THE STRUCTURAL METRIC MATTERS EVEN WHEN THE RESULT IS FLAT:** had I only
+measured fps, this would read "lever does nothing, probably didn't engage" - the exact ambiguity that has
+poisoned a dozen A/Bs in this file. **`inpass x=22.0` and `rt_change 26.8 -> 11.0` prove it engaged fully.**
+That is what makes this a refutation of the THEORY rather than an inconclusive run. **Always measure the
+mechanism alongside the outcome.**
+
 ## ✅✅✅ **CORRECTION + THE BEST GPU NUMBER OF THE SESSION: ~21 TRANSFERS/FRAME ARE FORMAT-COMPATIBLE FOR RENDER-PASS REUSE, AND IT IS EXACTLY WHAT QUALCOMM SAYS TO FIX (2026-08-10)**
 **I reported `rt_transfer_same_format_` / `rt_transfer_diff_format_` as "all zero" and used that to say the
 addressable resolve set was unmeasured. WRONG - they print as `xfer_same_fmt` / `xfer_diff_fmt`, they live PAST
