@@ -491,6 +491,58 @@ a GUESS, in a comment, load-bearing for our LRZ work). **A primary source turns 
 the fragment-ALU bottleneck is exactly where a fixed-function-vs-shader question decides whether work is
 reducible.**
 
+## 🚨🔥🔥 **FEX PROVES THE AAPCS64 CEILING IS A CHOICE, NOT A LAW: `preserve_allcc` KEEPS THE LOW 128 BITS OF v8-v31 (2026-08-10)**
+**This file states that vector residency across a call is "architecturally impossible" on AArch64. That is a
+statement about AAPCS64, NOT about the machine. FEX-Emu (`reference/FEX`) does not use AAPCS64 between guest
+code, and its FPR spill set at a helper call is literally an EMPTY ARRAY.**
+```
+AAPCS64        preserves the LOW  64 bits of v8-v15
+preserve_all   preserves the LOW 128 bits of v8-v31      <- FEX/Arm64Emitter.cpp:28-41
+FEX PreserveAll_SRA    = 7 GPRs                             Arm64Emitter.cpp:71-73
+FEX PreserveAll_SRAFPR = {}  EMPTY, non-SVE256 = our 8 Gen 2   Arm64Emitter.cpp:99-101
+```
+**⇒ THAT IS EXACTLY THE GUARANTEE WHOSE ABSENCE COSTS US.** It is why `EmitGuestCallClobberBarrier` must
+declare `~{v8}..~{v15}` (`llvm_assembler.cc:829-837`), why the `vmaddfp` miscompile existed, and why this file
+concluded **0 of 82 guest vectors can survive a call**. **LLVM already exposes this as `preserve_allcc`, so it
+is settable on the `xe_llvm_guest_call` / `_call_extern` / `_resolve_function` DECLARATIONS without touching
+the emitter.**
+**🔒 FEX also pins the whole guest register file GLOBALLY** - 16 x86 GPRs in `x4-x17,x19,x29,x26,x27`
+and **all 16 XMM in v16-v31** (`Arm64Emitter.cpp:47-58, 93-97`), mapped directly with no allocator
+(`RegisterAllocationPass.cpp:199-217`). **A guest call spills NOTHING** - `ExitFunction`/`BranchHint::Call` has
+no `SpillStaticRegs` (`BranchOps.cpp:161-185`). **The price is only 7 dynamic GPRs and 14 FPRs for temporaries.**
+**⇒ SO OUR "0.1 SPILL REQUESTS PER FUNCTION" MEASUREMENT WAS TAKEN UNDER A CONSTRAINT FEX SIMPLY DOES NOT
+ACCEPT.** The register-budget conclusion stands for OUR design; it is not a fact about ARM64.
+### ⚠⚠ FOUR MEASUREMENTS BEFORE BUILDING THIS, IN ORDER. THE FIRST IS A KILL SWITCH.
+1. **Guest-call DENSITY.** Calls per second, and the fraction of retired guest instructions at a call boundary,
+   on Burnout AND a second title. **If calls are rare the whole barrier is noise and everything below is
+   wasted.** Cheap. Do it first.
+2. **Current barrier COST.** Count the loads/stores `WriteBackCtxRegs`/`ReloadCtxRegs` emit per call site
+   (`llvm_assembler.cc:800,802`), and A/B `cpu_llvm_guest_call_clobber_barrier`. **That is the CEILING on the win.**
+3. **Can the a64 backend pay preserve_all's bill?** It clobbers `x22-x28` and the FULL `q8-q15` today. Honouring
+   preserve_all means real prologue/epilogue saves. **Measure that cost on the a64 side; do not assume it absorbs.**
+4. **Toolchain reality.** FEX gates this on a clang capability probe (`CMakeLists.txt:225-239`). **Verify NDK
+   clang emits correct `preserve_allcc` CALLEE-side saves for AArch64, and that the C++ helper and the IR
+   declaration AGREE - a one-sided application is silent guest-state corruption**, the exact class that cost a
+   day this session.
+**⇒ DO NOT bundle this with an inline-cache/backpatch change. The ABI change is independently testable; the
+call-resolution change is not.**
+### ❌ THE IMPORTANT NEGATIVE: FEX DOES NOT SEE ACROSS A GUEST CALL EITHER
+`Frontend.cpp:1143-1155` - on a CALL, FEX adds ONLY the return address to the multiblock and returns. **The call
+target is never followed. No inlining pass, no interprocedural analysis anywhere in `IR/Passes/`.**
+**⇒ FEX does not solve our one-module-per-function problem. It makes it IRRELEVANT by making the state barrier
+free, rather than by seeing through it.** Stop looking for cross-call optimisation in dynamic recompilers.
+### 📐 N64Recomp - the structural INVERSE, and two honest caveats
+**One C function per guest function, batched 50 per translation unit** (`config.cpp:435-444`), and a resolved
+`jal` emits **a direct C call by name** (`cgenerator.cpp:423-425`). The host C compiler is the interprocedural
+optimiser. **But:** (a) neither `rdram` nor `ctx` is `restrict`, so cross-call alias analysis is weak - the win
+is inlining and scalar promotion, **not** register residency; (b) **there is no benchmark in the repo for the
+50-per-file default.** It is a plausible default, not evidence.
+**❌ AND ITS INDIRECT-BRANCH STORY DOES NOT TRANSFER.** Jump tables are statically recovered
+(`analysis.cpp:60-263`), but if a table cannot be sized the **whole function fails to recompile**
+(`analysis.cpp:342-345`). Fine for a one-shot port of one known ROM with a symbol map; **unacceptable for
+arbitrary XEXs.** Genuine function-pointer calls still fall back to `LOOKUP_FUNC` (`cgenerator.cpp:413-415`) -
+**exactly what `xe_llvm_guest_call` already does. Nothing to take.** No self-modifying-code support at all.
+
 ## 📚❌ **BOX64 CLONED AND READ: OUR OWN CVAR HELP MIS-CITES IT. "CALLRET" IS NOT REGISTER RESIDENCY (2026-08-10)**
 **`reference/Box64` = github.com/ptitSeb/box64, an x86->ARM64 dynamic recompiler. This file cites it twice and
 nobody had read it. `cpu_backend_llvm_residency_abi`'s help says:**
