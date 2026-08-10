@@ -727,6 +727,36 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ⏳ **THE GEARS STALL DIAGNOSTIC IS BLOCKED BY THE OBJECT CACHE, NOT BY THE BUG (2026-08-10)**
+**Went to run the already-scoped Gears diagnostic (raise log to Debug, grep the five stalled handles for their
+`typeid`, which names the subsystem that owes the signal). It never got that far, and the reason is
+operational rather than interesting:**
+```
+Gears, log_level=3, 195 seconds:
+  Title name:                        NEVER REACHED
+  AOT precompile progress   15,360 / ~28,478     <- still compiling when stopped
+  LLVMobjload                    0               <- COLD cache for this title
+  LLVMbegin                 14,663
+  stall waits                    0               <- means nothing; the guest never ran
+  gpu temp                      51C              <- vs 73-78C when Gears actually reaches Act 1
+```
+**⇒ THE ZERO STALL-WAITS IS A NULL RESULT ABOUT NOTHING.** The tell was thermal: Gears reaching gameplay hits
+73-78C, this run peaked at 51C. **A cold-cache run is indistinguishable from a fixed bug if you only look at
+the symptom counter** - the same shape as the void routes the BD harness now gates against.
+**🔑 THE OPERATIONAL FACT, WHICH IS THE REUSABLE PART: THE OBJECT CACHE IS EFFECTIVELY SINGLE-TITLE
+UNTIL EACH TITLE IS WARMED SEPARATELY.** Titles CAN coexist in one stamped directory (the key is guest address
++ code hash, and this file records a dir once holding 60,606 objects of which 54,705 were Gears') - **but a
+rebuild that bumps the stamp wipes ALL of them, and re-warming is PER TITLE.** BD is ~18.6k functions / ~150s;
+**Gears is ~28.5k functions and did not finish in 195s.**
+**⇒ SO SWITCHING BENCHMARK TITLES AFTER AN LLVM-TOUCHING REBUILD COSTS A DEDICATED WARM RUN PER TITLE, and for
+Gears that is >3 minutes of compile before the route can even start** - on a title whose route then needs
+another 125-150s and lands at 73-78C. **Budget a full cooldown-warm-cooldown-run cycle; it does not fit in the
+tail of a session.**
+**⇒ THE DIAGNOSTIC ITSELF REMAINS CORRECTLY SCOPED AND UNCHANGED:** warm Gears' cache to completion, then run
+the route with `--ei log_level 3`, then
+`grep -E "Added handle:(F8000010|F8000018|F800004C|F80000FC|F8000104)"` - the `typeid` on those lines names the
+subsystem that owes the signal, which is the fix site. **No new instrumentation is needed; only device time.**
+
 ## 🚧 **WHY EVERY NUMBER IN THIS FILE IS BLUE DRAGON: IT IS THE ONLY TITLE WITH A VALID BENCHMARK SCENE (2026-08-10)**
 **The standing goal is "2x speed for EVERY game". Checked what could actually be measured, and the answer is
 one title - which is a structural blocker worth stating plainly rather than leaving implicit.**
