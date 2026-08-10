@@ -10,11 +10,13 @@
 #include "xenia/gpu/vulkan/vulkan_texture_cache.h"
 
 #include <algorithm>
+#include <atomic>
 #include <array>
 #include <cstddef>
 #include <utility>
 
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
@@ -26,6 +28,22 @@
 #include "xenia/ui/vulkan/ui_samplers.h"
 #include "xenia/ui/vulkan/vulkan_mem_alloc.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
+
+DEFINE_bool(
+    gpu_vulkan_tex_keep_ubwc, false,
+    "Efficiency (texture-bandwidth recovery): keep Adreno UBWC alive on TEXTURES "
+    "that need MUTABLE_FORMAT by attaching a VkImageFormatListCreateInfo naming the "
+    "exact 2 view formats. Pre-750 Adreno (the 740) disables UBWC on a "
+    "MUTABLE_FORMAT image unless the view formats are declared; Turnip honors the "
+    "list. This is the UNMITIGATED half of the hole gpu_vulkan_rt_keep_ubwc already "
+    "plugs for render targets - that site attaches a list, this one attached nothing, "
+    "so every texture with a second view lost UBWC silently. Bandwidth is now the "
+    "leading bottleneck candidate: pass-break count was excluded on device 2026-08-10 "
+    "(removing 36%% of breaks moved the frame 0.27%%), and Qualcomm lists maximizing "
+    "UBWC as a top best practice. The 2-entry list is complete by construction (the "
+    "image is viewed only as those two formats). Logs TEXubwc every 64 textures so a "
+    "flat A/B is a refutation, not an unproven no-op. Default off pending that A/B.",
+    "GPU");
 
 namespace xe {
 namespace gpu {
@@ -1194,8 +1212,51 @@ std::unique_ptr<TextureCache::Texture> VulkanTextureCache::CreateTexture(
   image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   image_create_info.pNext = nullptr;
   image_create_info.flags = 0;
+  // Declared here so it outlives the VkImageCreateInfo it is chained onto.
+  VkImageFormatListCreateInfo tex_format_list_info = {};
+  VkFormat tex_view_formats[2];
   if (formats[1] != VK_FORMAT_UNDEFINED) {
     image_create_info.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    // 🎯 UBWC RECOVERY ON *TEXTURES* - the unmitigated half of the same hole the
+    // render-target cache already plugs with gpu_vulkan_rt_keep_ubwc.
+    //
+    // Pre-750 Adreno (the Thor's 740) DISABLES Universal BandWidth Compression on
+    // any MUTABLE_FORMAT image unless the exact view formats are declared up
+    // front; Turnip honors VkImageFormatListCreateInfo. The RT cache learned this
+    // and attaches a 2-entry list. This site sets the SAME flag and attached
+    // NOTHING, so every texture needing a second view lost UBWC silently.
+    //
+    // Why textures are worth more than render targets here: Qualcomm's own guide
+    // lists "Maximize Universal BandWidth Compression" as a top-level best
+    // practice, and this project has just excluded pass-break count as the
+    // bottleneck (removing 36% of breaks moved the frame 0.27%), which leaves
+    // BANDWIDTH as the leading candidate for a 1,200-draw / 250k-vertex frame
+    // that is 99% GPU-busy at the max clock. Textures are read every draw.
+    //
+    // The list is complete BY CONSTRUCTION: this image is viewed only as
+    // formats[0] and formats[1] - the same two values that decide the flag one
+    // line above - so it cannot omit a view the image actually uses.
+    if (cvars::gpu_vulkan_tex_keep_ubwc &&
+        vulkan_device->extensions().ext_1_2_KHR_image_format_list) {
+      tex_view_formats[0] = formats[0];
+      tex_view_formats[1] = formats[1];
+      tex_format_list_info.sType =
+          VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO;
+      tex_format_list_info.pNext = image_create_info.pNext;
+      tex_format_list_info.viewFormatCount = 2;
+      tex_format_list_info.pViewFormats = tex_view_formats;
+      image_create_info.pNext = &tex_format_list_info;
+      // ENGAGEMENT PROOF. The sibling render-target lever (gpu_vulkan_rt_keep_ubwc)
+      // has no counter, so its flat A/B could not distinguish "no effect" from
+      // "never ran" - the exact ambiguity that has made a dozen results in this
+      // project unreadable. Log periodically so a flat result here is a real
+      // refutation instead of another maybe.
+      static std::atomic<uint32_t> ubwc_list_count{0};
+      uint32_t c = ubwc_list_count.fetch_add(1, std::memory_order_relaxed) + 1;
+      if ((c & 63u) == 0) {
+        XELOGI("TEXubwc: attached format list to {} mutable-format textures", c);
+      }
+    }
   }
   if (key.dimension == xenos::DataDimension::kCube) {
     image_create_info.flags |= VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT;

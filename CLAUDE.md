@@ -727,6 +727,48 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🔧🔧 **NOVEL HARDWARE ACCELERATION: WHAT THE THOR ACTUALLY OFFERS, AND TWO FALSE CLAIMS IN THIS FILE CORRECTED (2026-08-10)**
+**User asked for novel uses of the crypto hardware for emulation. The real precedent is using AES/PMULL as
+MIXING and BIT-MANIPULATION primitives rather than for crypto (meow hash, aHash, falkhash). Checked what we
+already get, what we do not, and what silicon is reachable at all.**
+### ❌ TWO "WE GET IT FREE" CLAIMS IN THIS FILE ARE WRONG - measured with `clang -S`, NDK 25 clang 14, our exact flags (`-march=armv8.2-a+lse+crypto+sha3+crc+dotprod`)
+| pattern | this file claimed | ACTUAL emitted code |
+|---|---|---|
+| `a ^ b ^ c` | fuses to EOR3 | ✅ **`eor3`** - 1 instruction. **Claim correct.** |
+| `a ^ (b & ~c)` | *"LLVM fuses ... `a ^ (b & ~c)` -> one `BCAX`"* | ❌ **`bic` + `eor`** - 2 instructions. **NOT FUSED.** |
+| `(a ^ b)` rotated | (not claimed, but the obvious third) | ❌ **`eor`+`ushr`+`shl`+`orr`** - 4 instructions. **XAR NOT USED.** |
+**So `+sha3` buys us EOR3 automatically and nothing else.** The BCAX claim in the crypto section of this file is
+false as written, and XAR (XOR-then-rotate in ONE instruction) is completely unexploited.
+**🔑 AND THE MAPPING TO GUEST CODE IS EXACT, WHICH IS WHY THIS LOOKED PROMISING:** PPC VMX has
+**`vandc`** (`b & ~c`) - literally BCAX's operation - and `vxor` + `vrlw` is literally XAR. A guest doing
+`vxor(a, vandc(b,c))` costs us 2 host instructions where 1 exists.
+**🛑 BUT RULE 4 KILLS IT AGAIN, AND THE PRECEDENT IS DIRECT: the EOR3 census in this file already
+measured `0 of 1` fusable occurrences in real guest code.** Static lowering sites are 9 for AND_NOT and 1 for
+V128 rotate, but sites are not frequency. **Expect the same zero.** Do not build a BCAX/XAR fusion pass without
+running a census first - this would be the fifth "obviously worth doing" lever with no frequency behind it,
+after EOR3, the per-draw FNV chain, `eieio`, and guest SHA.
+### 🧿 WHAT SILICON IS ACTUALLY REACHABLE - device-enumerated, not assumed
+| block | status |
+|---|---|
+| **Hexagon cDSP / NPU** | **UNREACHABLE. Zero `/dev/*fastrpc*`, `cdsp` or `adsp` nodes visible to an unprivileged app.** The most-cited "unused silicon" idea (XMA audio decode on the DSP) is **not possible** without OEM signing. Cross it off permanently. |
+| hardware video decode | 4 `/dev/video*` nodes, reachable via MediaCodec. Only relevant to FMV, which 360 titles usually decode in guest code. Low value. |
+| AES / SHA1 / SHA2 / SHA3 / CRC32 / PMULL | present and **enabled in our build flags**. EOR3 used automatically; BCAX/XAR not; guest SHA measured at **0 calls**; XEX AES is load-time. |
+| **5 Vulkan extensions exposed by Turnip with ZERO references in our tree** | `VK_EXT_host_image_copy`, `VK_EXT_descriptor_buffer`, `VK_EXT_graphics_pipeline_library`, `VK_EXT_attachment_feedback_loop_dynamic_state`, `VK_KHR_maintenance5` |
+**⇒ THE HONEST FRAME: BD IS GPU-BOUND, SO NO CPU-SIDE CRYPTO TRICK CAN DELIVER 2x REGARDLESS OF HOW CLEVER IT
+IS.** The crypto-hardware question is genuinely interesting and the answer is genuinely small. **The reachable
+unexploited hardware that could matter is on the GPU side**, and of the five unused extensions the one that
+targets a measured cost is `VK_EXT_host_image_copy` (texture upload without a staging buffer or queue submit).
+### 🎯 THE ONE CONCRETE FIX SHIPPED FROM THIS ANALYSIS: **UBWC ON TEXTURES**
+**Adreno UBWC is dedicated bandwidth-compression hardware, and pre-750 parts (the 740) DISABLE it on any
+`MUTABLE_FORMAT` image unless the view formats are declared.** The render-target cache already knows this and
+attaches a `VkImageFormatListCreateInfo` under `gpu_vulkan_rt_keep_ubwc`. **`vulkan_texture_cache.cc` sets the
+same flag and attached NOTHING** - so every texture needing a second view lost UBWC silently, with no cvar and
+no mitigation. Added `gpu_vulkan_tex_keep_ubwc` (default off) attaching the exact 2-entry list, **with a
+`TEXubwc` engagement counter** - because the RT sibling has no counter and its flat A/B therefore could not
+distinguish "no effect" from "never ran".
+**Bandwidth is the leading remaining candidate** precisely because pass-break count was excluded on device
+today (36% of breaks removed, +0.27%), and Qualcomm lists maximizing UBWC as a top-level best practice.
+
 ## 🧨🧨🧨 **THE PASS-BREAK THEORY IS DEAD: WE REMOVED 36% OF PASS BREAKS AND THE FRAME TIME DID NOT MOVE (2026-08-10)**
 **This is the most consequential GPU measurement in the file, because it invalidates the premise the entire GPU
 plan has been built on - including the ~115-site dynamic-rendering port.**
