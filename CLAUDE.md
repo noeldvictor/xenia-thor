@@ -727,6 +727,36 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🧪 **THE FULL FLOAT-LOWERING SET RUNS CLEAN ON DEVICE - 100% LLVM COVERAGE, FPS FLAT (2026-08-10)**
+**Ran the whole set together on a properly warmed cache. It is a COVERAGE result, and the fps outcome is the
+one the rest of this file predicts.**
+```
+--ez cpu_backend_llvm_lower_vmaddfp  --ez cpu_llvm_vmx_float_flush
+--ez cpu_llvm_vmx_fmax_nan           --ez cpu_llvm_lower_vsel
+--ez cpu_llvm_lower_scalar_fma
+
+  AOT:    19,866 functions lowered, 0 faults, guest resumed
+  cache:  19,601 objects   (baseline was 18,596  ->  +1,005 functions now on LLVM)
+  route:  gameplay-tier confirmed (215,193 verts), 0 faults
+  frame:  61,498 us / 16.26 fps   vs baseline 61,831 / 16.17   ->  -0.5% (FLAT)
+```
+**⇒ THE +1,005 CACHED OBJECTS ARE THE INDEPENDENT CONFIRMATION OF THE ZERO-FALLBACK CENSUS.** Those are
+functions that previously fell back to a64 and now compile on LLVM - the count matches, from a completely
+different signal (files on disk rather than log lines).
+**⇒ AND FPS IS FLAT, WHICH IS THE CORRECT AND EXPECTED RESULT.** BD is GPU-bound at 99% on the max clock, so
+recovering ~1,000 guest functions to LLVM cannot move the frame. **This exactly reproduces the earlier vmaddfp
+A/B (~900 functions recovered, ~0% fps)** - and that consistency is itself worth something: two independent
+coverage wins, both flat, both on a GPU-bound scene.
+**⇒ SO SCORE IT HONESTLY: THIS IS A CORRECTNESS + COVERAGE RESULT, NOT A SPEED ONE.** The value is that
+**every guest function now compiles on LLVM** (0 fallbacks, first time ever) and keeps its register residency,
+which should matter on a CPU-BOUND title - and we cannot currently benchmark one (Gears stalls, Burnout is
+capped). **File it as "banked, unvalued until a CPU-bound title exists."**
+**⚠ STILL NOT DEFAULTED ON, AND THE REASON IS UNCHANGED: NO HUMAN HAS CONFIRMED THE PIXELS.** The route reached
+the field and 0 faults were logged, but `lower_scalar_fma` was disabled for a *rendering* regression (black
+screen / degenerate geometry), and this file's own rule is that **only a human looking at the panel settles a
+visual question** - `screencap` cannot be trusted on a hardware-composited SurfaceView. **One look at BD's field
+with this set on is all that stands between here and defaulting five validated lowerings.**
+
 ## ✅🔧 **THE OBJECT-CACHE KEY IS NOW STRUCTURALLY UNBREAKABLE - ONE TABLE, BOTH SITES (2026-08-10)**
 **This file has demanded this fix four times** (*"the real fix is to derive the key from ONE table of lowering
 cvars so omission is impossible"*) after the key was broken three times in a single day, plus once more by me
