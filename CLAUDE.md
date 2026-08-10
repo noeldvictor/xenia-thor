@@ -1357,6 +1357,9 @@ host_height = GetRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples) 
 the cvar is set, **every consumer of that invariant computes a size the image no longer has.**
 ```
 exact "GetWidth() * draw_resolution_scale_x()" sites .... 6
+    of which LIVE vulkan code ........................... 1  (:3988, image creation)
+    default-off readback diagnostics .................... 3  (:12056/:12078/:12211)
+    d3d12 backend, not compiled into the APK ............ 1
 companion height computations in the RTC ............... 8
 total draw_resolution_scale_[xy]() references:
     vulkan_render_target_cache.cc  46      render_target_cache.cc   8
@@ -1364,12 +1367,28 @@ total draw_resolution_scale_[xy]() references:
     vulkan_texture_cache.cc         6      -> 69 in the five main .cc
     (122 counting headers + the d3d12 backend)
 ```
-**⇒ THAT IS THE MISALIGNMENT MECHANISM, NAMED AT LAST - AND IT IS NOT "RESOLVE FORGOT A MULTIPLY".**
-`DumpRenderTargets` (`:12019`) is the RT->EDRAM bridge every copy resolve goes through, and it sizes its reads
-with `rt_image_key.GetWidth() * draw_resolution_scale_x()`. With `pct=71` the image is 71% as wide and the dump
-still reads full-width coordinates - **so it samples past the image and writes the wrong texels into EDRAM
-tiles.** Patching `Resolve()` alone cannot fix that; `Resolve()` is upstream of the dump and the dump is where
-the coordinates are wrong.
+**❌❌ AND I GOT THE MECHANISM WRONG IN THE FIRST VERSION OF THIS ENTRY - CORRECTED HERE, SAME SESSION.**
+I wrote that `DumpRenderTargets` "sizes its reads with `GetWidth() * draw_resolution_scale_x()`" and cited
+`:12056`, `:12078`, `:12211`. **All three are inside DEFAULT-OFF DIAGNOSTICS** - `vulkan_trace_dump_rt_image`
+(guard at `:12044`) and `vulkan_trace_dump_depth_image` (guard at `:12196`). They are readback checksums, not the
+dump. **Of the 6 exact width sites, ONE is live Vulkan code (`:3988`, the image creation itself), three are those
+diagnostics, and one is the d3d12 backend, which does not compile into the APK.**
+**✅ THE ACTUAL DUMP DISPATCH NEVER COMPUTES A PIXEL WIDTH AT ALL - IT WORKS IN TILE SPACE:**
+```
+pitches.source_pitch      = rt_key.GetPitchTiles();
+offsets.source_base_tiles = rt_key.base_tiles;
+CmdVkDispatch(group_count_x, group_count_y, 1);      // groups over TILES
+```
+**The C++ hands the shader tiles, and the SHADER maps tiles -> pixels.** So the misalignment is not a missing
+multiply in our C++; it is that **the tile->pixel mapping assumes the image is exactly
+`tiles x tile_pixels x resolution_scale`, and a fractionally-shrunk image is not.**
+**🔥 AND THE SHADER SIDE HAS THE SAME INTEGER TYPE PROBLEM, WHICH IS THE REAL BLOCKER:**
+```
+shaders/resolve.xesli:84    uint2_xe resolution_scale;      <- INTEGER, on the shader side too
+```
+**So the fractional factor cannot be expressed in the resolve/dump shader constants either.** That is a stronger
+result than the C++ finding and it points the same way: **the downscale is not representable anywhere in the
+resolve chain as currently typed.**
 **❌ AND THE OBVIOUS CLEAN FIX IS BLOCKED BY A TYPE: `draw_resolution_scale_x_` / `_y_` ARE `uint32_t`**
 (`render_target_cache.h:641-642`). They express INTEGER UPSCALE (1x, 2x, 3x) and **cannot represent 0.71x**. So
 "just route the downscale through the native mechanism every consumer already respects" - which would have been
@@ -1386,10 +1405,16 @@ The frame-time measurements stand (fewer fragments really were shaded). What is 
 correctness hole is **structural rather than a missing line**, so the distance from "measured 1.79x" to
 "shippable slider" is a bounded refactor of the size invariant plus its shader constants - **not the one-function
 change recorded below.** Budget it as such.
-**📌 THE PROCESS POINT, and it is the third time today: I SCOPED A TASK FROM A GREP AND NOT FROM THE
-CALL PATH.** "Zero references to the downscale cvar in `Resolve()`" is TRUE and it is the wrong question - the
-cvar is absent from `DumpRenderTargets` too, and from all 14 dimension sites, which is the actual problem.
-**Counting where a symbol is ABSENT tells you nothing until you know where it OUGHT to be.**
+**📌 THE PROCESS POINT, AND I COMMITTED THE VERY MISTAKE THIS PARAGRAPH WARNS ABOUT.** The first
+version of this entry closed with *"counting where a symbol is ABSENT tells you nothing until you know where it
+OUGHT to be"* - and its own evidence was a grep for `GetWidth() * draw_resolution_scale_x()` whose hits I never
+checked for an enclosing guard. **Three of the six were behind default-off cvars.** This file already records
+that filter as mandatory (the BD-removal null-deref sweep: *"a short-window regex is not sufficient - read the
+enclosing block"*) and records the same trap in the crypto entry (*"the per-draw FNV chain LOOKS like the
+perfect target and never executes - check the GATE before the algorithm"*).
+**⇒ THE RULE, NOW EARNED TWICE: A GREP HIT INSIDE A `cvars::`-GUARDED BLOCK IS NOT A CALL SITE. Resolve the
+nearest enclosing guard for every hit BEFORE counting it.** One `awk` pass over the file does it, and here it is
+the difference between "6 sites" and "1 site" - between a refactor and a one-line change.
 
 ## 🔧 **"INCREMENT 2" SCOPED IN CODE: WHAT IT WOULD TAKE TO SHIP THE RESOLUTION WIN (2026-08-10)**
 **The measured win (1.38x at 71%, 1.79x at 50%) is gated on one correctness question, and it is answerable
