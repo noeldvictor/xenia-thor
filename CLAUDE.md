@@ -727,6 +727,40 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🏆🏆 **BEST RESULT OF THE SESSION: `gpu_resolution_downscale_pct 71` = -27.7% FRAME TIME, 16.17 -> 22.37 fps (2026-08-10)**
+**Qualcomm's own prescription for a fragment-bound title, and it is the only lever today that both WON and is
+plausibly shippable.**
+```
+BASELINE (same build)        277 frames   61,831 us   16.17 fps
+downscale_pct 71 (~half area) 624 frames  44,695 us   22.37 fps   -27.7% frame time / +38.3% fps
+0 faults, gameplay-tier confirmed (263,103 verts/frame)
+```
+**⇒ IT ALSO CLOSES THE BOTTLENECK ARGUMENT FOR GOOD: HALVE THE PIXEL AREA, LOSE 28% OF THE FRAME.** Together
+with VRS-all-draws (-21.1%) that is two independent fragment-cost levers winning big while every structural
+lever (pass breaks, renderArea, UBWC, shmem hoist) measured flat. **Blue Dragon's field is fragment-bound and
+the argument is over.**
+**📖 AND IT IS EXACTLY WHAT THE ADRENO GUIDE PRESCRIBES**, from the Best Practices Summary:
+> *"Use the lowest render target resolution that looks good and upscale: prefer SGSR when possible, or frame
+> buffer blits otherwise. On Android, consider relying on SurfaceFlinger's efficient bilinear rescale."*
+**Unlike VRS (structural, blocky artifacts) and FP16 (measured 40% SLOWER and uglier), resolution scaling
+degrades UNIFORMLY and is a user-facing slider.** That is the right shape for a quality/perf trade.
+**⚠⚠ NOT SHIPPABLE YET - THE CVAR NAMES ITS OWN CORRECTNESS HOLE, AND BD IS IN THE AFFECTED CLASS:**
+> *"Works transparently ONLY where the guest samples the RT as a texture with normalized [0,1] UVs (BD's
+> composites) - the sampler upscales the smaller image. **Pixel-exact EDRAM copies / resolves are NOT rescaled
+> here (increment 1), so titles that resolve the RT by copy will misalign.**"*
+**BD performs ~23 `copy=` resolves per frame** (measured today), so the misalignment path is live. **0 faults
+and a gameplay-tier scene say it did not crash or fall back to a title screen - they say NOTHING about whether
+the image is correct.** This file's own rule: **the only trustworthy visual check is a human looking at the
+panel** (`screencap` cannot be trusted on a hardware-composited SurfaceView).
+**⇒ NEXT, IN THIS ORDER: (1) HUMAN EYES ON THE FIELD AT 71% - specifically look for misaligned/offset
+composites, bloom or UI ghosting, not just softness; (2) if it misaligns, "increment 2" is to rescale the
+resolve/copy path too, which is the real work and is bounded; (3) sweep the percentage (85 / 71 / 50) to build
+the quality/fps curve for a user slider.** Do not default it on before (1).
+**📌 AND NOTE WHAT THIS MEANS FOR THE 2x GOAL, honestly: +38.3% fps is the largest measured gain in this
+file, and it is still not 2x.** 16.17 -> 22.37 fps against a 30 fps target. **Stacking is the open question** -
+downscale is fragment-area, VRS is fragment-rate, and they attack the same cost from different angles, so they
+will NOT simply add. Measure the pair before assuming.
+
 ## ❌❌❌ **`gpu_fp16_shaders` IS A DOUBLE REGRESSION: 40% SLOWER *AND* UGLIER - AND THE MANUAL WARNED ME ONE PARAGRAPH AWAY (2026-08-10)**
 **User watching the panel: "whoa its uglier AND slower." Device numbers agree, emphatically:**
 ```
