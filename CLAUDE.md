@@ -727,6 +727,42 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🚀🚀🚀 **THE RESOLUTION CURVE - AND BD's FIELD HITS 29 fps (1.79x) AT QUARTER AREA (2026-08-10)**
+**The closest anything in this project has come to the goal. Same route, same build, one arm per cooldown,
+every arm gameplay-tier confirmed, 0 faults.**
+```
+  gpu_resolution_downscale_pct   gpu_frame_us    fps      vs baseline
+    100 (off)                      61,831 us    16.17     1.00x
+     71 (~half area)               44,695 us    22.37     1.38x
+     50 (quarter area)             34,480 us    29.00     1.79x
+  ---------------------------------------------------------------
+  project goal for BD's field                   30.00
+  "2x" of this baseline                         32.34
+```
+**⇒ THE STANDING BD GOAL IN THIS FILE - "Blue Dragon -> 30fps @ 720p" - IS ESSENTIALLY MET AT 50%: 29.00 fps
+from 16.17.** After a year of EDRAM rewrites, HLE renderers, pass-fusion and CPU levers, **the thing that
+delivered it was rendering fewer pixels** - which is exactly what Qualcomm's guide says to do for a
+fragment-bound title, and what the per-pass measurement proved BD is.
+**📈 THE CURVE IS SUB-LINEAR, AND THAT IS INFORMATIVE:** area halves 100->71 for 1.38x, then halves
+again 71->50 for a further 1.30x. **Fragment cost is dominant but not total** - each halving returns less
+because the fixed (vertex / CP / transfer) portion becomes a larger share. Extrapolating, **resolution alone
+cannot reach 2x**; it asymptotes toward the non-fragment floor.
+**⚠⚠ THE QUALITY QUESTION IS NOW THE WHOLE QUESTION, AND IT IS NOT MINE TO ANSWER.** 50% is a **quarter of the
+pixels** - roughly 640x360 internal for a 720p output. That is a large, visible softness, and **on top of it
+the unvalidated misalignment risk still stands**: the cvar rescales draws but NOT pixel-exact EDRAM
+copies/resolves, and **BD performs ~23 `copy=` resolves per frame**. 0 faults and 1,102 gameplay frames say it
+runs; they say nothing about whether it looks right.
+**⇒ THE GATE BEFORE ANY OF THIS SHIPS, unchanged and now more important because the win is real: A HUMAN LOOKS
+AT THE FIELD AT 71 AND AT 50**, checking for misaligned/ghosted composites, bloom offset and UI shift - not
+merely softness. **If it misaligns, "increment 2" (rescaling the resolve/copy path) is the required work and
+it is bounded.** If it only softens, this is a per-title slider and BD's profile should default somewhere on
+this curve.
+**📌 AND THE HONEST SCOREBOARD FOR THE 2x ASK: 1.79x measured, 2.00x asked.** The gap is real and this
+file should not round it away. **What is established is where the remaining 0.21x would have to come from -
+NOT instruction-level work (priced at ~zero all session), NOT the structural/pass levers (measured flat, and
+re-confirmed flat after fragment cost was halved), but the CONTENT of the two dominant passes**, or a second
+cost centre that only becomes visible once fragment work is this low.
+
 ## 🔬 **THE RESIDUAL IS *STILL* FRAGMENT WORK - THE STRUCTURAL LEVERS STAY DEAD (2026-08-10)**
 **Asked the fork question directly: with fragment cost roughly halved, has the frame's composition changed?
 Re-ran the per-pass split WITH downscale+VRS on. It has not.**
