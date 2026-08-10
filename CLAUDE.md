@@ -727,6 +727,44 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🎯🎯🎯 **ZERO LLVM FALLBACKS: THE FULL FLOAT-LOWERING SET TAKES BD FROM ~95% TO 100% LLVM COVERAGE (2026-08-10)**
+**"Dig deep on Xenon" / "we have major issues with Xenon emulation" - here is a real, measured one, and it was
+hiding behind a default-off flag whose blocking concern had already been fixed.**
+**THE TRAIL:** today's fallback census with `lower_vmaddfp` + the float fixes + the new `lower_vsel` still
+showed **768 fallbacks, and they were ALL scalar FMA**: `mul_add 633`, `mul_sub 135`. Those are exactly what
+`cpu_llvm_lower_scalar_fma` handles - a lowering that is **implemented, qemu-validated 32/32, and DEFAULT
+OFF**, whose help says it *"recovers ~830 functions (LLVM fallbacks 1,022 -> 194, device-measured)"*.
+**It was disabled over an FPCR-mode concern - and its own help records that concern as SOLVED:**
+> *"UPDATE 2026-08-09: **the FPCR HALF IS NOW FIXED AT ITS SOURCE.**"* (the a64 epilog now restores FPU mode,
+> establishing "FPCR is in FPU mode at every guest function boundary")
+**✅ MEASURED WITH EVERYTHING ON:**
+```
+vmaddfp + vmx_float_flush + vmx_fmax_nan + lower_vsel + lower_scalar_fma
+  total_fallbacks = 0        (0 of 2,346 functions lowered; prior rate 768/13,916 = 5.5%
+                              predicts ~130 - so this is a real zero, not a small sample)
+  faults          = 0
+```
+**⇒ ZERO FALLBACKS. EVERY GUEST FUNCTION COMPILES ON LLVM.** The historical progression is
+**1,022 -> 121 -> 768 -> 0** as each lowering landed, and this is the first time the number has been zero.
+**⇒ WHY IT MATTERS BEYOND THE COUNT: a fallback does not just lose LLVM's codegen, it loses REGISTER RESIDENCY
+for the WHOLE function** (this file's own framing). 768 functions were dropping to a64 on the shipping-candidate
+config, including scalar-FP-heavy math.
+**⚠⚠ WHAT IS STILL OWED, AND IT IS THE SAME THING EVERY TIME: A PIXEL CHECK.** `lower_scalar_fma` was
+default-off for a RENDERING regression (black screen / degenerate geometry), and although the FPCR root cause is
+fixed, **nobody has confirmed the pixels since.** 0 faults is not a pixel check. **Do not flip the default until
+a human looks at BD's field with the full set on.**
+## 🐞 **AND I REINTRODUCED THE OBJECT-CACHE KEY DEFECT THE SAME DAY I READ ABOUT IT - FIXED**
+This file records the cache key as broken THREE TIMES in one day because *"the key is hand-maintained and
+nothing forces a new lowering cvar into it"*, and warns that a lowering cvar missing from the key means **an A/B
+serves objects compiled under the OTHER setting and reads FLAT.**
+**I added `cpu_llvm_lower_vsel` this session and did not add it to the key.** Fixed: the key format gains an
+`s%d` field and the argument list gains `cpu_llvm_lower_vsel`, **at BOTH construction sites** (`opath` and
+`setModuleIdentifier`) - which is the other half of the same defect, since those two diverging is what broke it
+the first time. Verified 2 format strings and 2 argument lists.
+**⇒ THE STRUCTURAL FIX THIS FILE ASKED FOR IS STILL NOT DONE: derive the key from ONE table of lowering cvars
+so omission is impossible.** Four instances now. **Every new lowering cvar is a latent false-flat until that
+exists.**
+
 ## 🧨🧨🧨 **REVIEWS #1/#2/#3 ARE REFUTED ON DEVICE: WE DO NOT SPILL. 0.1 SPILL REQUESTS PER FUNCTION (2026-08-10)**
 **"Dig deep on Xenon." The deepest Xenon->ARM64 claim in this file is the register squeeze - 32 guest GPRs and
 **128 guest VMX registers** crammed into 7 host GPRs and 28 host vectors, with "everything else spilled to a

@@ -3220,7 +3220,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // stamp in the DIRECTORY does not help here - both arms are the same build.
     char keybuf[160];
     std::snprintf(keybuf, sizeof(keybuf),
-                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dx%dm%08X",
+                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dx%ds%dm%08X",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
@@ -3235,6 +3235,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_llvm_vector_qload ? 1 : 0,
                   cvars::cpu_llvm_vmx_float_flush ? 1 : 0,
                   cvars::cpu_llvm_vmx_fmax_nan ? 1 : 0,
+                  cvars::cpu_llvm_lower_vsel ? 1 : 0,
                   LlvmTargetCpuKeyHash());
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
@@ -3448,7 +3449,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // the thermal budget of every measurement).
     char idbuf[176];
     std::snprintf(idbuf, sizeof(idbuf),
-                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dx%dm%08X",
+                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dx%ds%dm%08X",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
@@ -3464,6 +3465,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_llvm_vector_qload ? 1 : 0,
                   cvars::cpu_llvm_vmx_float_flush ? 1 : 0,
                   cvars::cpu_llvm_vmx_fmax_nan ? 1 : 0,
+                  cvars::cpu_llvm_lower_vsel ? 1 : 0,
                   LlvmTargetCpuKeyHash());
     mod->setModuleIdentifier(idbuf);
   }
