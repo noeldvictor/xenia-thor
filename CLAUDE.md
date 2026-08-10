@@ -370,6 +370,42 @@ x19/x22-x28 and full q8-q15, or it needs a guarantee the callee is LLVM-compiled
 AAPCS64 work rediscovered it independently — the new value is the manual now being in `docs/reference/arm/` and
 the ceiling being derived for stage 3, not the fact itself.
 
+## 🧩🧩 **REXGLUE FOUND AND CLONED (2026-08-10) — AND IT SHIPS EVERY RESIDENCY FLAG *OFF***
+**`reference/RexGlue` = github.com/rexglue/rexglue-sdk, "Xbox 360 Recompilation Runtime and Toolkit", v0.9.0.
+This file said for months that RexGlue had "no clone or upstream in tree". It exists, it is public, and it is
+the most directly comparable reference we have — because unlike XenonRecomp it is a XENIA FORK.** Same subsystem
+layout (audio/xma, graphics, kernel, filesystem, input, ui), same `PPCContext`, same `MMIOReadRegisterThunk`.
+Its own README: *"heavily rooted on the foundations of Xenia… Rather than interpreting or JIT-compiling PPC
+instructions at runtime, ReXGlue generates C++ source code ahead of time"* — i.e. **our subsystems, their JIT
+replaced by static AOT C++.**
+**🔑 THE FINDING, AND IT LANDS DIRECTLY ON THIS FILE'S #1 CPU CLAIM.** RexGlue exposes register residency as six
+independent per-title TOML flags (`src/codegen/config.cpp:105-115`):
+```
+ctr_as_local          = false
+xer_as_local          = false
+reserved_as_local     = false
+cr_as_local           = false
+non_argument_as_local = false
+non_volatile_as_local = false        <- index >= 14, i.e. PPC r14-r31 callee-saved
+```
+**ALL SIX DEFAULT TO FALSE.** `non_volatile_as_local` is the exact technique our
+`cpu_backend_llvm_residency_abi` help calls *"the #1 lever toward big CPU speedups"*, citing XenonRecomp's flag
+by name — and the shipping static recompiler that implements it, in the AOT-C++ model where it should work
+BEST, leaves it off.
+**⇒ TAKEN WITH TODAY'S A/B (900 functions moved to LLVM+residency = ~0% fps), that is two independent signals
+that register residency is NOT the big win this file has assumed.** One is our own measurement; the other is
+the reference implementation's default.
+**⚠️ DO NOT OVERREAD IT.** A default-off flag can mean "does not help" OR "not yet trusted" — RexGlue's README
+says "early development", and OUR residency cvars are off for correctness reasons too (the ABI assumption).
+**This is corroboration, not proof.** But the burden has shifted: residency should now be argued FOR with a
+measurement, not assumed.
+**⇒ WHAT IS ACTUALLY WORTH MINING FROM REXGLUE, given the above:** not the residency flags — the
+**per-title TOML config model** itself. They tune codegen PER GAME and ship a manifest; we have global cvars plus
+a Java `GameProfiles` table. Their `src/codegen/` (analyze, function_graph, function_scanner, phase_discover)
+is also the closest existing answer to the multi-function-module question in
+`docs/research/20260808-multi-function-llvm-modules-design.md`, since a static recompiler MUST solve function
+discovery and grouping to emit whole translation units.
+
 ## 🌟🌟🌟 THE REFERENCE THE USER POINTS AT: **UNLEASHED RECOMPILED / XenonRecomp** (2026-08-08, NOT yet studied in depth)
 *"the sonic unleashed recomp from 360 shows miracle tech"* — correct, and it is the purest form of what the
 priority above is asking for. **`XenonRecomp` STATICALLY recompiles an Xbox 360 PPC executable into C++ SOURCE,
