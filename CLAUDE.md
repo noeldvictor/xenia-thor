@@ -727,6 +727,37 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🎯 **AND THE COST IS *NOT* THE FOLIAGE: VRS ON ALPHA-TEST DRAWS ALONE IS FLAT (+0.1%) (2026-08-10)**
+**Ran the shippable, quality-preserving form - `gpu_vrs_foliage_rate 2` WITHOUT `all_draws`, same
+matched-scene helper, same route.**
+```
+BASELINE (same build)   277 frames   61,831 us   16.17 fps
+VRS 2x2 ALL draws       415 frames   48,790 us   20.50 fps   -21.1%
+VRS 2x2 FOLIAGE only    297 frames   61,902 us   16.15 fps   +0.1%   <- retains 0% of the win
+```
+**⇒ THE ENTIRE 21% LIVES IN NON-ALPHA-TEST DRAWS.** Coarsening every alpha-test draw in the scene changes
+nothing measurable.
+**🚨 THIS REFUTES THE PREMISE BAKED INTO THE CVAR'S OWN NAME AND HELP TEXT**, which describes 2x2 as
+targeting *"the overdraw-heavy BD foliage"* and promises *"up to N*N fewer alpha-test invocations"*. The
+mechanism is real; **the assumption about WHERE BD's fragment cost sits is wrong.**
+**AND IT IS NOT A DRAW-COUNT STORY EITHER** - alpha-test is the LARGEST category by count in this scene:
+```
+comp[ opaque=117  opaque_verts=38,674  alphatest=325  blended=321 ]
+```
+**325 alpha-test draws, coarsened 4x, worth nothing.** Cost is not where the draws are.
+**⇒ COMBINED WITH THE PER-PASS TIMING (two passes = 65% of in-pass GPU time), THE PICTURE IS NOW SPECIFIC: the
+fragment cost is concentrated in a FEW LARGE OPAQUE/BLENDED DRAWS INSIDE TWO PASSES, not spread across the many
+small foliage draws.** That is a much narrower target than "the field is heavy".
+**⇒ NEXT, AND IT IS EXACTLY WHAT XENDROID SHIPS: VRS ON *BLENDED* DRAWS ONLY** (`1a51d62bc` defaults blended
+draws to 2x1, per-draw via dynamic state, clamped to device support). Blended is where overdraw concentrates
+and where coarse shading is least visible - unlike opaque geometry, which is the most visible thing on screen
+and is why this file already records VRS being pulled from Burnout. **Our cvar offers only foliage-vs-all, so
+blended-only needs a small code change: gate on the blend state instead of the alpha-test state.**
+**⚠ HONEST GAP: the foliage arm has NO ENGAGEMENT PROOF.** A flat result from a lever that never fired is
+indistinguishable from one that fired and did nothing - the exact trap that voided the texture-UBWC A/B earlier
+today. The all-draws arm proves the VRS plumbing works, which makes "fired but irrelevant" the likely reading,
+**but a per-draw VRS-applied counter should be added before this verdict is treated as final.**
+
 ## 🔥🔥🔥 **PROVEN ON DEVICE: BLUE DRAGON IS FRAGMENT-SHADER BOUND. 2x2 VRS ON ALL DRAWS = -21.1% FRAME TIME (2026-08-10)**
 **The first measured SPEED win of the session, and more importantly the first DIRECT confirmation of what the
 frame is actually limited by. Same build, same route, one arm per cooldown, both arms gameplay-tier confirmed.**
