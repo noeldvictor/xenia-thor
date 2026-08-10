@@ -4504,6 +4504,39 @@ measures a *subset* of the code you changed.
   what made the `a64_spin_hint_isb` A/B useless). Run **uncapped** (`--ei gpu_frame_limit_fps 0`) and read the
   profiler's `entry_delta` (guest entries/5s) = a direct CPU-throughput measure.
 
+## 🔐❌❌ **ANSWERED ON DEVICE 2026-08-10: CRYPTO ACCELERATION IS WORTH *NOTHING* - BLUE DRAGON NEVER CALLS `XeCryptSha` ONCE**
+**The one open crypto question in this file was guest SHA frequency: "`xe_crypt_sha_census` exists
+(xboxkrnl_crypt.cc:29) and has never been run. This is the only live question." Ran it. The answer is zero.**
+```
+Blue Dragon, full route: boot + load + gameplay (262,989 verts/frame, thermal guard at 70C)
+  --ez xe_crypt_sha_census true
+  "XeCryptSha census ENABLED - first guest SHA-1 call observed"  ->  0 lines
+  XeCryptSha in the import table                                 ->  1 (linked, ordinal 402)
+```
+**⇒ THE GUEST LINKS `XeCryptSha` AND NEVER CALLS IT.** Not once, across the entire session.
+**✅ AND THE NULL RESULT IS TRUSTWORTHY, WHICH IS THE PART THAT USUALLY FAILS HERE.** Two independent guards:
+1. **The census ANNOUNCES ON THE FIRST CALL**, so "no lines" cannot mean "fewer than the 4096-call throttle" -
+   whoever wrote it anticipated exactly the log-cap-looks-like-a-count trap this file records elsewhere.
+2. **The cvar demonstrably applied**: the same `am start` carried `vulkan_trace_draw_outcomes_per_frame`, which
+   produced **2,170 frame-trace lines** in that run. The allowlist block ran, so `--ez` took effect.
+   *(Guard 1 alone would NOT have been enough - the announce sits inside the census function, so "cvar off" and
+   "never called" both produce silence. It is guard 2 that makes this a measurement.)*
+**⇒ SO THE WHOLE CRYPTO TRACK IS CLOSED FOR THIS TITLE, and the reasoning generalises to the rest of it:**
+| candidate | verdict |
+|---|---|
+| guest `XeCryptSha*` -> FEAT_SHA1/SHA2 hardware | **DEAD - 0 calls measured** |
+| XEX AES decryption (`aes_decrypt_buffer`, 2 sites, xex_module.cc:436/442) | **load-time, once per module.** Even a 10x win is invisible against a multi-second AOT compile |
+| per-draw FNV-1a signature | already recorded DEAD - behind a default-off BD cvar |
+| texture/sampler hashes | already `XXH3_64bits`, which beats CRC32 for bulk |
+| `EOR3`/`BCAX` from FEAT_SHA3 | **the ONLY live crypto-extension value, and it is NOT crypto** - LLVM fuses vector bitwise chains automatically via `cpu_llvm_target_features_native` (+sha3), no intrinsics needed |
+**⇒ DO NOT WRITE AES/SHA INTRINSICS.** The `-march=...+crypto+sha3+crc` flags stay (they cost nothing and buy
+the EOR3/BCAX fusion), but there is no hot call site to accelerate. **This is the fourth time "count first"
+killed a plausible lever** - after `EOR3` (0 of 1 fusable), the per-draw FNV chain (dead code behind an off
+cvar), and `eieio` (4 sites). All four looked obviously worth doing and all four had no frequency behind them.
+**⚠ SCOPE: measured on Blue Dragon.** A title doing heavy save-integrity or content verification could differ -
+but BD is the benchmark title, it links the export, and it still never calls it. **Re-run the census on another
+title before reopening; do not reopen on reasoning.**
+
 ## 🔐❌ CRYPTO / CRC32 HARDWARE: SEARCHED FOR A HOT TARGET, FOUND NONE (2026-08-07)
 **User asked directly: "use crypto hardware we have in arm 64 as needed too". The ISA prerequisite is now done
 - `-march=...+crypto+sha3+crc+dotprod` - but a search for somewhere it would actually PAY came up empty. Recorded
