@@ -818,6 +818,29 @@ class Lowerer {
   bool IsInt(TypeName t) { return t <= INT64_TYPE; }
   bool IsFloat(TypeName t) { return t == FLOAT32_TYPE || t == FLOAT64_TYPE; }
 
+  // VMX float32x4 binary op on VEC128 operands, mirroring a64's
+  // EmitVmxFpBinOp_V128 (a64_seq_util.h:851): flush denormal inputs, operate,
+  // PPC NaN fixup, flush the result. Used by the V128 forms of ADD/SUB/MUL,
+  // every one of which a64 implements as a FLOAT op.
+  llvm::Value* VmxFpBin(llvm::Value* a, llvm::Value* c,
+                        llvm::Instruction::BinaryOps fop) {
+    auto* i32x4 = T(VEC128_TYPE);
+    auto* f32x4 = LaneVecTy(FLOAT32_TYPE);
+    auto* ai = b_.CreateBitCast(a, i32x4);
+    auto* ci = b_.CreateBitCast(c, i32x4);
+    if (cvars::cpu_llvm_vmx_float_flush) {
+      ai = VmxFlushDenorm(ai);
+      ci = VmxFlushDenorm(ci);
+    }
+    auto* r = b_.CreateBinOp(fop, b_.CreateBitCast(ai, f32x4),
+                             b_.CreateBitCast(ci, f32x4));
+    auto* ri = VmxNanFixup(b_.CreateBitCast(r, i32x4), {ai, ci});
+    if (cvars::cpu_llvm_vmx_float_flush) {
+      ri = VmxFlushDenorm(ri);
+    }
+    return b_.CreateBitCast(ri, T(VEC128_TYPE));
+  }
+
   // Resolve an HIR value to an LLVM value (constant materialized inline, else
   // looked up from the def map).
   llvm::Value* V(Value* v) {
@@ -1396,6 +1419,13 @@ bool Lowerer::LowerInstr(Instr* i) {
     case OPCODE_ADD: {
       auto *a = V(i->src1.value), *c = V(i->src2.value);
       if (!a || !c) return false;
+      if (i->dest->type == VEC128_TYPE) {
+        // V128 is a FLOAT op in a64 (ADD_V128 -> VmxFpBinOp::Add); IsFloat() is
+        // false for VEC128_TYPE, so the ternary below would emit an
+        // INTEGER add over float bit patterns. Same bug class as MUL.
+        Def(i->dest, VmxFpBin(a, c, llvm::Instruction::FAdd));
+        return true;
+      }
       Def(i->dest, IsFloat(i->dest->type) ? b_.CreateFAdd(a, c)
                                           : b_.CreateAdd(a, c));
       return true;
@@ -1534,6 +1564,13 @@ bool Lowerer::LowerInstr(Instr* i) {
     case OPCODE_SUB: {
       auto *a = V(i->src1.value), *c = V(i->src2.value);
       if (!a || !c) return false;
+      if (i->dest->type == VEC128_TYPE) {
+        // V128 is a FLOAT op in a64 (SUB_V128 -> VmxFpBinOp::Sub); IsFloat() is
+        // false for VEC128_TYPE, so the ternary below would emit an
+        // INTEGER sub over float bit patterns. Same bug class as MUL.
+        Def(i->dest, VmxFpBin(a, c, llvm::Instruction::FSub));
+        return true;
+      }
       Def(i->dest, IsFloat(i->dest->type) ? b_.CreateFSub(a, c)
                                           : b_.CreateSub(a, c));
       return true;
@@ -1606,6 +1643,16 @@ bool Lowerer::LowerInstr(Instr* i) {
     case OPCODE_NEG: {
       auto* a = V(i->src1.value);
       if (!a) return false;
+      if (i->dest->type == VEC128_TYPE) {
+        // a64 NEG_V128 is EmitWithVmxFpcr + fneg - a FLOAT negate. The
+        // ternary below would emit an INTEGER negate (0 - x) over float
+        // bit patterns, which is not sign-flipping at all.
+        auto* f32x4 = LaneVecTy(FLOAT32_TYPE);
+        Def(i->dest, b_.CreateBitCast(
+                         b_.CreateFNeg(b_.CreateBitCast(a, f32x4)),
+                         T(VEC128_TYPE)));
+        return true;
+      }
       Def(i->dest, IsFloat(i->dest->type) ? b_.CreateFNeg(a)
                                           : b_.CreateNeg(a));
       return true;
