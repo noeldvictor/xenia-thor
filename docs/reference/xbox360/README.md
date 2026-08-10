@@ -70,7 +70,7 @@ Read `r400-sequencer-specification-v2.11.pdf` sections 1, 6.3 and 8, plus sectio
 | GPR budget | **128 registers**, 128 bits each, numbered 0..127, **shared between pixel and vertex threads**. GPR read/write addresses on the SQ-to-SP interface are 7 bits | seq p25-26, p44; SP p5 |
 | register allocation | Two round-robins (one pixel, one vertex) over one file; the boundary between them moves dynamically, or is static at `128 - VERTEX_REG_SIZE`. A program declares its GPR count and **the sequencer will not start the next vector until that space is free** | seq p6, p25-26 |
 | occupancy | Stated explicitly as a design tradeoff - see the quote below | SP p5 |
-| early-Z / hierarchical-Z | **NOT in the sequencer spec at all** (zero mentions). Hierarchical Z is described in the **top-level spec**, which supports occlusion-query culling against a "heir-Z memory" held in the rasterizer | top-level p27-28 |
+| early-Z / hierarchical-Z | **NOT in the sequencer spec at all** (zero mentions of "early Z" or "hierarchical" in any revision). Hierarchical Z is described in the **top-level spec** instead: a hier-Z memory held per-rasterizer with a local cache, tested per 8x8 tile before rasterization, plus command-stream occlusion-query culling | top-level pp. 11, 24-28 |
 | fixed-function resolve | **NOT described in any of these documents.** The top-level spec's Render Backend section (8.18) is a heading with no body | top-level p32 |
 
 The occupancy passage is the reason these documents were fetched, from the shader
@@ -104,7 +104,7 @@ for the shipped Xenos part, and they predate the C1 tapeout. Do not expect to fi
 | **VMX / AltiVec semantics** (NaN rules, saturation, rounding) | `../ppc/altivec-programming-environments-manual.pdf` |
 | **VMX128** (Xenon's extended vector ISA) | **Not public.** xenia's own `src/xenia/cpu/ppc/` decoder is the reference |
 | **Shader sequencer: wave size, GPR budget, occupancy, control flow** | `r400-sequencer-specification-v2.11.pdf` + `r400-shader-processor-specification-v0.1.pdf` |
-| **Hierarchical Z** | `r400-top-level-specification-v0.2.pdf` section 8.15 |
+| **Hierarchical Z** | `r400-top-level-specification-v0.2.pdf` pp. 11, 24-28 (the Raster Engine section) |
 | **Xenos registers, packets, EDRAM, resolve** | **Still not public.** `src/xenia/gpu/registers.h`, `xenos.h` and the RE'd PM4 handling are the reference |
 | **What ARM64 can do about it** | `../arm/` - the four Cortex SWOGs + the Arm ARM |
 
