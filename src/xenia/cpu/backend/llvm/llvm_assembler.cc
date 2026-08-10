@@ -815,6 +815,23 @@ class Lowerer {
     return true;
   }
 
+  // ⚠️⚠️ VEC128 IS NEITHER. TypeName is INT8..INT64=0..3, FLOAT32/64=4..5,
+  // VEC128=6 - so IsInt(VEC128) and IsFloat(VEC128) are BOTH false. That is
+  // correct and deliberate, and it is also a trap:
+  //
+  //   NEVER WRITE   IsFloat(t) ? float_op : integer_op
+  //
+  // for an opcode that can have a VEC128 dest. "Not float" does NOT mean
+  // "integer" here, and the fallback silently emits integer arithmetic over
+  // float bit patterns. That shipped in V128 MUL/ADD/SUB/NEG until 2026-08-09
+  // (a64 implements all nine V128 arithmetic ops as VMX FLOAT), and NEG was
+  // CreateNeg = 0 - x, which is not even a sign flip. It compiles clean and
+  // fails silently.
+  //
+  // USE THE GUARD FORM INSTEAD - `if (IsFloat(t)) { ...; return true; }
+  // return false;` - which drops VEC128 to the a64 fallback rather than
+  // guessing. DIV/ABS/SQRT/MAX/MIN were written that way and were safe by
+  // construction; the four ternaries were not.
   bool IsInt(TypeName t) { return t <= INT64_TYPE; }
   bool IsFloat(TypeName t) { return t == FLOAT32_TYPE || t == FLOAT64_TYPE; }
 
