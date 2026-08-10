@@ -199,6 +199,31 @@ DEFINE_bool(
     "function is called. Set false to A/B the call overhead.",
     "CPU");
 
+DEFINE_bool(
+    cpu_llvm_vmx_float_flush, false,
+    "Software-flush denormals around VMX float ADD/SUB (vaddfp / vsubfp) in the "
+    "LLVM backend, matching a64. "
+    "THE BUG THIS FIXES: PPC VMX flushes denormals (VSCR.NJ). a64 gets that "
+    "from HARDWARE - it wraps VMX float arithmetic in EmitWithVmxFpcr, setting "
+    "FPCR.FZ (a64_seq_vector.cc:254). The LLVM backend NEVER SETS FPCR, and its "
+    "VECTOR_ADD/VECTOR_SUB FLOAT32 path is a bare fadd/fsub with no software "
+    "flush either - so on the SHIPPING backend vaddfp/vsubfp do not flush "
+    "denormals and diverge from a64. This is a live correctness divergence "
+    "between our two backends on two very common VMX instructions, not a "
+    "hypothetical. "
+    "Note the vmaddfp lowering in this same file ALREADY software-flushes both "
+    "ends (VmxFlushDenorm) and is therefore FPCR-independent and correct - so "
+    "the machinery exists and add/sub simply never got it. "
+    "SUSPECT FOR THE bd-llvm-postload-3d-cyan-bug: that bug is a float-semantics "
+    "fault which appears when vmaddfp is lowered ALONGSIDE OTHER VECTOR OPS in "
+    "one function, and unflushed denormals in colour/lighting math is exactly "
+    "the shape of a wrong-colour result. NOT PROVEN - retest vmaddfp with this "
+    "on. "
+    "DEFAULT OFF only because it changes float results and cannot be pixel-"
+    "checked without the device; it makes LLVM match the validated a64 "
+    "reference, so the expected outcome is FEWER wrong pixels, not more.",
+    "CPU");
+
 DEFINE_string(
     cpu_llvm_target_cpu, "",
     "Scheduling model the LLVM JIT compiles guest code for, e.g. "
@@ -2099,7 +2124,27 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* cv = b_.CreateBitCast(c, lt);
       llvm::Value* r;
       if (pt == FLOAT32_TYPE) {
-        r = add ? b_.CreateFAdd(av, cv) : b_.CreateFSub(av, cv);
+        if (cvars::cpu_llvm_vmx_float_flush) {
+          // PPC VMX flushes denormals (VSCR.NJ). a64 gets that from HARDWARE by
+          // wrapping VMX float arithmetic in EmitWithVmxFpcr, which sets
+          // FPCR.FZ (a64_seq_vector.cc:254 etc, DEFAULT_VMX_FPCR = 1<<24).
+          // THE LLVM BACKEND NEVER SETS FPCR AT ALL, so a bare fadd/fsub here
+          // does NOT flush - vaddfp/vsubfp diverge from a64 on denormal inputs
+          // or results. Flush in software on both ends, exactly as this file's
+          // vmaddfp lowering already does, so the result is FPCR-independent
+          // and matches a64 lane-for-lane.
+          auto* i32x4 = T(VEC128_TYPE);
+          auto* f32x4 = lt;
+          auto* fa = b_.CreateBitCast(
+              VmxFlushDenorm(b_.CreateBitCast(av, i32x4)), f32x4);
+          auto* fb = b_.CreateBitCast(
+              VmxFlushDenorm(b_.CreateBitCast(cv, i32x4)), f32x4);
+          auto* raw = add ? b_.CreateFAdd(fa, fb) : b_.CreateFSub(fa, fb);
+          r = b_.CreateBitCast(
+              VmxFlushDenorm(b_.CreateBitCast(raw, i32x4)), f32x4);
+        } else {
+          r = add ? b_.CreateFAdd(av, cv) : b_.CreateFSub(av, cv);
+        }
       } else {
         uint32_t arith = i->flags >> 8;
         if (arith & ARITHMETIC_SATURATE) {
@@ -2982,7 +3027,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // stamp in the DIRECTORY does not help here - both arms are the same build.
     char keybuf[160];
     std::snprintf(keybuf, sizeof(keybuf),
-                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dm%08X",
+                  "g%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dm%08X",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
                   cvars::cpu_backend_llvm_opt,
@@ -2995,6 +3040,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
                   cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
                   cvars::cpu_llvm_vector_qload ? 1 : 0,
+                  cvars::cpu_llvm_vmx_float_flush ? 1 : 0,
                   LlvmTargetCpuKeyHash());
     std::filesystem::path opath =
         std::filesystem::path(cvars::cpu_llvm_object_cache_path) /
@@ -3208,7 +3254,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     // the thermal budget of every measurement).
     char idbuf[176];
     std::snprintf(idbuf, sizeof(idbuf),
-                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dm%08X",
+                  "%sg%08X_%016llX_o%dr%dw%da%dp%df%db%dv%dc%dq%dn%dm%08X",
                   lowerer.baked_host_pointer() ? "nocache_" : "",
                   function->address(),
                   static_cast<unsigned long long>(code_hash),
@@ -3222,6 +3268,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
                   cvars::cpu_backend_llvm_lower_vmaddfp ? 1 : 0,
                   cvars::cpu_llvm_guest_call_clobber_barrier ? 1 : 0,
                   cvars::cpu_llvm_vector_qload ? 1 : 0,
+                  cvars::cpu_llvm_vmx_float_flush ? 1 : 0,
                   LlvmTargetCpuKeyHash());
     mod->setModuleIdentifier(idbuf);
   }
