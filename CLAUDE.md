@@ -394,6 +394,45 @@ x19/x22-x28 and full q8-q15, or it needs a guarantee the callee is LLVM-compiled
 AAPCS64 work rediscovered it independently — the new value is the manual now being in `docs/reference/arm/` and
 the ceiling being derived for stage 3, not the fact itself.
 
+## 📚❌ **BOX64 CLONED AND READ: OUR OWN CVAR HELP MIS-CITES IT. "CALLRET" IS NOT REGISTER RESIDENCY (2026-08-10)**
+**`reference/Box64` = github.com/ptitSeb/box64, an x86->ARM64 dynamic recompiler. This file cites it twice and
+nobody had read it. `cpu_backend_llvm_residency_abi`'s help says:**
+> *"XenonRecomp **non_volatile_as_local** / **Box64 CALLRET** class, the #1 lever toward big CPU speedups"*
+**The two names are UNRELATED techniques. The help text joins them and that is wrong.**
+### ✅ WHAT BOX64's CALLRET ACTUALLY IS: A RETURN-ADDRESS-STACK OPTIMISATION
+From `src/dynarec/arm64/dynarec_arm64_helper.c:427` and `:441`:
+```
+CALL:  if (has_callret) BLR(dest);   else BR(dest);
+          BLR pushes the hardware return-address predictor. BR does not.
+          The expected GUEST return address is also pushed to a native stack.
+
+RET:   LDPx_S7_postindex(xLR, x6, xSP, 16)   // pop the pair
+       SUBx_REG(x6, x6, xRIP)                // does it match the real guest return?
+       CBNZx(x6, 2*4)
+       RET(xLR)                              // native RET -> correctly PREDICTED
+       // mismatch: purge the stack, fall back to indirect_lookup
+```
+**It keeps the CPU's return-stack buffer balanced so a guest RET is predicted instead of mispredicted.** It says
+nothing about keeping guest registers in host registers.
+### ⇒ AND WE ALREADY DO THIS. IT IS DONE.
+This file's Rosetta audit already checked the same technique and recorded the result:
+> *"Return-address prediction (keep the RSB balanced) - **already correct**: calls emit `blr` (pushes RSB),
+> epilog reloads x30 and emits `ret` (pops), bare `br` only on TAIL calls. **Nothing to do**."*
+**Two independent reads, same verdict. The Box64 half of that help text is a solved problem.**
+### ⇒ SO THE "#1 LEVER" CLAIM LOSES ITS SECOND SUPPORT
+The claim rested on two references. Both are now gone:
+| citation | status |
+|---|---|
+| Box64 CALLRET | **mis-cited.** Different technique, and we already implement it |
+| XenonRecomp `non_volatile_as_local` | RexGlue, the shipping static recompiler, **defaults it OFF** |
+**Add the two measurements already recorded** - AAPCS64 caps residency at 8 GPRs and **0 of 82 vectors**, and
+the register audit measured **0.1 spill requests per function** - and the residency story has no support left.
+**⇒ FIX THE HELP TEXT. It currently tells the next reader that a solved problem is the #1 unexploited lever.**
+### 📌 THE LESSON, AND IT IS THE THIRD TIME TODAY
+**A citation in a comment is not evidence. Read the cited source.** This file has now found three claims that
+did not survive reading the thing they cited: the `shaderdb` recipe, the `EmulateDotProduct4` "host call", and
+now Box64 CALLRET. **Each cost nothing to check and each redirected real work.**
+
 ## 🧩🧩 **REXGLUE FOUND AND CLONED (2026-08-10) — AND IT SHIPS EVERY RESIDENCY FLAG *OFF***
 **`reference/RexGlue` = github.com/rexglue/rexglue-sdk, "Xbox 360 Recompilation Runtime and Toolkit", v0.9.0.
 This file said for months that RexGlue had "no clone or upstream in tree". It exists, it is public, and it is
