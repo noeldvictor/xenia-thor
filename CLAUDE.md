@@ -727,6 +727,43 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🎬 **VIDEO ITEM 6/7 APPLIED: V128 `vsel` NOW LOWERS IN LLVM - A TOP-3 FALLBACK CAUSE, FIXED BY WRITING THE IR IDIOMATICALLY (2026-08-10)**
+**The talk's item 6 is "LLVM completely dropped the ball on a compare/select chain; only inline assembly fixed
+it, 15 -> 7 insns", and item 7 is the same class ("LLVM scalarized the whole vector op; fix = write the IR
+idiomatically like the x86 path"). Both were marked UNCHECKED in the mining doc. Checked, and the outcome is
+the good version of that lesson.**
+**🔍 THE GAP: `OPCODE_SELECT` BAILED TO a64 FOR EVERY VECTOR CASE.**
+```cpp
+if (IsVec(tv) || IsVec(cond)) return false;  // vsel is per-bit -> a64 (P3)
+```
+**And `select` is a TOP-3 FALLBACK CAUSE in this file's own census - 3 in one run, 137 in another** (it climbs
+as other opcodes stop bailing first). **Every one of those functions lost LLVM *and* its register residency,
+for the whole function, over an operation ARM performs in ONE instruction.**
+**✅ VERIFIED IN EMITTED CODE BEFORE WRITING ANY LOWERING** (NDK 25 clang, our exact `-march`):
+```
+(b & c) | (a & ~c)                    ->  bit  v0.16b, v1.16b, v2.16b        1 instruction
+vcgtq_f32 feeding the same shape      ->  fcmgt v0.4s,...  +  bsl v0.16b,... 2 instructions
+```
+**⇒ LLVM ALREADY EMITS THE OPTIMUM ON AArch64 - the talk needed inline asm for this shape on the SPU and we do
+not.** That IS item 7's lesson: write the IR the plain way and the backend does the right thing. **No
+intrinsic, no inline asm.**
+**🚨 THE TRAP THAT WOULD HAVE INVERTED EVERY `vsel` IN THE GUEST, AND THE LOCAL VARIABLE NAMES CAUSE
+IT.** The LLVM code calls the operands `tv`/`fv` (true value / false value). **That is not the contract.** a64's
+`SELECT_V128_V128` documents it: *"HIR SELECT V128: bit=1 -> src3, bit=0 -> src2"*, i.e.
+```
+result = (src3 & mask) | (src2 & ~mask)      // src2 is the mask=ZERO value
+```
+**Implementing from the names would have produced `(tv & mask) | (fv & ~mask)` - backwards - and the failure
+mode is WRONG PIXELS WITH NO CRASH**, the same class as the cyan bug that cost this project months. **Rule:
+for any HIR opcode, read the a64 sequence for the operand contract; do not trust the LLVM lowering's local
+names.**
+**SHIPPED as `cpu_llvm_lower_vsel`, DEFAULT OFF, allowlisted.** Build green. **The engagement proof is free and
+does not need a device A/B: run an AOT boot and watch `select` disappear from the `LLVMfallback` histogram.**
+That is a compile-time count, which this file establishes as trustworthy even on a contended device.
+**⚠ NOT VALIDATED: no pixel check, no fallback re-census** - the device was held by the other session's rpcs3
+and by a user-launched instance throughout. **Do not default it on until the histogram confirms the recovery
+AND a screenshot confirms `vsel`-using content renders correctly.**
+
 ## ✅ **x86-SHAPED CODE SWEEP, SYSTEMATIC AND CLOSED (2026-08-10): THE 2-OPERAND STAGING SHAPE IS ESSENTIALLY GONE - 2 SITES LEFT, BOTH SEMI-JUSTIFIED**
 **The standing user ask is "review code where x64 shit needs to be rethought for ARM64". Previous sweeps looked
 for IDIOM tells (`xmm`, `sse`, `movaps`, "like x64") and found 4 comments. This one searched for the STRUCTURAL

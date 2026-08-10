@@ -286,6 +286,21 @@ static uint32_t LlvmTargetCpuKeyHash() {
 }
 
 DEFINE_bool(
+    cpu_llvm_lower_vsel, false,
+    "Lower V128 per-bit SELECT (PPC vsel) in LLVM instead of falling back to "
+    "the a64 backend. `select` was a top-3 fallback cause (137 functions in one "
+    "census) and every one lost LLVM plus its register residency for the WHOLE "
+    "function over an op ARM does in ONE instruction. Emitted as the plain "
+    "bitwise form (src3 & mask) | (src2 & ~mask), which NDK 25 clang lowers to a "
+    "single `bit` (and `fcmgt`+`bsl` when a compare feeds it) - verified in "
+    "emitted asm, no intrinsic needed. Operand order follows a64 "
+    "SELECT_V128_V128: bit=1 takes src3, bit=0 takes src2 - NOT what the local "
+    "tv/fv names suggest, and getting it backwards inverts every vsel (wrong "
+    "pixels, no crash). Default off pending a pixel check; watch the LLVMfallback "
+    "histogram for `select` dropping as the engagement proof.",
+    "CPU");
+
+DEFINE_bool(
     cpu_llvm_vector_qload, false,
     "Emit ONE q-load/q-store for guest VEC128 memory access instead of FOUR "
     "volatile 32-bit words plus three insertelements. "
@@ -1859,7 +1874,35 @@ bool Lowerer::LowerInstr(Instr* i) {
       auto* tv = V(i->src2.value);
       auto* fv = V(i->src3.value);
       if (!cond || !tv || !fv) return false;
-      if (IsVec(tv) || IsVec(cond)) return false;  // vsel is per-bit -> a64 (P3)
+      // V128 per-BIT select (PPC vsel). This used to bail to a64 outright, and
+      // `select` was a top-3 fallback cause (137 functions in one census) -
+      // every one of those lost LLVM *and* its register residency for the whole
+      // function over an operation ARM does in ONE instruction.
+      //
+      // Verified in emitted code (NDK 25 clang, our exact -march): the plain
+      // bitwise form lowers to a single `bit`, and a compare feeding it gives
+      // `fcmgt` + `bsl`. That is the Whatcookie talk's item 6 in miniature - he
+      // needed inline asm for this shape on the SPU; written idiomatically,
+      // LLVM already emits the optimum here. No intrinsic required.
+      //
+      // 🚨 OPERAND ORDER IS THE TRAP, AND THE LOCAL NAMES LIE. `tv`/`fv` read as
+      // true/false value, but a64's SELECT_V128_V128 documents the real
+      // contract: "HIR SELECT V128: bit=1 -> src3, bit=0 -> src2", i.e.
+      //     result = (src3 & mask) | (src2 & ~mask)
+      // so src2 is the mask=0 value. Implementing from the variable names would
+      // invert every vsel in the guest - wrong pixels, no crash.
+      if (IsVec(tv) && IsVec(cond)) {
+        if (!cvars::cpu_llvm_lower_vsel) return false;
+        auto* i32x4 = T(VEC128_TYPE);
+        auto* m = b_.CreateBitCast(cond, i32x4);
+        auto* v_one = b_.CreateBitCast(fv, i32x4);   // src3: taken where bit=1
+        auto* v_zero = b_.CreateBitCast(tv, i32x4);  // src2: taken where bit=0
+        auto* r = b_.CreateOr(b_.CreateAnd(v_one, m),
+                              b_.CreateAnd(v_zero, b_.CreateNot(m)));
+        Def(i->dest, b_.CreateBitCast(r, T(VEC128_TYPE)));
+        return true;
+      }
+      if (IsVec(tv) || IsVec(cond)) return false;  // mixed shapes -> a64
       Def(i->dest, b_.CreateSelect(Truth(cond), tv, fv));
       return true;
     }
