@@ -116,6 +116,28 @@ COVERAGE win measured as coverage — it is not yet a measured speed or watt win
 **🔄 RE-CENSUS AFTER EVERY OPCODE:** `select` sat at 3 here but jumped to 137 in the vmaddfp-on run, because
 functions get further before hitting the next unsupported opcode. The histogram is a moving target.
 
+## 🚨🚨🚨 THIRD TIME, AND THE WORST: **`adb input keyevent` INJECTED BUTTON PRESSES INTO THE OTHER SESSION'S GAME**
+**2026-08-09. Pre-flight was CLEAN at launch (rpcs3=0, gated with an exit). rpcs3 started DURING my ~4 minute
+compile. I then sent `input keyevent 108/96` five times to drive past Blue Dragon's title - and those presses
+went to the FOREGROUND app, which by then was `net.rpcsx.easy`. I pressed START and A three times on another
+session's running Eternal Sonata.** The 2.4 MB screenshot I captured as "our frame" is THEIR title screen; its
+overlay says PPU / SPU / RSX, which is RPCS3's, not ours.
+**🔑 THE NEW AND GENERALISABLE LESSON — this one is not "read the pre-flight output":**
+1. **`adb shell input keyevent` HAS NO TARGET. It goes to whatever is in the foreground.** On a shared device
+   that means it can drive someone else's application. Everything else in this file's hygiene rules is about
+   not *observing* a contended device; this is about actively *corrupting* another session. **Prefer
+   `--es hid nop --es hid_nop_button_sequence`, which is injected into OUR guest and cannot escape the process.**
+2. **A pre-flight is a POINT-IN-TIME check, and a long compile is a long window.** Ours passed and was stale four
+   minutes later. **Re-check before every interaction, not just before launch** - and especially before anything
+   that WRITES (input, install, force-stop).
+3. **VERIFY THE SCREENSHOT IS YOURS.** A 2.4 MB capture looked like the long-awaited "real frame" and was another
+   emulator entirely. Check the foreground package (`dumpsys activity activities | grep topResumedActivity`)
+   before believing any screencap on this device.
+**⇒ WHAT SURVIVED FROM THAT RUN, and it is only the part taken before the intrusion:** the 53 KB screenshot of
+Blue Dragon's title at 29.6 fps with OUR green FPS badge, and the compile-time counter `LLVMfallback 1,022 ->
+121`. Compile-time counts survive contention (this file already says so). **Everything after rpcs3 appeared -
+the second screenshot, the 72.9C reading, the later frame counts - is VOID.**
+
 ## 🚨🚨 IT HAPPENED A SECOND TIME (2026-08-09) — AND THE AD-HOC COMMAND IS THE HOLE
 **Same violation as the section below, in a session where I had ALREADY written an aborting pre-flight into
 `tools/thor/bd_gameplay_route.sh` and watched it correctly refuse a run.** The pre-flight printed `rpcs3=1` and
