@@ -699,6 +699,34 @@ desktop Vulkan — minimize passes/GMEM flushes, GMEM-resident RT, Turnip extens
 PPC→native) for CPU/thermal. Blueprint: `docs/research/20260705-native-vulkan-renderer-plan.md`. Be creative,
 novel, research (arxiv/DXVK/Cemu). Convert the WHOLE pipeline at once — do NOT do one lever at a time (all dead).
 
+## ❌📏 **`vulkan_hoist_shmem_uploads` IS FLAT — AND I NEARLY REPORTED A 17.7% WIN FROM ONE FRAME (2026-08-10)**
+**Tested the never-validated pass-break reducer with the new per-frame metric. Result: FLAT. The interesting
+part is how close I came to publishing the opposite.**
+```
+SINGLE-FRAME capture, and the two frames looked perfectly matched
+(rendered=521, total_vertices=94,530 IDENTICAL in both arms):
+    baseline  gpu_frame_us = 65,250      hoist ON  gpu_frame_us = 53,684
+    -> "-17.7% frame time, 15.3 -> 18.6 fps"        <- WRONG
+
+AVERAGED over 40 gameplay frames per arm:
+    baseline  avg 63,229 us (15.8 fps)   hoist ON  avg 63,492 us (15.7 fps)
+    -> +0.4%, FLAT
+```
+**⇒ VERDICT: `vulkan_hoist_shmem_uploads` does nothing measurable on BD. Leave it default-off.** Pass breaks
+were also unchanged (barrier 18/18, rt_change 27 vs 28), which was the tell — a pass-break reducer that does not
+reduce pass breaks was never going to move the frame.
+**🚨 THE METHODOLOGICAL LESSON, and it is sharper than the usual "n=1 is bad": `gpu_frame_us` VARIES ENORMOUSLY
+FRAME TO FRAME EVEN WHEN `rendered` AND `total_vertices` ARE IDENTICAL.** I specifically checked that the two
+captures had the same draw count and the same vertex count and concluded they were therefore comparable. **They
+were the same frame of the same scene and still differed by 17.7%.** Matching scene content does NOT make two
+single frames comparable — the variance is in GPU scheduling, not in the workload.
+**⇒ RULE FOR EVERY FUTURE GPU MEASUREMENT: average `gpu_frame_us` over tens of frames, filtered to gameplay
+(`total_vertices > 150000`).** One frame is worthless no matter how well matched it looks. The awk one-liner
+that does this is in the session history; it costs nothing over reading the last line.
+**✅ What this DOES establish, cheaply and for the first time: a per-frame GPU metric that can resolve a real
+win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
+fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
+
 ## 📏 **PASS CENSUS RE-MEASURED 2026-08-10 — 45 PASS BREAKS/FRAME, AND *RT CHANGES* DOMINATE (27 vs 18)**
 **The 61/45 figure predated the Edge kernel merge and the BD-native-renderer removal, so it was re-taken before
 anyone builds against it. It holds, and it now names WHICH break to attack.** No new code was needed — the
