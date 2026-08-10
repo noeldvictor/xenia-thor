@@ -1515,6 +1515,58 @@ remaining levers are product decisions (internal resolution) rather than enginee
 very different project state from "we must be doing something stupid", and it took ten measured negatives to
 establish.**
 
+## 🔎 **GEARS STALL: A DEVICE-FREE AUDIT OF THE OVERLAPPED PATH. 23 CANDIDATES, 2 CONFIRMED DEFECT SHAPES (2026-08-10)**
+**The Gears Act-1 stall blocks the second benchmark title. That makes it worth more than another lever on Blue
+Dragon. The device had no charge, so I audited the code instead.**
+### ✅ FIRST, THE COMPLETION PATH IS CORRECT. DO NOT LOOK THERE.
+`KernelState::CompleteOverlappedEx` (`kernel_state.cc:1093`) does the right thing:
+```
+XOverlappedSetResult / SetExtendedError / SetLength
+event_handle = XOverlappedGetEvent(ptr)
+if (event_handle) { ev->Set(0, false); }        <- the event IS signalled
+if (completion routine) { thread->EnqueueApc(...); }
+```
+**The signal mechanism works. The bug is an operation that never REACHES completion.**
+### 📊 THE AUDIT
+I parsed every function in `kernel/xam/` and `kernel/xboxkrnl/` that mentions an overlapped. I checked each
+body for a `CompleteOverlapped*` call or an `X_ERROR_IO_PENDING` return.
+```
+functions that touch an overlapped ....... 65
+complete it, or return IO_PENDING ........ 42
+NEITHER .................................. 23
+```
+**⚠ MOST OF THE 23 ARE FALSE POSITIVES. The audit does not follow calls.** A 4-line wrapper such as
+`XamContentCreate_entry` delegates to an internal that completes correctly. **Judge a candidate by whether it
+has a real body, not by the count.**
+### ❌ TWO CONFIRMED DEFECT SHAPES, both in `XamShowDeviceSelectorUI_entry` (`xam_ui.cc`)
+```cpp
+if ((user_index >= XUserMaxUserCount && ...) || (content_flags & 0x83F00008) != 0 || !device_id_ptr) {
+  XOverlappedSetExtendedError(overlapped, X_ERROR_INVALID_PARAMETER);
+  return X_ERROR_INVALID_PARAMETER;          // <- sets the error, does NOT complete
+}
+...
+if (kernel_state()->xam_state()->IsUIActive()) {
+  return X_ERROR_ACCESS_DENIED;              // <- does NOT complete
+}
+```
+**Both paths accept an overlapped and return without signalling its event.** A caller that waits on that event
+waits forever. **The second path is the dangerous one: it fires when a dialog is already open, which is a
+TIMING condition, so it appears intermittently.**
+**⚠ THIS MAY BE CORRECT XBOX BEHAVIOUR, AND I CANNOT SETTLE IT FROM THE CODE.** A XAM function that returns a
+value other than `ERROR_IO_PENDING` completed SYNCHRONOUSLY, and the caller is not supposed to wait. **A title
+that waits anyway hangs.** Real titles do this.
+**❌ I AM NOT ATTRIBUTING THE GEARS STALL TO THIS.** Gears waits on FIVE handles, and this is one function.
+**Attributing a runtime stall to a static finding is the exact error this file records twice today** (the
+`DumpRenderTargets` diagnostic lines, and the six "width sites" that were three default-off guards).
+### ⇒ WHAT TO DO WITH IT
+1. **Run the scoped diagnostic first.** Warm the Gears cache, run with `--ei log_level 3`, then
+   `grep -E "Added handle:(F8000010|F8000018|F800004C|F80000FC|F8000104)"`. The `typeid` names the subsystem.
+   **That gives attribution. The audit only gives candidates.**
+2. **If the subsystem is XAM UI, the two paths above are the fix**, and the fix is to complete the overlapped
+   before returning the error.
+3. **Compare against Edge before changing either path.** The Edge kernel port already corrected
+   `XamGetOverlappedResult` and the overlapped event Reset. **Edge may already handle these two returns.**
+
 ## ⏳ **THE GEARS STALL DIAGNOSTIC IS BLOCKED BY THE OBJECT CACHE, NOT BY THE BUG (2026-08-10)**
 **Went to run the already-scoped Gears diagnostic (raise log to Debug, grep the five stalled handles for their
 `typeid`, which names the subsystem that owes the signal). It never got that far, and the reason is
