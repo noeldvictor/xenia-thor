@@ -727,6 +727,58 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🚨🚨🚨 **LOGCAT *WRAPS* THE FRAME-TRACE LINE - EVERY `grep "GPU draw outcomes"` ANALYSIS READ A TRUNCATED PREFIX (2026-08-10)**
+**Found while chasing why `brk_img_sr` read 0. It is not 0 - it is 42.2 per frame, and it was never in the text
+being grepped.** The per-frame trace is far longer than logcat's per-message limit, so it is emitted as MULTIPLE
+physical lines. Only the FIRST carries the `GPU draw outcomes` prefix; everything past the wrap point lands on
+continuation lines with no prefix at all.
+```
+grep "GPU draw outcomes"  -> rendered, vertices, pass_break_*, endpass_draws, acct   (in-chunk, VALID)
+                          -> brk_open, brk_buf, brk_img_sr, sr_cls[...], merges,
+                             comp[...]                                               (WRAPPED AWAY, INVISIBLE)
+```
+**⇒ THE FIX IS TRIVIAL AND IS NOW THE RULE: grep for the FIELD, never for the line prefix.**
+`logcat -d | grep brk_img_sr` returns the continuation lines directly. Fields that sit BEFORE the wrap were
+measured correctly all along, but **anything reported as "0" that lives after the wrap was never measured at
+all** - including the `rt_inpass_*` / `rt_transfer_*` counters recorded as all-zero one commit earlier.
+**Re-check those the same way before trusting that entry.**
+
+## 🎯🎯 **THE IN-PASS RESOLVE LEVER, FINALLY SIZED (2026-08-10): 42 EDRAM RESOLVE-SOURCE BREAKS/FRAME, AND THE SAME-PIXEL CANDIDATE CLASS IS *EMPTY***
+**`gpu_vulkan_classify_img_sr_breaks` has sat in this tree default-off and never run - the same shape as the
+crypto census - and it is purpose-built to answer "how many pass breaks could a Vulkan input attachment
+remove?" Ran it on a BD gameplay route.**
+```
+BD gameplay, 557 frames (filtered opaque_verts >= 30,000):
+  brk_open    48.6      brk_buf     36.6
+  brk_img_sr  42.2   <- an image transitioned to SHADER_READ while a guest pass was open
+  brk_img_oth 21.0
+  sr_cls[ rtsrc=42.2   tex=0.0   fscomp=0.0   rtfc=26.8 ]      merges=0.0
+```
+**🔑 TWO RESULTS, AND THE SECOND IS DECISIVE:**
+1. **ALL 42.2 shader-read breaks are `sr_rtsrc`** - the source was in a colour/depth ATTACHMENT layout, i.e. an
+   **EDRAM ownership-transfer / resolve SOURCE read**. `sr_tex` is **0**: none are ordinary guest textures.
+   **This break category is entirely the EDRAM resolve machinery, and at 42/frame it is LARGER than the 27
+   rt_change breaks** - the single biggest category measured.
+2. **`sr_fscomp = 0.0`, and that IS the candidate class.** The cvar's own text defines `sr_fscomp` as *"the
+   same-pixel input-attachment CANDIDATE class"* - breaks whose triggering draw is a full-screen composite
+   (rect or <=6-vertex quad with a pixel shader and colour write). **There are none.** BD's resolve consumers
+   are ordinary geometry, not full-screen quads.
+**⇒ THE SIMPLE INPUT-ATTACHMENT SUBSTITUTION DOES NOT APPLY TO BD.** A `subpassLoad` reads only the fragment's
+own coordinate; the population for that is `sr_fscomp`, and it is empty. **The 42 breaks are real and dominant,
+but they are not same-pixel reads** - they are remapped-texel EDRAM transfers, exactly what the classifier's own
+comment warned: *"otherwise the transfer reads a REMAPPED texel."* **And `merges = 0`**, so the existing
+feedback-merge lever never fires either.
+**⇒ WHAT THIS MEANS FOR THE WHOLE GPU PLAN, plainly: the in-pass resolve chain, the subpass input-attachment
+idea, AND the ~115-site dynamic-rendering port all rest on servicing a resolve AT THE SAME PIXEL, IN-PASS.
+Measured on BD, essentially none of the resolve traffic has that shape.** The options that remain are the ones
+that do NOT need same-pixel access: `VK_QCOM_render_pass_shader_resolve` (exposed by Turnip, unused - **but it
+is an MSAA-resolve mechanism and ours are format/layout conversions, so check applicability before building**),
+or attacking the 35 zero-draw passes structurally so fewer resolves are issued at all.
+**⚠ CAVEATS, honestly stated:** the fps here (26.4, from a 37.8 ms mean) is **NOT** comparable to the 16.5 fps
+measured elsewhere today - this aggregation filtered on `opaque_verts >= 30000` instead of
+`total_vertices > 150000`, so it includes lighter frames. **Do not read it as a speedup.** And `gpu_pass_us`
+still reads **0**, so per-pass cost remains unmeasured: the 42 breaks are COUNTED, not PRICED.
+
 ## 🚦🚦🚦 **DEVICE-CHECKED THE TILE EXTENSIONS (2026-08-10): THE GMEM-HEAP PATH IS DEAD ON TURNIP - BUT AN IN-PASS RESOLVE EXTENSION IS SITTING THERE UNUSED**
 **The section below says to grep the device extension list before designing against `VK_QCOM_tile_memory_heap`.
 Did it. It cost nothing - the list is already logged unconditionally on every launch
