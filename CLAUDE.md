@@ -1297,6 +1297,27 @@ neighbours, it was THE NEIGHBOURS being silently wrong** (V128 MUL/ADD/SUB/NEG t
 `IsFloat(t) ? float_op : integer_op`). vmaddfp merely made those functions reachable on LLVM so the existing
 corruption became visible. **When a bug only appears "in combination", check whether the OTHER half is the
 broken one.**
+**📊📊 A/B RUN 2026-08-10 — THE ~900 RECOVERED FUNCTIONS ARE **FLAT** ON FPS. First real in-game A/B this
+project has completed.** Same route, same binary, same title, one arm per cooldown, both caches pre-warmed:
+| t | baseline (all 3 cvars OFF) | treatment (vmaddfp + both float fixes) |
+|---|---|---|
+| 50s | 16.6 fps | 16.6 fps |
+| 60s | 17.1 fps | 17.4 fps |
+| 70-120s | — thermal guard at t=60s | 17.8 / 17.3 / 17.4 / 17.5 / 17.5 / 17.5 |
+**No measurable difference**, and the honest reading is weaker still: **the baseline arm started at 39.6C
+against the treatment's 31C**, so it throttled out at t=60s and only produced two gameplay samples. **Parity is
+not even confidently established — only "no visible win".**
+**⇒ SO RECOVERING ~900 FUNCTIONS ONTO LLVM DID NOT MAKE THIS SCENE FASTER.** That is worth sitting with rather
+than explaining away. Candidate readings, none tested: this scene may not be bound by those functions; the
+a64 code for them may already have been as good; or the win may be masked by whatever else dominates BD's field
+(this file's own measurement says the guest thread is memory-bound, and none of these fixes touch that).
+**⚠️ DO NOT read this as "the cyan fix was pointless".** It converted a rendering-breaking lever into a working
+one and restored 1,022 -> 121 fallback coverage. That is a CORRECTNESS result and it stands on its own. It is
+simply not, on this evidence, a throughput result.
+**⇒ AND IT SHARPENS THE STANDING QUESTION: if 900 functions moving from a64 to LLVM+residency is worth ~0%, the
+LLVM-vs-a64 gap on this workload is smaller than this file has assumed throughout.** That is the assumption to
+attack next, not another instruction lowering.
+
 **⚠️ WHAT IS NOT YET CLAIMED: a SPEED win.** 15.7-17.5 fps here is in the same band as the ~17.5 fps this route
 measured WITHOUT vmaddfp earlier the same session, so the recovered functions have not yet shown up as fps in
 this scene. **The win proven today is CORRECTNESS + COVERAGE (1,022 -> 121 fallbacks), not throughput.** A
