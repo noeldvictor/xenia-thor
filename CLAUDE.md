@@ -727,6 +727,40 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## ❌❌❌ **`gpu_fp16_shaders` IS A DOUBLE REGRESSION: 40% SLOWER *AND* UGLIER - AND THE MANUAL WARNED ME ONE PARAGRAPH AWAY (2026-08-10)**
+**User watching the panel: "whoa its uglier AND slower." Device numbers agree, emphatically:**
+```
+BASELINE (same build)   277 frames   61,831 us   16.17 fps
+gpu_fp16_shaders=true   388 frames   86,830 us   11.52 fps    +40.4% SLOWER    0 faults
+```
+**Plus a visible quality regression, reported by a human looking at the screen** - which this file already
+establishes is the only trustworthy visual check.
+**🚨 WHY I EXPECTED THE OPPOSITE, AND WHY THAT WAS AN OVER-READ OF THE MANUAL.** Qualcomm's Best
+Practices says, and the cvar's own help quotes the same figure:
+> *"Adreno's scalar architecture can be **twice as power-efficient and deliver twice the performance** while
+> processing a fragment shader - if that fragment shader uses medium-precision 16-bit floating point (mediump)
+> processing instead of high-precision 32-bit (highp) floating point."*
+**We are fragment-ALU bound, so this looked like the vendor handing us exactly the 2x we want.** It is not.
+**⇒ THE SAME DOCUMENT CONTAINS THE REFUTATION, A FEW PARAGRAPHS LATER, AND I READ IT IN THE SAME SITTING:**
+> *"instruction choices involving **type-casting (including converting floating point values from 32-bit to
+> 16-bit precision)**, control flow (branches and loops), built-in shader instructions and more all impact ALU
+> efficiency."*
+**🔑 THE DISTINCTION THAT DECIDES IT: Qualcomm's 2x is for shaders AUTHORED in mediump END TO END.**
+`RelaxedPrecision` on an fp32-authored shader does not make it a mediump shader - it makes it an fp32 shader
+with fp16 math **and a conversion at every boundary**. The cvar's help even says so in passing: *"the
+interpolator inputs, sampled-image objects and color/depth attachment formats stay fp32 (values **down-convert
+at the register-file boundary**)"*. **Those conversions cost more than the fp16 arithmetic saves** - by 40% on
+this workload. The decoration is cheap to APPLY and expensive to EXECUTE.
+**⇒ VERDICT: `gpu_fp16_shaders` STAYS DEFAULT-OFF PERMANENTLY unless the shader translator is reworked to emit
+fp16 END-TO-END** (fp16 interpolators, fp16 sampled results, fp16 attachments) - which is a much larger change,
+changes guest-visible precision throughout, and would still be a per-title quality call. **Do not retry the
+decoration-only form; it is measured at +40.4%.**
+**📌 THE READING LESSON, AND IT IS ABOUT MANUALS SPECIFICALLY: A VENDOR PERFORMANCE CLAIM CARRIES ITS
+PRECONDITIONS SOMEWHERE ELSE IN THE DOCUMENT.** "2x for mediump" and "type-casting costs ALU efficiency" are
+the same paragraph's worth of advice split across two sections; taking the headline without the caveat inverted
+the result. **When a manual promises a multiple, find what it assumes before building against it** - the
+assumption here was "authored in mediump", and we cannot satisfy it with a decoration.
+
 ## ❌❗ **CORRECTION, SAME SESSION: THE "FOLIAGE-ONLY" ARM WAS ALPHA-TEST **+ BLENDED**. SO THE ENTIRE 21% IS IN *OPAQUE* DRAWS (2026-08-10)**
 **I read the cvar's name and called the flat arm "foliage-only", then proposed porting XenDroid's blended-only
 VRS as the next step. Both were wrong - I had not read the gating code. It already does blended:**
