@@ -727,6 +727,49 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🚀🚀🚀 **SHIPPED: ALL FIVE FLOAT LOWERINGS ARE NOW DEFAULT-ON. ZERO LLVM FALLBACKS OUT OF THE BOX (2026-08-10)**
+**Validated on two titles, pixel-checked in the scene that used to break, and flipped. This is the first time
+every guest function compiles on LLVM by default.**
+```
+DEFAULT-ON NOW:
+  cpu_backend_llvm_lower_vmaddfp   (llvm_backend.cc:181)
+  cpu_llvm_vmx_float_flush         (llvm_assembler.cc:226)
+  cpu_llvm_vmx_fmax_nan            (llvm_assembler.cc:203)
+  cpu_llvm_lower_vsel              (llvm_assembler.cc:289)
+  cpu_llvm_lower_scalar_fma        (llvm_assembler.cc:126)
+```
+**THE EVIDENCE THAT JUSTIFIED THE FLIP:**
+| check | result |
+|---|---|
+| LLVM fallbacks | **0** (from 1,022 historically) |
+| functions moved a64 -> LLVM | **+1,005** (19,601 cached objects vs 18,596) |
+| BD field pixels | ✅ correct - Shu's colours, terrain, foliage, cliffs, shadows, DoF. **NO CYAN** |
+| BD cinematic pixels | ✅ correct - lit windmill scene, alpha, text |
+| **Burnout Revenge** | ✅ **61.3 fps at its cap, correct menu/3D/motion-blur/text, 0 faults, 0 fallbacks** |
+| faults, both titles | **0** |
+| fps | flat on BD (GPU-bound - expected) |
+**⇒ AND FOUR OF THE FIVE ARE CORRECTNESS FIXES, NOT JUST COVERAGE.** `vmx_fmax_nan` (PPC propagates NaN, we
+returned the number), `vmx_float_flush` (PPC flushes denormals via VSCR.NJ, LLVM never set FPCR),
+`lower_vsel`, and the V128 int-vs-float arithmetic behind `lower_vmaddfp` were all **live semantic divergences
+between our two backends on the SHIPPING one.** Leaving them off shipped known-wrong VMX arithmetic.
+**🚨🚨 AND THE FLIP DID NOT WORK UNTIL THE PERSISTED CONFIG WAS ALSO CHANGED - THE TRAP THIS
+FILE OPENS WITH.** All five read `false` in the device's `files/xenia.config.toml`, which **overrides the
+compiled default permanently**. Flipping the source alone would have changed NOTHING on this device and the
+next measurement would have "confirmed" the old behaviour.
+```
+run-as <pkg> sed -i 's/^<cvar> = false/<cvar> = true/' files/xenia.config.toml
+   (backup first: files/xenia.config.toml.bak-20260810-floatset, 294,524 bytes)
+```
+**⇒ VERIFIED END TO END WITH NO `--ez` AT ALL: 6,567 functions lowered from a COLD cache (LLVMobjload=0), and
+`LLVMfallback` = 0.** A zero fallback count only means something when lowering actually ran - the cold cache is
+what makes this proof rather than a warm-cache no-op.
+**⚠ GEARS REMAINS UNVALIDATED** and cannot be, until its Act-1 event stall is fixed - that bug is unrelated to
+these lowerings (it reproduces on both arms of an A/B and predates them). **Two titles is the bar these met;
+Gears is owed when it becomes runnable.**
+**📝 COLD-CACHE TRAP, THIRD TIME TODAY:** rebuilding `llvm_assembler.cc`/`llvm_backend.cc` moves the
+stamped cache directory, the pruner deletes the warm one, and the next route run VOIDs at 0 frames while AOT
+recompiles ~17k functions. **After ANY LLVM-backend rebuild, budget a warming run before attempting a route.**
+
 ## 🏁✅ **FIELD PIXEL CHECK PASSED - THE FULL FLOAT SET IS FULLY VALIDATED ON BLUE DRAGON (2026-08-10)**
 **The cinematic capture was good evidence; this is the decisive one. Captured IN THE FIELD - the exact scene
 class that used to render ENTIRELY CYAN.**

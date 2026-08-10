@@ -178,7 +178,7 @@ DEFINE_string(cpu_backend_llvm_skip_opcodes, "",
               "82=RSQRT, 86/87=DOT_PRODUCT_3/4, 77/78=MUL_ADD/SUB.",
               "CPU");
 
-DEFINE_bool(cpu_backend_llvm_lower_vmaddfp, false,
+DEFINE_bool(cpu_backend_llvm_lower_vmaddfp, true,
             "Lower VECTOR MUL_ADD/MUL_SUB (vmaddfp/vnmsubfp) in the LLVM backend. "
             "DEFAULT FALSE = fall back to the a64 backend for any guest function "
             "using vector vmaddfp. WHY: the LLVM lowering is qemu-byte-correct in "
