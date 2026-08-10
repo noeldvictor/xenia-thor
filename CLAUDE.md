@@ -727,6 +727,34 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 🔬 **THE RESIDUAL IS *STILL* FRAGMENT WORK - THE STRUCTURAL LEVERS STAY DEAD (2026-08-10)**
+**Asked the fork question directly: with fragment cost roughly halved, has the frame's composition changed?
+Re-ran the per-pass split WITH downscale+VRS on. It has not.**
+```
+                    BASELINE            downscale 71 + VRS 2x2
+  INSIDE passes   46,856 us (82.0%)  ->  28,173 us (80.4%)     -40%
+  BETWEEN          10,070 us (17.0%)  ->   6,531 us (18.6%)     -35%
+  top1 / top2     22,087 / 14,984    ->  11,937 / 9,554
+  passes/frame            76.7        ->        74.6
+```
+**⇒ THE RATIO IS UNCHANGED. Both halves scaled down together, and the same TWO passes still hold ~76% of
+in-pass time.** Cutting fragment area and rate did not expose a different bottleneck underneath - it just made
+the same one smaller.
+**⇒ SO THE STRUCTURAL LEVERS ARE NOT REHABILITATED.** I explicitly considered that pass breaks / transfers /
+barriers might have been measuring flat only because fragment cost was swamping them. **They were not.**
+"Between passes" shrank in absolute terms and stayed at ~18% of the frame - it was never the target and is
+still not.
+**⇒ AND IT KEEPS THE NEXT STEP POINTED AT THE SAME PLACE: the two dominant passes.** Everything else is noise
+by comparison, at every scale tested so far.
+**🚨 A METRIC TRAP I NEARLY FELL INTO, AND IT IS WORTH RECORDING BECAUSE THE TWO NUMBERS LOOK
+INTERCHANGEABLE:** this run's total reads **35,061 us** while the same configuration measured **42,499 us**
+earlier. That is NOT a speedup from adding timestamps. **They are different quantities**: `pass_us + gap_us +
+head + tail` (the bracketed spans) vs `gpu_frame_us` (whole-frame GPU time). The baseline shows the same
+offset - **56,925 by pass-split vs 61,831 by frame time, a consistent ~8% under-report.**
+**⇒ RULE: NEVER COMPARE A PASS-SPLIT TOTAL TO A `gpu_frame_us` TOTAL.** Pick one metric per comparison. The
+percentages and the per-pass numbers are the trustworthy output of the split; its absolute total is not
+comparable to the frame counter.
+
 ## 📊 **THE FRAGMENT-COST CEILING, MEASURED: 1.46x - AND THE TWO LEVERS DO *NOT* STACK (2026-08-10)**
 **Stacked the only two levers that won, to find the ceiling of the fragment-cost attack. Same route, same
 build, gameplay-tier confirmed, 0 faults.**
