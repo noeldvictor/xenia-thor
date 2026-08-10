@@ -727,6 +727,42 @@ that does this is in the session history; it costs nothing over reading the last
 win.** 40-frame averages of the two arms agreed to 0.4%, so the harness can detect changes well below the ~2.8%
 fps drift that has confounded this project's CPU work. **Use `gpu_frame_us` averages, not fps, for GPU levers.**
 
+## 📈 **GEARS OOM, MEASURED: RSS 888 MB / VSZ 30 GB / NO RLIMIT - AND THE ARMS DIFFER BY 26% MORE COMPILATION (2026-08-10)**
+**Sampled the failing arm to resolve the code-size-vs-something-else fork. Three more explanations die, and the
+one clean discriminator is not the one I expected.**
+```
+GEARS, lowerings ON, sampled every 15s to the abort:
+  t=45s   compiled= 3,609   RSS=554MB   VSZ=29,819MB
+  t=180s  compiled=13,510   RSS=677MB   VSZ=29,958MB
+  t=405s  compiled=31,391   RSS=888MB   VSZ=30,166MB
+  t=420s  PROCESS GONE                          PEAK RSS = 888 MB
+```
+**❌ NOT AN RSS/RAM PROBLEM: 888 MB peak on a 16 GB device.**
+**❌ NOT AN ADDRESS-SPACE RLIMIT: `ulimit -v` = unlimited** for the app process.
+**❌ NOT VA EXHAUSTION: user VA is ~512 GB** (stack sits at `0x7fcdf82000`); 30 GB VSZ is 6% of it.
+**❌ NOT MAPPING COUNT** (refuted in the previous entry: 2,177 mappings vs a 65,530 limit).
+**🔑 THE ONE CLEAN DIFFERENCE BETWEEN THE ARMS IS COMPILATION VOLUME, NOT CODE SIZE PER FUNCTION:**
+```
+  lowerings OFF -> 24,843 functions compiled, reached title, SURVIVED (121 fallbacks)
+  lowerings ON  -> 31,391 functions compiled, reached title, DIED       (0 fallbacks)
+                   = 26% MORE functions pushed through the LLVM path
+```
+**Zero fallbacks means every function that used to take the compact a64 path now goes through libLLVM** - more
+LLVM allocation churn, more objects, more code. **VSZ grew only ~350 MB across the whole compile**, so the
+growth is real but modest; the failure is Scudo being unable to obtain **1 MB** while the process holds 30 GB
+of reservations.
+**⇒ LEADING EXPLANATION NOW: FRAGMENTATION, NOT VOLUME.** Xenia reserves enormous contiguous regions (the 4 GB
+guest space and friends - `memory.cc:208/235/321`); Scudo must find a 1 MB contiguous hole *between* them, and
+26% more JIT allocation churn is what finally leaves no such hole. **That is consistent with every measurement
+above and with the size-dependence** (BD's ~19.6k functions never churn enough).
+**⚠ NOT PROVEN - and I am not implementing a fix on it.** Two hypotheses have already died this session by
+being arithmetically convincing and wrong. **The test that would settle it: dump `/proc/<pid>/maps` at t=400s
+in both arms and compare the largest free gap**, not the totals. If the ON arm's largest hole has collapsed
+below ~1 MB while the OFF arm's has not, fragmentation is confirmed and the fix is an arena/slab for JIT
+allocations rather than a codegen change.
+**⇒ AND NOTE WHAT THIS WOULD MEAN IF TRUE: the scalar-FMA code-size story would be a RED HERRING, and the
+"emit the branchy form" fix would not help.** Do not start that work until the gap measurement is in.
+
 ## 🔍 **THE GEARS OOM: TWO HYPOTHESES, ONE REFUTED BY MEASUREMENT (2026-08-10) - CAUSE STILL OPEN**
 **The revert below is settled and correct. The MECHANISM is not, and I want the next session to inherit the
 eliminated options rather than re-derive them.**
