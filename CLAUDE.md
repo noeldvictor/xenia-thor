@@ -492,7 +492,13 @@ the fragment-ALU bottleneck is exactly where a fixed-function-vs-shader question
 reducible.**
 
 ## 🐞🚨 **A LIVE LLVM BUG, AND THE FALLBACK CENSUS STRUCTURALLY CANNOT SEE IT: `IS_TRUE`/`IS_FALSE` ON V128 (2026-08-10)**
-**Found while mining a second Whatcookie video. CONFIRMED BY READING, not yet by running.**
+**Found while mining a second Whatcookie video. ✅✅ CONFIRMED ON DEVICE DATA 2026-08-10 — LLVM's OWN VERIFIER
+REPORTS THE PREDICTED ERROR, VERBATIM:**
+```
+08-10 18:35:13.864 17051 17077 E xenia   : !> 000042D7 LLVMAssembler: verifyFunction failed for
+    guest_2182930472: zext source and destination must both be a vector or neither
+```
+**That is `CreateZExt(<4 x i1> -> i8)`, named by the verifier.** The bug is real, not inferred.
 ```cpp
 // "i1 truth test of an HIR boolean/SCALAR value."     <- the comment says scalar
 Value* Truth(Value* v) { ... return b_.CreateICmpNE(v, ConstantInt::get(v->getType(), 0)); }
@@ -514,8 +520,23 @@ LOSING REGISTER RESIDENCY FOR THE WHOLE FUNCTION.** Same shape as the scalar-FMA
 `IS_FALSE` returns **TRUE**. The failure happens LATER, at the verifier, under a different log tag.
 **⇒ "194 remaining fallbacks, causes mul_sub 138 / mul_add 53 / select 3" MAY BE AN UNDERCOUNT THAT
 STRUCTURALLY CANNOT SEE THIS CLASS.** Every "zero fallbacks" claim in this file inherits that blind spot.
-**⇒ THE ONE-LINE CHECK, and it needs no device: grep any AOT log for `verifyFunction failed`.** Present =
-confirmed. Absent = my reading is wrong and this shrinks to a minor a64 tweak.
+**✅ THE ONE-LINE CHECK RAN, AND IT NEEDED NO DEVICE TIME: `grep verifyFunction failed` over AOT logs already on
+disk.** Present = confirmed. It is present.
+| captured log | verifyFunction hits | LLVMfallback | LLVMbegin |
+|---|---|---|---|
+| `ut2.log` (warm cache) | **1** | 121 | 414 |
+| `utrace.log` (cold, never reached the title) | 0 | - | 8,860 |
+**✅ AND THE BLIND SPOT IS CONFIRMED THE SAME WAY: the failing function is NOT in the 121 fallbacks.** It returned
+`true` from `LowerInstr` and died later at the verifier. **The census undercounts by exactly this class**, as
+predicted.
+**⚠ THE COUNT IS SMALL, AND I DO NOT YET KNOW THE REAL ONE.** One hit against `LLVMbegin = 414` is a warm cache
+compiling almost nothing. The cold run shows 0 hits against `LLVMbegin = 8,860`, **but that run never reached the
+title** (this file records it as VOID), so it plausibly never compiled the vector-compare-heavy code.
+**⇒ A FULL COLD AOT IS OWED BEFORE ANYONE SIZES THIS.** Do not quote "1 occurrence" as the population.
+**📌 AND CREDIT WHERE IT IS DUE: THE DIAGNOSTIC THAT CAUGHT THIS WAS DELIBERATE.** The comment at `:3374` says it
+exists to *"capture the verifier's reason (errs() isn't in logcat) so invalid-IR codegen bugs are diagnosable
+instead of a silent a64 fallback."* **Without it this class is invisible** — the fallback census cannot see it and
+Android does not carry `errs()` to logcat. **Keep that diagnostic; it is the only instrument for this bug class.**
 **⇒ THE FIX: reduce the vector to a scalar first** (`llvm.vector.reduce.or`, or `umaxp`+`fmov` on a64) then
 `icmp ne`. **And the a64 side is ALSO wasteful:** `EmitIsTrueV128` (`a64_sequences.cc:4282`) does **2x `umov`
 GPR<-vector**, called from BOTH `IS_TRUE_V128` and `IS_FALSE_V128` = **4 cross-domain transfers per record-form
