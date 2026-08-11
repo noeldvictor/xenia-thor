@@ -491,6 +491,57 @@ a GUESS, in a comment, load-bearing for our LRZ work). **A primary source turns 
 the fragment-ALU bottleneck is exactly where a fixed-function-vs-shader question decides whether work is
 reducible.**
 
+## 🐞🚨 **A LIVE LLVM BUG, AND THE FALLBACK CENSUS STRUCTURALLY CANNOT SEE IT: `IS_TRUE`/`IS_FALSE` ON V128 (2026-08-10)**
+**Found while mining a second Whatcookie video. CONFIRMED BY READING, not yet by running.**
+```cpp
+// "i1 truth test of an HIR boolean/SCALAR value."     <- the comment says scalar
+Value* Truth(Value* v) { ... return b_.CreateICmpNE(v, ConstantInt::get(v->getType(), 0)); }
+
+case OPCODE_IS_TRUE:   Def(i->dest, b_.CreateZExt(Truth(a), T(i->dest->type)));            // :1915
+case OPCODE_IS_FALSE:  Def(i->dest, b_.CreateZExt(b_.CreateNot(Truth(a)), ...));           // :1921
+```
+**NEITHER HAS AN `isVectorTy()` GUARD.** Their neighbours do - `SELECT` guards `IsVec(tv) && IsVec(cond)`
+(:1949), `LOAD` guards `ty->isVectorTy()` (:1970). **With a V128 source, `Truth()` returns `<4 x i1>` and
+`CreateZExt(<4 x i1> -> i8)` is INVALID IR.**
+**⇒ AND `UpdateCR6` FEEDS IT A V128, TWICE.** `ppc_hir_builder.cc:522-532` emits `IS_FALSE(NOT(v))` and
+`IS_FALSE(v)` on a V128 for **every record-form vector compare** - `vcmpeqfp.`, `vcmpgtfp.`, `vcmpequw.`,
+`vcmpbfp.`. Those are common in guest 3D code.
+**⇒ SO EVERY FUNCTION CONTAINING ONE PLAUSIBLY FAILS `verifyFunction` (:3374) AND FALLS BACK TO a64 WHOLESALE,
+LOSING REGISTER RESIDENCY FOR THE WHOLE FUNCTION.** Same shape as the scalar-FMA gap that was worth
+**1,022 -> 194 fallbacks**.
+**🔑 AND THIS IS THE PART THAT MATTERS MOST: THE FALLBACK CENSUS CANNOT COUNT IT.** The
+`LLVMfallback fn=.. opcode=..` histogram (:1313-1336) only fires when **`LowerInstr` returns FALSE**.
+`IS_FALSE` returns **TRUE**. The failure happens LATER, at the verifier, under a different log tag.
+**⇒ "194 remaining fallbacks, causes mul_sub 138 / mul_add 53 / select 3" MAY BE AN UNDERCOUNT THAT
+STRUCTURALLY CANNOT SEE THIS CLASS.** Every "zero fallbacks" claim in this file inherits that blind spot.
+**⇒ THE ONE-LINE CHECK, and it needs no device: grep any AOT log for `verifyFunction failed`.** Present =
+confirmed. Absent = my reading is wrong and this shrinks to a minor a64 tweak.
+**⇒ THE FIX: reduce the vector to a scalar first** (`llvm.vector.reduce.or`, or `umaxp`+`fmov` on a64) then
+`icmp ne`. **And the a64 side is ALSO wasteful:** `EmitIsTrueV128` (`a64_sequences.cc:4282`) does **2x `umov`
+GPR<-vector**, called from BOTH `IS_TRUE_V128` and `IS_FALSE_V128` = **4 cross-domain transfers per record-form
+compare.** `umaxp v,v.4s,v.4s` + one `fmov` halves it. All of `umaxp`/`addv`/`uaddlv`/`umaxv` are already in the
+assembler.
+**💡 AND THE FURTHER VERSION: DO NOT MATERIALISE CR6 AT ALL.** The pattern matcher already exists and is
+unused for optimisation - `AuditCr6UpdateShape` (`a64_emitter.cc:1528-1568`) already recognises the exact
+`NOT -> IS_FALSE -> store -> IS_FALSE -> store` chain and reports **strict** = "no other consumer". It only
+increments a statistic today (`:3336-3341`, logged `cr6={}/{}`). **Run that census before building anything;
+if the count is small, stop.**
+**⚠ EXPECT SINGLE DIGITS AT BEST, AND ZERO ON BLUE DRAGON, WHICH IS GPU-BOUND.** But note why this is a better
+bet than `ppc_cross_block_dead_gpr_elim` (12,942 stores removed, +0.8%): **cross-domain vector->GPR transfers
+are NOT absorbed by the store buffer**, which is exactly why that one measured flat.
+**📌 AND IT NAMES A GAP IN THE "CPU IS CLEAN" VERDICT.** The eight-axis sweep covered x86-SHAPED
+STRUCTURE - register budgets, spill shapes, memory ordering. **It never covered GUEST-OP-TO-HOST-SIMD
+INSTRUCTION SELECTION**, which is this video's entire subject. **This bug is an instance of that uncovered
+axis, in the SHIPPING backend, invisible to the census that declared the area clean.**
+### ✅ THE VIDEO ITSELF (40tyEVx_umY) IS OTHERWISE N/A - IT IS 100% x86 SIMD
+*"Abusing x86 instructions to optimize PS3 emulation"*, Whatcookie, 2025-12-17, 16:25. **A DIFFERENT video from
+the one already mined** (`docs/research/20260809-whatcookie-video-full-mining.md` covers the 60-min ARM one).
+**Zero GPU, zero ARM, zero threading content.** `VPDPBUSD`/`VDBPSADBW` byte-sums serve SPU `SUMB`, whose guest
+analogues (`vsum4ubs`, `vsumsws`) are `XEINSTRNOTIMPLEMENTED` here; `GF2P8AFFINEQB` has **no AArch64 analogue**
+(the SVE2-BitPerm equivalent needs SVE, which this SoC lacks). **His NaN item is the INVERSE of ours and
+independently corroborates deleting `FixupVmxMaxMinNan`** - the SPU is non-IEEE and needs work, the Xenon is
+ordered and ARM matches it natively.
+
 ## 🚨🔥🔥 **FEX PROVES THE AAPCS64 CEILING IS A CHOICE, NOT A LAW: `preserve_allcc` KEEPS THE LOW 128 BITS OF v8-v31 (2026-08-10)**
 **This file states that vector residency across a call is "architecturally impossible" on AArch64. That is a
 statement about AAPCS64, NOT about the machine. FEX-Emu (`reference/FEX`) does not use AAPCS64 between guest
