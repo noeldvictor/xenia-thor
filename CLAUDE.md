@@ -572,6 +572,40 @@ does not depend on it.
    "do not materialise CR6 at all" version. **If the count is small, stop.**
 **⇒ THE ENGAGEMENT PROOF IS FREE AND NEEDS NO DEVICE:** run a cold AOT and watch `verifyFunction failed` go to
 **zero** while `is_true`/`is_false` appear in the `LLVMfallback` histogram instead.
+### ✅✅✅ **THE COLD AOT RAN 2026-08-11: THE FIX WORKS, AND THE REAL POPULATION IS 11 FUNCTIONS**
+**The count this entry said was owed. Blue Dragon, COLD cache (the rebuild moved the stamp, so it pruned
+itself), full AOT to `Title name: Blue Dragon`, cvar OFF.**
+```
+AOT precompile ......... 16,896 / ~16,954 functions   LLVMobjload 0 / LLVMbegin 18,861  <- genuinely cold
+verifyFunction failed .. 0        <- WAS 1 BEFORE THE FIX. The invalid IR is GONE.
+budget reached ......... 0        <- so every count below is a TRUE count, not the log cap
+LLVMfallback ........... 1,023 -> mul_add 734, mul_sub 275, is_false 11, select 3
+faults / scudo / SIGTRAP 0
+```
+**⇒ THREE RESULTS, AND THE THIRD IS THE MECHANISM CONFIRMING ITSELF:**
+1. **`verifyFunction failed` went 1 -> 0.** The invalid IR no longer occurs.
+2. **The population is 11 FUNCTIONS**, and they are now VISIBLE in the census instead of dying at the verifier.
+   11 of 18,861 = **0.06%**.
+3. **`is_true` = 0; ALL ELEVEN ARE `is_false`.** That is exactly what `UpdateCR6` emits - `IS_FALSE(NOT(v))` and
+   `IS_FALSE(v)`, never `IS_TRUE` - so the predicted mechanism is confirmed by the shape of the data, not just
+   by the error text.
+**⚠ SIZE IT HONESTLY: THIS IS A CORRECTNESS FIX, NOT A COVERAGE WIN.** This entry predicted *"EXPECT SINGLE
+DIGITS AT BEST"* and that was right. 11 functions will not move fps, and BD is GPU-bound anyway. **What was
+actually bought: invalid IR eliminated, and the fallback census stopped lying.**
+**🛑 ARM 2 (cvar ON) WAS NOT RUN - rpcs3 APPEARED DURING THE COOLDOWN AND THE GUARD ABORTED.** So **the new
+lowering has still NEVER EXECUTED**: arm 1 only exercised the cvar-OFF path, which returns false. **That is the
+"a lever that has never executed is unvalidated code" rule, and it applies to the ON path here.** Arm 2 is one
+cold run and it is what remains owed, together with the pixel check.
+**📉 AND A NEW INSTANCE OF A KNOWN TRAP, WORTH MORE THAN THE FINDING: A SLEEPING PANEL THROTTLES THE AOT
+COMPILE BY 3.8x.**
+```
+mWakefulness=Asleep   ~18 functions/sec   (device 674% IDLE - not thermal, temp was 33C)
+mWakefulness=Awake    ~68 functions/sec   (matches this file's recorded ~61/s)
+```
+**This file documents the sleeping panel as a BLACK-SCREEN/rendering trap. It is also a CPU-THROUGHPUT trap.**
+**⇒ ANY AOT TIMING TAKEN WITH THE SCREEN ASLEEP IS WRONG BY ~4x** - which includes time-to-title figures and
+the precompile core-policy A/B. **Wake the screen before timing anything, or use `tools/thor_launch.sh`, which
+does it automatically.** I launched by hand and skipped it.
 ### ✅ THE BUG CLASS IS NOW SWEPT AND BOUNDED: THIS WAS THE **ONLY** INSTANCE (2026-08-11, device-free)
 **The obvious worry after finding one invisible invalid-IR bug is "how many more are there". Swept it properly
 by enumerating which HIR opcodes can actually RECEIVE a V128, from the a64 emitter tables - the same method that
