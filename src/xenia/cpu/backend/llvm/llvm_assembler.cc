@@ -301,6 +301,31 @@ DEFINE_bool(
     "CPU");
 
 DEFINE_bool(
+    cpu_llvm_lower_is_true_v128, false,
+    "Lower IS_TRUE/IS_FALSE on a V128 in LLVM instead of falling back to a64. "
+    "FIXES A LIVE BUG: those two cases called the scalar-only Truth() helper "
+    "with no isVectorTy() guard (their neighbours SELECT and LOAD both guard), "
+    "so a V128 source produced `zext <4 x i1> to i8` - INVALID IR. The whole "
+    "function then failed verifyFunction() and dropped to a64, losing register "
+    "residency for all of it. Device-confirmed by the verifier's own message: "
+    "'zext source and destination must both be a vector or neither'. "
+    "IT IS INVISIBLE TO THE FALLBACK CENSUS: that histogram only counts "
+    "LowerInstr returning FALSE, and this path returned TRUE and died later at "
+    "the verifier under a different log tag - so every 'zero fallbacks' claim "
+    "in this tree inherits the blind spot. "
+    "REACHED CONSTANTLY: PPCHIRBuilder::UpdateCR6 emits IS_FALSE(NOT(v)) and "
+    "IS_FALSE(v) on a V128 for EVERY record-form vector compare (vcmpeqfp., "
+    "vcmpgtfp., vcmpequw., vcmpbfp.), which is common in guest 3D code. "
+    "Semantics follow a64 EmitIsTrueV128: a WHOLE-VECTOR test, (low | high) != "
+    "0 across all 128 bits, NOT a per-lane compare - emitted as "
+    "llvm.vector.reduce.or over <2 x i64> then one icmp. Getting that wrong "
+    "would type-check and silently invert control flow. "
+    "Default off pending a pixel check; the engagement proof is free and needs "
+    "no device - run a COLD AOT and watch `verifyFunction failed` go to zero "
+    "while `is_true`/`is_false` appear in the LLVMfallback histogram instead.",
+    "CPU");
+
+DEFINE_bool(
     cpu_llvm_vector_qload, false,
     "Emit ONE q-load/q-store for guest VEC128 memory access instead of FOUR "
     "volatile 32-bit words plus three insertelements. "
@@ -422,7 +447,8 @@ DECLARE_bool(cpu_backend_llvm_residency_abi);
   X('q', cpu_llvm_vector_qload)                   \
   X('n', cpu_llvm_vmx_float_flush)                \
   X('x', cpu_llvm_vmx_fmax_nan)                   \
-  X('s', cpu_llvm_lower_vsel)
+  X('s', cpu_llvm_lower_vsel)                     \
+  X('t', cpu_llvm_lower_is_true_v128)
 
 // Builds the "<letter><0|1>..." run that both key sites embed verbatim.
 static std::string LlvmLoweringKeySuffix() {
@@ -1017,6 +1043,30 @@ class Lowerer {
       return b_.CreateFCmpUNE(v, llvm::ConstantFP::get(v->getType(), 0.0));
     }
     return b_.CreateICmpNE(v, llvm::ConstantInt::get(v->getType(), 0));
+  }
+  // i1 truth test that also accepts a V128.
+  //
+  // 🚨 Truth() ABOVE IS SCALAR-ONLY AND SAYS SO, BUT NOTHING ENFORCED IT. On a
+  // V128, ConstantInt::get(<4 x i32>, 0) splats, CreateICmpNE yields <4 x i1>,
+  // and the caller's `zext ... to i8` is INVALID IR - the whole function then
+  // fails verifyFunction() and falls back to a64 wholesale, INVISIBLY (the
+  // LLVMfallback census only counts LowerInstr returning false, and it
+  // returned true). Confirmed on device by the verifier itself:
+  //   "zext source and destination must both be a vector or neither".
+  //
+  // 🔑 THE CONTRACT IS A WHOLE-VECTOR TEST, NOT A PER-LANE ONE, and reading it
+  // off a64 rather than guessing is what makes this correct: EmitIsTrueV128
+  // (a64_sequences.cc:4271) does `umov x0,d[0]; umov x1,d[1]; orr; cmp #0`,
+  // i.e. (low | high) != 0 over all 128 bits, and its constant path agrees
+  // ((value.low | value.high) != 0). A per-lane compare would be a DIFFERENT
+  // and wrong answer that still type-checks.
+  llvm::Value* TruthWide(llvm::Value* v) {
+    if (!v->getType()->isVectorTy()) return Truth(v);
+    // <2 x i64> mirrors a64's two d-lane umovs exactly; the reduce+icmp pair
+    // is the only shape that produces the scalar i1 the zext needs.
+    auto* i64x2 = llvm::FixedVectorType::get(b_.getInt64Ty(), 2);
+    auto* red = b_.CreateOrReduce(b_.CreateBitCast(v, i64x2));
+    return b_.CreateICmpNE(red, b_.getInt64(0));
   }
 
   llvm::BasicBlock* BlockFor(Block* hb) { return block_map_[hb->ordinal]; }
@@ -1912,16 +1962,23 @@ bool Lowerer::LowerInstr(Instr* i) {
       Def(i->dest, b_.CreateZExt(r, T(i->dest->type)));
       return true;
     }
+    // NOTE both cases below: with the cvar OFF we return FALSE for a vector
+    // rather than emitting the old invalid IR. The function still lands on
+    // a64 either way, but it now lands there through the COUNTED fallback path
+    // instead of dying at the verifier - so the census stops under-reporting
+    // this class even when the lowering itself stays disabled.
     case OPCODE_IS_TRUE: {
       auto* a = V(i->src1.value);
       if (!a) return false;
-      Def(i->dest, b_.CreateZExt(Truth(a), T(i->dest->type)));
+      if (IsVec(a) && !cvars::cpu_llvm_lower_is_true_v128) return false;
+      Def(i->dest, b_.CreateZExt(TruthWide(a), T(i->dest->type)));
       return true;
     }
     case OPCODE_IS_FALSE: {
       auto* a = V(i->src1.value);
       if (!a) return false;
-      Def(i->dest, b_.CreateZExt(b_.CreateNot(Truth(a)), T(i->dest->type)));
+      if (IsVec(a) && !cvars::cpu_llvm_lower_is_true_v128) return false;
+      Def(i->dest, b_.CreateZExt(b_.CreateNot(TruthWide(a)), T(i->dest->type)));
       return true;
     }
     case OPCODE_SELECT: {
