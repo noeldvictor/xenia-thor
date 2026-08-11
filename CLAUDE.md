@@ -537,11 +537,41 @@ title** (this file records it as VOID), so it plausibly never compiled the vecto
 exists to *"capture the verifier's reason (errs() isn't in logcat) so invalid-IR codegen bugs are diagnosable
 instead of a silent a64 fallback."* **Without it this class is invisible** — the fallback census cannot see it and
 Android does not carry `errs()` to logcat. **Keep that diagnostic; it is the only instrument for this bug class.**
-**⇒ THE FIX: reduce the vector to a scalar first** (`llvm.vector.reduce.or`, or `umaxp`+`fmov` on a64) then
-`icmp ne`. **And the a64 side is ALSO wasteful:** `EmitIsTrueV128` (`a64_sequences.cc:4282`) does **2x `umov`
-GPR<-vector**, called from BOTH `IS_TRUE_V128` and `IS_FALSE_V128` = **4 cross-domain transfers per record-form
-compare.** `umaxp v,v.4s,v.4s` + one `fmov` halves it. All of `umaxp`/`addv`/`uaddlv`/`umaxv` are already in the
-assembler.
+**✅✅ FIXED AND SHIPPED 2026-08-10 (`533acb480`), `cpu_llvm_lower_is_true_v128`, DEFAULT OFF, allowlisted, in
+the cache-key table as letter `t`.** A `TruthWide()` helper reduces the vector before the compare:
+```cpp
+llvm::Value* TruthWide(llvm::Value* v) {
+  if (!v->getType()->isVectorTy()) return Truth(v);
+  auto* i64x2 = llvm::FixedVectorType::get(b_.getInt64Ty(), 2);
+  return b_.CreateICmpNE(b_.CreateOrReduce(b_.CreateBitCast(v, i64x2)), b_.getInt64(0));
+}
+```
+**🔑 THE SEMANTICS CAME FROM THE a64 SEQUENCE, NOT FROM THE OPCODE NAME - AND THAT IS THE WHOLE REASON IT IS
+RIGHT.** `EmitIsTrueV128` is a **WHOLE-VECTOR** test - `(low | high) != 0` across all 128 bits - **not a per-lane
+compare**, and its constant path agrees. **A per-lane version type-checks and silently inverts control flow**,
+which is the same trap the `vsel` operand order set (`tv`/`fv` names lying about the contract).
+**✅ AND THE EMITTED ASM WAS CHECKED BEFORE TRUSTING IT** (NDK 25 clang, our exact `-march`) - the rule that has
+now paid six times:
+```
+llvm.vector.reduce.or over <2 x i64>  ->  ext + orr + fmov + cmp + cset   <- ONE cross-domain transfer
+a64's hand-written EmitIsTrueV128     ->  umov + umov + orr + cmp + cset  <- TWO
+```
+**⇒ SO THE LLVM PATH LANDS STRICTLY BETTER THAN a64 HERE, and it independently CONFIRMS the a64-side waste
+below:** clang reaches for the vector-domain reduce where our emitter hand-writes two `umov`s.
+**⇒ THE a64 SIDE IS STILL WASTEFUL AND IS NOT FIXED:** `EmitIsTrueV128` (`a64_sequences.cc:4282`) does **2x
+`umov` GPR<-vector**, called from BOTH `IS_TRUE_V128` and `IS_FALSE_V128` = **4 cross-domain transfers per
+record-form compare.** `umaxp v,v.4s,v.4s` + one `fmov` halves it; all of `umaxp`/`addv`/`uaddlv`/`umaxv` are
+already in the assembler. **Left for separate work deliberately** - it is a different backend and the LLVM fix
+does not depend on it.
+**⚠ WHAT IS STILL OWED, AND THE DEFAULT MUST NOT FLIP UNTIL IT IS DONE:**
+1. **A FULL COLD AOT to count the real population.** The confirmation run had `LLVMbegin = 414` (warm cache).
+   **"1 occurrence" is not the count.**
+2. **A pixel check.** The failure mode is wrong control flow on record-form vector compares, i.e. wrong pixels
+   with no crash - the exact class that cost this project months on the cyan bug.
+3. **The `cr6=N/M strict` census** (`AuditCr6UpdateShape`, already built, never run) before anyone builds the
+   "do not materialise CR6 at all" version. **If the count is small, stop.**
+**⇒ THE ENGAGEMENT PROOF IS FREE AND NEEDS NO DEVICE:** run a cold AOT and watch `verifyFunction failed` go to
+**zero** while `is_true`/`is_false` appear in the `LLVMfallback` histogram instead.
 **💡 AND THE FURTHER VERSION: DO NOT MATERIALISE CR6 AT ALL.** The pattern matcher already exists and is
 unused for optimisation - `AuditCr6UpdateShape` (`a64_emitter.cc:1528-1568`) already recognises the exact
 `NOT -> IS_FALSE -> store -> IS_FALSE -> store` chain and reports **strict** = "no other consumer". It only
