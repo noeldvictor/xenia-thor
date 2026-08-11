@@ -572,6 +572,28 @@ does not depend on it.
    "do not materialise CR6 at all" version. **If the count is small, stop.**
 **⇒ THE ENGAGEMENT PROOF IS FREE AND NEEDS NO DEVICE:** run a cold AOT and watch `verifyFunction failed` go to
 **zero** while `is_true`/`is_false` appear in the `LLVMfallback` histogram instead.
+### ✅ THE BUG CLASS IS NOW SWEPT AND BOUNDED: THIS WAS THE **ONLY** INSTANCE (2026-08-11, device-free)
+**The obvious worry after finding one invisible invalid-IR bug is "how many more are there". Swept it properly
+by enumerating which HIR opcodes can actually RECEIVE a V128, from the a64 emitter tables - the same method that
+found the bug.**
+| construct | result |
+|---|---|
+| `Truth()` call sites | **6 others, ALL SAFE** - they feed BRANCH_TRUE/BRANCH_FALSE/TRAP_TRUE/RETURN_TRUE/CALL_TRUE/CALL_INDIRECT_TRUE, and **none of those has a V128 variant in a64** (I8..I64 + F32/F64 only). A V128 cannot reach them |
+| the `IsFloat(t) ? float_op : int_op` family | **4 sites (ADD/SUB/MUL/NEG), all already guarded** with explicit V128 branches - that is the cyan-bug fix, closed |
+| all 34 `CreateZExt`/`SExt`/`Trunc`/`IntCast` sites | the three that zext a PREDICATE (`COMPARE_*`, `IS_NAN`) **cannot take a V128** either - a64 lists I8..I64/F32/F64 only. `ZERO_EXTEND`/`SIGN_EXTEND`/`TRUNCATE` are integer-pair forms only |
+**⇒ `IS_TRUE`/`IS_FALSE` WERE THE ONLY V128-CAPABLE CONSUMERS OF A SCALAR-ONLY CONSTRUCT. DO NOT RE-RUN THIS
+SWEEP.** The method that settles it in minutes: grep `EMITTER_OPCODE_TABLE(OPCODE_<x>` in the a64 backend and
+read the type list - **the a64 tables are the authority on which types an opcode can actually carry**, and they
+are far cheaper to consult than reasoning about the HIR.
+### 📊 AND THE CAPTURED LOGS SAY WHAT IS LEFT (mined 2026-08-11, no device)
+```
+ut2.log:  LLVMfallback = 121  ->  mul_add 94, mul_sub 26   (100% scalar FMA, nothing else)
+          "budget reached" = 0   <- so 121 is a TRUE COUNT, not the log cap that once faked one
+          LLVMobjload = 18,447   LLVMbegin = 414 (warm cache)
+```
+**⇒ EVERY REMAINING FALLBACK IS SCALAR FMA**, i.e. `cpu_llvm_lower_scalar_fma`, which is default-off after the
+Gears OOM revert. **Checking `budget reached` matters**: this file records the old hardcoded 120-line cap
+reporting exactly 120 and looking like a count. It is 0 here, so the number is real.
 **💡 AND THE FURTHER VERSION: DO NOT MATERIALISE CR6 AT ALL.** The pattern matcher already exists and is
 unused for optimisation - `AuditCr6UpdateShape` (`a64_emitter.cc:1528-1568`) already recognises the exact
 `NOT -> IS_FALSE -> store -> IS_FALSE -> store` chain and reports **strict** = "no other consumer". It only
@@ -1191,6 +1213,33 @@ BRANCHY form - an early-out on 'no source is NaN' around a bare `llvm.fma`, mirr
 of 19). **That would cut the code-size blowup at its source and is the prerequisite to defaulting these on.**
 Alternatively gate the set per-title via `GameProfiles` for titles under some function count - but shrinking
 the sequence is the better fix.
+**❌❌❌ REFUTED BY MEASUREMENT 2026-08-11, DEVICE-FREE: THE BRANCHY FORM IS *BIGGER*, NOT SMALLER. DO NOT BUILD
+IT.** Compiled both forms with NDK 25 clang at our exact `-march` and counted the WHOLE function:
+```
+branchless (what ships today)   16 instructions / 3 fmov     <- reproduces the recorded figure EXACTLY
+branchy    (the prescribed fix) 18 instructions / 3 fmov     <- +2, the WRONG DIRECTION
+```
+**The branchy form is FASTER (~7 executed on the no-NaN path) and LARGER (18 emitted).** Those are opposite
+directions, and the Gears OOM is driven by EMITTED code size, not executed instructions - an early-out still
+has to emit the slow path it skips.
+**🔑 AND THE ROOT ERROR IS A UNIT MISMATCH THAT THIS FILE WARNS ABOUT ELSEWHERE: "19 insns vs 8" COMPARED A
+TOTAL AGAINST A FAST PATH.** The scalar-FMA entry says it plainly - a64 is *"~8 insns **on the no-NaN fast
+path**"* while ours is *"19 insns, ALWAYS"*. **a64's TOTAL is not 8** (it has a NaN block too, and the branchy
+C model of that same shape measures 18). So the 2.4x code-size blowup that motivated the whole story was never
+measured; it compared two different quantities. **Same trap as "never compare a pass-split total to a
+`gpu_frame_us` total".**
+**✅ THE MODEL IS TRUSTWORTHY, WHICH IS WHY THIS IS A REFUTATION AND NOT AN OPINION:** the branchless arm
+reproduces the in-code comment's own `clang -S` figure (16 insns / 3 fmov) to the instruction, so the harness
+is measuring the same thing the original claim did.
+**⇒ CONSEQUENCES, and they point the same way as the entry below:**
+1. **The scalar-FMA lowering is NOT the code-size culprit** - it is already more compact than the branchy
+   alternative. The code-size explanation for the Gears OOM loses its mechanism.
+2. **This CORROBORATES the fragmentation hypothesis** (next entry), which the OOM measurements already favoured
+   and which explicitly warned *"the scalar-FMA code-size story would be a RED HERRING."* Two independent lines
+   now agree.
+3. **The gap measurement (`/proc/<pid>/maps`, largest free hole) is still THE test**, and it still needs a
+   device. **Do not implement a codegen change for this until it is in** - which is what that entry already
+   says, and this measurement removes the remaining temptation to skip it.
 **📌 THE PROCESS LESSON, AND IT IS THE MOST EXPENSIVE ONE OF THE SESSION: "VALIDATED ON TWO TITLES" DID
 NOT COVER A SIZE-DEPENDENT FAILURE.** Both passing titles were smaller than the failing one. **When a change
 affects generated CODE SIZE, the validation set must include the LARGEST title, not merely more than one.**
