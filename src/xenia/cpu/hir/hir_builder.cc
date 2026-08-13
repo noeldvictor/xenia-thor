@@ -907,6 +907,13 @@ Instr* HIRBuilder::DelayExecution() {
   return i;
 }
 
+Instr* HIRBuilder::SpinBackoff(uint32_t units) {
+  Instr* i = AppendInstr(OPCODE_SPIN_BACKOFF_info, 0);
+  i->src1.offset = units;
+  i->src2.value = i->src3.value = NULL;
+  return i;
+}
+
 void HIRBuilder::SourceOffset(uint32_t offset) {
   Instr* i = AppendInstr(OPCODE_SOURCE_OFFSET_info, 0);
   i->src1.offset = offset;

@@ -15,7 +15,7 @@
 
 DEFINE_bool(
     park_memory_poll_loops, false,
-    "Inject a yield (DELAY_EXECUTION) into indefinite guest memory-poll "
+    "Inject a bounded backoff (SPIN_BACKOFF) into indefinite guest memory-poll "
     "self-loops - load, test, branch back - so a long wait stops spinning a "
     "core at full duty. Aimed squarely at the power gap: a guest thread "
     "polling a flag burns the same watts as one doing work, and this project's "
@@ -202,14 +202,25 @@ bool MemoryPollParkPass::TryInstrumentLoop(HIRBuilder* builder, Block* block) {
 
   // Already instrumented (the pass can run more than once over a function).
   for (Instr* instr = block->instr_head; instr; instr = instr->next) {
-    if (instr->GetOpcodeNum() == OPCODE_DELAY_EXECUTION) {
+    if (instr->GetOpcodeNum() == OPCODE_SPIN_BACKOFF) {
       return false;
     }
   }
 
-  // Place the yield immediately BEFORE the loop-back branch, so it runs only
+  // Place the backoff immediately BEFORE the loop-back branch, so it runs only
   // when the loop is actually going round again - never on the exit path.
-  builder->DelayExecution()->MoveBefore(loop_branch);
+  //
+  // This emits OPCODE_SPIN_BACKOFF, not OPCODE_DELAY_EXECUTION. That is the
+  // difference between a lever that works and one that does not: on a64,
+  // DELAY_EXECUTION lowers to `yield`, and ARM YIELD RETIRES AS A NO-OP on
+  // essentially every modern core - so the original form of this pass changed
+  // the spin rate by nothing at all on the Thor, even switched on. SPIN_BACKOFF
+  // is a real bounded wait, and under a64_park_spin_backoff it escalates to a
+  // bounded sleep once a wait is clearly not short.
+  //
+  // One unit, matching upstream: the adaptivity lives in the backoff helper,
+  // not in the emitted count.
+  builder->SpinBackoff(1)->MoveBefore(loop_branch);
   if (cvars::log_memory_poll_park) {
     XELOGI("MemoryPollPark: instrumented poll loop at guest {:08X}",
            guest_address);

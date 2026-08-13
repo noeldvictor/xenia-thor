@@ -29,6 +29,18 @@
 #include "xenia/cpu/processor.h"
 #include "xenia/cpu/xex_module.h"
 
+DEFINE_bool(
+    a64_park_spin_backoff, false,
+    "Lower OPCODE_SPIN_BACKOFF to an adaptive spin-then-park helper instead of "
+    "an inline isb sled. A short guest spin is cheap either way, but a long "
+    "one burns a core at full clock for nothing; the helper counts consecutive "
+    "polls and drops into a bounded 30us sleep once the wait is clearly not "
+    "short. Costs a full guest->host thunk per backoff, so it is only a win "
+    "where the polls are genuinely long. Under the cooperative scheduler the "
+    "helper only yields the fiber, so the call is gated on the scheduler's own "
+    "give-way flag. Default off pending a device A/B.",
+    "a64");
+
 DEFINE_bool(emit_mmio_aware_stores_for_recorded_exception_addresses, false,
             "Use recorded MMIO exception addresses for A64 store emission.",
             "a64");
@@ -101,6 +113,9 @@ DEFINE_uint32(a64_clock_spin_yield_window_us, 50,
               "resets. Was hardcoded 2us (too tight - caught nothing at a "
               "GPU-bound Gears2 menu); tune on-device.",
               "a64");
+// Defined in the kernel layer; read here only to gate the park helper's call.
+DECLARE_bool(guest_scheduler);
+
 DECLARE_bool(arm64_blue_dragon_draw_wait_probe);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_probe_stride);
 DECLARE_uint32(arm64_blue_dragon_draw_wait_inline_tick_step);
@@ -347,6 +362,84 @@ struct DELAY_EXECUTION
   static void Emit(A64Emitter& e, const EmitArgType& i) { e.EmitSpinHint(); }
 };
 EMITTER_OPCODE_TABLE(OPCODE_DELAY_EXECUTION, DELAY_EXECUTION);
+
+// Adaptive spin-then-park backing OPCODE_SPIN_BACKOFF when
+// a64_park_spin_backoff is on. A short wait stays a handful of isb; a wait
+// that keeps coming back drops into a bounded sleep so the core is not held
+// at full clock. Episodes are per-thread and reset after an idle gap, so a
+// title that polls in bursts is not permanently demoted to the sleeping path.
+static void SpinBackoffParkThunk(void* /*ppc_context*/) {
+  static constexpr uint32_t kSpinIters = 24;
+  static constexpr int64_t kParkNs = 30000;   // 30us bounded park
+  static constexpr int64_t kGapNs = 200000;   // >200us idle -> new episode
+  thread_local uint32_t consec = 0;
+  thread_local int64_t last_ns = 0;
+  const int64_t now_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                             std::chrono::steady_clock::now().time_since_epoch())
+                             .count();
+  if (now_ns - last_ns > kGapNs) {
+    consec = 0;
+  }
+  last_ns = now_ns;
+  // Under the cooperative scheduler a host sleep would park the whole dispatch
+  // thread, not just this fiber, so never sleep there - the give-way flag the
+  // caller already tested is the yield mechanism.
+  if (cvars::guest_scheduler || ++consec < kSpinIters) {
+    for (uint32_t n = 0; n < 8; ++n) {
+      __asm__ __volatile__("isb sy" ::: "memory");
+    }
+    return;
+  }
+  xe::threading::NanoSleep(kParkNs);
+}
+
+// ============================================================================
+// OPCODE_SPIN_BACKOFF
+// ============================================================================
+// Bounded host-side wait: a counted loop of `isb sy` (~tens of cycles each on
+// modern cores), emitted in place of a proven constant-trip-count guest
+// spin-backoff loop. src1.offset is the iteration count, already clamped by
+// the pass that emits this. The loop is held entirely in w16, emitter scratch
+// (the register allocator only hands out x22-x28). It uses sub+cbnz rather
+// than subs+b.ne so NZCV is never written, and touches no guest context or
+// memory at all.
+struct SPIN_BACKOFF
+    : Sequence<SPIN_BACKOFF, I<OPCODE_SPIN_BACKOFF, VoidOp, OffsetOp>> {
+  static void Emit(A64Emitter& e, const EmitArgType& i) {
+    const uint32_t count = static_cast<uint32_t>(i.src1.value);
+    if (!count) {
+      return;
+    }
+    if (cvars::a64_park_spin_backoff) {
+      if (cvars::guest_scheduler) {
+        // The helper only yields the fiber, which is a no-op unless something
+        // else is runnable - but reaching it costs a full guest->host thunk.
+        // Gate on the scheduler's give-way flag so the common case is two
+        // instructions.
+        static_assert(offsetof(ppc::PPCContext, preempt_requested) < 4096,
+                      "preempt_requested must stay in ldrb offset range");
+        auto& skip = e.NewCachedLabel();
+        e.ldrb(e.w16,
+               Xbyak_aarch64::ptr(e.GetContextReg(),
+                                  static_cast<uint32_t>(offsetof(
+                                      ppc::PPCContext, preempt_requested))));
+        e.cbz(e.w16, skip);
+        e.CallNativeSafe(reinterpret_cast<void*>(&SpinBackoffParkThunk));
+        e.L(skip);
+        return;
+      }
+      e.CallNativeSafe(reinterpret_cast<void*>(&SpinBackoffParkThunk));
+      return;
+    }
+    auto& loop = e.NewCachedLabel();
+    e.mov(e.w16, count);
+    e.L(loop);
+    e.isb(Xbyak_aarch64::SY);
+    e.sub(e.w16, e.w16, 1);
+    e.cbnz(e.w16, loop);
+  }
+};
+EMITTER_OPCODE_TABLE(OPCODE_SPIN_BACKOFF, SPIN_BACKOFF);
 
 // ============================================================================
 // OPCODE_MEMORY_BARRIER

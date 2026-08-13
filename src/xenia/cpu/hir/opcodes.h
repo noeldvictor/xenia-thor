@@ -293,6 +293,9 @@ enum Opcode {
   OPCODE_RESERVED_STORE,
   // Cooperative-scheduler preemption safepoint (guest scheduler stage 2).
   OPCODE_CHECK_PREEMPT,
+  // Bounded host-only wait, emitted in place of a proven constant-trip-count
+  // guest spin-backoff loop. No guest-visible effect.
+  OPCODE_SPIN_BACKOFF,
 
   __OPCODE_MAX_VALUE,  // Keep at end.
 };

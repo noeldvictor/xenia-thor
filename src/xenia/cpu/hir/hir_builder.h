@@ -88,6 +88,8 @@ class HIRBuilder {
   Instr* CheckPreempt();
   // Yield/backoff hint inside a guest spin. Lowered by a64 and LLVM.
   Instr* DelayExecution();
+  // Bounded host-only wait of `units` backoff units; no guest-visible effect.
+  Instr* SpinBackoff(uint32_t units);
 
   void SourceOffset(uint32_t offset);
 

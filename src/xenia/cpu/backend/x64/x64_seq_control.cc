@@ -39,6 +39,30 @@ struct CHECK_PREEMPT
 EMITTER_OPCODE_TABLE(OPCODE_CHECK_PREEMPT, CHECK_PREEMPT);
 
 // ============================================================================
+// OPCODE_SPIN_BACKOFF
+// ============================================================================
+// Bounded host-side wait emitted in place of a proven constant-trip-count
+// guest spin-backoff loop. src1.offset is the iteration count, already clamped
+// by the pass that emits this. PAUSE is the x86 spin hint; eax is caller-saved
+// scratch here, and no guest context or memory is touched.
+struct SPIN_BACKOFF
+    : Sequence<SPIN_BACKOFF, I<OPCODE_SPIN_BACKOFF, VoidOp, OffsetOp>> {
+  static void Emit(X64Emitter& e, const EmitArgType& i) {
+    const uint32_t count = static_cast<uint32_t>(i.src1.value);
+    if (!count) {
+      return;
+    }
+    Xbyak::Label loop;
+    e.mov(e.eax, count);
+    e.L(loop);
+    e.pause();
+    e.dec(e.eax);
+    e.jnz(loop);
+  }
+};
+EMITTER_OPCODE_TABLE(OPCODE_SPIN_BACKOFF, SPIN_BACKOFF);
+
+// ============================================================================
 // OPCODE_DEBUG_BREAK_TRUE
 // ============================================================================
 struct DEBUG_BREAK_TRUE_I8

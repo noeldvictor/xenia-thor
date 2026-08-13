@@ -9,6 +9,8 @@
 
 #include "xenia/cpu/backend/llvm/llvm_assembler.h"
 
+#include <algorithm>
+
 #include "xenia/base/cvar.h"
 #include "xenia/base/exception_handler.h"
 #include "xenia/base/logging.h"
@@ -1658,6 +1660,31 @@ bool Lowerer::LowerInstr(Instr* i) {
     case OPCODE_DELAY_EXECUTION:
       // Guest delay/spin hint (a64 emits `yield`). No architectural effect.
       return true;
+    case OPCODE_SPIN_BACKOFF: {
+      // Bounded host-only wait replacing a collapsed guest spin-backoff loop.
+      // Upstream has no LLVM backend, so this lowering is ours: without it an
+      // LLVM-compiled function containing the op would fall back to a64 and
+      // silently lose the whole function's residency.
+      //
+      // Emitted UNROLLED rather than as a loop. The trip counts this op
+      // carries are tiny (the XDK idiom is `li rN, 4`), and an unrolled sled
+      // needs no counter register, no label and no basic-block surgery - so it
+      // cannot disturb the surrounding value numbering. The cap only bounds
+      // code size if a pass ever hands us a large count.
+      const uint32_t count =
+          std::min<uint32_t>(static_cast<uint32_t>(i->src1.offset), 64);
+      if (count) {
+        auto* fty = llvm::FunctionType::get(llvm::Type::getVoidTy(ctx_), false);
+        // sideeffect + memory clobber: this must not be hoisted out of, or
+        // sunk past, the poll it is backing off.
+        auto* isb = llvm::InlineAsm::get(fty, "isb sy", "~{memory}",
+                                         /*hasSideEffects=*/true);
+        for (uint32_t n = 0; n < count; ++n) {
+          b_.CreateCall(isb);
+        }
+      }
+      return true;
+    }
     case OPCODE_SET_ROUNDING_MODE:
     case OPCODE_SET_NJM:
       // Set the a64 backend's CACHED FPCR (rounding mode / VMX flush-to-zero) -

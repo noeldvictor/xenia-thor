@@ -750,3 +750,15 @@ DEFINE_OPCODE(
     "check_preempt",
     OPCODE_SIG_X,
     OPCODE_FLAG_VOLATILE)
+
+// Flags are deliberately 0, matching upstream. NOT volatile: our
+// ContextPromotionPass treats OPCODE_FLAG_VOLATILE as a barrier and would
+// flush guest context around every backoff, which is exactly the cost this
+// opcode exists to remove. It survives dead-code elimination anyway, because
+// that pass only kills instructions that HAVE an unused dest, and this has no
+// dest at all (dead_code_elimination_pass.cc:77).
+DEFINE_OPCODE(
+    OPCODE_SPIN_BACKOFF,
+    "spin_backoff",
+    OPCODE_SIG_X_O,
+    0)

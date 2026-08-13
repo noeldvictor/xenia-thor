@@ -219,6 +219,15 @@ PPCTranslator::PPCTranslator(PPCFrontend* frontend) : frontend_(frontend) {
   if (validate) sap->AddPass(std::make_unique<passes::ValidationPass>());
   compiler_->AddPass(std::move(sap));
 
+  // Collapse the XDK spin-backoff idiom (mtctr small-constant + db16cyc sled +
+  // bdnz) into one bounded host wait. Placed HERE, not next to the other
+  // injection passes above: it can only fire once ConstantPropagationPass has
+  // run, because the trip count must reach it as a literal in the
+  // predecessor's CTR store. Earlier in the pipeline it is a silent no-op.
+  // The ControlFlowAnalysisPass edges it walks are still valid at this point.
+  compiler_->AddPass(std::make_unique<passes::SpinLoopBackoffPass>());
+  if (validate) compiler_->AddPass(std::make_unique<passes::ValidationPass>());
+
   if (backend->machine_info()->supports_extended_load_store) {
     // Backend supports the advanced LOAD/STORE instructions.
     // These will save us a lot of HIR opcodes.
