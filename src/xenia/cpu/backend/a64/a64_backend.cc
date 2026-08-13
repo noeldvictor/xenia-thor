@@ -1185,45 +1185,25 @@ A64BackendContext* BackendContextFromRawContext(void* raw_context) {
       reinterpret_cast<uint8_t*>(raw_context) - sizeof(A64BackendContext));
 }
 
-void ReserveOffsetAndBit(ReserveHelper* reserve_helper, uint32_t guest_address,
-                         volatile uint64_t*& out_block, uint32_t& out_bit) {
-  const uint32_t block_idx = guest_address >> A64_RESERVE_BLOCK_SHIFT;
-  out_block = &reserve_helper->blocks[block_idx >> 6];
-  out_bit = block_idx & 63;
+std::atomic<uint32_t>& ReserveGranule(ReserveHelper* reserve_helper,
+                                      uint32_t guest_address) {
+  const uint32_t granule = guest_address >> A64_RESERVE_GRANULE_SHIFT;
+  return reserve_helper->generations[granule & A64_RESERVE_ENTRY_MASK];
 }
 
 extern "C" uint64_t TryAcquireReservationHelper(void* raw_context,
                                                 uint64_t guest_address) {
   auto* bctx = BackendContextFromRawContext(raw_context);
-  const uint32_t reserve_flag = 1u << kA64BackendHasReserveBit;
-  // PPC lwarx drops any previous reservation.
-  bctx->flags &= ~reserve_flag;
-
-  volatile uint64_t* block = nullptr;
-  uint32_t bit = 0;
-  ReserveOffsetAndBit(bctx->reserve_helper_, uint32_t(guest_address), block,
-                      bit);
-  const uint64_t mask = uint64_t(1) << bit;
-
-  bool acquired = false;
-  while (true) {
-    const uint64_t old = *block;
-    if (old & mask) {
-      break;
-    }
-    if (xe::atomic_cas(old, old | mask,
-                       reinterpret_cast<volatile uint64_t*>(block))) {
-      acquired = true;
-      break;
-    }
-  }
-
-  bctx->cached_reserve_offset = reinterpret_cast<uintptr_t>(block);
-  bctx->cached_reserve_bit = bit;
-  if (acquired) {
-    bctx->flags |= reserve_flag;
-  }
-  return acquired ? 1 : 0;
+  auto& granule =
+      ReserveGranule(bctx->reserve_helper_, uint32_t(guest_address));
+  // Snapshot the generation BEFORE the caller reads the value. The acquire
+  // keeps that load from being hoisted above this one.
+  bctx->reserve_generation = granule.load(std::memory_order_acquire);
+  bctx->cached_reserve_offset = uint32_t(guest_address);
+  // lwarx always replaces any reservation this thread already held, and now
+  // always succeeds - there is no owned bit to contend for.
+  bctx->flags |= 1u << kA64BackendHasReserveBit;
+  return 1;
 }
 
 template <typename T>
@@ -1238,13 +1218,16 @@ uint64_t ReservedStoreImpl(void* raw_context, uint64_t guest_address,
     return 0;
   }
 
-  volatile uint64_t* block = nullptr;
-  uint32_t bit = 0;
-  ReserveOffsetAndBit(bctx->reserve_helper_, uint32_t(guest_address), block,
-                      bit);
-  if (bctx->cached_reserve_offset != reinterpret_cast<uintptr_t>(block) ||
-      bctx->cached_reserve_bit != bit) {
-    assert_always();
+  // The reservation must be for the address being stored to. PPC FAILS the
+  // store in that case; it does not trap, so the old assert_always() was
+  // simply wrong about the architecture.
+  if (bctx->cached_reserve_offset != uint32_t(guest_address)) {
+    return 0;
+  }
+  auto& granule =
+      ReserveGranule(bctx->reserve_helper_, uint32_t(guest_address));
+  // Anyone storing to this granule since our lwarx kills the reservation.
+  if (granule.load(std::memory_order_acquire) != bctx->reserve_generation) {
     return 0;
   }
 
@@ -1259,18 +1242,11 @@ uint64_t ReservedStoreImpl(void* raw_context, uint64_t guest_address,
         reinterpret_cast<volatile uint32_t*>(uintptr_t(host_address)));
   }
 
-  const uint64_t mask = uint64_t(1) << bit;
-  while (true) {
-    const uint64_t old = *block;
-    if ((old & mask) == 0) {
-      break;
-    }
-    if (xe::atomic_cas(old, old & ~mask,
-                       reinterpret_cast<volatile uint64_t*>(block))) {
-      break;
-    }
+  if (exchange_ok) {
+    // The store landed, so kill every other reservation on this granule. A
+    // FAILED stwcx. leaves remote reservations alone, matching hardware.
+    granule.fetch_add(1, std::memory_order_release);
   }
-
   return exchange_ok ? 1 : 0;
 }
 

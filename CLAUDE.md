@@ -7431,3 +7431,37 @@ every one that was ever emitted". **Checked: it would not.** `dead_code_eliminat
 has no dest and cannot be reached by either. **So flags=0 on `OPCODE_SPIN_BACKOFF` and `OPCODE_LOAD_BARRIER`
 is safe** (both match upstream). Not changing DELAY_EXECUTION - VOLATILE is merely conservative there - but
 do not repeat the reasoning: **check the removal paths, they all key on `dest`.**
+
+## 🔒 lwarx/stwcx RESERVATIONS: THE BITMAP WEDGE IS REAL BUT DEFAULT-OFF; THE SHIPPING PATH IS ABA-OPEN (2026-08-13)
+**Edge `f0e2a16f4` replaces a reservation bitmap with hashed generation counters. Checking our tree found TWO
+different implementations, and the important part is WHICH ONE SHIPS.**
+| path | gate | what it does |
+|---|---|---|
+| inline CAS | **`arm64_global_reservation_helpers = false` (DEFAULT - this is what ships)** | lwarx stores guest address + loaded value in the backend context; stwcx checks the flag, checks the address matches, then CASes cached_value -> new. **No global state at all** |
+| global helpers | cvar on | the 64KB-block bitmap Edge replaced |
+**❌ CORRECTION OF MY OWN CLAIM EARLIER THIS SESSION.** I read the bitmap code and wrote "confirmed in full -
+this is a live wedge bug". **It is NOT live**, because the bitmap only runs under a default-off cvar. The
+wedge is real and the analysis of it is correct - an abandoned lwarx leaks its bit forever, after which no
+thread INCLUDING THE ORIGINAL can reserve in that 64KB and every CAS loop there spins - but it is reachable
+only by turning the cvar on. **Check the gate before calling a bug live.**
+**⚠ WHAT THE SHIPPING INLINE PATH ACTUALLY GETS WRONG: it is a plain value-compare CAS, so it is
+ABA-VULNERABLE.** Our own comment in `a64_seq_memory.cc` says so outright: *"ABA on the cached value would
+silently succeed."* If another thread writes X->Y->X between our lwarx and our stwcx, the stwcx SUCCEEDS
+where PPC requires failure. A simple 0/1 spinlock is unaffected (plain CAS is enough there), so this bites
+pointer-based lock-free structures - freelists, ABA-sensitive queues - not ordinary mutexes.
+**✅ PORTED (helper path only): generation counters.** `ReserveHelper` is now 2^20 hashed
+`std::atomic<uint32_t>` generations at the 128-byte Xenon granule. lwarx snapshots the granule generation and
+the address and ALWAYS succeeds; stwcx requires the flag, an exact address match and an unchanged generation,
+then CASes and bumps the generation **only when the store lands**, so a failed stwcx leaves remote
+reservations alone. Nothing is owned, so nothing leaks and teardown needs no cleanup.
+Also removed an `assert_always()` that fired when a stwcx landed on a different address than its lwarx -
+**PPC fails that store, it does not trap.**
+**⚠ SCOPE, DELIBERATE: the inline default path is UNTOUCHED.** Making it generation-correct needs the granule
+load/compare/bump emitted inline at four sites in `a64_seq_memory.cc`, in the hottest correctness path in the
+backend, and **none of it can be exercised on desktop** (the a64 backend is not built there) or on device
+right now. Landing that blind is exactly the class this file warns about. **The helper path is now correct,
+which is the prerequisite for ever flipping `arm64_global_reservation_helpers` on and measuring it.**
+**Validation:** `libxenia-cpu-backend-arm64.a` compiles. Nothing executed - a64 does not run on desktop.
+**Next:** `578a551b3` (GuestAtomic backed by real reservations, 630 lines) is the sibling commit and the x64
+half of `f0e2a16f4` is still unported; the x64 backend is what the PPC suite actually exercises, so porting
+that half WOULD be testable on desktop.

@@ -11,6 +11,7 @@
 #define XENIA_CPU_BACKEND_A64_A64_BACKEND_H_
 
 #include <atomic>
+#include <atomic>
 #include <memory>
 #include <mutex>
 #include <vector>
@@ -45,14 +46,31 @@ static constexpr uint32_t GUEST_TRAMPOLINE_MIN_LEN = 8;
 static constexpr uint32_t MAX_GUEST_TRAMPOLINES =
     (GUEST_TRAMPOLINE_END - GUEST_TRAMPOLINE_BASE) / GUEST_TRAMPOLINE_MIN_LEN;
 
-#define A64_RESERVE_BLOCK_SHIFT 16
-#define A64_RESERVE_NUM_ENTRIES \
-  ((1024ULL * 1024ULL * 1024ULL * 4ULL) >> A64_RESERVE_BLOCK_SHIFT)
+// The Xenon reservation granule is one 128 byte cache line.
+static constexpr uint32_t A64_RESERVE_GRANULE_SHIFT = 7;
+// One generation counter per granule, hashed into a fixed size table. A
+// successful stwcx. bumps its granule, which kills every other thread's
+// reservation on it. Two granules colliding in the table only costs a
+// spurious stwcx. failure, which the architecture permits.
+//
+// This replaces a bitmap of one exclusive bit per 64KB block released ONLY by
+// a matching stwcx. That leaked: the ordinary CAS early-exit
+// (lwarx/cmpw/bne- out) and thread teardown both abandon an lwarx, and the bit
+// then stayed set forever - after which no thread, INCLUDING THE ORIGINAL,
+// could take a reservation in that 64KB again, so every guest CAS loop there
+// spun forever. Generations own nothing, so nothing can leak and thread
+// teardown needs no cleanup. Ported from xenia-edge f0e2a16f4.
+static constexpr uint32_t A64_RESERVE_NUM_ENTRIES = 1u << 20;
+static constexpr uint32_t A64_RESERVE_ENTRY_MASK = A64_RESERVE_NUM_ENTRIES - 1;
 
 struct ReserveHelper {
-  uint64_t blocks[A64_RESERVE_NUM_ENTRIES / 64];
+  std::atomic<uint32_t> generations[A64_RESERVE_NUM_ENTRIES];
 
-  ReserveHelper() { memset(blocks, 0, sizeof(blocks)); }
+  ReserveHelper() {
+    for (auto& generation : generations) {
+      generation.store(0, std::memory_order_relaxed);
+    }
+  }
 };
 
 struct A64BackendStackpoint {
@@ -83,8 +101,13 @@ struct A64BackendContext {
   uint64_t* guest_tick_count;
   uint64_t host_uptime_millis_base;
   A64BackendStackpoint* stackpoints;
+  // Guest address the live reservation was taken on. The inline (default)
+  // RESERVED_LOAD/STORE path writes and compares this directly from emitted
+  // code; the helper path also snapshots reserve_generation below.
   uint64_t cached_reserve_offset;
-  uint32_t cached_reserve_bit;
+  // Granule generation as it read when the reservation was taken. Helper path
+  // only - the inline path is a plain value CAS and does not consult it.
+  uint32_t reserve_generation;
   unsigned int current_stackpoint_depth;
   unsigned int fpcr_fpu;
   unsigned int fpcr_vmx;
