@@ -1958,55 +1958,44 @@ EMITTER_OPCODE_TABLE(OPCODE_LVR, LVR_V128);
 // ============================================================================
 struct STVL_V128 : Sequence<STVL_V128, I<OPCODE_STVL, VoidOp, I64Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    // Inline STVL using 2-register TBL over {original_mem, rev32(src)}.
-    // STVL writes bytes offset..15 from the byte-swapped source.
-    // ctrl[i] = i (keep original) where i < offset,
-    // ctrl[i] = 16 + (i - offset) (from rev32(src)) where i >= offset.
-    // This equals: ctrl = identity + (mask & delta)
-    //   where mask = (i >= offset), delta = (16 - offset).
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    int s = SrcVReg(e, i.src2, 2);
+    // Store bytes offset..15 from the byte-swapped source, touching ONLY the
+    // in-range bytes.
+    //
+    // The previous lowering blended with a 2-register TBL and stored all 16
+    // bytes back. That is a read-modify-write of memory this instruction must
+    // not write: a concurrent guest write to the low bytes between our load
+    // and our store was silently lost, and the spurious write dirtied
+    // write-watched / GPU-shared pages every time.
+    int s = SrcVReg(e, i.src2, 0);
 
-    // x0 = host address, w17 = offset, x16 = aligned address (saved).
+    // Stash rev32(src) so its bytes can be addressed individually.
+    e.rev32(VReg(0).b16, VReg(s).b16);
+    e.str(QReg(0),
+          ptr(e.sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH)));
+
+    // x16 = aligned destination base, w17 = offset, x0 = stash base.
+    auto addr = ComputeMemoryAddress(e, i.src1);
     e.add(e.x0, e.GetMembaseReg(), addr);
     e.and_(e.w17, e.w0, 0xF);
-    e.and_(e.x0, e.x0, ~0xFull);
-    e.mov(e.x16, e.x0);  // save aligned addr for final store
+    e.and_(e.x16, e.x0, ~0xFull);
+    e.add(e.x0, e.sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH));
 
-    // v0 = original mem (table reg 0), v1 = rev32(src) (table reg 1).
-    e.ldr(QReg(0), ptr(e.x0));
-    e.rev32(VReg(1).b16, VReg(s).b16);
-
-    // Build identity {0,1,...,15} in v2.
-    e.mov(e.x0, 0x0706050403020100ull);
-    e.fmov(DReg(2), e.x0);
-    e.mov(e.x0, 0x0F0E0D0C0B0A0908ull);
-    e.ins(VReg(2).d2[1], e.x0);
-
-    // Save identity to stack scratch (needed after mask computation).
-    e.str(QReg(2),
-          ptr(e.sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH)));
-
-    // v3 = mask: 0xFF where i >= offset.
-    e.dup(VReg(3).b16, e.w17);
-    e.cmhs(VReg(3).b16, VReg(2).b16, VReg(3).b16);
-
-    // v2 = delta splat = (16 - offset).
-    e.mov(e.w0, 16);
-    e.sub(e.w0, e.w0, e.w17);
-    e.dup(VReg(2).b16, e.w0);
-
-    // v3 = masked delta = mask & delta.
-    e.and_(VReg(3).b16, VReg(3).b16, VReg(2).b16);
-
-    // Restore identity and compute ctrl = identity + masked_delta.
-    e.ldr(QReg(2),
-          ptr(e.sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH)));
-    e.add(VReg(2).b16, VReg(2).b16, VReg(3).b16);
-
-    // 2-register TBL: blend original mem and rev32(src).
-    e.tbl(VReg(2).b16, VReg(0).b16, 2, VReg(2).b16);
-    e.str(QReg(2), ptr(e.x16));
+    // for (i = offset; i < 16; ++i) mem[base + i] = stash[i - offset];
+    // Heap-backed via the emitter's cache: xbyak's LabelManager registers
+    // labels by address and outlives this frame, so a stack Label leaves a
+    // dangling entry behind for a later defineClabel to trip over.
+    auto& loop = e.NewCachedLabel();
+    auto& done = e.NewCachedLabel();
+    e.mov(e.w1, e.w17);
+    e.L(loop);
+    e.cmp(e.w1, 16);
+    e.b(Xbyak_aarch64::GE, done);
+    e.sub(e.w2, e.w1, e.w17);
+    e.ldrb(e.w3, ptr(e.x0, e.x2));
+    e.strb(e.w3, ptr(e.x16, e.x1));
+    e.add(e.w1, e.w1, 1);
+    e.b(loop);
+    e.L(done);
   }
 };
 EMITTER_OPCODE_TABLE(OPCODE_STVL, STVL_V128);
@@ -2016,57 +2005,38 @@ EMITTER_OPCODE_TABLE(OPCODE_STVL, STVL_V128);
 // ============================================================================
 struct STVR_V128 : Sequence<STVR_V128, I<OPCODE_STVR, VoidOp, I64Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
-    // Inline STVR using 2-register TBL over {original_mem, rev32(src)}.
-    // STVR writes bytes 0..offset-1 from the byte-swapped source tail.
-    // ctrl[i] = 16 + (16 - offset + i) where i < offset (from rev32(src)),
-    // ctrl[i] = i (keep original) where i >= offset.
-    // This equals: ctrl = identity + (mask & delta)
-    //   where mask = (i < offset), delta = (32 - offset).
-    // When offset == 0, no bytes are written (mask is all-zero → identity →
-    // load and store back the same memory, effectively a no-op).
-    auto addr = ComputeMemoryAddress(e, i.src1);
-    int s = SrcVReg(e, i.src2, 2);
+    // Store bytes 0..offset-1 from the byte-swapped source tail, touching ONLY
+    // the in-range bytes. offset == 0 stores NOTHING - the previous lowering
+    // still wrote a full 16 bytes in that case, for an instruction that must
+    // write none. See the STVL note above for the rest of the rationale.
+    int s = SrcVReg(e, i.src2, 0);
 
-    // x0 = host address, w17 = offset, x16 = aligned address (saved).
+    e.rev32(VReg(0).b16, VReg(s).b16);
+    e.str(QReg(0),
+          ptr(e.sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH)));
+
+    // x16 = aligned destination base, w17 = offset, x0 = stash base.
+    auto addr = ComputeMemoryAddress(e, i.src1);
     e.add(e.x0, e.GetMembaseReg(), addr);
     e.and_(e.w17, e.w0, 0xF);
-    e.and_(e.x0, e.x0, ~0xFull);
-    e.mov(e.x16, e.x0);
+    e.and_(e.x16, e.x0, ~0xFull);
+    e.add(e.x0, e.sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH));
+    e.mov(e.w6, 16);
+    e.sub(e.w6, e.w6, e.w17);  // source tail starts at 16 - offset
 
-    // v0 = original mem (table reg 0), v1 = rev32(src) (table reg 1).
-    e.ldr(QReg(0), ptr(e.x0));
-    e.rev32(VReg(1).b16, VReg(s).b16);
-
-    // Build identity in v2.
-    e.mov(e.x0, 0x0706050403020100ull);
-    e.fmov(DReg(2), e.x0);
-    e.mov(e.x0, 0x0F0E0D0C0B0A0908ull);
-    e.ins(VReg(2).d2[1], e.x0);
-
-    // Save identity to stack scratch.
-    e.str(QReg(2),
-          ptr(e.sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH)));
-
-    // v3 = mask: 0xFF where i < offset (complement of STVL's mask).
-    e.dup(VReg(3).b16, e.w17);
-    e.cmhi(VReg(3).b16, VReg(3).b16, VReg(2).b16);
-
-    // v2 = delta splat = (32 - offset).
-    e.mov(e.w0, 32);
-    e.sub(e.w0, e.w0, e.w17);
-    e.dup(VReg(2).b16, e.w0);
-
-    // v3 = masked delta.
-    e.and_(VReg(3).b16, VReg(3).b16, VReg(2).b16);
-
-    // Restore identity and compute ctrl.
-    e.ldr(QReg(2),
-          ptr(e.sp, static_cast<uint32_t>(StackLayout::GUEST_SCRATCH)));
-    e.add(VReg(2).b16, VReg(2).b16, VReg(3).b16);
-
-    // 2-register TBL and store.
-    e.tbl(VReg(2).b16, VReg(0).b16, 2, VReg(2).b16);
-    e.str(QReg(2), ptr(e.x16));
+    // for (i = 0; i < offset; ++i) mem[base + i] = stash[16 - offset + i];
+    auto& loop = e.NewCachedLabel();
+    auto& done = e.NewCachedLabel();
+    e.mov(e.w1, 0);
+    e.L(loop);
+    e.cmp(e.w1, e.w17);
+    e.b(Xbyak_aarch64::GE, done);
+    e.add(e.w2, e.w1, e.w6);
+    e.ldrb(e.w3, ptr(e.x0, e.x2));
+    e.strb(e.w3, ptr(e.x16, e.x1));
+    e.add(e.w1, e.w1, 1);
+    e.b(loop);
+    e.L(done);
   }
 };
 EMITTER_OPCODE_TABLE(OPCODE_STVR, STVR_V128);

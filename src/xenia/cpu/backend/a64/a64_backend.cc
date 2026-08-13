@@ -279,11 +279,13 @@ DEFINE_bool(
     "2026-08-05). Set false for the original sequence.",
     "a64");
 
-DEFINE_bool(a64_enable_host_guest_stack_synchronization, true,
-            "Records entries for guest/host stack mappings at function starts "
-            "and checks for reentry at return sites. Has slight performance "
-            "impact, but fixes crashes in games that use setjmp/longjmp.",
-            "a64");
+// DEFINEd in a64_emitter.cc, not here. a64_emitter.cc is the LOWEST layer that
+// reads it, and a CPU-only tool (xenia-cpu-ppc-tests on ARM64) pulls
+// a64_emitter.o out of the static lib without pulling a64_backend.o - so a
+// DEFINE here left the tool with an undefined symbol at link time. Same fix as
+// the guest_scheduler cvars, which moved into preempt_check_injection_pass.cc
+// for exactly this reason.
+DECLARE_bool(a64_enable_host_guest_stack_synchronization);
 
 DEFINE_bool(
     a64_stack_sync_retaddr_match, false,

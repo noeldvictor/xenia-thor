@@ -7192,3 +7192,63 @@ evaluated for 300 seconds**. No harm happened - the run ended at 50.7C - but the
   reports `MSB1008: Only one project can be specified`. Use the PowerShell tool.
 - **`xb.bat premake` fails here**: PowerShell resolves `python` to the WindowsApps stub, so the script reports
   `Python version mismatch`. Git Bash has a real Python 3.10.11. Call `premake5.exe` directly instead.
+
+## 🩸🩸 STVL/STVR WROTE BYTES THEY DO NOT OWN (found 2026-08-13, Edge `62c21ea8e`)
+**Our a64 `STVL_V128`/`STVR_V128` were BYTE-IDENTICAL to xenia-edge's pre-fix version.** Edge fixed this on
+2026-06-12; we never took it. It is the third write-past-what-you-own bug found in one day, after the PPC
+trace-dest overflow and the upload-pool stale bound.
+**The defect:** both lowerings did a 2-register TBL blend and then stored ALL 16 BYTES back.
+- `STVL` must write only bytes `offset..15`. `STVR` must write only bytes `0..offset-1`.
+- Storing all 16 is a READ-MODIFY-WRITE of memory the instruction does not own. **A concurrent guest write to
+  the out-of-range bytes, landing between our load and our store, is silently lost.** That is the
+  x86-TSO-hides-it bug class this file already names as the one to hunt.
+- It also **dirties pages the instruction never touches**. Our own STVR comment admitted the worst case:
+  with `offset == 0` it would "load and store back the same memory" - **a full 16-byte write for an
+  instruction that must write ZERO bytes**. Every one of those is a spurious write-watch / GPU-shared-page
+  invalidation.
+**The fix (ported):** a byte loop that copies only the in-range bytes out of a stashed `rev32(src)`.
+**⚠️ PORT `c1915cdd0` AT THE SAME TIME, NOT AFTER.** The fixed loop needs two labels, and XenDroid's
+`c1915cdd0` exists because stack-allocated `Xbyak_aarch64::Label` objects leave dangling entries in xbyak's
+LabelManager, which registers by address and outlives the frame. **Today's sweep graded `c1915cdd0` "N/A - we
+have no stack labels", which was true ONLY because we did not yet have the byte-loop code that introduces
+them.** Porting the fix without it would have imported the bug it fixes. Both landed together, using
+`e.NewCachedLabel()`.
+**Validation status: COMPILE-ONLY on ARM64.** The a64 backend is not built on desktop at all, so the desktop
+PPC suite cannot reach this code. `instr_stvl.s` / `instr_stvr.s` exist and pass on x64, which says nothing
+about the a64 lowering. **This is unproven at runtime.**
+
+### 🔗 THE ARM64 `xenia-cpu-ppc-tests` TARGET COULD NOT LINK AT ALL - now it can
+`ld: error: undefined symbol: cvars::a64_enable_host_guest_stack_synchronization`.
+**Cause: the cvar was `DEFINE`d in `a64_backend.cc`, but `context_promotion_pass.cc` (in `xenia-cpu`) READS
+it, and the ppc-tests target links `xenia-cpu` WITHOUT `xenia-cpu-backend-arm64`.** So the reader was linked
+and the definer was not.
+**Fix: move the `DEFINE` to the LOWEST layer that reads it** - `context_promotion_pass.cc`, inside its
+existing `#if XE_ARCH_ARM64` guard. **Exactly the same fix as the `guest_scheduler` cvars**, which moved into
+`preempt_check_injection_pass.cc` for this identical reason. Desktop and APK both still build.
+**⚠️ MY OWN ERROR, RECORDED: I grepped for the referencers with `| head -6` and it TRUNCATED at exactly the
+third file** - `context_promotion_pass.cc`, the only one that mattered - so my first fix moved the DEFINE to
+`a64_emitter.cc` and failed identically. **Never `head` a grep whose purpose is "find ALL referencers".**
+
+### ❌ THE DEVICE PPC RUN DID NOT COMPLETE - OOM, not a test failure
+The ARM64 binary builds and pushes, but on-device it is **SIGKILLed before producing output**. It reserves
+~17 GB of guest address space (`VIRT 17G`), and rpcs3 was resident. First attempt parked in `nanosleep` at
+0% CPU with an empty log; the retry printed `Killed`.
+**⇒ Run the device PPC suite only with the device otherwise IDLE.** Recipe that works up to that point:
+```
+ndk-build NDK_PROJECT_PATH=. NDK_APPLICATION_MK=build/xenia.Application.mk \
+  PREMAKE_ANDROIDNDK_PLATFORMS:=Android-ARM64 PREMAKE_ANDROIDNDK_CONFIGURATIONS:=Release xenia-cpu-ppc-tests
+# tar testing/ (73KB for all 167 .s + 167 .bin), push, extract, then:
+./ppctests --test_path=<dir>/testing/ --test_bin_path=<dir>/testing/bin/
+```
+
+## 🪤🪤🪤 GIT BASH REWRITES PATHS FOR EXTERNAL TOOLS - AND TWO OF THE THREE FAIL SILENTLY (2026-08-13)
+**Three distinct failures in one session, same root cause.** Git Bash converts anything that looks like a
+POSIX absolute path into a Windows path before the external tool sees it.
+| call | what happened |
+|---|---|
+| `MSBuild /p:Configuration=...` | became a file path -> `MSB1008: Only one project can be specified`. **LOUD** |
+| `adb shell cat /sys/class/kgsl/kgsl-3d0/temp` | device replied `cat: C:/Program: No such file`. The script read an empty string, printed `gpu=0C`, and **the 75C thermal guard never evaluated for a 300-second run**. SILENT |
+| `adb push <src> /data/local/tmp/x.tgz` | destination became `C:/Program Files/Git/data/local/tmp/x.tgz`. adb printed **"1 file pushed"** and the file was not on the device. An earlier directory push burned 10 minutes into a rewritten path. SILENT |
+**⇒ THE RULES:** run MSBuild from the PowerShell tool. **QUOTE the remote command** in `adb shell "..."`.
+Use `MSYS_NO_PATHCONV=1` (or a leading `//`) for `adb push` destinations. **And make any guard fail CLOSED -
+`[ "$T" -gt 75000 ]` on an empty `$T` is a silent no-op, not an error.**

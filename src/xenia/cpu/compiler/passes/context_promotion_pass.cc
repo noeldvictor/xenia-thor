@@ -27,12 +27,21 @@
 
 DECLARE_bool(debug);
 #if XE_ARCH_ARM64
-// Defined by the a64 backend (a64_backend.cc). The cross-call r1 carrier is
-// unsound while this stack-sync net is enabled (it reloads r1 from context and
-// resumes into the caller after a longjmp without reseeding the carrier), so
-// PromoteGprLiveInR1 disables preserve_call when it is on. Declared only on
-// ARM64 builds — the symbol does not exist in the x64-only host build.
-DECLARE_bool(a64_enable_host_guest_stack_synchronization);
+// DEFINED HERE, not in the a64 backend, because this is the LOWEST layer that
+// reads it. xenia-cpu-ppc-tests links xenia-cpu but NOT xenia-cpu-backend-arm64,
+// so a DEFINE in a64_backend.cc left that tool with an undefined symbol and the
+// ARM64 test binary could not be linked at all. Same fix as the guest_scheduler
+// cvars, which moved into preempt_check_injection_pass.cc for this exact reason.
+//
+// The cross-call r1 carrier is unsound while this stack-sync net is enabled (it
+// reloads r1 from context and resumes into the caller after a longjmp without
+// reseeding the carrier), so PromoteGprLiveInR1 disables preserve_call when it
+// is on. ARM64 builds only — the a64 backend is the only consumer.
+DEFINE_bool(a64_enable_host_guest_stack_synchronization, true,
+            "Records entries for guest/host stack mappings at function starts "
+            "and checks for reentry at return sites. Has slight performance "
+            "impact, but fixes crashes in games that use setjmp/longjmp.",
+            "a64");
 #endif
 
 DEFINE_bool(store_all_context_values, false,
