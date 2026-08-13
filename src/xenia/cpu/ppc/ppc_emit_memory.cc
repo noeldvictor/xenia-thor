@@ -793,8 +793,12 @@ int InstrEmit_sync(PPCHIRBuilder& f, const InstrData& i) {
 }
 
 int InstrEmit_isync(PPCHIRBuilder& f, const InstrData& i) {
-  // XEINSTRNOTIMPLEMENTED();
-  f.Nop();
+  // Only the memory-ordering half is modelled. Guests pair isync with a
+  // conditional branch to ACQUIRE a lock (lwarx / cmp / bne / isync), so
+  // emitting nothing let later loads hoist above the acquire on a weakly
+  // ordered host. x86 hid this; ARM64 does not. Ported from xenia-edge
+  // 9c729844c.
+  f.LoadBarrier();
   return 0;
 }
 

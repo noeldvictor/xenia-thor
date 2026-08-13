@@ -453,6 +453,18 @@ struct MEMORY_BARRIER
 EMITTER_OPCODE_TABLE(OPCODE_MEMORY_BARRIER, MEMORY_BARRIER);
 
 // ============================================================================
+// OPCODE_LOAD_BARRIER
+// ============================================================================
+// Acquire side only - dmb ishld is cheaper than the full dmb ish that
+// OPCODE_MEMORY_BARRIER emits, and it is all `isync` needs.
+struct LOAD_BARRIER : Sequence<LOAD_BARRIER, I<OPCODE_LOAD_BARRIER, VoidOp>> {
+  static void Emit(A64Emitter& e, const EmitArgType& i) {
+    e.dmb(Xbyak_aarch64::ISHLD);
+  }
+};
+EMITTER_OPCODE_TABLE(OPCODE_LOAD_BARRIER, LOAD_BARRIER);
+
+// ============================================================================
 // OPCODE_YIELD
 // ============================================================================
 struct YIELD : Sequence<YIELD, I<OPCODE_YIELD, VoidOp>> {

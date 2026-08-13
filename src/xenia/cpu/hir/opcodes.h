@@ -296,6 +296,9 @@ enum Opcode {
   // Bounded host-only wait, emitted in place of a proven constant-trip-count
   // guest spin-backoff loop. No guest-visible effect.
   OPCODE_SPIN_BACKOFF,
+  // Acquire-side ordering only: no load may be reordered past it. Free on a
+  // store-ordered host, a dmb ishld on ARM64.
+  OPCODE_LOAD_BARRIER,
 
   __OPCODE_MAX_VALUE,  // Keep at end.
 };

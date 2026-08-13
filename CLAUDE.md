@@ -7397,3 +7397,37 @@ app's private dir with `run-as`. One run settles (a).
 RTs are exonerated; go add depth/MSAA/multi-attachment arms to the harness and find what really reactivates it.
 **⚠ Do not skip straight to the allocation rewrite on the strength of the blob numbers.** They are the wrong
 driver, and this file already records one session lost to acting on a lever before the gating check.
+
+## 🧊 `isync` EMITTED NOTHING - A MISSING ACQUIRE FENCE ON A WEAKLY ORDERED HOST (2026-08-13, edge `9c729844c`)
+**`InstrEmit_isync` was `f.Nop()`, byte-identical to xenia-edge's pre-fix state.**
+**Why it matters:** guests acquire a lock with `lwarx / cmp / bne / isync`. `isync` is the ACQUIRE half. With
+nothing emitted, a load after the acquire may be hoisted above it. **x86's TSO hid this completely; ARM64
+does not.** This is the exact class `THE x86->ARM64 SWEEP: MEMORY ORDERING IS THE BUG CLASS` names.
+**Ported:** new `OPCODE_LOAD_BARRIER` (acquire-only), and `isync` now emits it.
+| backend | lowering |
+|---|---|
+| a64 | `dmb ishld`. Cheaper than the full `dmb ish` that `OPCODE_MEMORY_BARRIER` emits, and all isync needs |
+| x64 | nothing - x86 never reorders a load with a later access |
+| LLVM | `CreateFence(Acquire)`. A real IR fence, NOT inline asm, so LLVM's own optimizer also cannot hoist loads across it. **Ours - upstream has no LLVM backend**; without it every guest function containing isync would fall back to a64 and lose its register residency |
+**⚠ ONLY THE isync HALF OF `9c729844c` WAS TAKEN.** That commit ALSO deletes the explicit `MemoryBarrier()`
+around `lwarx`/`stwcx`. **That is only safe once the reservations carry their own ordering**, which is
+`f0e2a16f4`'s generation-counter rework - NOT ported. Dropping the barriers now would trade one ordering bug
+for another. **Our lwarx/stwcx barriers stay until `f0e2a16f4` lands.**
+**⚠ VALIDATION IS "NO REGRESSION", NOT "EXERCISED": PPC suite 1481/1481, but the corpus has NO isync test**
+(no `instr_isync.s`, and none for sync/lwarx/stwcx either). The new opcode never executed during the suite.
+Same vacuity shape as the spin-collapse pass. The a64 and LLVM lowerings do not run on desktop at all.
+### 📋 EDGE a64 SWEEP - two more closed as ALREADY PORTED
+| upstream | verdict |
+|---|---|
+| `7eb0c7671` SHORT_4 unpack lane order | **already ported** - our code cites the hash in its comment |
+| `0a18453bc` LoadV128Const splat crash | **already ported** - we have `IsMovi64Imm`, the fixed form |
+**Still open from that list:** `f0e2a16f4` (lwarx/stwcx on generation counters, 223 lines) and `578a551b3`
+(GuestAtomic backed by real reservations, 630 lines). Both are reservation-semantics rewrites; take them
+together, and they unblock the second half of `9c729844c`.
+### ✅ A CLAIM IN THIS FILE THAT DOES NOT MATCH THE CODE
+The `OPCODE_DELAY_EXECUTION` entry in `opcodes.inl` says flags=0 would let dead-code elimination "delete
+every one that was ever emitted". **Checked: it would not.** `dead_code_elimination_pass.cc:77` requires
+`i->dest`, and all three `flags == 0` sites in `simplification_pass.cc` require `i->dest` too. A void opcode
+has no dest and cannot be reached by either. **So flags=0 on `OPCODE_SPIN_BACKOFF` and `OPCODE_LOAD_BARRIER`
+is safe** (both match upstream). Not changing DELAY_EXECUTION - VOLATILE is merely conservative there - but
+do not repeat the reasoning: **check the removal paths, they all key on `dest`.**

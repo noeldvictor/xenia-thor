@@ -1660,6 +1660,14 @@ bool Lowerer::LowerInstr(Instr* i) {
     case OPCODE_DELAY_EXECUTION:
       // Guest delay/spin hint (a64 emits `yield`). No architectural effect.
       return true;
+    case OPCODE_LOAD_BARRIER: {
+      // Acquire-side ordering. A real IR fence, not inline asm, so LLVM's own
+      // optimizer also respects it and cannot hoist loads across it. Lowers to
+      // dmb ishld on AArch64, matching the a64 backend.
+      b_.CreateFence(llvm::AtomicOrdering::Acquire,
+                     llvm::SyncScope::System);
+      return true;
+    }
     case OPCODE_SPIN_BACKOFF: {
       // Bounded host-only wait replacing a collapsed guest spin-backoff loop.
       // Upstream has no LLVM backend, so this lowering is ours: without it an

@@ -901,6 +901,8 @@ Instr* HIRBuilder::CheckPreempt() {
   return i;
 }
 
+void HIRBuilder::LoadBarrier() { AppendInstr(OPCODE_LOAD_BARRIER_info, 0); }
+
 Instr* HIRBuilder::DelayExecution() {
   Instr* i = AppendInstr(OPCODE_DELAY_EXECUTION_info, 0);
   i->src1.value = i->src2.value = i->src3.value = NULL;

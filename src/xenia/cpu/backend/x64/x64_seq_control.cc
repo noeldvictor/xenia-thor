@@ -63,6 +63,15 @@ struct SPIN_BACKOFF
 EMITTER_OPCODE_TABLE(OPCODE_SPIN_BACKOFF, SPIN_BACKOFF);
 
 // ============================================================================
+// OPCODE_LOAD_BARRIER
+// ============================================================================
+struct LOAD_BARRIER : Sequence<LOAD_BARRIER, I<OPCODE_LOAD_BARRIER, VoidOp>> {
+  // x86 never reorders a load with a later access, so nothing to emit.
+  static void Emit(X64Emitter& e, const EmitArgType& i) {}
+};
+EMITTER_OPCODE_TABLE(OPCODE_LOAD_BARRIER, LOAD_BARRIER);
+
+// ============================================================================
 // OPCODE_DEBUG_BREAK_TRUE
 // ============================================================================
 struct DEBUG_BREAK_TRUE_I8

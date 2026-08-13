@@ -762,3 +762,10 @@ DEFINE_OPCODE(
     "spin_backoff",
     OPCODE_SIG_X_O,
     0)
+
+// Free on a store-ordered host.
+DEFINE_OPCODE(
+    OPCODE_LOAD_BARRIER,
+    "load_barrier",
+    OPCODE_SIG_X,
+    OPCODE_FLAG_MEMORY | OPCODE_FLAG_VOLATILE)
