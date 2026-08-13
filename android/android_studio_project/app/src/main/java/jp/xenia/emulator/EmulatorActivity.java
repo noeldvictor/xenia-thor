@@ -509,6 +509,14 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_lazy_completion_polls");
             copyIntExtra(intent, launchArguments, "gpu_stall_spin_iterations");
             copyBooleanExtra(intent, launchArguments, "spirv_multiply_zero_test_on_bits");
+            // Spin-backoff subsystem. park_memory_poll_loops predates the rest
+            // and was never allowlisted, so a GUI/intent launch could not set
+            // it at all - the second form of the stale-config trap.
+            copyBooleanExtra(intent, launchArguments, "collapse_ctr_spin_loops");
+            copyBooleanExtra(intent, launchArguments, "log_spin_loop_rejects");
+            copyBooleanExtra(intent, launchArguments, "a64_park_spin_backoff");
+            copyBooleanExtra(intent, launchArguments, "park_memory_poll_loops");
+            copyBooleanExtra(intent, launchArguments, "log_memory_poll_park");
             // Guest vblank pacing: vsync=false drops the 16ms vblank timer to
             // ~1ms - the A/B for the vsync-quantization hypothesis (every
             // title's frame interval is an exact 16.7ms multiple, B86i).
