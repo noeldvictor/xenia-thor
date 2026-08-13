@@ -27,6 +27,7 @@
 // MECHANISM check, not a game speedup.
 
 #include <vulkan/vulkan.h>
+#include <dlfcn.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -38,6 +39,115 @@
 
 #include "shaders/fill_vert.h"
 #include "shaders/fill_frag.h"
+
+// ---------------------------------------------------------------------------
+// Driver shim.
+//
+// We SHIP TURNIP, but the system Vulkan loader on Android hands out the
+// Qualcomm blob and cannot be told otherwise without adrenotools' dlopen hook.
+// A standalone binary can sidestep all of that: dlopen the ICD directly and
+// resolve entry points from it. --driver <path> selects one; without it we use
+// the system libvulkan, and the harness always PRINTS which device it got so a
+// result can never be silently attributed to the wrong driver.
+//
+// Every vk* name below is #defined onto a loaded pointer, so the call sites in
+// main() are unchanged.
+// ---------------------------------------------------------------------------
+#define XE_VK_GLOBAL_FUNCS(X) X(CreateInstance)
+
+#define XE_VK_INSTANCE_FUNCS(X)      \
+  X(DestroyInstance)                 \
+  X(EnumeratePhysicalDevices)        \
+  X(GetPhysicalDeviceProperties)     \
+  X(GetPhysicalDeviceQueueFamilyProperties) \
+  X(GetPhysicalDeviceMemoryProperties) \
+  X(CreateDevice)                    \
+  X(GetDeviceProcAddr)
+
+#define XE_VK_DEVICE_FUNCS(X)  \
+  X(DestroyDevice)             \
+  X(GetDeviceQueue)            \
+  X(CreateImage) X(DestroyImage)                 \
+  X(GetImageMemoryRequirements)                  \
+  X(AllocateMemory) X(FreeMemory) X(BindImageMemory) \
+  X(CreateImageView) X(DestroyImageView)         \
+  X(CreateRenderPass) X(DestroyRenderPass)       \
+  X(CreateFramebuffer) X(DestroyFramebuffer)     \
+  X(CreateShaderModule) X(DestroyShaderModule)   \
+  X(CreatePipelineLayout) X(DestroyPipelineLayout) \
+  X(CreateGraphicsPipelines) X(DestroyPipeline)  \
+  X(CreateCommandPool) X(DestroyCommandPool)     \
+  X(AllocateCommandBuffers)                      \
+  X(CreateQueryPool) X(DestroyQueryPool)         \
+  X(CreateFence) X(DestroyFence)                 \
+  X(ResetCommandBuffer) X(BeginCommandBuffer) X(EndCommandBuffer) \
+  X(CmdResetQueryPool) X(CmdPipelineBarrier) X(CmdWriteTimestamp) \
+  X(CmdBeginRenderPass) X(CmdEndRenderPass)      \
+  X(CmdBindPipeline) X(CmdPushConstants) X(CmdDraw) \
+  X(ResetFences) X(QueueSubmit) X(WaitForFences) \
+  X(GetQueryPoolResults)
+
+namespace vkapi {
+#define XE_DECL(name) PFN_vk##name name = nullptr;
+XE_VK_GLOBAL_FUNCS(XE_DECL)
+XE_VK_INSTANCE_FUNCS(XE_DECL)
+XE_VK_DEVICE_FUNCS(XE_DECL)
+#undef XE_DECL
+PFN_vkGetInstanceProcAddr GetInstanceProcAddr = nullptr;
+const char* source = "system libvulkan.so";
+}  // namespace vkapi
+
+#define vkCreateInstance vkapi::CreateInstance
+#define XE_MAP(name)
+#define vkDestroyInstance vkapi::DestroyInstance
+#define vkEnumeratePhysicalDevices vkapi::EnumeratePhysicalDevices
+#define vkGetPhysicalDeviceProperties vkapi::GetPhysicalDeviceProperties
+#define vkGetPhysicalDeviceQueueFamilyProperties \
+  vkapi::GetPhysicalDeviceQueueFamilyProperties
+#define vkGetPhysicalDeviceMemoryProperties vkapi::GetPhysicalDeviceMemoryProperties
+#define vkCreateDevice vkapi::CreateDevice
+#define vkDestroyDevice vkapi::DestroyDevice
+#define vkGetDeviceQueue vkapi::GetDeviceQueue
+#define vkCreateImage vkapi::CreateImage
+#define vkDestroyImage vkapi::DestroyImage
+#define vkGetImageMemoryRequirements vkapi::GetImageMemoryRequirements
+#define vkAllocateMemory vkapi::AllocateMemory
+#define vkFreeMemory vkapi::FreeMemory
+#define vkBindImageMemory vkapi::BindImageMemory
+#define vkCreateImageView vkapi::CreateImageView
+#define vkDestroyImageView vkapi::DestroyImageView
+#define vkCreateRenderPass vkapi::CreateRenderPass
+#define vkDestroyRenderPass vkapi::DestroyRenderPass
+#define vkCreateFramebuffer vkapi::CreateFramebuffer
+#define vkDestroyFramebuffer vkapi::DestroyFramebuffer
+#define vkCreateShaderModule vkapi::CreateShaderModule
+#define vkDestroyShaderModule vkapi::DestroyShaderModule
+#define vkCreatePipelineLayout vkapi::CreatePipelineLayout
+#define vkDestroyPipelineLayout vkapi::DestroyPipelineLayout
+#define vkCreateGraphicsPipelines vkapi::CreateGraphicsPipelines
+#define vkDestroyPipeline vkapi::DestroyPipeline
+#define vkCreateCommandPool vkapi::CreateCommandPool
+#define vkDestroyCommandPool vkapi::DestroyCommandPool
+#define vkAllocateCommandBuffers vkapi::AllocateCommandBuffers
+#define vkCreateQueryPool vkapi::CreateQueryPool
+#define vkDestroyQueryPool vkapi::DestroyQueryPool
+#define vkCreateFence vkapi::CreateFence
+#define vkDestroyFence vkapi::DestroyFence
+#define vkResetCommandBuffer vkapi::ResetCommandBuffer
+#define vkBeginCommandBuffer vkapi::BeginCommandBuffer
+#define vkEndCommandBuffer vkapi::EndCommandBuffer
+#define vkCmdResetQueryPool vkapi::CmdResetQueryPool
+#define vkCmdPipelineBarrier vkapi::CmdPipelineBarrier
+#define vkCmdWriteTimestamp vkapi::CmdWriteTimestamp
+#define vkCmdBeginRenderPass vkapi::CmdBeginRenderPass
+#define vkCmdEndRenderPass vkapi::CmdEndRenderPass
+#define vkCmdBindPipeline vkapi::CmdBindPipeline
+#define vkCmdPushConstants vkapi::CmdPushConstants
+#define vkCmdDraw vkapi::CmdDraw
+#define vkResetFences vkapi::ResetFences
+#define vkQueueSubmit vkapi::QueueSubmit
+#define vkWaitForFences vkapi::WaitForFences
+#define vkGetQueryPoolResults vkapi::GetQueryPoolResults
 
 #define VK_CHECK(expr)                                                     \
   do {                                                                     \
@@ -63,6 +173,7 @@ struct Config {
   std::string load_op = "clear";      // clear | load | dontcare
   std::string store_op = "store";     // store | dontcare
   const char* label = "arm";
+  std::string driver;  // empty = system loader
 };
 
 VkAttachmentLoadOp ParseLoadOp(const std::string& s) {
@@ -88,6 +199,59 @@ uint32_t FindMemoryType(VkPhysicalDevice pd, uint32_t bits,
   }
   std::fprintf(stderr, "no suitable memory type\n");
   std::exit(1);
+}
+
+void LoadDriver(const std::string& driver_path) {
+  const char* path =
+      driver_path.empty() ? "libvulkan.so" : driver_path.c_str();
+  void* h = dlopen(path, RTLD_NOW | RTLD_LOCAL);
+  if (!h) {
+    std::fprintf(stderr, "dlopen(%s) failed: %s\n", path, dlerror());
+    std::exit(1);
+  }
+  // An ICD loaded directly exposes the loader-facing entry point; the system
+  // libvulkan exposes the normal one. Accept either.
+  vkapi::GetInstanceProcAddr =
+      (PFN_vkGetInstanceProcAddr)dlsym(h, "vkGetInstanceProcAddr");
+  if (!vkapi::GetInstanceProcAddr) {
+    vkapi::GetInstanceProcAddr =
+        (PFN_vkGetInstanceProcAddr)dlsym(h, "vk_icdGetInstanceProcAddr");
+  }
+  if (!vkapi::GetInstanceProcAddr) {
+    std::fprintf(stderr, "no vkGetInstanceProcAddr in %s\n", path);
+    std::exit(1);
+  }
+  if (!driver_path.empty()) vkapi::source = driver_path.c_str();
+#define XE_LOAD_GLOBAL(name)                                              \
+  vkapi::name = (PFN_vk##name)vkapi::GetInstanceProcAddr(nullptr, "vk" #name); \
+  if (!vkapi::name) {                                                     \
+    std::fprintf(stderr, "missing vk" #name "\n");                        \
+    std::exit(1);                                                         \
+  }
+  XE_VK_GLOBAL_FUNCS(XE_LOAD_GLOBAL)
+#undef XE_LOAD_GLOBAL
+}
+
+void LoadInstanceFuncs(VkInstance inst) {
+#define XE_LOAD(name)                                                     \
+  vkapi::name = (PFN_vk##name)vkapi::GetInstanceProcAddr(inst, "vk" #name); \
+  if (!vkapi::name) {                                                     \
+    std::fprintf(stderr, "missing vk" #name "\n");                        \
+    std::exit(1);                                                         \
+  }
+  XE_VK_INSTANCE_FUNCS(XE_LOAD)
+#undef XE_LOAD
+}
+
+void LoadDeviceFuncs(VkDevice dev) {
+#define XE_LOAD(name)                                                     \
+  vkapi::name = (PFN_vk##name)vkapi::GetDeviceProcAddr(dev, "vk" #name);  \
+  if (!vkapi::name) {                                                     \
+    std::fprintf(stderr, "missing vk" #name "\n");                        \
+    std::exit(1);                                                         \
+  }
+  XE_VK_DEVICE_FUNCS(XE_LOAD)
+#undef XE_LOAD
 }
 
 VkShaderModule MakeShader(VkDevice dev, const uint32_t* code, size_t bytes) {
@@ -122,6 +286,7 @@ int main(int argc, char** argv) {
     else if (a == "--iters") cfg.iters = std::stoul(next());
     else if (a == "--loadop") cfg.load_op = next();
     else if (a == "--storeop") cfg.store_op = next();
+    else if (a == "--driver") cfg.driver = next();
     else if (a == "--label") cfg.label = argv[i + 1], ++i;
     else {
       std::fprintf(stderr, "unknown arg: %s\n", a.c_str());
@@ -130,6 +295,8 @@ int main(int argc, char** argv) {
   }
   cfg.view_width = std::min(cfg.view_width, cfg.width);
   cfg.view_height = std::min(cfg.view_height, cfg.height);
+
+  LoadDriver(cfg.driver);
 
   VkApplicationInfo app{};
   app.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -140,6 +307,7 @@ int main(int argc, char** argv) {
   ici.pApplicationInfo = &app;
   VkInstance inst;
   VK_CHECK(vkCreateInstance(&ici, nullptr, &inst));
+  LoadInstanceFuncs(inst);
 
   uint32_t pd_count = 0;
   VK_CHECK(vkEnumeratePhysicalDevices(inst, &pd_count, nullptr));
@@ -184,6 +352,7 @@ int main(int argc, char** argv) {
   dci.pQueueCreateInfos = &qci;
   VkDevice dev;
   VK_CHECK(vkCreateDevice(pd, &dci, nullptr, &dev));
+  LoadDeviceFuncs(dev);
   VkQueue queue;
   vkGetDeviceQueue(dev, qfi, 0, &queue);
 
@@ -443,11 +612,11 @@ int main(int argc, char** argv) {
       double(cfg.passes) / 1e6;
 
   std::printf(
-      "%-10s gpu=%s  rt=%ux%u view=%ux%u loadop=%s storeop=%s passes=%u "
-      "draws=%u\n",
-      cfg.label, props.deviceName, cfg.width, cfg.height, cfg.view_width,
-      cfg.view_height, cfg.load_op.c_str(), cfg.store_op.c_str(), cfg.passes,
-      cfg.draws);
+      "%-10s gpu=%s via %s\n"
+      "%-10s rt=%ux%u view=%ux%u loadop=%s storeop=%s passes=%u draws=%u\n",
+      cfg.label, props.deviceName, vkapi::source, cfg.label, cfg.width,
+      cfg.height, cfg.view_width, cfg.view_height, cfg.load_op.c_str(),
+      cfg.store_op.c_str(), cfg.passes, cfg.draws);
   std::printf(
       "%-10s median_total=%.1fus  per_pass=%.1fus  min=%.1f max=%.1f  "
       "us_per_covered_Mpx=%.2f\n",

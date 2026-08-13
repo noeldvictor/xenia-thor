@@ -145,3 +145,7 @@ _xenia.config.backup.toml
 /binary_cache/
 *.pftrace
 *.rdc
+
+# edram_bench build artifacts (the arm64 binary and generated SPIR-V)
+tools/edram_bench/edram_bench
+tools/edram_bench/shaders/*.spv
