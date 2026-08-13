@@ -13,6 +13,7 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **claim an instruction is too slow/strong** | `docs/reference/arm/` + diff the emitted asm | one `clang -S` killed an implemented `__sync_*` optimisation that was a pure no-op |
 | **touch GPU / EDRAM / render passes** | `THE BD EDRAM / D3D9-HLE ERA IS ARCHIVED`, `BD FIELD IS CPU-BOUND` | that entire era optimised the wrong processor; the archive lists what is already dead |
 | **test an acceleration theory** | `STANDING DIRECTIVE ... BESPOKE HARNESS` | build a native ARM64 binary and run it over adb - ~45s loop vs 10-18min for an APK; the theory needs the DEVICE and the DRIVER, not the emulator |
+| **chase the BD EDRAM cost** | `EDRAM HARNESS RESULT` | measured: LOAD is FREE at any attachment height, only CLEAR scales (~35.8us/1000 rows). It is the clear, not the oversized RT - but re-run on TURNIP before acting |
 | **plan GPU work for BD** | `CORRECTION ... IN-PASS RESOLVE`, `WHERE THE FRAME ACTUALLY GOES` | `sr_fscomp = 0` killed the in-pass-resolve/dynamic-rendering track for BD; the oversized EDRAM-span RTs are the measured 37ms target |
 | **port from XenDroid** | `XENDROID SWEEP 2026-08-13` (latest, has the author-filter recipe), `XENDROID IS THE BAR`, `XENDROID UPSTREAM PORT TRACK`, `APU/BASE SWEEP TRIAGE` | their tree is heavily diverged - port the idea, not the patch, and expect genuine N/A results |
 | **fire the device** | `Never thrash the Thor`, `BLACK SCREEN? CHECK THE DISPLAY`, `TURNIP IS MANDATORY` | thermal limits are real; a sleeping panel looks exactly like a rendering bug; a bare launch uses the WRONG driver |
@@ -7301,3 +7302,61 @@ That section predates the measurement. **Read the 08-10 sizing before restarting
 a multi-session render-pass rewrite on it without first re-measuring `sr_fscomp` on the title you care about.
 **⇒ THE OVERSIZED-RT WORK IS THE REAL TARGET.** It has a measured cost, a proven mechanism, and no dependency
 on dynamic rendering at all.
+
+## 🔬🔬🔬 **EDRAM HARNESS RESULT (2026-08-13): IT IS THE *CLEAR*, NOT THE OVERSIZED ATTACHMENT**
+**First result from the bespoke harness (`tools/edram_bench`, native ARM64 over adb, ~45s loop). It
+CONTRADICTS the working theory in the most useful way: an EDRAM-span render target costs nothing by
+existing. It costs when you CLEAR it.**
+### THE DATA — 1280-wide attachment, viewport 1280x720, 1 draw, 16 passes, median of 20 iters
+| attachment height | `loadOp=LOAD` (our common path) | `loadOp=CLEAR` | `loadOp=DONT_CARE` |
+|---|---|---|---|
+| 720 (screen) | 64.6 us | 87.3 us | 64.7 us |
+| 2048 (EDRAM span) | **64.8 us** | 134.7 us | 64.7 us |
+| 8192 | **64.8 us** | **355.3 us** | 64.7 us |
+**⇒ `LOAD` IS FREE AT EVERY HEIGHT.** 64.8 us at 8192 rows is identical to 64.6 us at 720. The driver elides
+load/store for tiles no draw touches, so untouched off-screen rows cost NOTHING to load or store.
+**⇒ `storeOp` IS IRRELEVANT.** `clear/store` 134.7 vs `clear/dontcare` 134.6 at h2048; 355.8 vs 355.3 at
+h8192. Store was never the cost.
+**⇒ ONLY `CLEAR` SCALES, AND IT SCALES LINEARLY: ~35.8 us per 1000 rows at 1280 wide.**
+```
+h1024  +10.5us / 304 rows   = 34.5 us/1000
+h2048  +47.3us / 1328 rows  = 35.6
+h4096 +120.6us / 3376 rows  = 35.7
+h8192 +268.9us / 7472 rows  = 36.0     <- textbook linear
+```
+Internally consistent: the 720-row clear costs 87.3-64.7 = 22.6 us, and 720 rows x 35.8/1000 = 25.8 us.
+### 🔑 WHY THIS REFRAMES THE PROBLEM
+The `WHERE THE FRAME ACTUALLY GOES` entry blamed the oversized RTs and proposed making host render targets
+screen-sized - a real change to `GetRenderTargetHeight` and the RT key that interacts with EDRAM aliasing.
+**This measurement says the allocation is not the problem.** A clear is an explicit write to every tile and
+cannot be elided; a load of untouched tiles can be, and is.
+**⇒ THE CHEAP FIX TO TRY FIRST: never `CLEAR` a full EDRAM-span attachment.** Keep the allocation, use
+`DONT_CARE`/`LOAD`, and issue a scissored `vkCmdClearAttachments` over only the region that actually needs
+clearing. That is a local change in the RT cache, not a rewrite, and we already have both a `load_dont_care`
+path (`vulkan_render_target_cache.cc:3093-3099`) and a default-off `gpu_edram_passes_dont_care_safe`.
+**⇒ AND THE MAGNITUDE MATCHES THE GAME TRACE.** One full-attachment clear on 1280x2048 = 47 us. The 08-10
+trace puts BD's top pass at ~60 us/frame (22,087 us / 370 frames). **A single full-span clear could be most
+of that pass.** NOT asserted - it is a size match, not an attribution. The in-app check is to count
+full-attachment clears per frame on the tall surfaces.
+### ⚠️⚠️ THE CAVEAT THAT GATES ALL OF IT: **THIS RAN ON THE QUALCOMM BLOB, NOT TURNIP**
+`gpu=Adreno (TM) 740` - the harness uses the system Vulkan loader, and we SHIP TURNIP
+(`TURNIP IS MANDATORY`). Mesa's tiling, clear lowering and load/store elision are a different
+implementation. **Do not act on this until the same matrix is re-run against
+`libvulkan_freedreno.so`.** If Turnip does NOT elide untouched-tile loads, the LOAD column changes and the
+oversized-RT theory comes back.
+**Other limits, stated:** headless, so no present path and no FlexRender binning-vs-direct switch driven by
+presentation; and a 1-draw fullscreen-triangle pass is not a BD pass. **A harness result is a MECHANISM
+check, not a game speedup.**
+### 🧰 THE HARNESS
+`tools/edram_bench/{edram_bench.cc,build.sh,shaders/}`. `bash tools/edram_bench/build.sh` compiles shaders,
+builds arm64, pushes. Args: `--width --height --view-width --view-height --passes --draws --iters --loadop
+--storeop --label`. Reports median total, per-pass us, and us per covered Mpx.
+**⚠ FOUR PATH TRAPS HIT WHILE BUILDING IT - the fixes are in `build.sh`, do not re-derive:**
+1. `adb push` destination is rewritten to `C:/Program Files/Git/data/...` and adb STILL PRINTS "1 file pushed".
+2. `MSYS_NO_PATHCONV=1` fixes that but ALSO stops SOURCE conversion, and adb.exe cannot stat `/c/...`.
+   **Use `MSYS_NO_PATHCONV=1` together with `cygpath -m` on the source.**
+3. `//data/local/tmp/x` makes the REMOTE path literally `//data/...` and fchown fails.
+4. **An `adb shell` argument that STARTS with `/` is converted even inside double quotes.** Lead with
+   `cd /data/local/tmp && ./edram_bench`, never `adb shell "/data/local/tmp/edram_bench"`.
+Also: link `-static-libstdc++`, or a bare adb-run binary dies with
+`CANNOT LINK EXECUTABLE: library "libc++_shared.so" not found`.
