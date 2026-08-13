@@ -7144,6 +7144,45 @@ and additionally COALESCES consecutive barriers so a long sled stays one instruc
 Their measurement is the evidence our cvar was waiting for, but the standing rule holds: it is default-off pending
 a device A/B. Coalescing is separable and behaviour-preserving.
 
+### ✅ DEVICE VALIDATION OF THE SWEEP (2026-08-13, Thor, Turnip r11 on Adreno 740)
+**APK built and installed. Burnout Revenge, two runs, ~9 minutes of device time.**
+| check | result |
+|---|---|
+| Title renders | **CORRECT at 59.4 FPS** (`scratchpad/burnout_240s.png`) - background scene, logo, road signage and text all clean. **This is the no-regression result that matters**, because `Page::capacity_` bounds a hot per-frame path and a wrong bound shows as WRONG PIXELS, not a crash |
+| Crashes, Scudo, host faults | **0** across both runs |
+| `Vulkan upload pool handed out ...` | **0** - the new bound rejects nothing legitimate |
+| `UpdateBindings: ... null destination set` | **0** - same |
+| Real Vulkan errors | **0**. The single `validation` grep hit is the layer being LOADED, not an error |
+| Thermals | 30C cold start, 43C at second launch, **67C** at the end. Normal for Burnout |
+**⚠️ WHAT THIS DOES NOT PROVE: the Scudo mid-gameplay crash is NOT tested.** Both runs stopped at the
+"Press START" title screen. The crash is mid-gameplay, so the heap-overflow fixes remain an untested
+hypothesis for it. **A gameplay route for Burnout does not exist yet** - `tools/thor/` has BD and Gears
+routes only.
+**⚠️ THE HID NOP SEQUENCE DID NOT FIRE (0 log hits) in run 1.** Its timings were absolute from launch, but
+**Burnout takes ~143 s to load** (`Davey! duration=142646ms` - the load blocks the Android UI thread).
+Every button press landed during loading. **Offset any Burnout route by 150 s, not the 25-40 s the Gears
+route uses.**
+
+### 🌡️🌡️ THE THERMAL GUARD WAS INERT FOR A WHOLE RUN — SAME GIT BASH PATH TRAP
+**`adb shell cat /sys/class/kgsl/kgsl-3d0/temp` UNQUOTED inside a Git Bash script does not read the sysfs
+node.** Git Bash rewrites the argument into a Windows path and the device replies:
+```
+cat: C:/Program: No such file or directory
+cat: Files/Git/sys/class/kgsl/kgsl-3d0/temp: No such file or directory
+```
+The script then parsed an empty string as the temperature, printed `gpu=0C`, and **the 75C guard never
+evaluated for 300 seconds**. No harm happened - the run ended at 50.7C - but the guard was decorative.
+- **⇒ ALWAYS QUOTE THE REMOTE COMMAND: `adb shell "cat /sys/..."`.** This is the same class as MSBuild's
+  `/p:` switches turning into paths. **Assume every absolute path handed to an external tool from Git Bash
+  is rewritten unless it is inside double quotes.**
+- **⇒ AND MAKE THE GUARD FAIL CLOSED.** A guard that reads an empty value must ABORT, not continue with 0.
+  `[ "$T" -gt 75000 ]` on an empty `$T` is a syntax error that the loop happily ignores.
+- **⚠️ `tools/thor/*_route.sh` all hardcode `DRV=mesa-turnip-v26.3.0-20260803-r7-vulkan-1.4.354-7`, which is
+  NO LONGER INSTALLED** - the device now carries `...20260807-r11-vulkan-1.4.358-11`. A stale driver path
+  does not error; it falls back to the stock Qualcomm blob, which is the "Turnip is mandatory" trap and
+  looks like a rendering bug. **Read the name off the device instead:**
+  `DRV="$(adb -s $DEV shell run-as $PKG ls files/gpu_drivers/ | head -1 | tr -d '\r')"`
+
 ### 🔧 TOOLING NOTES FROM THIS SESSION
 - **`build/` held ONLY Android `.mk` files** — the last premake regen was `--os=android`. Run
   `./tools/build/bin/premake5.exe --file=premake5.lua vs2022` to get the `.vcxproj` back. **Re-run the android
