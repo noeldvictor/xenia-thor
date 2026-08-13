@@ -30,11 +30,26 @@ fi
 # inside quotes - always lead with cd.
 run() { adb shell "cd /data/local/tmp && ./edram_bench $DRIVER_ARG $*"; }
 
-echo "### height x loadOp, view 1280x720, 1 draw, 16 passes"
+echo "### A: colour only - height x loadOp, view 1280x720, 1 draw, 16 passes"
 run --label probe --width 1280 --height 720 --view-height 720 --draws 1 | head -1
 for h in 720 2048 8192; do
   for op in load clear dontcare; do
     run --label "h$h-$op" --width 1280 --height "$h" --view-width 1280 \
         --view-height 720 --draws 1 --loadop "$op" | grep median
+  done
+done
+
+# Hypothesis (b): the colour-only harness may show off-screen rows as free
+# while the real passes do not, because the real passes carry DEPTH. Our own
+# LRZ note says Turnip disables Adreno LRZ when depth enters via LOAD_OP_LOAD,
+# which is a strong hint that Turnip treats a depth LOAD very differently from
+# a colour one.
+echo
+echo "### B: with depth - colour loadOp=load, depth loadOp swept"
+for h in 720 2048 8192; do
+  for dop in load clear dontcare; do
+    run --label "d$h-$dop" --width 1280 --height "$h" --view-width 1280 \
+        --view-height 720 --draws 1 --loadop load --depth --depth-loadop "$dop" \
+        | grep median
   done
 done

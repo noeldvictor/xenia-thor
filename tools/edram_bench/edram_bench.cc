@@ -174,6 +174,8 @@ struct Config {
   std::string store_op = "store";     // store | dontcare
   const char* label = "arm";
   std::string driver;  // empty = system loader
+  bool depth = false;          // add a depth attachment alongside colour
+  std::string depth_load_op = "load";
 };
 
 VkAttachmentLoadOp ParseLoadOp(const std::string& s) {
@@ -287,6 +289,8 @@ int main(int argc, char** argv) {
     else if (a == "--loadop") cfg.load_op = next();
     else if (a == "--storeop") cfg.store_op = next();
     else if (a == "--driver") cfg.driver = next();
+    else if (a == "--depth") cfg.depth = true;
+    else if (a == "--depth-loadop") cfg.depth_load_op = next();
     else if (a == "--label") cfg.label = argv[i + 1], ++i;
     else {
       std::fprintf(stderr, "unknown arg: %s\n", a.c_str());
@@ -382,6 +386,38 @@ int main(int argc, char** argv) {
   VK_CHECK(vkAllocateMemory(dev, &mai, nullptr, &mem));
   VK_CHECK(vkBindImageMemory(dev, image, mem, 0));
 
+  // Optional depth attachment. BD's real passes carry one, and our own LRZ
+  // note says Turnip disables Adreno LRZ when depth enters via LOAD_OP_LOAD -
+  // so depth is the most likely thing to reactivate a per-row cost that the
+  // colour-only harness showed as free.
+  const VkFormat kDepthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
+  VkImage depth_image = VK_NULL_HANDLE;
+  VkDeviceMemory depth_mem = VK_NULL_HANDLE;
+  VkImageView depth_view = VK_NULL_HANDLE;
+  if (cfg.depth) {
+    VkImageCreateInfo dci2 = img_ci;
+    dci2.format = kDepthFormat;
+    dci2.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT;
+    VK_CHECK(vkCreateImage(dev, &dci2, nullptr, &depth_image));
+    VkMemoryRequirements dreq;
+    vkGetImageMemoryRequirements(dev, depth_image, &dreq);
+    VkMemoryAllocateInfo dmai{};
+    dmai.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    dmai.allocationSize = dreq.size;
+    dmai.memoryTypeIndex = FindMemoryType(pd, dreq.memoryTypeBits,
+                                          VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK_CHECK(vkAllocateMemory(dev, &dmai, nullptr, &depth_mem));
+    VK_CHECK(vkBindImageMemory(dev, depth_image, depth_mem, 0));
+    VkImageViewCreateInfo dvi{};
+    dvi.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+    dvi.image = depth_image;
+    dvi.viewType = VK_IMAGE_VIEW_TYPE_2D;
+    dvi.format = kDepthFormat;
+    dvi.subresourceRange = {
+        VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT, 0, 1, 0, 1};
+    VK_CHECK(vkCreateImageView(dev, &dvi, nullptr, &depth_view));
+  }
+
   VkImageViewCreateInfo iv_ci{};
   iv_ci.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
   iv_ci.image = image;
@@ -406,14 +442,33 @@ int main(int argc, char** argv) {
                           : VK_IMAGE_LAYOUT_UNDEFINED;
   att.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
   VkAttachmentReference att_ref{0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL};
+  VkAttachmentDescription depth_att{};
+  VkAttachmentReference depth_ref{
+      1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL};
+  const VkAttachmentLoadOp depth_load_op = ParseLoadOp(cfg.depth_load_op);
+  if (cfg.depth) {
+    depth_att.format = kDepthFormat;
+    depth_att.samples = VK_SAMPLE_COUNT_1_BIT;
+    depth_att.loadOp = depth_load_op;
+    depth_att.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_att.stencilLoadOp = depth_load_op;
+    depth_att.stencilStoreOp = VK_ATTACHMENT_STORE_OP_STORE;
+    depth_att.initialLayout =
+        (depth_load_op == VK_ATTACHMENT_LOAD_OP_LOAD)
+            ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+            : VK_IMAGE_LAYOUT_UNDEFINED;
+    depth_att.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+  }
+  VkAttachmentDescription atts[2] = {att, depth_att};
   VkSubpassDescription sub{};
   sub.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
   sub.colorAttachmentCount = 1;
   sub.pColorAttachments = &att_ref;
+  if (cfg.depth) sub.pDepthStencilAttachment = &depth_ref;
   VkRenderPassCreateInfo rp_ci{};
   rp_ci.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
-  rp_ci.attachmentCount = 1;
-  rp_ci.pAttachments = &att;
+  rp_ci.attachmentCount = cfg.depth ? 2u : 1u;
+  rp_ci.pAttachments = atts;
   rp_ci.subpassCount = 1;
   rp_ci.pSubpasses = &sub;
   VkRenderPass rp;
@@ -422,8 +477,9 @@ int main(int argc, char** argv) {
   VkFramebufferCreateInfo fb_ci{};
   fb_ci.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
   fb_ci.renderPass = rp;
-  fb_ci.attachmentCount = 1;
-  fb_ci.pAttachments = &view;
+  VkImageView fb_views[2] = {view, depth_view};
+  fb_ci.attachmentCount = cfg.depth ? 2u : 1u;
+  fb_ci.pAttachments = fb_views;
   fb_ci.width = cfg.width;
   fb_ci.height = cfg.height;
   fb_ci.layers = 1;
@@ -491,7 +547,13 @@ int main(int argc, char** argv) {
   gp_ci.pViewportState = &vps;
   gp_ci.pRasterizationState = &rs;
   gp_ci.pMultisampleState = &ms;
+  VkPipelineDepthStencilStateCreateInfo ds{};
+  ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
+  ds.depthTestEnable = VK_TRUE;
+  ds.depthWriteEnable = VK_TRUE;
+  ds.depthCompareOp = VK_COMPARE_OP_ALWAYS;
   gp_ci.pColorBlendState = &cb;
+  if (cfg.depth) gp_ci.pDepthStencilState = &ds;
   gp_ci.layout = layout;
   gp_ci.renderPass = rp;
   VkPipeline pipe;
@@ -560,8 +622,9 @@ int main(int argc, char** argv) {
 
     vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, qpool, 0);
     for (uint32_t p = 0; p < cfg.passes; ++p) {
-      VkClearValue clear{};
-      clear.color = {{0.1f, 0.2f, 0.3f, 1.0f}};
+      VkClearValue clear[2]{};
+      clear[0].color = {{0.1f, 0.2f, 0.3f, 1.0f}};
+      clear[1].depthStencil = {1.0f, 0};
       VkRenderPassBeginInfo rp_bi{};
       rp_bi.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
       rp_bi.renderPass = rp;
@@ -569,8 +632,8 @@ int main(int argc, char** argv) {
       // renderArea is the FULL attachment, matching what the emulator does
       // today. Clamping it is the experiment already run and rejected.
       rp_bi.renderArea = {{0, 0}, {cfg.width, cfg.height}};
-      rp_bi.clearValueCount = 1;
-      rp_bi.pClearValues = &clear;
+      rp_bi.clearValueCount = cfg.depth ? 2u : 1u;
+      rp_bi.pClearValues = clear;
       vkCmdBeginRenderPass(cmd, &rp_bi, VK_SUBPASS_CONTENTS_INLINE);
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
       for (uint32_t d = 0; d < cfg.draws; ++d) {
@@ -613,10 +676,11 @@ int main(int argc, char** argv) {
 
   std::printf(
       "%-10s gpu=%s via %s\n"
-      "%-10s rt=%ux%u view=%ux%u loadop=%s storeop=%s passes=%u draws=%u\n",
+      "%-10s rt=%ux%u view=%ux%u loadop=%s storeop=%s depth=%s passes=%u draws=%u\n",
       cfg.label, props.deviceName, vkapi::source, cfg.label, cfg.width,
       cfg.height, cfg.view_width, cfg.view_height, cfg.load_op.c_str(),
-      cfg.store_op.c_str(), cfg.passes, cfg.draws);
+      cfg.store_op.c_str(),
+      cfg.depth ? cfg.depth_load_op.c_str() : "none", cfg.passes, cfg.draws);
   std::printf(
       "%-10s median_total=%.1fus  per_pass=%.1fus  min=%.1f max=%.1f  "
       "us_per_covered_Mpx=%.2f\n",
@@ -632,6 +696,11 @@ int main(int argc, char** argv) {
   vkDestroyShaderModule(dev, fs, nullptr);
   vkDestroyFramebuffer(dev, fb, nullptr);
   vkDestroyRenderPass(dev, rp, nullptr);
+  if (cfg.depth) {
+    vkDestroyImageView(dev, depth_view, nullptr);
+    vkDestroyImage(dev, depth_image, nullptr);
+    vkFreeMemory(dev, depth_mem, nullptr);
+  }
   vkDestroyImageView(dev, view, nullptr);
   vkDestroyImage(dev, image, nullptr);
   vkFreeMemory(dev, mem, nullptr);
