@@ -12,6 +12,8 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **pick a CPU lever** | `ARM64 PERFORMANCE PLAYBOOK` (the five rules), `docs/reference/arm/` | the port model was wrong until checked against the manual; measure applicability before building |
 | **claim an instruction is too slow/strong** | `docs/reference/arm/` + diff the emitted asm | one `clang -S` killed an implemented `__sync_*` optimisation that was a pure no-op |
 | **touch GPU / EDRAM / render passes** | `THE BD EDRAM / D3D9-HLE ERA IS ARCHIVED`, `BD FIELD IS CPU-BOUND` | that entire era optimised the wrong processor; the archive lists what is already dead |
+| **test an acceleration theory** | `STANDING DIRECTIVE ... BESPOKE HARNESS` | build a native ARM64 binary and run it over adb - ~45s loop vs 10-18min for an APK; the theory needs the DEVICE and the DRIVER, not the emulator |
+| **plan GPU work for BD** | `CORRECTION ... IN-PASS RESOLVE`, `WHERE THE FRAME ACTUALLY GOES` | `sr_fscomp = 0` killed the in-pass-resolve/dynamic-rendering track for BD; the oversized EDRAM-span RTs are the measured 37ms target |
 | **port from XenDroid** | `XENDROID SWEEP 2026-08-13` (latest, has the author-filter recipe), `XENDROID IS THE BAR`, `XENDROID UPSTREAM PORT TRACK`, `APU/BASE SWEEP TRIAGE` | their tree is heavily diverged - port the idea, not the patch, and expect genuine N/A results |
 | **fire the device** | `Never thrash the Thor`, `BLACK SCREEN? CHECK THE DISPLAY`, `TURNIP IS MANDATORY` | thermal limits are real; a sleeping panel looks exactly like a rendering bug; a bare launch uses the WRONG driver |
 | **chase a crash** | `BURNOUT ... LLVM WRITING x20`, `GEARS SIGTRAP`, `Android fault diagnosis` (memory) | decode the instruction before blaming a subsystem; x20/x21 state is the discriminator |
@@ -7252,3 +7254,50 @@ POSIX absolute path into a Windows path before the external tool sees it.
 **⇒ THE RULES:** run MSBuild from the PowerShell tool. **QUOTE the remote command** in `adb shell "..."`.
 Use `MSYS_NO_PATHCONV=1` (or a leading `//`) for `adb push` destinations. **And make any guard fail CLOSED -
 `[ "$T" -gt 75000 ]` on an empty `$T` is a silent no-op, not an error.**
+
+## 🧪🧪🧪 STANDING DIRECTIVE (user, 2026-08-13): TEST ACCELERATION THEORIES IN A BESPOKE HARNESS, NOT IN THE APP
+**"when possible to test acceleration theories, do it in a bespoke way outside the main app for speed of
+development."**
+**Why this is right, in this project's own numbers:** an APK cycle is 10-18 minutes plus a 143-second title
+load plus a 140-second route before a single sample. A GPU theory that needs three arms costs a whole session
+and a thermal budget. **The theory does not need the emulator - it needs the DEVICE and the DRIVER.**
+### THE FORM (user-chosen 2026-08-13): a native ARM64 binary run over adb
+| | |
+|---|---|
+| build | `ndk-build ... <target>` against the premake-generated Android.mk, same as `xenia-cpu-ppc-tests` |
+| deploy | `MSYS_NO_PATHCONV=1 adb push <bin> /data/local/tmp/...` then `adb shell` |
+| loop | **~45 s**, versus 10-18 min for an APK. No gradle, no emulator boot, no route |
+| measure | `vkCmdWriteTimestamp` around passes. **Headless - no swapchain**, so it prices GPU work, not present |
+**Rejected alternatives and why:** a minimal APK gets a real present path (catches compositor / FlexRender
+binning-vs-direct effects) but costs a 2-4 min loop - use it only when the theory is ABOUT presentation. A
+desktop Vulkan exe compiles fastest and is **useless for this class**: the PC GPU is not a TBDR, and
+GMEM/tiling behaviour is the entire question.
+**⚠ WHAT A HEADLESS HARNESS CANNOT TELL YOU - state it in every result:** no swapchain means no compositor
+interaction and no FlexRender mode switch driven by presentation. And a microbenchmark's draw pattern is not
+BD's. **A harness result is a MECHANISM check, not a game speedup.** Port the mechanism, then measure the game.
+### 🥇 FIRST TARGET (user-chosen): EDRAM-SPAN vs SCREEN-SIZED RENDER TARGETS
+**This is the one with a measured 37 ms behind it** (see `WHERE THE FRAME ACTUALLY GOES`). Arms:
+```
+Arm A: RT 1280x2048   <- EDRAM-span, 10,485,760 B = EXACTLY the 360's 10 MB. What we allocate today.
+Arm B: RT 1280x720    <- screen-sized
+same draws, same shaders, same pass count; per-pass GPU us via timestamp queries
+```
+**The question it answers:** are the off-screen rows really being binned/loaded/stored, and is that the 37 ms?
+This project has already proved the MECHANISM (clamping `renderArea` halved in-pass time) but the clamp is the
+wrong fix - it pushed the cost into the gaps for a net **+18% SLOWER**. **The harness prices the ALLOCATION
+change without building it into the RT cache first**, which is exactly the point of testing outside the app.
+
+## ❌❌ CORRECTION (2026-08-13): I RECOMMENDED THE IN-PASS RESOLVE / DYNAMIC-RENDERING TRACK, AND THE 08-10 MEASUREMENT ALREADY KILLED IT FOR BD
+**Earlier today I called in-pass resolve "the biggest GPU win available" and recommended the ~115-site dynamic
+rendering port as THE big perf item. That was wrong, and the refutation was already in this file.**
+**`THE IN-PASS RESOLVE LEVER, FINALLY SIZED (2026-08-10)` measured `sr_fscomp = 0.0` on BD.** That is the
+same-pixel input-attachment CANDIDATE class - the population the whole chain services. It is EMPTY. BD's 42
+resolve-source breaks/frame are remapped-texel EDRAM transfers consumed by ordinary geometry, not full-screen
+composites, and a `subpassLoad` reads only the fragment's own coordinate.
+**⇒ The in-pass resolve chain, the subpass input-attachment idea, AND the ~115-site dynamic-rendering port all
+rest on servicing a resolve AT THE SAME PIXEL. Measured on BD, essentially none of the traffic has that shape.**
+**⇒ THE `XENDROID UPSTREAM PORT TRACK` SECTION ABOVE STILL READS AS IF THIS IS THE BIG LEVER. IT IS NOT, FOR BD.**
+That section predates the measurement. **Read the 08-10 sizing before restarting that track**, and do not spend
+a multi-session render-pass rewrite on it without first re-measuring `sr_fscomp` on the title you care about.
+**⇒ THE OVERSIZED-RT WORK IS THE REAL TARGET.** It has a measured cost, a proven mechanism, and no dependency
+on dynamic rendering at all.
