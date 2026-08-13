@@ -167,7 +167,11 @@ class GuestScheduler {
     // levels so the highest ready priority is one bit scan away.
     XThread* ready_head[32] = {};
     XThread* ready_tail[32] = {};
-    uint32_t ready_summary = 0;
+    // Atomic only so YieldCurrentThread's fast path can test it without taking
+    // lock_. Every mutation still happens under the lock, so relaxed ordering
+    // is enough. A stale zero there costs one skipped yield, which the next
+    // call or the quantum watchdog picks up.
+    std::atomic<uint32_t> ready_summary{0};
     // The fiber currently running on this CPU, for the preemption check.
     XThread* current_thread = nullptr;
     // Set under lock_ by a voluntary yield, so the next DequeueReady prefers
@@ -246,6 +250,21 @@ class GuestScheduler {
   // summary bit, and preempts the CPU's running fiber if outranked. Caller
   // holds lock_ and has set links.queued and links.cpu.
   void LinkReadyLocked(Cpu& cpu, XThread* thread, bool at_head);
+  // Sets one priority bit of a CPU's ready summary. Callers hold lock_; the
+  // atomic exists only for the lock-free test in YieldCurrentThread.
+  static void SetReadyLevel(Cpu& cpu, int level) {
+    cpu.ready_summary.store(
+        cpu.ready_summary.load(std::memory_order_relaxed) |
+            (uint32_t(1) << level),
+        std::memory_order_relaxed);
+  }
+  // Clears one priority bit of a CPU's ready summary. Same contract.
+  static void ClearReadyLevel(Cpu& cpu, int level) {
+    cpu.ready_summary.store(
+        cpu.ready_summary.load(std::memory_order_relaxed) &
+            ~(uint32_t(1) << level),
+        std::memory_order_relaxed);
+  }
   // Out-of-line so the yield fast path stays a single relaxed bool load.
   void ReportGlobalLockHazard();
 

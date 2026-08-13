@@ -12508,6 +12508,20 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   }
   // Write.
   if (write_descriptor_set_count) {
+    // A null destination set faults inside the driver rather than returning an
+    // error, so check before handing the batch over.
+    for (uint32_t i = 0; i < write_descriptor_set_count; ++i) {
+      if (write_descriptor_sets[i].dstSet == VK_NULL_HANDLE) {
+        XELOGE(
+            "UpdateBindings: write {} of {} has a null destination set (type "
+            "{}, binding {}, count {}) - skipping the update",
+            i, write_descriptor_set_count,
+            uint32_t(write_descriptor_sets[i].descriptorType),
+            write_descriptor_sets[i].dstBinding,
+            write_descriptor_sets[i].descriptorCount);
+        return false;
+      }
+    }
     dfn.vkUpdateDescriptorSets(device, write_descriptor_set_count,
                                write_descriptor_sets.data(), 0, nullptr);
   }

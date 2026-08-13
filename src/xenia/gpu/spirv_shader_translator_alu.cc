@@ -13,10 +13,23 @@
 #include <cmath>
 #include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "third_party/glslang/SPIRV/GLSL.std.450.h"
 #include "xenia/base/assert.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/math.h"
+
+DEFINE_bool(
+    spirv_multiply_zero_test_on_bits, false,
+    "Test multiply operands for zero on their raw bits instead of as "
+    "min(|a|, |b|) == 0.0 when emulating Shader Model 3 zero semantics. "
+    "Both forms are equivalent, but Mesa folds the float one into "
+    "nir_op_fmulz and then nir_op_fmadz, which the Adreno ir3 compiler does "
+    "not implement - it aborts shader compilation (Project Gotham Racing 3, "
+    "Dark Souls on a8xx, reported by XenDroid). Enable for titles whose "
+    "shaders fail to compile that way.",
+    "GPU");
 
 namespace xe {
 namespace gpu {
@@ -28,14 +41,39 @@ spv::Id SpirvShaderTranslator::ZeroIfAnyOperandIsZero(spv::Id value,
   int num_components = builder_->getNumComponents(value);
   assert_true(builder_->getNumComponents(operand_0_abs) == num_components);
   assert_true(builder_->getNumComponents(operand_1_abs) == num_components);
+  if (!cvars::spirv_multiply_zero_test_on_bits) {
+    return builder_->createTriOp(
+        spv::OpSelect, type_float_,
+        builder_->createBinOp(
+            spv::OpFOrdEqual, type_bool_vectors_[num_components - 1],
+            builder_->createBinBuiltinCall(
+                type_float_vectors_[num_components - 1], ext_inst_glsl_std_450_,
+                GLSLstd450NMin, operand_0_abs, operand_1_abs),
+            const_float_vectors_0_[num_components - 1]),
+        const_float_vectors_0_[num_components - 1], value);
+  }
+  // Equivalent to min(|a|, |b|) == 0.0 - the operands are already absolute, so
+  // their IEEE bit patterns order like their values and +0.0 is all-zero bits.
+  // See the cvar for why the float form is a problem on Adreno.
+  spv::Id type_uint_vector = type_uint_vectors_[num_components - 1];
+  spv::Id operand_0_bits =
+      builder_->createUnaryOp(spv::OpBitcast, type_uint_vector, operand_0_abs);
+  spv::Id operand_1_bits =
+      builder_->createUnaryOp(spv::OpBitcast, type_uint_vector, operand_1_abs);
+  spv::Id min_bits = builder_->createBinBuiltinCall(
+      type_uint_vector, ext_inst_glsl_std_450_, GLSLstd450UMin, operand_0_bits,
+      operand_1_bits);
+  spv::Id const_uint_zero = builder_->makeUintConstant(0);
+  if (num_components > 1) {
+    std::vector<spv::Id> components(size_t(num_components), const_uint_zero);
+    const_uint_zero =
+        builder_->makeCompositeConstant(type_uint_vector, components);
+  }
   return builder_->createTriOp(
       spv::OpSelect, type_float_,
-      builder_->createBinOp(
-          spv::OpFOrdEqual, type_bool_vectors_[num_components - 1],
-          builder_->createBinBuiltinCall(
-              type_float_vectors_[num_components - 1], ext_inst_glsl_std_450_,
-              GLSLstd450NMin, operand_0_abs, operand_1_abs),
-          const_float_vectors_0_[num_components - 1]),
+      builder_->createBinOp(spv::OpIEqual,
+                            type_bool_vectors_[num_components - 1], min_bits,
+                            const_uint_zero),
       const_float_vectors_0_[num_components - 1], value);
 }
 
@@ -243,12 +281,34 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
           different_operands[i] = GetAbsoluteOperand(different_operands[i],
                                                      instr.vector_operands[i]);
         }
-        spv::Id different_zero = builder_->createBinOp(
-            spv::OpFOrdEqual, type_bool_vectors_[different_count - 1],
-            builder_->createBinBuiltinCall(
-                different_type, ext_inst_glsl_std_450_, GLSLstd450NMin,
-                different_operands[0], different_operands[1]),
-            const_float_vectors_0_[different_count - 1]);
+        spv::Id different_zero;
+        if (cvars::spirv_multiply_zero_test_on_bits) {
+          // As in ZeroIfAnyOperandIsZero.
+          spv::Id different_uint_type = type_uint_vectors_[different_count - 1];
+          spv::Id different_zero_uint = builder_->makeUintConstant(0);
+          if (different_count > 1) {
+            std::vector<spv::Id> zero_components(size_t(different_count),
+                                                 different_zero_uint);
+            different_zero_uint = builder_->makeCompositeConstant(
+                different_uint_type, zero_components);
+          }
+          different_zero = builder_->createBinOp(
+              spv::OpIEqual, type_bool_vectors_[different_count - 1],
+              builder_->createBinBuiltinCall(
+                  different_uint_type, ext_inst_glsl_std_450_, GLSLstd450UMin,
+                  builder_->createUnaryOp(spv::OpBitcast, different_uint_type,
+                                          different_operands[0]),
+                  builder_->createUnaryOp(spv::OpBitcast, different_uint_type,
+                                          different_operands[1])),
+              different_zero_uint);
+        } else {
+          different_zero = builder_->createBinOp(
+              spv::OpFOrdEqual, type_bool_vectors_[different_count - 1],
+              builder_->createBinBuiltinCall(
+                  different_type, ext_inst_glsl_std_450_, GLSLstd450NMin,
+                  different_operands[0], different_operands[1]),
+              const_float_vectors_0_[different_count - 1]);
+        }
         // Replace with +0.
         different_result = builder_->createTriOp(
             spv::OpSelect, different_type, different_zero,

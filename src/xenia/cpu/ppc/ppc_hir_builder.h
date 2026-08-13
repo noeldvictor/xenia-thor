@@ -104,13 +104,18 @@ class PPCHIRBuilder : public hir::HIRBuilder {
   Instr** instr_offset_list_;
   Label** label_list_;
 
-  // Reset each instruction.
+  // Reset each instruction. Sized for what a typical PowerPC instruction
+  // writes. Some instructions write far more - lmw stores up to 32 GPRs, and
+  // an inlined helper body is a longer run again - so the Store*R helpers must
+  // stop the counter at the end instead of running past it. trace_info_ is the
+  // last member of this class, so an overrun corrupts the heap behind it.
+  static constexpr uint32_t kMaxTraceDests = 4;
   struct {
     uint32_t dest_count;
     struct {
       uint8_t reg;
       Value* value;
-    } dests[4];
+    } dests[kMaxTraceDests];
   } trace_info_;
 };
 

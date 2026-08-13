@@ -50,6 +50,19 @@
 #include <unordered_map>
 #endif  // XE_PLATFORM_ANDROID
 
+DEFINE_uint32(
+    gpu_stall_spin_iterations, 500,
+    "How many times the command processor polls the ring buffer with a cheap "
+    "yield before it parks on the write-pointer event, when the guest has "
+    "produced no commands. The spin dodges wake latency if the guest kicks "
+    "again immediately, but on ARM64 the yield retires as a no-op, so every "
+    "iteration burns a core at full clock. 0 parks immediately. No wake-up is "
+    "missed either way, because UpdateWritePointer signals the event. "
+    "500 keeps the historic behaviour; XenDroid measured and ships 32. "
+    "Lowering this is a POWER lever, not an fps lever - measure fps on an "
+    "uncapped title before you keep a lower value.",
+    "GPU");
+
 DEFINE_bool(
     gpu_bd_sync_event_write_fences, false,
     "BD Turnip crash-race candidate fix (gated, default off): before an "
@@ -1048,7 +1061,7 @@ void CommandProcessor::WorkerThreadMain() {
       uint32_t loop_count = 0;
       do {
         // If we spin around too much, revert to a "low-power" state.
-        if (loop_count > 500) {
+        if (loop_count > cvars::gpu_stall_spin_iterations) {
           const int wait_time_ms = 5;
           xe::threading::Wait(write_ptr_index_event_.get(), true,
                               std::chrono::milliseconds(wait_time_ms));

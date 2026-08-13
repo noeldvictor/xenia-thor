@@ -407,6 +407,9 @@ void PPCHIRBuilder::StoreLR(Value* value) {
   assert_true(value->type == INT64_TYPE);
   StoreContext(offsetof(PPCContext, lr), value);
 
+  if (trace_info_.dest_count >= kMaxTraceDests) {
+    return;  // trace slots are per-instruction; extra stores stay untraced
+  }
   auto& trace_reg = trace_info_.dests[trace_info_.dest_count++];
   trace_reg.reg = 64;
   trace_reg.value = value;
@@ -420,6 +423,9 @@ void PPCHIRBuilder::StoreCTR(Value* value) {
   assert_true(value->type == INT64_TYPE);
   StoreContext(offsetof(PPCContext, ctr), value);
 
+  if (trace_info_.dest_count >= kMaxTraceDests) {
+    return;  // trace slots are per-instruction; extra stores stay untraced
+  }
   auto& trace_reg = trace_info_.dests[trace_info_.dest_count++];
   trace_reg.reg = 65;
   trace_reg.value = value;
@@ -540,6 +546,9 @@ void PPCHIRBuilder::StoreFPSCR(Value* value) {
   assert_true(value->type == INT32_TYPE);
   StoreContext(offsetof(PPCContext, fpscr), value);
 
+  if (trace_info_.dest_count >= kMaxTraceDests) {
+    return;  // trace slots are per-instruction; extra stores stay untraced
+  }
   auto& trace_reg = trace_info_.dests[trace_info_.dest_count++];
   trace_reg.reg = 67;
   trace_reg.value = value;
@@ -607,6 +616,9 @@ void PPCHIRBuilder::StoreCA(Value* value) {
   assert_true(value->type == INT8_TYPE);
   StoreContext(offsetof(PPCContext, xer_ca), value);
 
+  if (trace_info_.dest_count >= kMaxTraceDests) {
+    return;  // trace slots are per-instruction; extra stores stay untraced
+  }
   auto& trace_reg = trace_info_.dests[trace_info_.dest_count++];
   trace_reg.reg = 66;
   trace_reg.value = value;
@@ -620,6 +632,9 @@ void PPCHIRBuilder::StoreSAT(Value* value) {
   value = Truncate(value, INT8_TYPE);
   StoreContext(offsetof(PPCContext, vscr_sat), value);
 
+  if (trace_info_.dest_count >= kMaxTraceDests) {
+    return;  // trace slots are per-instruction; extra stores stay untraced
+  }
   auto& trace_reg = trace_info_.dests[trace_info_.dest_count++];
   trace_reg.reg = 44;
   trace_reg.value = value;
@@ -633,6 +648,9 @@ void PPCHIRBuilder::StoreGPR(uint32_t reg, Value* value) {
   assert_true(value->type == INT64_TYPE);
   StoreContext(offsetof(PPCContext, r) + reg * 8, value);
 
+  if (trace_info_.dest_count >= kMaxTraceDests) {
+    return;  // trace slots are per-instruction; extra stores stay untraced
+  }
   auto& trace_reg = trace_info_.dests[trace_info_.dest_count++];
   trace_reg.reg = reg;
   trace_reg.value = value;
@@ -646,6 +664,9 @@ void PPCHIRBuilder::StoreFPR(uint32_t reg, Value* value) {
   assert_true(value->type == FLOAT64_TYPE);
   StoreContext(offsetof(PPCContext, f) + reg * 8, value);
 
+  if (trace_info_.dest_count >= kMaxTraceDests) {
+    return;  // trace slots are per-instruction; extra stores stay untraced
+  }
   auto& trace_reg = trace_info_.dests[trace_info_.dest_count++];
   trace_reg.reg = reg + 32;
   trace_reg.value = value;
@@ -659,6 +680,9 @@ void PPCHIRBuilder::StoreVR(uint32_t reg, Value* value) {
   assert_true(value->type == VEC128_TYPE);
   StoreContext(offsetof(PPCContext, v) + reg * 16, value);
 
+  if (trace_info_.dest_count >= kMaxTraceDests) {
+    return;  // trace slots are per-instruction; extra stores stay untraced
+  }
   auto& trace_reg = trace_info_.dests[trace_info_.dest_count++];
   trace_reg.reg = 128 + reg;
   trace_reg.value = value;

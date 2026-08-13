@@ -12,7 +12,7 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **pick a CPU lever** | `ARM64 PERFORMANCE PLAYBOOK` (the five rules), `docs/reference/arm/` | the port model was wrong until checked against the manual; measure applicability before building |
 | **claim an instruction is too slow/strong** | `docs/reference/arm/` + diff the emitted asm | one `clang -S` killed an implemented `__sync_*` optimisation that was a pure no-op |
 | **touch GPU / EDRAM / render passes** | `THE BD EDRAM / D3D9-HLE ERA IS ARCHIVED`, `BD FIELD IS CPU-BOUND` | that entire era optimised the wrong processor; the archive lists what is already dead |
-| **port from XenDroid** | `XENDROID IS THE BAR`, `XENDROID UPSTREAM PORT TRACK`, `APU/BASE SWEEP TRIAGE` | their tree is heavily diverged - port the idea, not the patch, and expect genuine N/A results |
+| **port from XenDroid** | `XENDROID SWEEP 2026-08-13` (latest, has the author-filter recipe), `XENDROID IS THE BAR`, `XENDROID UPSTREAM PORT TRACK`, `APU/BASE SWEEP TRIAGE` | their tree is heavily diverged - port the idea, not the patch, and expect genuine N/A results |
 | **fire the device** | `Never thrash the Thor`, `BLACK SCREEN? CHECK THE DISPLAY`, `TURNIP IS MANDATORY` | thermal limits are real; a sleeping panel looks exactly like a rendering bug; a bare launch uses the WRONG driver |
 | **chase a crash** | `BURNOUT ... LLVM WRITING x20`, `GEARS SIGTRAP`, `Android fault diagnosis` (memory) | decode the instruction before blaming a subsystem; x20/x21 state is the discriminator |
 | **hunt x86-shaped bugs** | `THE x86→ARM64 SWEEP: MEMORY ORDERING IS THE BUG CLASS` | TSO hides missing fences; look for an atomic index guarding a plain buffer, and check the POSIX `#elif` nobody profiles |
@@ -7070,3 +7070,85 @@ Hash" in logcat). Applied in `KernelState::LoadUserModule` before execution. Ski
 Pick the highest-value unit yourself, execute end-to-end (implement → build-verify → device-test → commit →
 next). Don't ask which task / re-confirm direction / analysis-paralyze. A big effort is a reason to start, not
 to ask. Surface only genuine external blockers. Thermal + no-fabrication rules always hold.
+
+## 🧲🧲 XENDROID SWEEP 2026-08-13 — 54 NEW COMMITS TRIAGED, 8 PORTED, TWO REAL MEMORY BUGS FOUND
+**`reference/XenDroid` `origin/main` = `b70d64374` (2026-08-10). The default branch is `main`, NOT `master` —
+the local clone tracks `master` at `84edc9b00`, so `git log HEAD..origin/HEAD` reports 4,429 commits. That number
+is the vendored xenia-edge history from PR #75, not XenDroid work. Filter by author to get the real list:**
+```
+git -C reference/XenDroid log --format='%h %ad %s' --date=short --no-merges --author=rfandango 3925dd802..origin/main
+```
+**That gives 59 commits from 2026-08-05 to 08-10. Five already had a verdict here. The other 54 are below.**
+
+### 🐛🐛 THE TWO THAT MATTER: BOTH ARE LIVE MEMORY CORRUPTION IN OUR TREE
+| bug | our site | why it is real |
+|---|---|---|
+| **`40f193b23` register-trace array overflow** | `ppc_hir_builder.h:113` `dests[4]`, 8 append sites in the `.cc` | **`lmw` calls `StoreGPR` up to 32 times for ONE instruction** (`ppc_emit_memory.cc:726`). `trace_info_` is the LAST member of `PPCHIRBuilder`, so the extra 28 entries write ~448 bytes past the object. Unconditional — not gated on tracing |
+| **`e31de7bf9` upload-pool offsets bounded by a stale `page_size_`** | `graphics_upload_buffer_pool.cc:105/151/153` | `page_size_` really does grow (`vulkan_upload_buffer_pool.cc:126` sets it to `allocation_size_`). A page created before that growth is smaller than `page_size_` claims, so an offset computed against `page_size_` writes past the end of that page's mapping. Our tree even carried the same stale comment: *"page_size_ may grow - but this doesn't matter here"* |
+**⇒ Both are heap-overflow class. This is the first concrete candidate for the unattributed Scudo heap-corruption
+crash on Kernel Dispatch. NOT asserted as the cause — neither has been tied to that crash by a repro.**
+
+### ✅ PORTED (8), desktop `xenia-app` BUILD SUCCESSFUL after each batch
+| upstream | what landed here |
+|---|---|
+| `40f193b23` | `kMaxTraceDests` + an early return in all 8 `Store*R` helpers |
+| `e31de7bf9` | `Page::capacity_`, stamped after creation, replaces `page_size_` in `Request`/`RequestPartial` |
+| `31c170ff4` | `VulkanPage::mapping_size_` + a bounds check in both `Request` paths. The detector for the bug above. Their two per-page `XELOGI` lines were left out as log spam |
+| `bb86a836f` | `PreemptCheckInjectionPass` now scans every instruction, not the trailing branch run. **A loop whose block ends with a call hid its back-edge from the tail-backward walk and got no safepoint** |
+| `c5441507c` | `UpdateBindings` rejects a null `dstSet` instead of faulting inside the driver |
+| `fceac7376` | new `gpu_stall_spin_iterations`, replacing the hardcoded `loop_count > 500` |
+| `4773f77f9` | `Cpu::ready_summary` is now `std::atomic<uint32_t>` (all 11 sites, via `SetReadyLevel`/`ClearReadyLevel`), and `YieldCurrentThread` returns early when there is nothing to yield to |
+| `62a6a0d42` + `71e678320` | new `spirv_multiply_zero_test_on_bits`, default off, both call sites |
+**⚠️ `gpu_stall_spin_iterations` DEFAULTS TO 500, which is the historic behaviour — it changes nothing until
+somebody sets it.** XenDroid measured and ships **32**. It is a POWER lever, not an fps lever, and the risk is a
+little added latency per draw batch, never wrong pixels. It is allowlisted, so A/B it with
+`--ez gpu_stall_spin_iterations 32` on an uncapped title and keep the lower value only if fps holds.
+**⚠️ `spirv_multiply_zero_test_on_bits` is a TURNIP CORRECTNESS FIX and our `ZeroIfAnyOperandIsZero` was
+byte-identical to their pre-fix version.** Mesa folds the `min(|a|,|b|) == 0.0` form into `nir_op_fmulz` then
+`nir_op_fmadz`, **which the Adreno ir3 compiler does not implement — it ABORTS shader compilation** (they report
+PGR3 and Dark Souls). The bit form is equivalent: the operands are already absolute, so IEEE bit patterns order
+like the values and `+0.0` is all-zero bits. NaN and `-0.0` behave the same both ways. Default off, allowlisted.
+**Try it on any title whose shaders fail to compile, before debugging the shader.**
+
+### ❌ N/A — WE ALREADY HAVE IT, OR WE ARE AHEAD. Do not re-check these.
+| upstream | why not |
+|---|---|
+| `eb71db58d` wake only CPUs a signal can matter to | **ALREADY PORTED** here, with our per-object condvar refactor on top (`threading_posix.cc`, `NotifyWaiters` + `parked_waiters_`). The earlier note calling it unported is stale |
+| `c1915cdd0` cached labels, not stack-local | Our a64 sequences have **zero** stack `Xbyak_aarch64::Label` declarations already |
+| `ab4a66e1a` + `c786e2bcd` gradient LOD bias | **We never implemented the per-axis bias.** We already use ONE `exp2` shared by both axes, which is their cvar-OFF path. Adding it would cost fragment ALU, not save it |
+| `e9d9eecfa` scan every subdirectory | `XeniaAndroidSettings.scanDocumentTree` already recurses. `GAME_LIBRARY_MAX_DEPTH = 7`, deeper than their fix |
+| `399b78a7b` inline small leaf functions | We have this (`INLINE-LEAF` in `ppc_hir_builder.cc`) |
+| `21291698c` vblank pacing + clock priority | **Both halves N/A.** Their bug was `NanoSleep(full period)` letting oversleep accumulate; ours is a 1 ms poll loop, so drift is bounded to ~1-2 ms, not sagging toward half. And our vsync thread never calls `set_priority`, so it is already kNormal, not their starved kLowest |
+| `4ae33425b` render-area shrinking | **They measured NO EFFECT and shelved it off.** Taking it would be re-running their negative result |
+| `6fa6b0a2e`, `d313aba71` | Their mesa submodule and their Compose settings UI. Neither exists here |
+| `eb0c1b488` ask before deleting a replaced .iso | We do not have the `.zar` compress flow |
+| `106ebdcfc` + `81cb96adc` uma readback | Same overlap rejected on 2026-07-30: collides with our own host-visible shared memory + `vulkan_readback_resolve` |
+| `428008f0e`, `83cf6fa0d` | Already rejected 2026-08-06. Verdicts unchanged |
+
+### 🚧 DEFERRED, WITH THE REASON. Each is a feature, not a patch.
+| upstream | size | why it is deferred |
+|---|---|---|
+| **`edaf74cd4` park indefinite guest memory-poll loops** + **`da6b36eb7`/`ecd38cfa0` collapse memory-counter delay countdowns** | 279 + 674 lines, new HIR opcodes | **This is the one this file already named "the next worth porting"** — they PARK the guest busy-wait, our `arm64_guest_spin_throttle` only deschedules it. It is a new opcode plus frontend pattern detection, and it is a behaviour-changing CPU lever. **Do not land ~950 lines of it without the device free to measure.** Read `da6b36eb7` first; `edaf74cd4` builds on it |
+| `f6e0888e9`, `b97c75685`, `eaa9e5710` spin-collapse to scheduler/safepoint interactions | small | All three depend on the spin-backoff machinery above. Port them WITH it, never before |
+| `98b691ea9` inline the XDK GPR save/rest helpers | 72 lines | Our saverest handling differs across a64/LLVM/`cpu_flags`. **`40f193b23` exists because inlining a helper body overruns the trace array** — that guard is now in, so this is unblocked, but it is a codegen change needing device fps |
+| `ab8725422`, `4dde8412e`, `99da95bd9`, `a34ef3c31`, `4410ae902`, `dbd4ebe75` scheduler wedge diagnostics | ~690 lines total | All ABSENT here. They are **diagnostics for a scheduler we still ship default-off**. Take them when `guest_scheduler` is being driven toward default-on, not before |
+| `eb2289ebf` stale minimal pipeline layout, `1454202d7` per-draw readiness snapshot | 133 + 48 | Both concepts ABSENT here. Real perf/robustness work, but in `vulkan_command_processor` where we diverge most |
+| `3addc186d`, `754475592`, `99fc17a16`, `90ee0d939`, `d1723f093`, `6d78b4312` lean shader variant gates | small each | All ABSENT. **These are the fragment-ALU lever the counter study points at** — they cut resolve/texture shader work behind cvars. Best next GPU batch after the memory fixes |
+| `51adc9cb7` controller-navigable guest message box | Kotlin | **A real capability gap.** We only have `xam_auto_dismiss_message_boxes` — an auto-answer, not a dialog. Theirs needs a JNI round trip from the guest thread to a Java dialog and back |
+| `d9930ddcf`, `6f6afe4cb`, `3d3e94cc3`, `0f1cf8834`, `8ccb65d93` HWASan build variant | build system | **They built this to chase GPU-path heap corruption — the same hunt we are on.** Worth it if the two fixes above do not close the Scudo crash |
+| `c2ab879a4` Turnip counter sampler cvars, `462e4d02e` machine-code dump, `ad745b48d` log dedup | small | Instrumentation. Take when chasing the matching problem |
+
+### ⚠️ ONE IDEA WE HAVE BUT KEEP OFF: `ee030d15b` emit `isb` for `db16cyc`
+We already have `a64_spin_hint_isb` (`a64_emitter.cc:148`), **default FALSE**. XenDroid made `isb` unconditional
+and additionally COALESCES consecutive barriers so a long sled stays one instruction. **We do not coalesce.**
+Their measurement is the evidence our cvar was waiting for, but the standing rule holds: it is default-off pending
+a device A/B. Coalescing is separable and behaviour-preserving.
+
+### 🔧 TOOLING NOTES FROM THIS SESSION
+- **`build/` held ONLY Android `.mk` files** — the last premake regen was `--os=android`. Run
+  `./tools/build/bin/premake5.exe --file=premake5.lua vs2022` to get the `.vcxproj` back. **Re-run the android
+  regen before the next APK build**, per the standing both-regens rule.
+- **Do NOT run MSBuild from the Bash tool.** Git Bash rewrites `/p:Configuration=...` into a path and MSBuild
+  reports `MSB1008: Only one project can be specified`. Use the PowerShell tool.
+- **`xb.bat premake` fails here**: PowerShell resolves `python` to the WindowsApps stub, so the script reports
+  `Python version mismatch`. Git Bash has a real Python 3.10.11. Call `premake5.exe` directly instead.

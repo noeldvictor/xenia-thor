@@ -38,16 +38,20 @@ class VulkanUploadBufferPool : public GraphicsUploadBufferPool {
   struct VulkanPage : public Page {
     // Takes ownership of the buffer and its memory and mapping.
     VulkanPage(const VulkanDevice* vulkan_device, VkBuffer buffer,
-               VkDeviceMemory memory, void* mapping)
+               VkDeviceMemory memory, void* mapping, VkDeviceSize mapping_size)
         : vulkan_device_(vulkan_device),
           buffer_(buffer),
           memory_(memory),
-          mapping_(mapping) {}
+          mapping_(mapping),
+          mapping_size_(mapping_size) {}
     ~VulkanPage() override;
     const VulkanDevice* vulkan_device_;
     VkBuffer buffer_;
     VkDeviceMemory memory_;
     void* mapping_;
+    // Bytes really mapped for this page. The last line of defence against an
+    // offset the size bookkeeping let through.
+    VkDeviceSize mapping_size_;
   };
 
   const VulkanDevice* vulkan_device_;
