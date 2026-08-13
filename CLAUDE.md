@@ -7360,3 +7360,40 @@ builds arm64, pushes. Args: `--width --height --view-width --view-height --passe
    `cd /data/local/tmp && ./edram_bench`, never `adb shell "/data/local/tmp/edram_bench"`.
 Also: link `-static-libstdc++`, or a bare adb-run binary dies with
 `CANNOT LINK EXECUTABLE: library "libc++_shared.so" not found`.
+
+### 🔻 FOLLOW-UP SAME SESSION: MY OWN PROPOSED FIX DOES NOT APPLY, AND THAT SHARPENS THE NEXT EXPERIMENT
+**I proposed "never CLEAR a full EDRAM-span attachment". Then I read the loadOp selection. WE ALREADY DO NOT
+CLEAR.**
+| attachment | our loadOp, shipping config |
+|---|---|
+| colour (`vulkan_render_target_cache.cc:3147`) | `DONT_CARE` if in `load_dont_care_mask`, else **`LOAD`**. **CLEAR is never selected** |
+| depth (`:3092`) | `CLEAR` **only** under `gpu_lrz_spike_depth_clear`, which is **default false** (the throwaway spike). Otherwise `DONT_CARE` / `LOAD` |
+**⇒ The cheap fix I proposed is a no-op for the shipping config. Recorded so nobody implements it.**
+### ⚡ BUT IT EXPLAINS AN ALREADY-MEASURED RESULT NOBODY HAD A MECHANISM FOR
+`gpu_lrz_spike_depth_clear` forces the depth loadOp to CLEAR to keep Adreno LRZ valid, and this file records
+that spike as **+13.1% WORSE and visually wrong**, unexplained. **The harness prices exactly that change:** a
+forced CLEAR on an EDRAM-span depth surface costs **+47 us/pass at 2048 rows and +269 us/pass at 8192**. That
+is easily enough to swamp any LRZ win. **The LRZ spike did not fail because LRZ is worthless here - it failed
+because forcing CLEAR on an oversized attachment is expensive.** If LRZ is ever revisited, the prerequisite is
+a depth attachment that is NOT EDRAM-span, or a scissored clear.
+### 🔬 THE CONTRADICTION THAT IS NOW THE DECISIVE EXPERIMENT
+```
+harness (Qualcomm blob): loadOp=LOAD costs the SAME at 8192 rows as at 720. Off-screen rows are FREE.
+in-app  (Turnip):        clamping renderArea to the guest scissor HALVED in-pass time, 46.9ms -> 23.5ms.
+```
+**Both cannot be true of the same driver.** If untouched off-screen rows were free under LOAD, clamping
+renderArea could not have halved anything. So exactly one of these holds:
+- **(a) TURNIP DOES NOT ELIDE UNTOUCHED-TILE LOADS THE WAY THE BLOB DOES.** Then the oversized-RT theory is
+  alive, it is **Turnip-specific**, and the fix is the screen-sized allocation after all. **This is the
+  leading hypothesis** - the in-app number was measured on Turnip, the harness number on the blob.
+- **(b) The in-app passes differ from the harness in a way that reactivates the cost** - a depth attachment
+  alongside colour, MSAA samples, several colour attachments, or draws that really do cover more rows than
+  the 720 the harness assumes.
+**⇒ NEXT EXPERIMENT, AND IT IS DECISIVE, NOT A CAVEAT: `bash tools/edram_bench/run_matrix.sh turnip`.**
+The harness can now load an arbitrary ICD (`--driver`), and `run_matrix.sh` extracts the Turnip ICD out of the
+app's private dir with `run-as`. One run settles (a).
+**If (a) holds** -> build the screen-sized RT allocation; the 37 ms is real and the mechanism is understood.
+**If Turnip also shows LOAD as free** -> the renderArea-clamp result has a DIFFERENT cause and the oversized
+RTs are exonerated; go add depth/MSAA/multi-attachment arms to the harness and find what really reactivates it.
+**⚠ Do not skip straight to the allocation rewrite on the strength of the blob numbers.** They are the wrong
+driver, and this file already records one session lost to acting on a lever before the gating check.
