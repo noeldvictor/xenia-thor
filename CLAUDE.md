@@ -7465,3 +7465,37 @@ which is the prerequisite for ever flipping `arm64_global_reservation_helpers` o
 **Next:** `578a551b3` (GuestAtomic backed by real reservations, 630 lines) is the sibling commit and the x64
 half of `f0e2a16f4` is still unported; the x64 backend is what the PPC suite actually exercises, so porting
 that half WOULD be testable on desktop.
+
+### ❌❌ CORRECTION, SAME SESSION: THE WHOLE a64 RESERVATION APPARATUS IS DEAD CODE
+**`OPCODE_RESERVED_LOAD` and `OPCODE_RESERVED_STORE` ARE NEVER EMITTED BY ANYTHING IN THIS TREE.**
+```
+grep -rn "OPCODE_RESERVED_LOAD|OPCODE_RESERVED_STORE" src/ --include=*.cc --include=*.h
+  -> hits ONLY in backend/a64/ and hir/opcodes.*   (no producer, ever)
+```
+So all of the following is unreachable: the a64 `RESERVED_LOAD_I32/I64` and `RESERVED_STORE_I32/I64`
+sequences, the inline CAS path, the helper path, `TryAcquireReservationHelper` /
+`ReservedStore32/64Helper`, `ReserveHelper`, **and the `arm64_global_reservation_helpers` cvar, which can
+never take effect no matter what it is set to.** The x64 backend has no lowering for these opcodes at all,
+which is consistent - nothing asks for one.
+**⇒ MY COMMIT `78a7cb238` REWORKED DEAD CODE.** It is correct and harmless, and it makes that path sound if
+it is ever revived, but **it did not change emulator behaviour.** I described it as fixing a wedge; it fixes
+a wedge in code that does not run. Recorded plainly so the ledger is not misleading.
+**⇒ AND `arm64_global_reservation_helpers` IS AN INERT CVAR.** That is the FOURTH inert lever found today
+(`arm64_guest_spin_throttle_functions` empty list, `park_memory_poll_loops` emitting a no-op yield and
+unallowlisted, and now this). **Before A/B-ing any lever in this tree, check that a producer exists.**
+### 🔑 WHAT THE EMULATOR ACTUALLY DOES FOR lwarx/stwcx (both backends - it is HIR level)
+```
+lwarx : MemoryBarrier; rt = load(ea); StoreReserved(rt)   -> PPCContext.reserved_val
+stwcx : cr0.eq = AtomicCompareExchange(ea, reserved_val, new_value)
+```
+This is upstream master's long-standing **plain value CAS**, and it is what ships on the Thor.
+| property | verdict |
+|---|---|
+| leaks / permanent wedge | **none** - no owned global state |
+| ordinary 0/1 guest spinlock | **correct** - plain CAS is sufficient for that pattern |
+| ABA | **VULNERABLE.** X->Y->X between the lwarx and the stwcx makes the stwcx succeed where PPC requires failure. Bites pointer-based lock-free structures (freelists, ABA-sensitive queues), not mutexes |
+| reservation ADDRESS | **not checked.** stwcx CASes at its own `ea` against whatever value the last lwarx loaded, even from a DIFFERENT address. PPC requires that stwcx to fail. It usually does fail because the values differ, but a coincidental value match would let it succeed |
+**⇒ Fixing this properly means giving the HIR reservation an address + a global generation, i.e. actually
+adopting Edge's model at the PPC-emit layer, not just in the unreachable backend sequences.** That is a real
+design change to the shipping atomics path, it cannot be exercised by the PPC suite (no lwarx/stwcx tests
+exist), and it should not be attempted without a device and a targeted test. **Do not start it casually.**
