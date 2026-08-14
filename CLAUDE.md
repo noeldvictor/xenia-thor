@@ -7121,6 +7121,54 @@ pays for every gated block whether or not the flag is set** (ir3 flattens the br
 property of this driver, it is now measured, and it applies to any future shader work here - just not to a
 `kSysFlag_` population that turns out to be four.
 
+## ❌ **BIN COUNT IS REAL AND FAR TOO SMALL: 1-3%, NOT THE renderArea CLAMP'S 50% (Turnip, 2026-08-14)**
+**The Adreno guide names "Bin Minimization" as a top-level best practice, and our own arithmetic said a
+1280x2048 attachment is 16 bins against 1280x720's 8 - exactly the 2x the renderArea clamp measured. It looked
+like the missing mechanism. It is not. Measured it before building anything.**
+### THE MANUAL, verbatim (`mobile_best_practices.txt`)
+> **L399 "Bin Minimization":** *"Some performance bottlenecks for a render target can be alleviated by reducing
+> the number of bins the driver generates (which, in turn, often increases the number of pixels each bin
+> contains)."* Remedies listed: lower resolution, VRS, fewer MSAA samples, fewer render targets at once.
+> **L379:** *"If a triangle spans multiple tiles in binning mode, **the full triangle will be rasterized per
+> tile** - there are no added vertices at tile boundaries."*
+> **L1201:** per-tile visibility-stream overhead is *"small (2-5us) but **can add up if the draw call count is
+> high and draws are present in many tiles**"*, and the trimming optimisation *"can be nullified if something
+> like a **full screen pass is issued as the last draw call** to a render target."*
+**Every clause applies to us on paper:** our EDRAM transfers ARE full-screen triangles spanning every bin, they
+ARE often the last draw to a target, and our attachments generate bins for 2048 rows while the guest draws 720.
+### THE MEASUREMENT (`tools/edram_bench/tile_scaling.sh`) - viewport fixed at 1280x720 in EVERY arm, so
+### fragment work is IDENTICAL and only the bin grid changes. loadOp/storeOp = DONT_CARE.
+| draws per pass | h720 (~8 bins) | h2048 (~16 bins) | h8192 (~64 bins) |
+|---|---|---|---|
+| 1 | 60.3 us | 60.1 | 60.1 |
+| 8 | 442.7 us | 459.1 (+3.7%) | 493.4 (+11.5%) |
+| 64 | 3,139 us | 3,184 (+1.4%) | 3,247 (+3.4%) |
+| **256** | **12,526 us** | **12,670 (+1.2%)** | **12,842 (+2.5%)** |
+**⇒ THE BIN-COUNT COST IS REAL - it grows with both bin count and draw count, exactly as the manual says - AND
+IT IS 1-3% AT REALISTIC DRAW COUNTS.** Going from 8 bins to 64 with 256 draws costs 2.5%. **The renderArea
+clamp bought 50% of in-pass time. Bin count cannot be the explanation; it is off by more than 10x.**
+**✅ AND A USEFUL UNIT FALLS OUT: ~49 us PER FULL-COVERAGE 1280x720 DRAW** (12,526/256 = 48.9; 3,139/64 = 49.1).
+Cost is LINEAR in draws and flat in bins, i.e. this harness workload is purely fragment-bound - which is what
+makes the bin column trustworthy as a small residual rather than noise.
+**⇒ SO THE renderArea CLAMP IS STILL UNEXPLAINED, AND THE LIST OF DEAD EXPLANATIONS IS NOW FOUR:** attachment
+memory traffic (LOAD is flat at every height), clear rects (ours are already scissored and screen-sized), bin
+count (this entry), and fragment count (the clamp does not change what the guest scissor already clips).
+### 🎯 THE ONE SURVIVING CANDIDATE, AND THE MANUAL POINTS AT IT
+Same chapter, on **FlexRender**: *"The driver heuristics that determine when to run binned or direct mode are
+not exposed to the developer, but generally these scenarios trigger direct mode: ... **Small number of vertices
+and/or draws**."*
+**Our frame is 61 of 74 passes with AT MOST ONE DRAW** (measured, `THE REAL PASS ECONOMICS`). That is precisely
+the direct-mode trigger. **Hypothesis: clamping renderArea flips the dominant passes between binned and direct
+mode, and direct mode is faster in-pass (no per-tile replay of full-screen triangles) while costing more
+between passes - which is exactly the shape observed (+335% in the gaps, net +18% slower).**
+**⇒ AND IT NEEDS NO GUESSING, BECAUSE TURNIP REPORTS IT PER PASS.** `MESA_GPU_TRACES=print` emits `gmem`
+(true = binning) and `gmem_disable_reason` at every `end_render_pass` - this file already records the full
+recipe. **Run the BD route once with and once without the clamp and diff the `gmem` column.** That settles a
+datapoint four hypotheses have now failed to explain, and it is zero-code.
+**⚠ AND NOTE WHAT IT WOULD MEAN: if the win is a mode flip, it is not portable as "clamp renderArea"** - that
+form was already measured at +18% SLOWER overall. It would mean the lever is "get the dominant passes into the
+cheaper mode without breaking the attachment contract", which is a different and harder change.
+
 ## 🧰 TOOLING RULE (user, 2026-08-14): **PUT DEVICE COMMANDS IN A SCRIPT, DO NOT RUN HUGE INLINE COMMANDS**
 *"don't run huge commands, create scripts and use that."*
 **Why it matters here specifically, beyond readability:** this file already records five distinct Git Bash
