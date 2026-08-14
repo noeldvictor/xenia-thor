@@ -7291,6 +7291,49 @@ inferred from a counter we emit; (c) accept the harness numbers as bracketing an
 running threads parked on a wait. This is a process that never attaches. **Different signature, different bug -
 do not merge them.**
 
+## 🔥🔥🔥 **BD RENDERS 100% IN DIRECT/SYSMEM MODE, AND FORCING BINNING IS 42% SLOWER (2026-08-14)**
+**Two measurements on the real game. Together they retire the TBDR framing of this project's GPU work.**
+```
+tools/thor/bd_render_mode.sh + bd_mode_report.py   (248,055 passes traced, ~110s)
+  binning (GMEM)  :        22   (0.009%)
+  direct (sysmem) :   248,033   (100.0%)
+  reasons: 245,965 "Autotune selected sysmem" / 2,068 "Can't fit attachments into gmem"
+  autotune only bins a pass carrying ~686 draws; every EDRAM-span surface goes direct
+
+tools/thor/bd_gmem_ab.sh   TU_DEBUG=gmem vs autotune, one arm per cooldown
+  autotune : 623 gameplay frames  mean 63,184us  15.83 fps
+  gmem     : 351 gameplay frames  mean 89,716us  11.15 fps   -> +42.0% SLOWER
+```
+**⇒ AUTOTUNE IS CORRECT. Direct mode is the right choice for our workload, and it is not close.**
+### WHAT THIS SETTLES
+1. **THE OVERSIZED-RT EXONERATION STANDS** - and my morning retraction of it is itself withdrawn. I retracted
+   because the harness ran in sysmem; **the GAME runs in sysmem too**, so the harness modelled the right mode
+   and "attachment height is free" is the applicable number. The +31us/pass binning penalty applies to 22 of
+   248,055 passes.
+2. **EVERY TILE-ORIENTED LEVER WAS INAPPLICABLE BY CONSTRUCTION** - GMEM residency, tile load/store elision,
+   `VK_QCOM_tile_memory_heap`, subpass merging (*"only applies when the surface is rendered in binning mode"*),
+   and **LRZ, which requires binning**. One common cause for pass-break reduction (-0.27%), UBWC (flat), the
+   shmem hoist (+0.4%) and the LRZ spike (+13.1% worse).
+3. **THE renderArea CLAMP IS EXPLAINED** - the last unexplained GPU datapoint. In direct mode there is no
+   visibility pass and no tile replay, so a smaller declared area is directly less work. Not a binning effect.
+4. **The 2,068 `Can't fit attachments into gmem` passes are the oversized RTs biting** - costing not tile
+   traffic but the OPTION to bin. 0.8% of passes, and binning is worse anyway.
+**⇒ SO THE REMAINING GPU COST IS FRAGMENT SHADING, which is what every measurement has said. Stop proposing
+tile/GMEM/subpass work for BD.**
+**⚠ ONE CONFOUND, STATED: the gmem arm started at 45C against autotune's 38C.** Drift here is ~2.8% and the
+effect is 42%, so the direction is safe; the magnitude is not exact.
+### 🧨 THE RECIPE IN THIS FILE WAS UNRUNNABLE - `setprop wrap.<pkg> '"VAR=x"'` CANNOT WORK
+In shell `VAR=x cmd` is an assignment, but `"VAR=x" cmd` tries to EXECUTE a program named `VAR=x`, so the app
+forks and dies with `failed to attach` - zero log lines, indistinguishable from a broken route, and it persists
+until reboot on a SHARED device. Probed all forms (`tools/thor/wrap_probe.sh`):
+```
+''  /  env  /  "env"  /  MESA_GPU_TRACES=print                      -> launch
+"MESA_GPU_TRACES=print"  /  "env MESA_GPU_TRACES=print"             -> DIE
+MESA_GPU_TRACES=print MESA_GPU_TRACEFILE=/sdcard/u.txt              -> launches AND traces
+```
+**Single-quote at the shell level; put NO double quotes in the value. Unset with `''`, never `'""'`.**
+**Budget 206 MB of trace per ~110s** - aggregate on device with `grep -oE`, pull only the fields.
+
 ## 🧰 TOOLING RULE (user, 2026-08-14): **PUT DEVICE COMMANDS IN A SCRIPT, DO NOT RUN HUGE INLINE COMMANDS**
 *"don't run huge commands, create scripts and use that."*
 **Why it matters here specifically, beyond readability:** this file already records five distinct Git Bash

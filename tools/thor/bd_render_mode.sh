@@ -67,7 +67,7 @@ if [ "${NOWRAP:-0}" = "1" ]; then
 else
 WRAP="MESA_GPU_TRACEFILE=$TRACE MESA_GPU_TRACES=print"
 [ ${#WRAP} -lt 92 ] || { say "ABORT: wrap value ${#WRAP} bytes >= 92"; exit 1; }
-"$ADB" -s "$DEV" shell "setprop wrap.$PKG '\"$WRAP\"'"
+"$ADB" -s "$DEV" shell "setprop wrap.$PKG '$WRAP'"
 GOT=$("$ADB" -s "$DEV" shell "getprop wrap.$PKG" | tr -d '\r')
 say "wrap = $GOT"
 case "$GOT" in *MESA_GPU_TRACES*) ;; *) say "ABORT: setprop did not apply"; exit 1;; esac
