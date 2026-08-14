@@ -7662,3 +7662,49 @@ likely a binning/FlexRender decision. **It is now the only unexplained GPU datap
 something about a smaller renderArea genuinely halves in-pass shading time.** If fragment cost dominates,
 a clamped renderArea may simply be rasterising fewer fragments somewhere - worth one instrumented look
 before it is written off.
+
+## 🧲 UPSTREAM SWEEP 2026-08-14 (XenDroid +40, edge, canary) — AND THE FRAGMENT LEVER FROM THE MANUALS
+### ✅ PORTED: `907d92bf8` (canary) — OOB WRITE, byte size passed where a CHAR COUNT is required
+`copy_and_swap_truncating(dest, src, dest_buffer_count)` takes a CHAR COUNT. Callers passed BYTES, which for
+`char16_t` is **2x the real capacity**, so a long enough string writes past the end of a guest buffer.
+**Our call sites were line-for-line identical to the pre-fix upstream:** `xam_locale.cc` (XFormatDateString,
+XFormatTimeString), `xam_info.cc` (keXamBuildResourceLocator), `profile_manager.cc` (`sizeof` instead of
+`countof` on a fixed array). **Fourth out-of-bounds write found in two days**, after the PPC trace array, the
+upload pool and STVL/STVR. Audited the rest instead of assuming: the typeface path (`path.size()+1`) and
+`xam_content_device` (`name_capacity`, compared against `name.size()+1`) are already char counts and correct.
+### 🔭 INDEPENDENT CORROBORATION OF YESTERDAY'S EDRAM VERDICT
+**`7b33819eb` [GPU] Keep in-pass EDRAM resolves off by default, on for the TDU titles.**
+**XenDroid BUILT the in-pass resolve chain, and has now defaulted it OFF**, enabling it per-title. That is
+independent agreement with our own measurement that it is not a general win - and with `sr_fscomp = 0` on BD.
+**Do not restart that track for BD.**
+### ⚠ SUSPECTED, NOT FIXED: `d434ef516` halfword-permute lane selection
+Upstream's constant-fold built a mask with `1 << (7 - i)` and tested it with `mask & (1 << i)` - a reflected
+index. **Ours is different code** (`x64_seq_vector.cc:2028` feeds the mask straight to `vpblendw`) **but has
+the same reflection**: `vpblendw`'s bit *i* selects word *i*, and we set bit *7-i*. **x64 ONLY, so it cannot
+affect the Thor**, and the PPC suite passes 1481/1481. **Flagged, not changed** - altering a working blend
+mask on unverified reasoning is how you break the desktop build. Verify against `vpshufb` operand order first.
+### 📖📖 THE MANUALS POINT AT THE FRAGMENT LEVER, AND IT IS SPECIFIC
+BD is now measured as fragment-shading bound (EDRAM overhead ruled out entirely - see the census above). The
+Adreno guide names the mechanism outright:
+> *"Using **uber-shaders** (without Vulkan **specialization constants**) can sometimes reduce state changes
+> and batch draw calls - but this **often increases GPR count, which can reduce performance overall**."*
+> *"Keeping every shader's register usage under the device limits will ensure that the **maximum number of
+> simultaneous waves** execute."*  (`docs/reference/adreno/mobile_best_practices.txt:744,761`)
+Mesa's own ir3 notes agree on the mechanism: *"larger register usage will at some thresholds limit the number
+of threads which can run in parallel."*
+**⇒ AND OUR TRANSLATED SHADERS ARE EXACTLY THAT UBER-SHADER:**
+```
+kSysFlag_* system flags branched on at runtime : 61
+specialization constants in the GUEST shader translator : NONE
+  (spec constants exist ONLY in vulkan_render_target_cache.cc's own transfer/resolve shaders)
+```
+So every guest pixel shader carries up to 61 runtime flag tests that the compiler cannot fold, which is
+precisely the pattern Qualcomm says inflates GPRs. **This file already measured our worst fragment variants
+at 31 GPRs against the ~8 the Xenos designers budgeted, and XenDroid's counters measured 26% NOPs (40-57% in
+many shaders) with the SP as the bottleneck. Three independent lines now point at the same cause.**
+**⇒ THE LEVER: promote the hot `kSysFlag_` bits to Vulkan specialization constants** so ir3 dead-strips the
+untaken branches and the register allocator sees a much smaller live set. It costs one pipeline variant per
+distinct flag combination, which is the tradeoff Qualcomm explicitly recommends taking.
+**⚠ NOT MEASURED. This is a manual-backed hypothesis with three supporting measurements, not a result.**
+Price it in the harness first (a shader with N runtime flag tests vs the same shader specialized), because a
+pipeline-variant explosion is the obvious way it backfires.
