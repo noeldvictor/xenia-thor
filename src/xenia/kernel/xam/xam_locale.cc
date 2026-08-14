@@ -500,7 +500,10 @@ void XFormatDateString(uint64_t filetime, uint32_t buffer_address,
                          static_cast<unsigned>(year_month_day.month()),
                          static_cast<unsigned>(year_month_day.day()),
                          static_cast<int>(year_month_day.year()));
-  xe::string_util::copy_and_swap_truncating(buffer, str, buffer_size);
+  // buffer_size is BYTES; the third parameter is a CHAR COUNT. Passing bytes
+  // let a char16_t copy run up to twice the buffer length. (canary 907d92bf8)
+  const uint32_t char_count = buffer_size / sizeof(char16_t);
+  xe::string_util::copy_and_swap_truncating(buffer, str, char_count);
 }
 
 void XamFormatDateString_entry(dword_t locale_format, qword_t filetime,
@@ -528,7 +531,9 @@ void XFormatTimeString(uint64_t filetime, uint32_t buffer_address,
 
   auto str = fmt::format(u"{:02d}:{:02d}", time.hours().count(),
                          time.minutes().count());
-  xe::string_util::copy_and_swap_truncating(buffer, str, buffer_size);
+  // Bytes vs char count, as above. (canary 907d92bf8)
+  const uint32_t char_count = buffer_size / sizeof(char16_t);
+  xe::string_util::copy_and_swap_truncating(buffer, str, char_count);
 }
 
 void XamFormatTimeString_entry(dword_t user_index, qword_t filetime,
