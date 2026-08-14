@@ -39,6 +39,8 @@
 
 #include "shaders/fill_vert.h"
 #include "shaders/fill_frag.h"
+#include "shaders/flags_dyn.h"
+#include "shaders/flags_spec.h"
 
 // ---------------------------------------------------------------------------
 // Driver shim.
@@ -179,6 +181,11 @@ struct Config {
   std::string depth_load_op = "load";
   // In-pass vkCmdClearAttachments: none | full | scissor.
   std::string inpass_clear = "none";
+  // Uber-shader probe: none | dyn | spec. dyn branches on push-constant
+  // flags (what our translator emits); spec makes them specialization
+  // constants so the compiler folds and dead-strips them.
+  std::string flag_shader = "none";
+  uint32_t flag_value = 0x5555u;
 };
 
 VkAttachmentLoadOp ParseLoadOp(const std::string& s) {
@@ -391,6 +398,8 @@ int main(int argc, char** argv) {
     else if (a == "--depth") cfg.depth = true;
     else if (a == "--depth-loadop") cfg.depth_load_op = next();
     else if (a == "--inpass-clear") cfg.inpass_clear = next();
+    else if (a == "--flag-shader") cfg.flag_shader = next();
+    else if (a == "--flag-value") cfg.flag_value = std::stoul(next(), nullptr, 0);
     else if (a == "--label") cfg.label = argv[i + 1], ++i;
     else {
       std::fprintf(stderr, "unknown arg: %s\n", a.c_str());
@@ -587,9 +596,17 @@ int main(int argc, char** argv) {
   VK_CHECK(vkCreateFramebuffer(dev, &fb_ci, nullptr, &fb));
 
   VkShaderModule vs = MakeShader(dev, kFillVert, sizeof(kFillVert));
-  VkShaderModule fs = MakeShader(dev, kFillFrag, sizeof(kFillFrag));
+  VkShaderModule fs;
+  if (cfg.flag_shader == "dyn") {
+    fs = MakeShader(dev, kFlagsDyn, sizeof(kFlagsDyn));
+  } else if (cfg.flag_shader == "spec") {
+    fs = MakeShader(dev, kFlagsSpec, sizeof(kFlagsSpec));
+  } else {
+    fs = MakeShader(dev, kFillFrag, sizeof(kFillFrag));
+  }
 
-  VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0, sizeof(float)};
+  VkPushConstantRange pcr{VK_SHADER_STAGE_FRAGMENT_BIT, 0,
+                          sizeof(float) + sizeof(uint32_t)};
   VkPipelineLayoutCreateInfo pl_ci{};
   pl_ci.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
   pl_ci.pushConstantRangeCount = 1;
@@ -606,6 +623,20 @@ int main(int argc, char** argv) {
   stages[1].stage = VK_SHADER_STAGE_FRAGMENT_BIT;
   stages[1].module = fs;
   stages[1].pName = "main";
+  // The spec arm hands the flag word to the COMPILER, so every gated block
+  // folds away at pipeline creation instead of branching per fragment.
+  VkSpecializationMapEntry spec_entry{};
+  VkSpecializationInfo spec_info{};
+  if (cfg.flag_shader == "spec") {
+    spec_entry.constantID = 0;
+    spec_entry.offset = 0;
+    spec_entry.size = sizeof(uint32_t);
+    spec_info.mapEntryCount = 1;
+    spec_info.pMapEntries = &spec_entry;
+    spec_info.dataSize = sizeof(uint32_t);
+    spec_info.pData = &cfg.flag_value;
+    stages[1].pSpecializationInfo = &spec_info;
+  }
 
   VkPipelineVertexInputStateCreateInfo vin{};
   vin.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
@@ -757,9 +788,12 @@ int main(int argc, char** argv) {
         vkCmdClearAttachments(cmd, 1, &ca, 1, &cr);
       }
       for (uint32_t d = 0; d < cfg.draws; ++d) {
-        float t = float(d) * 0.031f + float(p) * 0.017f;
+        struct {
+          float t;
+          uint32_t flags;
+        } push{float(d) * 0.031f + float(p) * 0.017f, cfg.flag_value};
         vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
-                           sizeof(float), &t);
+                           sizeof(push), &push);
         vkCmdDraw(cmd, 3, 1, 0, 0);
       }
       vkCmdEndRenderPass(cmd);
@@ -796,12 +830,13 @@ int main(int argc, char** argv) {
 
   std::printf(
       "%-10s gpu=%s via %s\n"
-      "%-10s rt=%ux%u view=%ux%u loadop=%s storeop=%s depth=%s inpass=%s passes=%u draws=%u\n",
+      "%-10s rt=%ux%u view=%ux%u loadop=%s storeop=%s depth=%s inpass=%s fs=%s flags=%#x passes=%u draws=%u\n",
       cfg.label, props.deviceName, vkapi::source, cfg.label, cfg.width,
       cfg.height, cfg.view_width, cfg.view_height, cfg.load_op.c_str(),
       cfg.store_op.c_str(),
       cfg.depth ? cfg.depth_load_op.c_str() : "none",
-      cfg.inpass_clear.c_str(), cfg.passes, cfg.draws);
+      cfg.inpass_clear.c_str(), cfg.flag_shader.c_str(), cfg.flag_value,
+      cfg.passes, cfg.draws);
   std::printf(
       "%-10s median_total=%.1fus  per_pass=%.1fus  min=%.1f max=%.1f  "
       "us_per_covered_Mpx=%.2f\n",

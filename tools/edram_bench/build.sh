@@ -32,6 +32,10 @@ PY
 echo "[1/3] shaders"
 "$GLSLC" -O -fshader-stage=vert "$HERE/shaders/fill.vert" -o "$HERE/shaders/fill.vert.spv"
 "$GLSLC" -O -fshader-stage=frag "$HERE/shaders/fill.frag" -o "$HERE/shaders/fill.frag.spv"
+"$GLSLC" -O -fshader-stage=frag "$HERE/shaders/flags.frag" -o "$HERE/shaders/flags_dyn.spv"
+"$GLSLC" -O -fshader-stage=frag -DSPEC_FLAGS "$HERE/shaders/flags.frag" -o "$HERE/shaders/flags_spec.spv"
+emit_header "$HERE/shaders/flags_dyn.spv" kFlagsDyn "$HERE/shaders/flags_dyn.h"
+emit_header "$HERE/shaders/flags_spec.spv" kFlagsSpec "$HERE/shaders/flags_spec.h"
 emit_header "$HERE/shaders/fill.vert.spv" kFillVert "$HERE/shaders/fill_vert.h"
 emit_header "$HERE/shaders/fill.frag.spv" kFillFrag "$HERE/shaders/fill_frag.h"
 

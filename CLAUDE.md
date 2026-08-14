@@ -7074,6 +7074,16 @@ Pick the highest-value unit yourself, execute end-to-end (implement → build-ve
 next). Don't ask which task / re-confirm direction / analysis-paralyze. A big effort is a reason to start, not
 to ask. Surface only genuine external blockers. Thermal + no-fabrication rules always hold.
 
+## 🧰 TOOLING RULE (user, 2026-08-14): **PUT DEVICE COMMANDS IN A SCRIPT, DO NOT RUN HUGE INLINE COMMANDS**
+*"don't run huge commands, create scripts and use that."*
+**Why it matters here specifically, beyond readability:** this file already records five distinct Git Bash
+path-rewrite traps, a thermal guard that ran inert for 300 seconds, and two `IR3_SHADER_DEBUG` false
+negatives. **Every one of those was a long inline command that nobody could re-run or review.** A script
+carries its own guards, its own comments, and is committed - so the next session inherits the fix instead of
+the bug.
+**⇒ THE FORM: one script per experiment, in `tools/`, with the abort conditions inside it.** `tools/thor/`
+for device routes, `tools/edram_bench/` for harness arms. Keep inline commands to short reads.
+
 ## 🧲🧲 XENDROID SWEEP 2026-08-13 — 54 NEW COMMITS TRIAGED, 8 PORTED, TWO REAL MEMORY BUGS FOUND
 **`reference/XenDroid` `origin/main` = `b70d64374` (2026-08-10). The default branch is `main`, NOT `master` —
 the local clone tracks `master` at `84edc9b00`, so `git log HEAD..origin/HEAD` reports 4,429 commits. That number
@@ -7705,6 +7715,65 @@ many shaders) with the SP as the bottleneck. Three independent lines now point a
 **⇒ THE LEVER: promote the hot `kSysFlag_` bits to Vulkan specialization constants** so ir3 dead-strips the
 untaken branches and the register allocator sees a much smaller live set. It costs one pipeline variant per
 distinct flag combination, which is the tradeoff Qualcomm explicitly recommends taking.
+## 🎯🎯🎯 **SPECIALIZATION CONSTANTS: MEASURED 2.5x ON FRAGMENT COST — AND MY OWN MECHANISM IS REFUTED (Turnip, 2026-08-14)**
+**The entry above said to price this in the harness before touching the translator. Done. The LEVER is real
+and large. The REASON I gave for it is wrong, and ir3's own numbers say so.**
+### THE TIMING - 1280x720, full coverage, 4 passes x 8 draws, median of 20, Turnip
+| flag word | `dyn` (push constant) | `spec` (specialization constant) | speedup |
+|---|---|---|---|
+| `0x0000` (no block taken) | 1385.3 us/pass | **247.9** | **5.6x** |
+| `0x5555` (8 of 16 taken) | 1384.8 us/pass | **552.5** | **2.5x** |
+| `0xffff` (all 16 taken) | 1385.0 us/pass | **1066.0** | 1.3x |
+**🔑 THE HEADLINE IS THE FIRST COLUMN, NOT THE LAST: `dyn` IS FLAT AT ~1385 us WHATEVER THE FLAGS SAY.**
+Zero blocks taken costs exactly the same as sixteen. **The runtime-flag shader pays for every gated block on
+every fragment, always.** ir3 flattens the small `if` bodies into predicated arithmetic, so "not taken" does
+not mean "not executed". That IS the uber-shader tax, measured.
+### THE ir3 STATS - the mechanism check (`tools/edram_bench/shader_stats.sh`)
+| arm | instructions | full regs | **max_waves** | constlen |
+|---|---|---|---|---|
+| `dyn`, any flag value | **179** | 6 | **16** | 20 |
+| `spec 0xffff` | 133 | 6 | **16** | 16 |
+| `spec 0x5555` | **68** | 6 | **16** | 12 |
+**❌❌ THE OCCUPANCY EXPLANATION IS REFUTED HERE: `max_waves` IS 16 IN BOTH ARMS, AND REGISTER USE IS 6 FULL
+IN BOTH.** The Adreno guide's stated mechanism - uber-shaders inflate GPR count, which cuts simultaneous waves
+- **did not fire at all in this probe.** I proposed exactly that mechanism one entry above. It is not what is
+happening.
+**✅ WHAT IS ACTUALLY HAPPENING: TIME TRACKS INSTRUCTION COUNT, ALMOST EXACTLY.**
+```
+spec 0xffff : 133/179 = 0.743 of the instructions -> 1066/1385 = 0.770 of the time
+spec 0x5555 :  68/179 = 0.380 of the instructions ->  552/1385 = 0.399 of the time
+```
+**So the win is DEAD-CODE ELIMINATION, not occupancy.** The compiler folds the constant, deletes the untaken
+blocks, and the fragment shader simply does less work. That is a simpler and more robust reason than the one
+in the manual, and it does not depend on register pressure at all.
+**⇒ AND IT MEANS THE PROBE CANNOT TEST THE OCCUPANCY CLAIM.** 6 full registers is far under any Adreno
+limit, so this shader has no occupancy to lose. **Our real fragment variants sit at 31 GPRs / 4 waves**, where
+the register mechanism COULD apply on top. **Do not quote this probe as evidence for or against occupancy -
+it is evidence about instruction count only.**
+### ⚠ WHAT IS STILL UNPROVEN BEFORE THE TRANSLATOR IS TOUCHED
+1. **How many `kSysFlag_` bits are CONSTANT per pipeline.** A bit that genuinely varies per draw cannot become
+   a specialization constant, and each independent bit that does doubles the variant count. **Census the flags
+   first**; a pipeline-variant explosion is the way this backfires, and it costs compile time and stutter, not
+   frame time.
+2. **Whether our gated blocks look like the probe's.** Each block here keeps a live accumulator, which is what
+   makes them undeletable in the `dyn` arm. A `kSysFlag_` test guarding a cheap block is worth less.
+3. **The harness is HEADLESS and one shader.** It prices the MECHANISM, per the standing directive - it is not
+   a Blue Dragon speedup.
+**⇒ NEXT STEP, and it is cheap: count how many of the 61 `kSysFlag_` bits are fixed for a given pipeline.**
+That number decides both the size of the win and the size of the variant explosion, and it needs no device.
+### 🧰 THE HARNESS ADDITIONS
+`--flag-shader dyn|spec|none` and `--flag-value <word>` in `tools/edram_bench/edram_bench.cc`, one source
+(`shaders/flags.frag`) compiled twice with `-DSPEC_FLAGS`, so **the two arms differ ONLY in where the flag word
+comes from**. Drivers: `bash tools/edram_bench/spec_ab.sh` (timing), `bash tools/edram_bench/shader_stats.sh`
+(ir3 stats).
+**🪤 TWO TRAPS IN READING ir3 STATS, both of which produced a convincing empty result first:**
+1. **`IR3_SHADER_DEBUG` output does NOT come back on stdout.** Mesa logs through `__android_log` on Android, so
+   the numbers are in **LOGCAT under tag `MESA`** even for a plain adb-run binary. An inline `adb shell ... |
+   grep` shows nothing and reads like the driver lacks the option.
+2. **Turnip keeps an ON-DISK SHADER CACHE, so a variant compiled by an earlier run prints NO stats.** Two runs
+   reported different arms until `MESA_SHADER_CACHE_DISABLE=true` was added. **A missing stat block means
+   "already cached", not "did not compile".**
+
 **⚠ NOT MEASURED. This is a manual-backed hypothesis with three supporting measurements, not a result.**
 Price it in the harness first (a shader with N runtime flag tests vs the same shader specialized), because a
 pipeline-variant explosion is the obvious way it backfires.
