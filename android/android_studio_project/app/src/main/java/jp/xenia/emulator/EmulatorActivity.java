@@ -281,24 +281,19 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "save_state_at_guest_ms");
             copyBooleanExtra(intent, launchArguments, "gpu_hle_surface_trace");
             copyBooleanExtra(intent, launchArguments, "gpu_hle_surface_binonce");
+            // 13 gpu_bd_native_* extras were removed here on 2026-08-13: the BD
+            // native renderer was archived and deleted, so those names are not
+            // cvars any more and passing them did nothing. The ones below are
+            // still DEFINEd and still work. Re-check with tools/audit/cvar_audit.py.
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_hle");
-            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_renderer");
-            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_skip_resolves");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_skip_transfers");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_copy_transfers");
-            copyIntExtra(intent, launchArguments, "gpu_bd_native_rt_width");
-            copyIntExtra(intent, launchArguments, "gpu_bd_native_stretch_width");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_whole_frame");
-            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_aux_rt");
-            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_tex_bind");
-            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_resolves");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_transfers");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_all_color_xfer");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_mainscene_redirect");
-            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_depth_resolve");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_depth_xfer_census");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_all_xfer");
-            copyDoubleExtra(intent, launchArguments, "gpu_bd_native_depth_clear");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_drop_depth_downscale");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_depth_convert");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_depth_handoff");
@@ -307,14 +302,10 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "gpu_bd_framegraph_depth_shadow");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_patha_depth_snapshot");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_skip_foliage_shadows");
-            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_diag_coverage");
-            copyIntExtra(intent, launchArguments, "gpu_bd_native_aux_max_width");
             copyIntExtra(intent, launchArguments, "gpu_bd_native_color_lifetime_hle");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_field_convert");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_keep_scissor");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_field_decouple");
-            copyDoubleExtra(intent, launchArguments, "gpu_bd_native_viewport_scale_x");
-            copyBooleanExtra(intent, launchArguments, "gpu_bd_native_force_samples1");
             copyBooleanExtra(intent, launchArguments, "vulkan_validation");
             copyBooleanExtra(intent, launchArguments, "gpu_bd_native_hle_replace");
             copyIntExtra(intent, launchArguments, "gpu_bd_native_hle_decouple");
