@@ -184,6 +184,10 @@ struct Config {
   // Uber-shader probe: none | dyn | spec. dyn branches on push-constant
   // flags (what our translator emits); spec makes them specialization
   // constants so the compiler folds and dead-strips them.
+  // renderArea height. 0 = the full attachment, which is what the emulator
+  // does. Setting it smaller is the in-app "clamp renderArea to the guest
+  // scissor" experiment, which halved in-pass time and nobody can explain.
+  uint32_t area_height = 0;
   std::string flag_shader = "none";
   uint32_t flag_value = 0x5555u;
 };
@@ -398,6 +402,7 @@ int main(int argc, char** argv) {
     else if (a == "--depth") cfg.depth = true;
     else if (a == "--depth-loadop") cfg.depth_load_op = next();
     else if (a == "--inpass-clear") cfg.inpass_clear = next();
+    else if (a == "--area-height") cfg.area_height = std::stoul(next());
     else if (a == "--flag-shader") cfg.flag_shader = next();
     else if (a == "--flag-value") cfg.flag_value = std::stoul(next(), nullptr, 0);
     else if (a == "--label") cfg.label = argv[i + 1], ++i;
@@ -762,7 +767,9 @@ int main(int argc, char** argv) {
       rp_bi.framebuffer = fb;
       // renderArea is the FULL attachment, matching what the emulator does
       // today. Clamping it is the experiment already run and rejected.
-      rp_bi.renderArea = {{0, 0}, {cfg.width, cfg.height}};
+      rp_bi.renderArea = {
+          {0, 0},
+          {cfg.width, cfg.area_height ? cfg.area_height : cfg.height}};
       rp_bi.clearValueCount = cfg.depth ? 2u : 1u;
       rp_bi.pClearValues = clear;
       vkCmdBeginRenderPass(cmd, &rp_bi, VK_SUBPASS_CONTENTS_INLINE);
@@ -830,12 +837,13 @@ int main(int argc, char** argv) {
 
   std::printf(
       "%-10s gpu=%s via %s\n"
-      "%-10s rt=%ux%u view=%ux%u loadop=%s storeop=%s depth=%s inpass=%s fs=%s flags=%#x passes=%u draws=%u\n",
+      "%-10s rt=%ux%u view=%ux%u loadop=%s storeop=%s depth=%s inpass=%s fs=%s flags=%#x area_h=%u passes=%u draws=%u\n",
       cfg.label, props.deviceName, vkapi::source, cfg.label, cfg.width,
       cfg.height, cfg.view_width, cfg.view_height, cfg.load_op.c_str(),
       cfg.store_op.c_str(),
       cfg.depth ? cfg.depth_load_op.c_str() : "none",
       cfg.inpass_clear.c_str(), cfg.flag_shader.c_str(), cfg.flag_value,
+      cfg.area_height ? cfg.area_height : cfg.height,
       cfg.passes, cfg.draws);
   std::printf(
       "%-10s median_total=%.1fus  per_pass=%.1fus  min=%.1f max=%.1f  "

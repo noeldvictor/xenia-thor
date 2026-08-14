@@ -7169,6 +7169,57 @@ datapoint four hypotheses have now failed to explain, and it is zero-code.
 form was already measured at +18% SLOWER overall. It would mean the lever is "get the dominant passes into the
 cheaper mode without breaking the attachment contract", which is a different and harder change.
 
+## 🚨🚨🚨 **RETRACTED: EVERY EDRAM HARNESS RESULT WAS MEASURED IN *SYSMEM* MODE. IN BINNING MODE, ATTACHMENT HEIGHT IS *NOT* FREE (2026-08-14)**
+**The `OVERSIZED EDRAM-SPAN RENDER TARGETS ARE EXONERATED` entry, and the two harness entries under it, were
+all measured on passes that Turnip ran in DIRECT/SYSMEM mode. In sysmem there are no tiles, so of course
+attachment height was free. The verdict was right about the data and wrong about what the data was of.**
+### HOW IT WAS CAUGHT: THE DRIVER SAYS SO, PER PASS
+`MESA_GPU_TRACEFILE=... MESA_GPU_TRACES=print` on the harness binary emits, at every `end_render_pass`:
+```
+end_render_pass tiledRender=false, tilingDisableReason=Autotune selected sysmem, drawCount=1, ...
+start_render_pass ... width=1280, height=2048, attachment_count=1, numberOfBins=4, binWidth=768, binHeight=1024
+```
+**`tiledRender=false` on EVERY arm.** The harness draws 1-64 fullscreen triangles, and the Adreno guide lists
+*"small number of vertices and/or draws"* as a direct-mode trigger - **the harness was too simple to bin.**
+### THE CONTROL, WITH THE MODE VERIFIED ON EVERY ARM (`tools/edram_bench/forcebin.sh`)
+| attachment | sysmem `LOAD` | **gmem `LOAD`** | gmem `DONT_CARE` | gmem `CLEAR` |
+|---|---|---|---|---|
+| 1280x720 | 58.0 us | **74.3** | 74.8 | 75.2 |
+| 1280x2048 (EDRAM span) | 57.9 | **105.8 (+42%)** | 95.3 | 155.5 |
+| 1280x8192 | 57.9 | **136.7 (+84%)** | 117.5 | 463.5 |
+**⇒ IN BINNING MODE THE EDRAM-SPAN ATTACHMENT COSTS ~+31 us PER PASS OVER A SCREEN-SIZED ONE, AND 8192 COSTS
+~+62 us.** `DONT_CARE` scales too, so it is not the load - it is per-bin work that exists at all only in
+binning mode.
+**⇒ AND NOTE THE MODE FLIP ITSELF IS NOT FREE EITHER: at 720 rows, gmem is SLOWER than sysmem (74.3 vs 58.0).**
+For a 1-draw pass, binning is a pessimisation - which is exactly why autotune picks sysmem for it.
+### ⚠ WHAT THIS DOES AND DOES NOT OVERTURN
+- **The exoneration is WITHDRAWN as stated.** "LOAD is free at every attachment height" is a SYSMEM fact.
+- **It is NOT re-promoted to the 37 ms explanation either.** +31 us/pass over ~74 passes is ~2.3 ms of a
+  56.9 ms frame - **~4%, real but not the target.** Do not swing back and call the oversized RTs the big lever.
+- **The clear-rect census stands unchanged** - it counted GUEST rectangles (max 720 rows, 1.72/frame), which is
+  a property of the guest, not of the render mode.
+### 🔑 THE INSTRUMENT NOTES, because two of them cost a wrong verdict
+1. **`TU_DEBUG=gmem` is the MODE override. `TU_DEBUG=forcebin` is NOT** - forcebin only changed `numberOfBins`
+   (720: 2 -> 4, 8192: 15 -> 30) and left `tiledRender=false` and the timings byte-identical. **An arm that
+   reports the same number to 0.1 us as its control did not change anything.**
+2. **The u_trace field names are `tiledRender` / `tilingDisableReason` / `numberOfBins` / `binWidth` /
+   `binHeight`** - NOT the `gmem` / `gmem_disable_reason` spelling this file recorded from the Mesa source.
+   A grep for `gmem=` returns nothing and reads like the trace is empty.
+3. **On a plain adb-run binary `MESA_GPU_TRACEFILE` works directly** - no `wrap.` property, no
+   `log.redirect-stdio`, none of the 92-byte property limit. That whole recipe is only needed for the APK.
+**⇒ THE MEASUREMENT THAT NOW MATTERS MOST, AND IT IS ONE RUN: WHICH MODE DO BD's PASSES ACTUALLY USE?**
+61 of BD's 74 passes issue AT MOST ONE DRAW, which is the direct-mode trigger - so a large part of our frame
+may be in sysmem, where every harness number above already applies and the tall attachments really are free.
+The two DOMINANT passes carry hundreds of draws and are the ones likely to bin. **Run the BD route with
+`MESA_GPU_TRACES=print` and tabulate `tiledRender` + `tilingDisableReason` per pass.** That single run tells us
+which half of this table describes our frame, and it is also the direct test of the surviving renderArea
+hypothesis (a mode flip).
+**📌 AND THE PROCESS LESSON, WHICH IS THE ONE THIS FILE KEEPS RE-LEARNING IN NEW COSTUMES: I VALIDATED THAT THE
+LEVER FIRED AND NEVER VALIDATED THAT THE ENVIRONMENT MATCHED.** Every rule here says "prove the lever
+executed" - the harness arms all did. **Nobody asked whether the harness was in the same RENDER MODE as the
+thing it was modelling.** For a TBDR that is the single most important property of the workload, and the
+driver reports it for free.
+
 ## 🧰 TOOLING RULE (user, 2026-08-14): **PUT DEVICE COMMANDS IN A SCRIPT, DO NOT RUN HUGE INLINE COMMANDS**
 *"don't run huge commands, create scripts and use that."*
 **Why it matters here specifically, beyond readability:** this file already records five distinct Git Bash
