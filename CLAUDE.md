@@ -7220,6 +7220,38 @@ executed" - the harness arms all did. **Nobody asked whether the harness was in 
 thing it was modelling.** For a TBDR that is the single most important property of the workload, and the
 driver reports it for free.
 
+## 📰 **WHATCOOKIE "WHAT DIDN'T MAKE THE CUT" (user-supplied 2026-08-14): ONE TRANSFERABLE IDEA, AND IT LANDS ON AN INERT PATH**
+`https://whatcookie.github.io/posts/rpcs3-on-arm64-what-didnt-make-the-cut/` - the follow-up to the 60-minute
+talk already mined here. Triaged item by item against our tree and the device, not taken at face value.
+| their item | our verdict |
+|---|---|
+| **WFE for spin loops** - suspend the core until a monitored cache line is written; they measured POWER savings | **THE ONLY APPLICABLE ONE. We emit WFE NOWHERE - grep returns 0 across `src/xenia`.** Our backoff is an ISB sled then a 30us sleep |
+| **WFET** (WFE with timeout) | **N/A - the device does not have it.** `/proc/cpuinfo` Features has no `wfxt`; we get `atomics lrcpc ilrcpc` and no FEAT_WFxT. Same reason they deferred it |
+| **FEAT_LUT** table lookup | **N/A** - not present on this SoC, and they deferred it over feature-detection ergonomics anyway |
+| **32 GPRs / 32 NEON registers** | **N/A as a new idea.** Reviews #1/#2/#3 measured our allocator at **0.1 spill requests per function** - we are nowhere near the budget, so more registers buy nothing |
+| **SVE** (they rate it 4.3/5 but call it "insane" - TBL is not vector-length agnostic) | **N/A** - 8 Gen 2 ships ARMv9 WITHOUT SVE. This file records that repeatedly |
+| Mesa Turnip gave them **+10% GPU** between late-2025 and mid-2026 | **already ours by standing directive** - we track upstream Turnip and the device carries the 2026-08-07 r11 build |
+### ⇒ SO THE WHOLE ARTICLE REDUCES TO WFE - AND RULE 4 STOPS IT BEFORE IT STARTS
+**WFE would go into the spin-backoff path. That path has NEVER EXECUTED.** This file already records that
+`OPCODE_SPIN_BACKOFF` and the collapse pass never fire anywhere, and that
+`arm64_guest_spin_throttle_functions` ships with an EMPTY address list. **Improving the power behaviour of code
+that does not run is worth exactly zero.**
+**⇒ THE ORDER IS THEREFORE: make the spin-collapse pass actually fire on a real title FIRST, measure that it
+fires, and only then consider WFE as the backoff primitive.** Not the other way round.
+### ⚠ AND TWO CAVEATS THAT WOULD BITE IF SOMEONE BUILT IT ANYWAY
+1. **WFE without an armed exclusive monitor waits for the EVENT STREAM, and the article gives the number:
+   ~100us on Linux/Android** (against ~1us on Apple). A guest poll predicate expecting microsecond turnaround
+   would get a 100us backstop. **To wake on the actual write you must `LDXR` the polled guest address first** -
+   and our `SPIN_BACKOFF` opcode does not carry an address. `memory_poll_park_pass` knows it; the opcode does
+   not. That is the real design work, not the `wfe` instruction.
+2. **They name a "stampede effect": the event stream wakes every core at once, "amplifying contention" and
+   degrading real-world performance despite good microbenchmarks.** Exactly the shape of the thundering-herd
+   condvar problem already fixed here - so measure wakeups, not just watts.
+**📌 THE ONE LINE WORTH REMEMBERING FROM IT, because it is the opposite of an optimisation idea:** they could
+not reproduce their own January numbers in warmer weather on the Odin 2, and **rejected power-limiting the
+device as a fix because it would mask real-world gains.** Same SoC, same thermal-confound problem this file
+documents at length. It is independent confirmation that the measurement protocol here is not paranoia.
+
 ## 🧰 TOOLING RULE (user, 2026-08-14): **PUT DEVICE COMMANDS IN A SCRIPT, DO NOT RUN HUGE INLINE COMMANDS**
 *"don't run huge commands, create scripts and use that."*
 **Why it matters here specifically, beyond readability:** this file already records five distinct Git Bash
