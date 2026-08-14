@@ -7605,3 +7605,25 @@ proposed - and that rewrite is now known to recover nothing (see the exoneration
 The harness proves the MECHANISM and its price. The in-game count has not been measured. At 8192 rows one
 clear is 302 us; BD's whole frame is ~57 ms, so even a handful per frame is worth real time - but that is
 arithmetic on an unmeasured count, not a measured speedup. **Count them before promising a number.**
+
+### 🔍 AND THEN THE CODE CHECK: WE ALREADY SCISSOR OUR EDRAM CLEAR
+**Having priced the mechanism, the obvious next move was to go scissor our clears. They are ALREADY scissored.**
+Every clear path in the Vulkan backend, checked:
+| site | what it clears | verdict |
+|---|---|---|
+| `vulkan_render_target_cache.cc:11490` (`resolve_clear_rect`) | built from `resolve_clear_rectangle` x/y/width/height, i.e. the GUEST RESOLVE REGION scaled by `draw_resolution_scale_*` (`:10174-10188`) | **already scissored - not the full attachment** |
+| `vulkan_command_processor.cc:4046` | presenter guest-output clear, sized `guest_output_width/height` | correct by construction |
+| `vulkan_render_target_cache.cc:6710` | `vkCmdClearColorImage` on the FDM density image | tiny, one-time, not per-pass |
+| `loadOp = CLEAR` (`:3093`) | depth only, and only under `gpu_lrz_spike_depth_clear` (**default off**) | not on the shipping path |
+**⇒ SO THERE IS NO FULL-SPAN-CLEAR BUG TO FIX. Do not "fix" the resolve clear - it is already right.**
+**⇒ AND THE renderArea CLAMP IS STILL UNEXPLAINED.** Both candidate explanations are now dead: the
+attachment size is free (LOAD is flat), and our clears are already scissored. Something else about clamping
+`renderArea` halved in-pass time.
+**⇒ THE REMAINING EMPIRICAL QUESTION, AND IT IS CHEAP: HOW BIG ARE BD'S RESOLVE CLEAR RECTS, AND HOW MANY PER
+FRAME?** The clear is scissored to the guest's rectangle - but if the GUEST resolves an EDRAM-span region,
+that rectangle is legitimately huge and costs exactly what the table above says. **Log
+`resolve_clear_rect.rect` width/height and a per-frame count, then multiply by ~44.4 us per 1000 rows.**
+That converts this from a priced mechanism into an attributed cost, or rules it out.
+**⚠ THE LESSON, AGAIN: I priced a mechanism and started reaching for the fix before checking our code
+implements it correctly already.** Same shape as the reservation dead-code episode earlier. **Price the
+mechanism, THEN read our implementation, THEN decide there is work.**
