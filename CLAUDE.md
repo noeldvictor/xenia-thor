@@ -1624,7 +1624,7 @@ System.out lines in logcat ...... 0
 adb shell setprop wrap.jp.xenia.emulator.github.debug   '"MESA_GPU_TRACEFILE=/sdcard/u.txt MESA_GPU_TRACES=print"'        # 53 bytes
 adb shell getprop wrap.jp.xenia.emulator.github.debug               # CONFIRM IT APPLIED
    ... run the route ...
-adb shell setprop wrap.jp.xenia.emulator.github.debug '""'          # UNSET IT
+adb shell setprop wrap.jp.xenia.emulator.github.debug ''            # UNSET IT - '' NOT '""', see the bricking entry
 adb pull /sdcard/u.txt
 ```
 **The app reads ISOs from `/storage`, so it has storage permission. `/sdcard/u.txt` is 16 characters.**
@@ -1692,7 +1692,7 @@ visually broken).
 adb shell setprop log.redirect-stdio true                  # REQUIRED - see the stderr trap below
 adb shell setprop wrap.jp.xenia.emulator.github.debug '"MESA_GPU_TRACES=print"'
    ... launch, reach the BD field, read logcat ...
-adb shell setprop wrap.jp.xenia.emulator.github.debug '""'   # UNSET IT AFTERWARDS
+adb shell setprop wrap.jp.xenia.emulator.github.debug ''     # UNSET - '' NOT '""' (it bricks launches)
 ```
 **⚠ THREE OPERATIONAL WARNINGS, all earned elsewhere in this file:**
 1. **`log.redirect-stdio true` is not optional.** Android does not route stdout/stderr to logcat; the tbl2 probe
@@ -7251,6 +7251,45 @@ fires, and only then consider WFE as the backoff primitive.** Not the other way 
 not reproduce their own January numbers in warmer weather on the Odin 2, and **rejected power-limiting the
 device as a fix because it would mask real-world gains.** Same SoC, same thermal-confound problem this file
 documents at length. It is independent confirmation that the measurement protocol here is not paranoia.
+
+## 🧨🧨🧨 **THE DOCUMENTED `wrap.` UNSET RECIPE BRICKS EVERY LAUNCH OF THE PACKAGE (2026-08-14)**
+**This file has told three sessions to unset the wrap property with `setprop wrap.<pkg> '""'`. THAT DOES NOT
+UNSET IT - it sets the property to the literal two-character value `""`, which Android treats as a WRAPPER
+COMMAND. The app then forks, fails to exec, and is killed before it ever attaches.**
+```
+ActivityTaskManager: START u0 {cmp=jp.xenia.emulator.github.debug/...EmulatorActivity}
+libc              : SetHeapTaggingLevel: tag level set to 0
+ActivityManager   : Start proc 6117:jp.xenia.emulator.github.debug for top-activity
+ActivityManager   : Process ... failed to attach            <- 10s later
+ActivityManager   : Killing 6117 (adj -10000): start timeout
+```
+**ZERO xenia log lines. Zero `Turnip`. No trace file. No process.** From adb this is indistinguishable from
+"the route is broken" or "the game path is wrong", and it PERSISTS UNTIL REBOOT on a SHARED device.
+**✅ THE FIX IS ONE CHARACTER OF QUOTING:**
+```
+setprop wrap.<pkg> ''     # CORRECT - value becomes genuinely empty, launches work
+setprop wrap.<pkg> '""'   # WRONG   - value is the 2-char string "" and BRICKS the app
+```
+Verified both ways in the same minute: with `''` the app starts and prints `Storage root:` / `Loaded config:`
+immediately; with `'""'` it never attaches.
+**🔑 AND IT COST ME MY OWN CONTROL, WHICH IS THE PART WORTH REMEMBERING.** I ran the traced route (VOID), then
+ran a `NOWRAP=1` control to decide whether the tracing or the route was at fault - **but the previous run's
+cleanup had already left the property at `""`, so the "control" was running under the same broken wrapper.**
+Both arms voided, and the obvious reading ("the route is broken") was wrong. **A control that inherits the
+previous run's persistent global state is not a control.** Clear the state INSIDE the control, not only in the
+teardown of the thing you are controlling for.
+**⚠ AND THE WRAP MECHANISM ITSELF IS STILL UNPROVEN HERE.** The run that set a REAL value
+(`"MESA_GPU_TRACEFILE=/sdcard/u.txt MESA_GPU_TRACES=print"`, 54 bytes, `getprop` confirmed) ALSO produced zero
+xenia lines - so the quoted-value form may fail the same way. **Do not assume the recipe works; the only
+`MESA_GPU_TRACES` capture proven on this device is the one on a PLAIN adb-run binary**, where the env var is
+set directly and no wrapper is involved (see the harness retraction entry).
+**⇒ SO THE BD RENDER-MODE QUESTION IS STILL OPEN, AND THE INSTRUMENT NEEDS SORTING FIRST.** Options, cheapest
+first: (a) find out why a wrapped launch fails to attach at all on this Android 13 build; (b) get the mode from
+our own code instead - the RT cache already knows the pass geometry, and Turnip's autotune decision could be
+inferred from a counter we emit; (c) accept the harness numbers as bracketing and stop.
+**📌 AND NOTE WHAT THIS DOES NOT EXPLAIN: the historical "startup stall".** That one had a LIVE process with
+running threads parked on a wait. This is a process that never attaches. **Different signature, different bug -
+do not merge them.**
 
 ## 🧰 TOOLING RULE (user, 2026-08-14): **PUT DEVICE COMMANDS IN A SCRIPT, DO NOT RUN HUGE INLINE COMMANDS**
 *"don't run huge commands, create scripts and use that."*
