@@ -7499,3 +7499,37 @@ This is upstream master's long-standing **plain value CAS**, and it is what ship
 adopting Edge's model at the PPC-emit layer, not just in the unreachable backend sequences.** That is a real
 design change to the shipping atomics path, it cannot be exercised by the PPC suite (no lwarx/stwcx tests
 exist), and it should not be attempted without a device and a targeted test. **Do not start it casually.**
+
+## 🔎🔎 INERT-LEVER AUDIT (2026-08-13) — `tools/audit/cvar_audit.py`, 781 cvars swept
+**Four levers were found inert BY ACCIDENT in one day** (empty spin-throttle address list; the poll-park pass
+emitting a no-op `yield`; that same pass never allowlisted; `arm64_global_reservation_helpers` with no
+producer). **So the surface was swept properly.** Run it after adding any cvar:
+`python tools/audit/cvar_audit.py`
+### ❌ CLASS A — DEFINED BUT NEVER READ. Setting these does NOTHING.
+| cvar | where | note |
+|---|---|---|
+| **`present_frame_gen_factor`** | `ui/presenter.cc:112` | **THE WORST ONE - IT IS USER-FACING.** default 2, DECLAREd in the header, allowlisted for launch, AND behind the in-game `emulator_menu_frame_gen` checkbox. `cvars::present_frame_gen_factor` is read NOWHERE. The comment at `presenter.cc:775` says it "will subdivide further later" - the implementation was never finished. **Frame gen produces whatever it produces regardless of the factor the user sets.** |
+| `emit_mmio_aware_stores_for_recorded_exception_addresses` | `a64_seq_memory.cc` | a64 MMIO store lever, no reader |
+| `stack_size_multiplier_hack`, `main_xthread_stack_size_multiplier_hack` | `kernel/xthread.cc` | both unread - a title needing a bigger guest stack cannot get one this way |
+| `texture_dump` | `gpu/texture_dump.cc` | no reader |
+| `default_achievements_backend` | `xam/achievement_manager.cc` | no reader |
+| `defaults_date` | `config.cc` | no reader |
+### ❌ CLASS B — READ, BUT ONLY FROM CODE NOTHING REACHES
+`arm64_global_reservation_helpers` - its only reader is the a64 RESERVED_LOAD/STORE path, and **nothing in
+the tree emits those opcodes.** See the reservation correction above.
+### ❌ CLASS C — ALLOWLISTED FOR LAUNCH BUT NOT A CVAR AT ALL (13 of 16 are one dead feature)
+`EmulatorActivity` copies 501 launch extras. Sixteen name something that is not a defined cvar, and
+**thirteen are `gpu_bd_native_*`**:
+```
+gpu_bd_native_renderer  _aux_rt  _aux_max_width  _depth_clear  _depth_resolve  _diag_coverage
+_drop_resolves  _force_samples1  _rt_width  _skip_resolves  _stretch_width  _tex_bind
+_viewport_scale_x
+```
+**The BD native renderer was ARCHIVED and DELETED** (`THE BD EDRAM / D3D9-HLE ERA IS ARCHIVED`).
+`gpu_bd_native_renderer` now appears ONLY inside comments; `bd_native_renderer.cc` does not exist. So every
+one of those extras is a no-op, and any game profile or A/B script still setting them is measuring nothing.
+The remaining three (`target`, `android_hide_osd`, `android_show_fps`) are Java-side launch arguments, not
+cvars - those are legitimate.
+**⇒ THE STANDING RULE THIS EARNS: BEFORE YOU A/B A LEVER, PROVE IT CAN FIRE.** Three separate ways a lever
+in this tree can be silently dead - no reader, no producer for the opcode its reader sits behind, or no
+allowlist entry so a GUI launch never passes it. The audit script checks all three.
