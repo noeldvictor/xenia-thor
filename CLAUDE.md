@@ -7627,3 +7627,38 @@ That converts this from a priced mechanism into an attributed cost, or rules it 
 **⚠ THE LESSON, AGAIN: I priced a mechanism and started reaching for the fix before checking our code
 implements it correctly already.** Same shape as the reservation dead-code episode earlier. **Price the
 mechanism, THEN read our implementation, THEN decide there is work.**
+
+## 🚫🚫🚫 **EDRAM OVERHEAD IS NOT BD'S PROBLEM — BOTH REMAINING THEORIES KILLED BY MEASUREMENT (2026-08-14)**
+**Census on device, Blue Dragon, 3,319 frames, Turnip, `gpu_trace_resolve_clears` (new):**
+```
+resolve clears        : 5,722          -> 1.72 per frame
+rect sizes observed   : 672x720  (3,319 = exactly one per frame)
+                        320x184  (2,403)
+MAX rect height       : 720     <- NEVER EDRAM-span. 2048/8192 never occurs.
+rows cleared per frame: 853
+est cost per frame    : 37.9 us   (at the measured 44.4us per 1000 rows)
+```
+**BD's frame is ~56.9 ms. The resolve clears are 37.9 us = 0.07% OF THE FRAME.**
+### ⇒ THE WHOLE EDRAM-OVERHEAD LINE IS CLOSED. Three measurements, three dead ends:
+| theory | verdict |
+|---|---|
+| oversized EDRAM-span render targets cost per-pass tile traffic | **DEAD.** `LOAD` is flat 52-58us at 720 / 2048 / 8192 on Turnip AND on the blob, with or without depth. Off-screen rows are free |
+| the cost is a full-span CLEAR | **DEAD TWICE.** Our clear is already scissored to the guest rectangle, AND the guest rectangles are screen-sized (max 720 rows), totalling 37.9us/frame |
+| making host RTs screen-sized recovers the 37 ms | **DEAD.** It would recover nothing - see above |
+### 🔑 WHERE BD'S TIME ACTUALLY GOES, BY ELIMINATION AND ARITHMETIC
+The 08-10 trace measured **in-pass 46.9 ms of a 56.9 ms frame, with TWO passes = 37.1 ms of it.** The harness
+prices a 1-draw 1280x720 pass at **~58 us**. BD's top pass is **22.1 ms - roughly 380x that.** Attachment
+overhead cannot produce that ratio; only DRAW WORK can.
+**⇒ BD's two expensive passes are expensive because of what they DRAW - fragment shading - not because of
+EDRAM emulation overhead.** That matches XenDroid's hardware-counter study exactly (SP/fragment-ALU bound,
+GPU 93.3% busy, 26% NOPs and 40-57% in many shaders) and this file's own note that our worst fragment
+variants use 31 GPRs against the ~8 the Xenos designers budgeted.
+**⇒ STOP OPTIMISING EDRAM PLUMBING FOR BD. The lever is SHADER COST in those two passes.** Occupancy /
+register pressure / instruction count in the fragment shaders, which is where the counter evidence pointed
+all along.
+**⚠ AND THE renderArea CLAMP IS STILL UNEXPLAINED.** It halved in-pass time (46.9 -> 23.5 ms) while making
+the frame 18% slower. Neither attachment size nor clears explain it, so it changed something else - most
+likely a binning/FlexRender decision. **It is now the only unexplained GPU datapoint, and it is a big one:
+something about a smaller renderArea genuinely halves in-pass shading time.** If fragment cost dominates,
+a clamped renderArea may simply be rasterising fewer fragments somewhere - worth one instrumented look
+before it is written off.
