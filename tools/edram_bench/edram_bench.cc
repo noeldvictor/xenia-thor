@@ -203,6 +203,95 @@ uint32_t FindMemoryType(VkPhysicalDevice pd, uint32_t bits,
   std::exit(1);
 }
 
+// Turnip on Android is built as a Vulkan HAL MODULE, not a plain ICD: it
+// exports `HMI` (hw_module_t) and no vkGetInstanceProcAddr at all, which is
+// why dlsym for the usual names finds nothing. The real entry is
+// HMI -> methods->open("vk0") -> hwvulkan_device_t::GetInstanceProcAddr.
+//
+// These structs are AOSP platform headers (hardware/hardware.h,
+// hardware/hwvulkan.h) and are NOT shipped in the NDK, so the minimum is
+// redefined here. The layout has been ABI-frozen for a decade - every Android
+// HAL depends on it.
+struct xe_hw_module_t;
+struct xe_hw_device_t;
+struct xe_hw_module_methods_t {
+  int (*open)(const struct xe_hw_module_t*, const char*, struct xe_hw_device_t**);
+};
+struct xe_hw_module_t {
+  uint32_t tag;
+  uint16_t module_api_version;
+  uint16_t hal_api_version;
+  const char* id;
+  const char* name;
+  const char* author;
+  struct xe_hw_module_methods_t* methods;
+  void* dso;
+  uint32_t reserved[32 - 7];
+};
+struct xe_hw_device_t {
+  uint32_t tag;
+  uint32_t version;
+  struct xe_hw_module_t* module;
+  uint32_t reserved[12];
+  int (*close)(struct xe_hw_device_t*);
+};
+struct xe_hwvulkan_device_t {
+  struct xe_hw_device_t common;
+  PFN_vkEnumerateInstanceExtensionProperties EnumerateInstanceExtensionProperties;
+  PFN_vkCreateInstance CreateInstance;
+  PFN_vkGetInstanceProcAddr GetInstanceProcAddr;
+};
+
+PFN_vkGetInstanceProcAddr TryLoadAsHalModule(void* h) {
+  auto* module = reinterpret_cast<xe_hw_module_t*>(dlsym(h, "HMI"));
+  std::fprintf(stderr, "[hal] HMI=%p\n", (void*)module);
+  if (!module || !module->methods || !module->methods->open) return nullptr;
+  std::fprintf(stderr, "[hal] tag=%#x id=%s methods=%p\n", module->tag,
+               module->id ? module->id : "(null)", (void*)module->methods);
+  xe_hw_device_t* dev = nullptr;
+  int rc = module->methods->open(module, "vk0", &dev);
+  std::fprintf(stderr, "[hal] open rc=%d dev=%p\n", rc, (void*)dev);
+  if (rc != 0 || !dev) {
+    return nullptr;
+  }
+  // hwvulkan_device_t is hw_device_t followed by
+  // {EnumerateInstanceExtensionProperties, CreateInstance,
+  // GetInstanceProcAddr}, and hw_device_t itself ends in close(). So the tail
+  // is four consecutive function pointers and GetInstanceProcAddr is the LAST.
+  //
+  // The offset is NOT hardcoded: this build's hw_device_t is larger than the
+  // AOSP header describes (close lands at +112, not +64), so a copied offset
+  // would silently read a different field. Instead, find the last run of
+  // pointers that dladdr maps back into the driver itself, then PROVE the
+  // candidate by calling it - a real GetInstanceProcAddr must resolve
+  // "vkCreateInstance" against a null instance.
+  auto* words = reinterpret_cast<void**>(dev);
+  void* last_in_driver = nullptr;
+  Dl_info self{};
+  const bool have_self = dladdr(reinterpret_cast<void*>(module), &self) != 0;
+  for (int i = 0; i < 32; ++i) {
+    if (!words[i]) continue;
+    Dl_info info{};
+    if (!dladdr(words[i], &info) || !info.dli_fname) continue;
+    if (have_self && self.dli_fname &&
+        std::strcmp(info.dli_fname, self.dli_fname) != 0) {
+      continue;
+    }
+    last_in_driver = words[i];
+  }
+  if (!last_in_driver) {
+    return nullptr;
+  }
+  auto gipa = reinterpret_cast<PFN_vkGetInstanceProcAddr>(last_in_driver);
+  if (!gipa(nullptr, "vkCreateInstance")) {
+    std::fprintf(stderr,
+                 "[hal] candidate at %p did not resolve vkCreateInstance\n",
+                 last_in_driver);
+    return nullptr;
+  }
+  return gipa;
+}
+
 void LoadDriver(const std::string& driver_path) {
   const char* path =
       driver_path.empty() ? "libvulkan.so" : driver_path.c_str();
@@ -220,7 +309,14 @@ void LoadDriver(const std::string& driver_path) {
         (PFN_vkGetInstanceProcAddr)dlsym(h, "vk_icdGetInstanceProcAddr");
   }
   if (!vkapi::GetInstanceProcAddr) {
-    std::fprintf(stderr, "no vkGetInstanceProcAddr in %s\n", path);
+    // Turnip takes this path - it is a HAL module, not an ICD.
+    vkapi::GetInstanceProcAddr = TryLoadAsHalModule(h);
+  }
+  if (!vkapi::GetInstanceProcAddr) {
+    std::fprintf(stderr,
+                 "no vkGetInstanceProcAddr, vk_icdGetInstanceProcAddr or "
+                 "usable HMI hw_module in %s\n",
+                 path);
     std::exit(1);
   }
   if (!driver_path.empty()) vkapi::source = driver_path.c_str();

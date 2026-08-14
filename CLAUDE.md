@@ -7533,3 +7533,49 @@ cvars - those are legitimate.
 **⇒ THE STANDING RULE THIS EARNS: BEFORE YOU A/B A LEVER, PROVE IT CAN FIRE.** Three separate ways a lever
 in this tree can be silently dead - no reader, no producer for the opcode its reader sits behind, or no
 allowlist entry so a GUI launch never passes it. The audit script checks all three.
+
+## ✅✅✅ **DECIDED ON TURNIP (2026-08-13): OVERSIZED EDRAM-SPAN RENDER TARGETS ARE EXONERATED**
+**The gating experiment ran on the driver we actually ship (`gpu=Turnip Adreno (TM) 740`), and it AGREES
+with the Qualcomm blob. Both hypotheses that could have saved the oversized-RT theory are refuted.**
+### BLOCK A — colour only, view 1280x720, 1 draw, 16 passes, median of 20
+| attachment height | `loadOp=LOAD` | `loadOp=CLEAR` | `loadOp=DONT_CARE` |
+|---|---|---|---|
+| 720 | 57.8 us | 95.3 us | 60.4 us |
+| 2048 (EDRAM span) | **57.8 us** | 153.8 us | 54.7 us |
+| 8192 | **52.3 us** | **384.3 us** | 54.7 us |
+### BLOCK B — colour `LOAD`, depth attachment added and its loadOp swept
+| attachment height | depth `LOAD` | depth `CLEAR` | depth `DONT_CARE` |
+|---|---|---|---|
+| 720 | 55.7 us | 96.5 us | 71.1 us |
+| 2048 | 61.6 us | 165.2 us | 71.0 us |
+| 8192 | **61.6 us** | **409.7 us** | 64.4 us |
+### 🔑 WHAT IT SETTLES
+1. **TURNIP ELIDES UNTOUCHED-TILE LOADS, exactly like the blob.** `LOAD` is FLAT across an 11x height range -
+   52-58 us at 720, 2048 AND 8192. **Off-screen rows cost NOTHING to load or store.** Hypothesis (a) dead.
+2. **DEPTH DOES NOT REACTIVATE IT.** Depth `LOAD` is flat too (55.7 / 61.6 / 61.6). Hypothesis (b) dead.
+3. **ONLY `CLEAR` SCALES, on both drivers.** Turnip ~44.4 us per 1000 rows cleared at 1280 wide
+   ((384.3-52.3)/7472); the blob measured ~35.8. An 8192-row clear is **7.4x** the cost of the same pass
+   with `LOAD`.
+**⇒ MAKING HOST RENDER TARGETS SCREEN-SIZED WOULD RECOVER NOTHING.** The `WHERE THE FRAME ACTUALLY GOES`
+entry names that as the real fix with a 37 ms target. **That target is real but its MECHANISM is wrong** -
+the off-screen rows are already free. Do not spend a session on `GetRenderTargetHeight` and the RT key.
+**⇒ AND THE renderArea-CLAMP RESULT NOW NEEDS A NEW EXPLANATION.** Clamping renderArea halved in-pass time
+(46.9 -> 23.5 ms) on this same device. If the attachment size is not the cost, clamping did something else.
+**The leading candidate: our EDRAM emulation CLEARS.** This file's own frame trace counts `rt_resolve_clears`,
+and the Adreno guide section warns that Z clears between passes kill concurrent binning. A clear over a
+full EDRAM-span attachment costs exactly what the table above says - and a clamped renderArea would shrink
+that clear. **`vkCmdClearAttachments` inside the pass would cost the same as a `loadOp=CLEAR`; the harness
+has not measured that form yet.** That is the next arm to add.
+**⚠ Our shipping loadOps are NOT the problem:** colour never selects CLEAR, and depth only does under
+`gpu_lrz_spike_depth_clear` (default off). So if BD is paying a clear cost it is coming from somewhere
+other than the render-pass loadOp - in-pass `vkCmdClearAttachments`, or a separate clear pass.
+### 🧩 HOW THE HARNESS REACHES TURNIP AT ALL (nontrivial, do not re-derive)
+**Turnip on Android is a Vulkan HAL MODULE, not an ICD.** `libvulkan_freedreno.so` exports **`HMI`** and
+**no `vkGetInstanceProcAddr` / `vk_icdGetInstanceProcAddr` whatsoever**, so a plain dlsym finds nothing.
+The path is `dlsym("HMI")` -> `hw_module_t::methods->open(module, "vk0", &dev)` -> the vk entry points that
+follow `hw_device_t`.
+**⚠ AND THE AOSP STRUCT LAYOUT DOES NOT MATCH THIS BUILD.** `hw_device_t` is documented as ending with
+`close` at +64; here the four tail function pointers sit at **+112 / +120 / +128 / +136**. A hardcoded
+offset reads the wrong field and yields null. The harness therefore finds the LAST pointer that `dladdr`
+maps back into the driver and **PROVES it by calling `gipa(nullptr, "vkCreateInstance")`** before using it.
+Those headers are not in the NDK, so the minimal structs are redefined in `edram_bench.cc`.

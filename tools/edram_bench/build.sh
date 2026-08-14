@@ -54,5 +54,4 @@ MSYS_NO_PATHCONV=1 adb push "$SRC" /data/local/tmp/edram_bench >/dev/null
 # An adb shell ARGUMENT THAT STARTS WITH '/' is converted even inside quotes,
 # so lead with cd. Same reason edram_ab.sh runs './edram_bench'.
 adb shell "cd /data/local/tmp && chmod 755 edram_bench"
-adb shell chmod 755 /data/local/tmp/edram_bench
 echo "ready: adb shell /data/local/tmp/edram_bench --help-less (see edram_ab.sh)"
