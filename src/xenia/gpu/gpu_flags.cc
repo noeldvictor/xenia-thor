@@ -517,6 +517,20 @@ DEFINE_bool(gpu_trace_interrupts, false,
             "VBlank interrupts, and source-1 dispatch chronology. "
             "Research-only Android watchdog probe.",
             "GPU");
+DEFINE_bool(
+    gpu_trace_resolve_clears, false,
+    "Log every EDRAM resolve clear with its scissor rectangle, so the cost can "
+    "be priced against the measured clear rate (~44.4us per 1000 rows at 1280 "
+    "wide on Turnip). The clear is already scissored to the GUEST resolve "
+    "rectangle, so the open question is how large those rectangles actually "
+    "are in a real title and how many are issued per frame. Each line carries "
+    "the rect and its row count; the running totals let a frame count divide "
+    "them. Budgeted by gpu_trace_resolve_clears_budget.",
+    "GPU");
+DEFINE_int32(gpu_trace_resolve_clears_budget, 400,
+             "Maximum gpu_trace_resolve_clears lines. Negative = unlimited.",
+             "GPU");
+
 DEFINE_int32(gpu_trace_interrupts_budget, 256,
              "Maximum GPU interrupt trace lines; negative means unlimited.",
              "GPU");

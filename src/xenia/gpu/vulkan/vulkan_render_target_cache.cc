@@ -10185,6 +10185,32 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
         resolve_clear_rectangle->height_pixels * draw_resolution_scale_y();
     resolve_clear_rect.baseArrayLayer = 0;
     resolve_clear_rect.layerCount = 1;
+    // The clear is scissored to the GUEST resolve rectangle, not the
+    // attachment - so its cost depends entirely on how large the guest's
+    // rectangles are. Turnip measures ~44.4us per 1000 rows cleared at 1280
+    // wide, so rows is the number to multiply. Totals are cumulative; divide
+    // by the frame count from vulkan_trace_draw_outcomes_per_frame.
+    if (cvars::gpu_trace_resolve_clears) {
+      static std::atomic<uint32_t> logged{0};
+      static std::atomic<uint64_t> total_clears{0};
+      static std::atomic<uint64_t> total_rows{0};
+      const uint32_t w = resolve_clear_rect.rect.extent.width;
+      const uint32_t h = resolve_clear_rect.rect.extent.height;
+      const uint64_t n = total_clears.fetch_add(1, std::memory_order_relaxed) + 1;
+      const uint64_t rows =
+          total_rows.fetch_add(h, std::memory_order_relaxed) + h;
+      const int32_t budget = cvars::gpu_trace_resolve_clears_budget;
+      if (budget < 0 ||
+          logged.fetch_add(1, std::memory_order_relaxed) <
+              static_cast<uint32_t>(budget)) {
+        XELOGI(
+            "ResolveClear: at {},{} size {}x{} rows={} est_us={:.1f} | "
+            "total_clears={} total_rows={} est_total_ms={:.1f}",
+            resolve_clear_rect.rect.offset.x, resolve_clear_rect.rect.offset.y,
+            w, h, h, double(h) * 44.4 / 1000.0, n, rows,
+            double(rows) * 44.4 / 1000.0 / 1000.0);
+      }
+    }
   }
 
   // Minimal non-adjacent framegraph edge: remove only the selected transfer

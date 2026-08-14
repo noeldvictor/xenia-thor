@@ -499,6 +499,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "vulkan_hoist_request_range_lock");
             copyBooleanExtra(intent, launchArguments, "vulkan_lazy_completion_polls");
             copyIntExtra(intent, launchArguments, "gpu_stall_spin_iterations");
+            copyBooleanExtra(intent, launchArguments, "gpu_trace_resolve_clears");
+            copyIntExtra(intent, launchArguments, "gpu_trace_resolve_clears_budget");
             copyBooleanExtra(intent, launchArguments, "spirv_multiply_zero_test_on_bits");
             // Spin-backoff subsystem. park_memory_poll_loops predates the rest
             // and was never allowlisted, so a GUI/intent launch could not set

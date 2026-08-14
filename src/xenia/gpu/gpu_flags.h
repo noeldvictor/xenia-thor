@@ -59,6 +59,8 @@ DECLARE_bool(clear_memory_page_state);
 DECLARE_bool(gpu_interrupt_on_ring_idle);
 DECLARE_bool(gpu_interrupt_on_swap);
 DECLARE_bool(gpu_trace_interrupts);
+DECLARE_bool(gpu_trace_resolve_clears);
+DECLARE_int32(gpu_trace_resolve_clears_budget);
 DECLARE_int32(gpu_trace_interrupts_budget);
 DECLARE_bool(gpu_log_interrupt_counts);
 DECLARE_bool(gpu_watch_lo_render_gate);
