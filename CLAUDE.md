@@ -7579,3 +7579,29 @@ follow `hw_device_t`.
 offset reads the wrong field and yields null. The harness therefore finds the LAST pointer that `dladdr`
 maps back into the driver and **PROVES it by calling `gipa(nullptr, "vkCreateInstance")`** before using it.
 Those headers are not in the NDK, so the minimal structs are redefined in `edram_bench.cc`.
+
+## 🎯🎯🎯 **FOUND IT: THE EDRAM COST IS THE FULL-SPAN CLEAR, AND SCISSORING IT IS A 4.8x WIN (Turnip, 2026-08-14)**
+**In-pass `vkCmdClearAttachments`, 1280 wide, drawn region 1280x720, 1 draw, 16 passes, median of 20:**
+| attachment height | no clear | clear over the FULL span | clear SCISSORED to the drawn region |
+|---|---|---|---|
+| 720 | 57.7 us | 88.8 us | 88.9 us |
+| 2048 (EDRAM span) | 57.7 us | 147.3 us | **88.9 us** |
+| 8192 | 57.8 us | **382.6 us** | **80.4 us** |
+### 🔑 THREE RESULTS
+1. **AN IN-PASS CLEAR COSTS THE SAME AS `loadOp=CLEAR`.** 382.6 us vs the 384.3 us measured for loadOp at
+   8192. So it does not matter which form the EDRAM emulation uses - a full-span clear is a full-span clear.
+2. **SCISSORING THE CLEAR RECOVERS ALMOST ALL OF IT: 382.6 -> 80.4 us at 8192, a 4.8x reduction, 302 us per
+   pass.** At 2048 it is 147.3 -> 88.9, saving 58 us per pass. At 720 full and scissored are identical, as
+   they must be - same rect.
+3. **THIS EXPLAINS THE renderArea CLAMP AT LAST.** `vkCmdClearAttachments` is CLIPPED TO `renderArea`, so
+   clamping renderArea shrank every clear - that is why in-pass time halved (46.9 -> 23.5 ms). **The clamp
+   got the right effect through the wrong mechanism**, and it paid for it elsewhere (+335% between passes,
+   net +18% slower). **Scissoring the CLEAR RECT gets the same win with none of that**, because renderArea
+   still covers the attachment and the driver's pass/binning decisions are unchanged.
+**⇒ THE FIX: never clear the whole EDRAM-span attachment. Clear only the region that is actually in use.**
+This is a local change at the clear sites, NOT the `GetRenderTargetHeight` / RT-key rewrite the earlier entry
+proposed - and that rewrite is now known to recover nothing (see the exoneration entry above).
+**⚠ WHAT IS STILL UNPROVEN: that BD actually issues full-span clears at these sizes, and how many per frame.**
+The harness proves the MECHANISM and its price. The in-game count has not been measured. At 8192 rows one
+clear is 302 us; BD's whole frame is ~57 ms, so even a handful per frame is worth real time - but that is
+arithmetic on an unmeasured count, not a measured speedup. **Count them before promising a number.**

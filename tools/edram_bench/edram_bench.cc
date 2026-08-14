@@ -83,7 +83,7 @@
   X(ResetCommandBuffer) X(BeginCommandBuffer) X(EndCommandBuffer) \
   X(CmdResetQueryPool) X(CmdPipelineBarrier) X(CmdWriteTimestamp) \
   X(CmdBeginRenderPass) X(CmdEndRenderPass)      \
-  X(CmdBindPipeline) X(CmdPushConstants) X(CmdDraw) \
+  X(CmdBindPipeline) X(CmdPushConstants) X(CmdDraw) X(CmdClearAttachments) \
   X(ResetFences) X(QueueSubmit) X(WaitForFences) \
   X(GetQueryPoolResults)
 
@@ -144,6 +144,7 @@ const char* source = "system libvulkan.so";
 #define vkCmdBindPipeline vkapi::CmdBindPipeline
 #define vkCmdPushConstants vkapi::CmdPushConstants
 #define vkCmdDraw vkapi::CmdDraw
+#define vkCmdClearAttachments vkapi::CmdClearAttachments
 #define vkResetFences vkapi::ResetFences
 #define vkQueueSubmit vkapi::QueueSubmit
 #define vkWaitForFences vkapi::WaitForFences
@@ -176,6 +177,8 @@ struct Config {
   std::string driver;  // empty = system loader
   bool depth = false;          // add a depth attachment alongside colour
   std::string depth_load_op = "load";
+  // In-pass vkCmdClearAttachments: none | full | scissor.
+  std::string inpass_clear = "none";
 };
 
 VkAttachmentLoadOp ParseLoadOp(const std::string& s) {
@@ -387,6 +390,7 @@ int main(int argc, char** argv) {
     else if (a == "--driver") cfg.driver = next();
     else if (a == "--depth") cfg.depth = true;
     else if (a == "--depth-loadop") cfg.depth_load_op = next();
+    else if (a == "--inpass-clear") cfg.inpass_clear = next();
     else if (a == "--label") cfg.label = argv[i + 1], ++i;
     else {
       std::fprintf(stderr, "unknown arg: %s\n", a.c_str());
@@ -732,6 +736,26 @@ int main(int argc, char** argv) {
       rp_bi.pClearValues = clear;
       vkCmdBeginRenderPass(cmd, &rp_bi, VK_SUBPASS_CONTENTS_INLINE);
       vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipe);
+      // The EDRAM emulation clears inside passes (rt_resolve_clears in our own
+      // frame trace). A loadOp=CLEAR over an EDRAM-span attachment is
+      // expensive; the question is whether the IN-PASS form costs the same,
+      // and whether scissoring it to the drawn region recovers that.
+      if (cfg.inpass_clear != "none") {
+        VkClearAttachment ca{};
+        ca.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        ca.colorAttachment = 0;
+        ca.clearValue.color = {{0.4f, 0.5f, 0.6f, 1.0f}};
+        VkClearRect cr{};
+        cr.layerCount = 1;
+        cr.baseArrayLayer = 0;
+        cr.rect.offset = {0, 0};
+        if (cfg.inpass_clear == "scissor") {
+          cr.rect.extent = {cfg.view_width, cfg.view_height};
+        } else {
+          cr.rect.extent = {cfg.width, cfg.height};
+        }
+        vkCmdClearAttachments(cmd, 1, &ca, 1, &cr);
+      }
       for (uint32_t d = 0; d < cfg.draws; ++d) {
         float t = float(d) * 0.031f + float(p) * 0.017f;
         vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
@@ -772,11 +796,12 @@ int main(int argc, char** argv) {
 
   std::printf(
       "%-10s gpu=%s via %s\n"
-      "%-10s rt=%ux%u view=%ux%u loadop=%s storeop=%s depth=%s passes=%u draws=%u\n",
+      "%-10s rt=%ux%u view=%ux%u loadop=%s storeop=%s depth=%s inpass=%s passes=%u draws=%u\n",
       cfg.label, props.deviceName, vkapi::source, cfg.label, cfg.width,
       cfg.height, cfg.view_width, cfg.view_height, cfg.load_op.c_str(),
       cfg.store_op.c_str(),
-      cfg.depth ? cfg.depth_load_op.c_str() : "none", cfg.passes, cfg.draws);
+      cfg.depth ? cfg.depth_load_op.c_str() : "none",
+      cfg.inpass_clear.c_str(), cfg.passes, cfg.draws);
   std::printf(
       "%-10s median_total=%.1fus  per_pass=%.1fus  min=%.1f max=%.1f  "
       "us_per_covered_Mpx=%.2f\n",
