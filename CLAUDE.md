@@ -7074,6 +7074,53 @@ Pick the highest-value unit yourself, execute end-to-end (implement → build-ve
 next). Don't ask which task / re-confirm direction / analysis-paralyze. A big effort is a reason to start, not
 to ask. Surface only genuine external blockers. Thermal + no-fabrication rules always hold.
 
+## ❌❌❌ **THE `kSysFlag_` CENSUS KILLS MY OWN LEVER: OUR PIXEL SHADERS HAVE ~4 RUNTIME FLAG TESTS, NOT 61 (2026-08-14, device-free)**
+**The entry above priced specialization constants at 2.5x in the harness and said to census the flags before
+touching the translator. Censused. THE POPULATION IS NOT THERE, and the "61 runtime flag tests" figure I
+published one entry earlier is wrong by more than an order of magnitude.**
+### WHERE THE 61 CAME FROM, AND WHY IT WAS WRONG
+It counted **every `kSysFlag_` mention across the whole GPU tree** - including `dxbc_shader_translator.*`,
+which is the **D3D12 backend and does not compile into the APK**, and including the enum DEFINITIONS rather
+than the test sites. **Definitions are not branches, and a backend we do not build is not our cost.**
+### THE ACTUAL SURFACE, counted from the SPIR-V translator only
+```
+kSysFlag_ bits DEFINED for SPIR-V .................. 52
+distinct flags actually TESTED in emitted SPIR-V ... 21     <- 26 test sites
+  of which VERTEX-stage (spirv_shader_translator.cc) 10
+  of which PIXEL-stage  (..._rb.cc) ................ 11
+```
+**⇒ AND 7 OF THE 11 PIXEL FLAGS ARE THE FSI FAMILY, WHICH IS NEVER EMITTED ON THIS DEVICE.**
+`FSIDepthStencil`, `FSIDepthPassIfLess/Equal/Greater`, `FSIDepthWrite`, `FSIStencilTest`,
+`FSIDepthStencilEarlyWrite` all sit inside `if (edram_fragment_shader_interlock_)` - a **C++ TRANSLATION-TIME**
+guard, not a shader branch. **Turnip does not expose `fragment_shader_interlock`** (device-enumerated, and this
+file already records it as ABSENT and DEAD for BD), so that flag is false and those blocks are never generated.
+**⇒ SO THE REAL RUNTIME-GATED PIXEL SURFACE ON THE THOR IS FOUR TEST SITES:**
+| flag | bits | is it pipeline-constant? |
+|---|---|---|
+| `kSysFlag_AlphaPassIfLess_Shift` (alpha test comparison) | 3 | yes - guest alpha func, part of the draw state |
+| `kSysFlag_ConvertColor0ToGamma` (+1/2/3, shifted per RT) | 4 | yes - render-target format |
+| `kSysFlag_MsaaSamples_Shift` | 2 | yes - render-target config |
+| `kSysFlag_DepthFloat24` | 1 | yes - depth format |
+**Every one is pipeline-constant, so they are all legitimate specialization constants** - the variant-explosion
+worry was unfounded too. **But there are four of them, guarding thin blocks, not sixteen guarding fat ones.**
+### ⇒ THE VERDICT: DO NOT REWRITE THE TRANSLATOR FOR THIS
+The harness measured 16 gated blocks, each holding its own live accumulator - which is what made the `dyn` arm
+cost 179 instructions. **Our pixel shaders have four thin gates.** Scaling the harness result down by that
+ratio leaves a win far too small to justify touching the shader translator, and this file's own measurement
+says our worst fragment variants are **2,195 instructions** - so four flag tests are a rounding error in them.
+**⇒ AND THAT IS THE USEFUL PART: IT RE-CONFIRMS THE EXISTING VERDICT FROM A NEW DIRECTION.** If the emulation
+scaffolding in a BD pixel shader is ~4 branches out of ~2,195 instructions, then **the instructions are the
+GUEST'S OWN SHADER**, exactly as the "smarter Xenos emulation" entry and XenDroid's counter study both
+concluded. There is no uber-shader tax to reclaim here.
+**📌 THE PROCESS POINT, AND IT IS THE SAME ONE THIS FILE KEEPS PAYING FOR: I PUBLISHED A COUNT FROM A GREP
+WITHOUT CHECKING WHICH BACKEND IT WAS IN, THEN BUILT A HARNESS AROUND IT.** The harness was still worth
+building - it produced a real, reusable measurement, and it cost minutes - but **the census that killed the
+lever cost NO device time and should have come first.** That is rule 4 verbatim: count before building.
+**✅ WHAT SURVIVES AND IS WORTH KEEPING:** the harness arms and the measured fact that **a runtime-flag shader
+pays for every gated block whether or not the flag is set** (ir3 flattens the branches). That is a real
+property of this driver, it is now measured, and it applies to any future shader work here - just not to a
+`kSysFlag_` population that turns out to be four.
+
 ## 🧰 TOOLING RULE (user, 2026-08-14): **PUT DEVICE COMMANDS IN A SCRIPT, DO NOT RUN HUGE INLINE COMMANDS**
 *"don't run huge commands, create scripts and use that."*
 **Why it matters here specifically, beyond readability:** this file already records five distinct Git Bash
