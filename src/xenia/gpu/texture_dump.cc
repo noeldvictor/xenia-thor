@@ -12,7 +12,18 @@
 #include "xenia/base/math.h"
 #include "xenia/gpu/texture_info.h"
 
-DEFINE_bool(texture_dump, false, "Dump textures to DDS", "GPU");
+// ⚠ DEAD AS OF 2026-08-13, and this cvar therefore does NOTHING when set.
+// TextureDump() has no callers and no header, and it is written against the
+// legacy TextureInfo struct - the current Vulkan texture cache does not use
+// that type at all (vulkan_texture_cache.cc references TextureInfo only via
+// the unrelated SwapTextureInfo). Reviving this means re-targeting the DDS
+// writer at the modern cache's upload path, not just adding a call.
+// Kept rather than deleted because the DDS writer itself is still useful.
+// Found by tools/audit/cvar_audit.py.
+DEFINE_bool(texture_dump, false,
+            "Dump textures to DDS. CURRENTLY INERT - see the note above; the "
+            "dumper is not wired to the Vulkan texture cache.",
+            "GPU");
 
 namespace xe {
 namespace gpu {

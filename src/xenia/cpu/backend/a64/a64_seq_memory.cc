@@ -41,9 +41,6 @@ DEFINE_bool(
     "give-way flag. Default off pending a device A/B.",
     "a64");
 
-DEFINE_bool(emit_mmio_aware_stores_for_recorded_exception_addresses, false,
-            "Use recorded MMIO exception addresses for A64 store emission.",
-            "a64");
 DEFINE_bool(emit_inline_mmio_checks, false,
             "Emit inline A64 MMIO checks for memory accesses.", "a64");
 DEFINE_bool(arm64_offset_memory_address_fastpath, false,
