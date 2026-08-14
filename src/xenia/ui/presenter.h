@@ -739,7 +739,11 @@ class Presenter {
   // the current interval. Guarded by frame_gen_tick_mutex_.
   uint64_t frame_gen_last_real_present_us_ = 0;
   uint64_t frame_gen_guest_interval_us_ = 0;
-  bool frame_gen_synthed_this_interval_ = false;
+  // Synthesized frames emitted so far in the CURRENT guest interval. Was a
+  // bool, which hardcoded one synth per interval and left
+  // present_frame_gen_factor unread - the user could set the factor and
+  // nothing changed.
+  uint32_t frame_gen_synthed_this_interval_ = 0;
   // Set by the tick thread in kUIThreadOnRequest mode to mark the next UI-thread
   // paint as a synthesized (frame-gen) present; consumed in PaintFromUIThread.
   std::atomic<bool> frame_gen_synth_paint_requested_{false};

@@ -129,6 +129,23 @@ namespace ui {
 
 namespace {
 
+// Synthesized frames to emit between two real guest frames.
+//
+// present_frame_gen_factor is "presented frames per guest frame", so factor N
+// means N-1 synthesized frames. Clamped to [2, 4]: below 2 frame generation is
+// off by definition, and each extra slice costs another full synth present
+// inside one guest interval, so an unbounded value would just starve the real
+// frame.
+//
+// This cvar was DEFINEd, DECLAREd, allowlisted for launch and wired to an
+// in-game checkbox, but never read anywhere - the tick loop hardcoded one
+// synth at the interval midpoint. Found by tools/audit/cvar_audit.py.
+uint32_t FrameGenSynthsPerInterval() {
+  int32_t factor = cvars::present_frame_gen_factor;
+  factor = std::max(2, std::min(4, factor));
+  return static_cast<uint32_t>(factor - 1);
+}
+
 uint64_t FrameGenNowMicroseconds() {
   return uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
                       std::chrono::steady_clock::now().time_since_epoch())
@@ -576,7 +593,7 @@ bool Presenter::RefreshGuestOutput(
         }
       }
       frame_gen_last_real_present_us_ = now_us;
-      frame_gen_synthed_this_interval_ = false;
+      frame_gen_synthed_this_interval_ = 0;
     }
     frame_gen_tick_cv_.notify_one();
   }
@@ -757,7 +774,7 @@ void Presenter::FrameGenTickThread() {
   while (!frame_gen_tick_shutdown_) {
     if (!cvars::present_frame_extrapolation ||
         frame_gen_guest_interval_us_ == 0 ||
-        frame_gen_synthed_this_interval_) {
+        frame_gen_synthed_this_interval_ >= FrameGenSynthsPerInterval()) {
       // Frame generation off, no measured interval yet, or this interval's synth
       // already done: idle until a real present (or shutdown) wakes us.
       static uint64_t idle_log = 0;
@@ -766,15 +783,19 @@ void Presenter::FrameGenTickThread() {
             "Frame generation tick idle: enabled={} interval_us={} synthed={}",
             cvars::present_frame_extrapolation ? 1 : 0,
             frame_gen_guest_interval_us_,
-            frame_gen_synthed_this_interval_ ? 1 : 0);
+            frame_gen_synthed_this_interval_);
       }
       frame_gen_tick_cv_.wait(lock);
       continue;
     }
-    // Aim for the midpoint of the guest interval (factor 2 = one synth per real
-    // frame). present_frame_gen_factor will subdivide further later.
+    // Subdivide the guest interval into `factor` slices and aim for the next
+    // unfilled boundary: factor 2 gives one synth at the midpoint (the old
+    // hardcoded behaviour), factor 3 gives two at 1/3 and 2/3, and so on.
+    const uint32_t synths = FrameGenSynthsPerInterval();
+    const uint32_t slice = frame_gen_synthed_this_interval_ + 1;
     uint64_t target_us =
-        frame_gen_last_real_present_us_ + frame_gen_guest_interval_us_ / 2;
+        frame_gen_last_real_present_us_ +
+        frame_gen_guest_interval_us_ * slice / (synths + 1);
     uint64_t now_us = FrameGenNowMicroseconds();
     if (now_us + 250 < target_us) {
       frame_gen_tick_cv_.wait_for(lock,
@@ -782,7 +803,7 @@ void Presenter::FrameGenTickThread() {
       continue;
     }
     // Reached the midpoint with no new real present: synthesize one frame.
-    frame_gen_synthed_this_interval_ = true;
+    ++frame_gen_synthed_this_interval_;
     // Drop the timing lock BEFORE taking paint_mode_mutex_ (lock order).
     lock.unlock();
     DoFrameGenSynthPresent();
