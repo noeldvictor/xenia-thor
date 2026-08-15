@@ -7334,6 +7334,41 @@ MESA_GPU_TRACES=print MESA_GPU_TRACEFILE=/sdcard/u.txt              -> launches 
 **Single-quote at the shell level; put NO double quotes in the value. Unset with `''`, never `'""'`.**
 **Budget 206 MB of trace per ~110s** - aggregate on device with `grep -oE`, pull only the fields.
 
+## 🧮 **PASS OVERHEAD PRICED IN THE RIGHT MODE AT LAST: THE 61 LIGHT PASSES ARE ~6% OF THE FRAME (2026-08-14, device-free)**
+**Now that BD is known to render 100% in direct/sysmem mode, the harness's SYSMEM numbers are the applicable
+ones and the long-standing "61 of 74 passes pay full cost for at most one draw" observation can finally be
+multiplied out instead of argued about.**
+```
+harness, sysmem, 1280x720, ONE draw, loadOp=dontcare : ~58 us per pass   (measured)
+BD frame                                             : 74.4 passes, 61 of them <=1 draw
+   61 x 58 us                                        = ~3.5 ms
+BD in-pass total (08-10 trace)                        = 46.9 ms of a 56.9 ms frame
+```
+**⇒ THE 61 LIGHT PASSES ARE ~3.5 ms = ~6% OF THE FRAME. The 13 heavy passes carry the other ~43 ms.**
+That is consistent with the independent per-pass split, which put TWO passes at 65% of in-pass time - and it
+closes the pass-count question quantitatively rather than by assertion.
+**⇒ SO EVEN A PERFECT FIX FOR PASS OVERHEAD - fusing every light pass, deleting every zero-draw pass - IS
+CAPPED AT ~6%, AND THE DRAW WORK IN A HANDFUL OF PASSES IS ~75%.** Combined with the mode finding (tile levers
+inapplicable) and the four dead structural explanations, **there is nothing left in the pass STRUCTURE. It is
+the shading.**
+**📌 AND NOTE THIS RETIRES THE OLDEST GPU PLAN IN THE FILE ON ARITHMETIC.** The "35 zero-draw passes are the
+single biggest category and nobody has looked at them" entry proposed attacking exactly this. It was a
+reasonable target when a pass was assumed to cost tile traffic; at 58 us in direct mode it is 6%.
+
+## ⏱ **THE SHADER-STATS RUN VOIDED, AND THE INSTRUMENT CAUSED IT (2026-08-14)**
+`tools/thor/bd_shader_stats.sh` - dump ir3 FRAG variant stats for BD's real shaders - **never reached the title
+in 240 s.** The wrap applied correctly (`getprop` confirmed `IR3_SHADER_DEBUG=fs
+MESA_SHADER_CACHE_DISABLE=true`), so this is not the quoting bug.
+**⇒ THE CAUSE IS ALMOST CERTAINLY `MESA_SHADER_CACHE_DISABLE=true` ITSELF.** It forces EVERY pipeline to be
+recompiled from source on every use, with `IR3_SHADER_DEBUG=fs` logging each one - during a load that already
+takes ~150 s. **The instrument made the thing it was measuring too slow to reach.**
+**⇒ THE FIX FOR THE NEXT ATTEMPT, and it keeps the cache doing its job:** do NOT disable the cache. Instead
+**delete Turnip's on-disk shader cache once before the run** so every variant compiles exactly once and prints
+its stats, then writes back normally. Raise the title gate to ~400 s for that run only, and expect the stats
+for the FIELD shaders to appear only after the route reaches gameplay, since variants compile on first use.
+**⚠ AND LEAVE THE LOGCAT BUFFER ALONE AFTERWARDS:** the script raises it to 64 MB to survive the dump volume
+and the device was handed back before it could be restored to 256 KB. Harmless, but reset it next session.
+
 ## 🧰 TOOLING RULE (user, 2026-08-14): **PUT DEVICE COMMANDS IN A SCRIPT, DO NOT RUN HUGE INLINE COMMANDS**
 *"don't run huge commands, create scripts and use that."*
 **Why it matters here specifically, beyond readability:** this file already records five distinct Git Bash
