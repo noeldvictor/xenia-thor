@@ -8544,3 +8544,49 @@ indistinguishable from a normal run in every other signal - fps, temperature, fa
 look right.
 **⇒ AND THE EXISTING `tools/thor/*` TRACE SCRIPTS ALL POINT AT `/data/local/tmp`.** That works for
 `edram_bench` (shell) and silently yields nothing for the app.
+
+## 🔎🔎🔎 **LRZ ON BD: MEASURED AT LAST — AND IT IS THE GUEST'S OWN STATE, NOT OUR EMULATION (2026-08-16)**
+**First time this project has read the driver's own LRZ verdict instead of inferring it. 93 MB Turnip trace,
+63,516 render passes, BD gameplay route (147k-250k verts, scene-gated, 0 faults).**
+**⚠ THE FIELD NAMES IN THIS FILE WERE STALE.** Turnip r11 emits camelCase: `lrz`, `lrzDisableReason`,
+`lrzWriteDisableReason`, `lrzDisabledAtDraw`, `lrzWriteDisabledAtDraw`, `lrzStatus` - **not** `lrz.valid` /
+`lrz_disable_reason` as recorded in `THE SHIPPED DRIVER CAN TELL US...`.
+### THE NUMBERS
+| | count | share |
+|---|---|---|
+| `lrz=false` (LRZ test NOT used) | **62,106** | 97.8% |
+| `lrz=true` | 1,410 | 2.2% |
+**⚠ I FIRST READ `lrzStatus=DISABLED` (63,516 of 63,516) AS "LRZ NEVER RUNS" AND THAT WAS WRONG.** `lrzStatus`
+is the end-of-pass buffer state, not whether the test ran. **The HEAVY passes are in the `lrz=true` 2.2%.**
+### THE HEAVY PASS, VERBATIM
+```
+end_render_pass tiledRender=false, tilingDisableReason=Autotune selected sysmem,
+  drawCount=347, avgPerSampleBandwidth=18,
+  lrz=true, lrzDisableReason=, lrzDisabledAtDraw=-1,
+  lrzWriteDisableReason=Depth write + blending, lrzWriteDisabledAtDraw=1,
+  lrzStatus=DISABLED
+```
+**🔑 LRZ TEST IS ON. LRZ *WRITE* IS KILLED AT DRAW 1, BY "Depth write + blending".** So the LRZ buffer never
+learns anything during the pass: draws 2..347 are tested against whatever existed at pass start. In a pass of
+hundreds of stacked blended layers that is the overdraw amplifier - **each layer pays full fragment cost and
+contributes nothing to rejecting the next.**
+### ❌ BUT IT IS **NOT** AN EMULATION ARTEFACT — CHECKED IN THE GUEST REGISTERS
+The BIGPASS dump gives the guest's own `RB_DEPTHCONTROL`:
+| pass | draws | depthctl | Z_WRITE (bit 2) |
+|---|---|---|---|
+| `6BE11A2B6B84F1EC` | 671 | `00700736` | **ON** |
+| `5E6B8038D6E50B65` | 220 | `00700732` | off |
+**The 671-draw pass genuinely blends WHILE writing depth. That is the game's own state, so Turnip's decision
+to stop LRZ writes is correct and unavoidable.** We cannot fix it by emulating differently, and we cannot
+reorder the guest's draws.
+**⇒ LRZ IS A DEAD END FOR BD's HEAVY PASSES. Record it so nobody re-runs this.** (The earlier
+`gpu_lrz_spike_depth_clear` attempt measuring +13.1% worse is now explained rather than mysterious.)
+### ⇒ WHAT SURVIVES FOR "FIX THE BD SLOWDOWN"
+The frame is **~890 alpha-blended, depth-writing draws into one 720x1824 target, two passes = 81.5% of GPU
+in-pass time**, with no LRZ accumulation possible. Every EDRAM lever measured today is 0-1.5%; the EDRAM
+bucket as a whole caps at 10.4%.
+**⇒ The only measured lever that moves this class is FEWER OR CHEAPER FRAGMENTS** - resolution scaling is
+already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
+**⇒ And the CPU side remains unclaimed and is where this file says BD actually is:** review backlog P1, LLVM
+functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
+(`llvm_backend.cc:251`, still true).
