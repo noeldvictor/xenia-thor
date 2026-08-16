@@ -8282,3 +8282,37 @@ ones that reduce shader cost or pixel count: resolution, shader complexity in th
 or present interaction. It says the HARDWARE is not bandwidth-limited at this shape and that GMEM cannot pay -
 it does not identify which of BD's shaders costs the 37 ms. **The next question is which two passes those are
 and what their shaders do, not how EDRAM is modelled.**
+
+### 🔬 THE CACHE-ARTIFACT CHECK — REJECTED, SO THE ALU VERDICT HOLDS ACROSS A 36x WORKING SET
+**The obvious objection to "bandwidth is free": 1280x720x4 = 3.7 MB fits the SoC system cache, so of course
+it looked free.** Swept the working set instead of assuming. `--alu-iters 0`, 16 draws, depth:
+| view | rgba8 | rgba16f | penalty |
+|---|---|---|---|
+| 640x360 | 52.42 | 48.92 us/Mpx | - |
+| 1280x720 | 42.13 | 46.64 | +10.7% |
+| 1920x1080 | 39.92 | 39.48 | - |
+| 2560x1440 | 37.00 | 40.80 | +10.3% |
+| **3840x2160** | **36.06** | **39.13** | **+8.5%** |
+**At 4K rgba16f the colour target alone is ~66 MB - far past any cache. `us/Mpx` is FLAT (36-52) over the
+whole range and there is NO CLIFF.** Doubling bytes per pixel costs a steady ~8-10%, never more.
+**⇒ The framebuffer is genuinely not bandwidth-limited on this hardware. Not a cache artifact.**
+
+### ⚠️⚠️ SCOPE CORRECTION — WHAT THE 2026-08-16 VERDICT DOES **NOT** COVER
+**Every section above times the INSIDE of render passes. The frame splits 82% / 17%:**
+```
+INSIDE passes : 46,856 us (82%)   <- all three sections measured here
+BETWEEN passes: 10,070 us (17%)   <- transfers, resolves, barriers, stalls
+```
+**The 17% IS the EDRAM emulation machinery - ownership transfers and resolves - and it is UNMEASURED.**
+10 ms is ~6x the 1.5% attachment cost that killed the allocation redesign.
+**⇒ SO "the EDRAM redesign is dead" IS TOO BROAD AS WRITTEN. What is dead is the IN-PASS story: attachment
+shape, tiling mode, framebuffer bandwidth. The transfer/resolve path is untouched by these numbers.**
+| claim | status |
+|---|---|
+| in-pass bandwidth is the cost | **dead** - blend free, 2x bytes ~10%, no cache cliff |
+| EDRAM-span attachment shape is the cost | **dead** - 1.5% at the representative shape |
+| GMEM / tiling can win | **dead** - converges to parity, never wins |
+| **EDRAM transfers + resolves (the 17%)** | **OPEN. This is where a UMA hybrid would pay** |
+**⇒ NEXT: `vulkan_direct_host_resolve` (`gpu_flags.cc:1422`, default OFF, NEVER device-tested) is exactly the
+UMA fast path for the resolve half - compute-resolve host RT straight into guest memory, no EDRAM dump, no
+round trip. Measure it on the game before designing anything.**
