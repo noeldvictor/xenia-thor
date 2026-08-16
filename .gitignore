@@ -169,3 +169,8 @@ tools/xex/*.bin
 
 # Perf symbol map, regenerated per build.
 xenia_perf.map
+
+# Autonomous-loop RUNTIME control file, not configuration. Its presence is
+# what keeps the Stop hook grinding, so committing it would ship the loop
+# switched on to every checkout.
+.claude/thor-loop-active
