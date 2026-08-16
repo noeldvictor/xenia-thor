@@ -3238,6 +3238,26 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_wholecull_draws_, draw_outcomes_wholecull_elig_,
         draw_outcomes_wholecull_verts_, draw_outcomes_cull_whole_skip_,
         draw_outcomes_cull_whole_skip_verts_);
+
+    // ⚠⚠ THE LINE ABOVE IS TRUNCATED BY LOGCAT AT ~1066 CHARACTERS, and
+    // gpu_frame_us / gpu_pass_us sit near its END. A HEAVY frame carries
+    // bigger numbers earlier in the line, so it runs out of budget first and
+    // those two fields are the ones cut off - on exactly the frames worth
+    // measuring.
+    // MEASURED 2026-08-16 on a BD gameplay route: 0 of 159 gameplay-tier
+    // frames (>50k vertices) carried gpu_pass_us, while 810 of 821 light
+    // frames did. So ANY in-pass/between-pass split read off that line is a
+    // LIGHT-FRAME statistic, whatever it appears to say.
+    // Emit the timings on their own short line so the frames that matter
+    // survive. Keep this line SHORT - that is the whole point of it.
+    if (cvars::vulkan_trace_pass_timestamps) {
+      XELOGI(
+          "GPU pass timing: gpu_frame_us={} gpu_pass_us={} between_us={} "
+          "verts={} rt_transfer_calls={} rt_transfers={}",
+          gpu_frame_us_, gpu_pass_us_,
+          gpu_frame_us_ >= gpu_pass_us_ ? gpu_frame_us_ - gpu_pass_us_ : 0,
+          draw_outcomes_total_vertices_, rt_transfer_calls_, rt_transfers_);
+    }
     XELOGI("hwvtx engage: elig={} redir={} (cvar={})",
            draw_outcomes_hwvtx_elig_draws_, draw_outcomes_hwvtx_redir_draws_,
            cvars::gpu_hw_vertex_fetch ? 1 : 0);
