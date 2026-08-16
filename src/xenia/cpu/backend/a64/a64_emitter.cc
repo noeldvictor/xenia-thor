@@ -4683,12 +4683,17 @@ void A64Emitter::AddGuestAddressToMembase(Xbyak_aarch64::WReg guest_reg,
                                           Xbyak_aarch64::XReg host_reg) {
   mov(WReg(host_reg.getIdx()), guest_reg);
   if (xe::memory::allocation_granularity() > 0x1000) {
+    // Branch-free boundary fixup. This runs on EVERY dynamic guest memory
+    // access when the host granularity is above 4K, so the conditional
+    // branch that used to be here was a predictor slot spent per access, on
+    // a condition that is almost always false. cmp/add/csel is the same
+    // instruction count, clobbers the same w12, and needs no label.
+    // (xenia-edge af082b6d0 applies the same rewrite to its helper site.)
     mov(w12, 0xE0000000u);
     cmp(WReg(host_reg.getIdx()), w12);
-    auto& skip_offset = NewCachedLabel();
-    b(LO, skip_offset);
-    add(WReg(host_reg.getIdx()), WReg(host_reg.getIdx()), 1, 12);
-    L(skip_offset);
+    add(w12, WReg(host_reg.getIdx()), 1, 12);  // candidate = addr + 0x1000
+    // LO = unsigned <, so keep the original below the boundary.
+    csel(WReg(host_reg.getIdx()), WReg(host_reg.getIdx()), w12, LO);
   }
   add(host_reg, GetMembaseReg(), host_reg);
 }
