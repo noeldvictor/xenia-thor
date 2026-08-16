@@ -5530,9 +5530,17 @@ void VulkanCommandProcessor::MaybeLogSmallGuestPass() {
   uint32_t pass_draws = pass_draws_now >= pass_begin_draws_
                             ? pass_draws_now - pass_begin_draws_
                             : 0;
-  if (pass_draws < 1 || pass_draws > kResolveTimingSmallPassDraws) {
+  // 2026-08-16: this used to return for ANY pass above the small-draw
+  // threshold, which excluded the two passes that are 65% of a BD frame
+  // (22,087 us and 14,984 us) - the exact passes nobody has ever been able to
+  // identify. A heavy pass is now logged too, tagged BIGPASS, with the same
+  // fields. The small/big split is kept because they are different questions:
+  // SMALLPASS hunts an anomalously expensive 1-draw pass, BIGPASS asks what
+  // the dominant guest geometry pass is actually shading.
+  if (pass_draws < 1) {
     return;
   }
+  const bool is_big_pass = pass_draws > kResolveTimingSmallPassDraws;
   // Only the EDRAM-tile-oversized RTs (a 720p game gets 720x1824 / 1280x2048 /
   // x4096 / x8192 host RTs) are the ~52ms deferred-store suspects; skip the
   // normal-height passes to keep the log readable.
@@ -5543,10 +5551,11 @@ void VulkanCommandProcessor::MaybeLogSmallGuestPass() {
   }
   const GuestDrawDesc& d = last_guest_draw_desc_;
   XELOGI(
-      "SMALLPASS fb={:04x} {}x{} draws={} host_verts={} idx={} prim={} "
+      "{} fb={:04x} {}x{} draws={} host_verts={} idx={} prim={} "
       "ps_hash={:016X} vs_hash={:016X} blendctl0={:08X} colorctl={:08X} "
       "colormask={:04X} depthctl={:08X} color0_info={:08X} depth_info={:08X} "
       "ps_zwrite={} ps_kill={}",
+      is_big_pass ? "BIGPASS" : "SMALLPASS",
       uint32_t((reinterpret_cast<uintptr_t>(current_framebuffer_) >> 4) &
                0xFFFFu),
       host_w, host_h, pass_draws, d.host_vertex_count, d.index_count,
