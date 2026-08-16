@@ -8316,3 +8316,39 @@ shape, tiling mode, framebuffer bandwidth. The transfer/resolve path is untouche
 **⇒ NEXT: `vulkan_direct_host_resolve` (`gpu_flags.cc:1422`, default OFF, NEVER device-tested) is exactly the
 UMA fast path for the resolve half - compute-resolve host RT straight into guest memory, no EDRAM dump, no
 round trip. Measure it on the game before designing anything.**
+
+## 📏📏 **`vulkan_direct_host_resolve` MEASURED (2026-08-16): IT WORKS, -13 TO -15% OF THE BETWEEN-PASS BUCKET — AND THAT IS ~1.3% OF THE FRAME**
+**Thor, Turnip r11 / Adreno 740, BD gameplay route, both arms scene-gated (>50k verts), 0 faults.
+Instrument: the NEW dedicated `GPU pass timing` line (`23f89c276`) - the old one was truncated by logcat and
+lost `gpu_pass_us` on every heavy frame.**
+### ⚠ THE MEDIANS ARE NOT COMPARABLE. MATCH ON SCENE COMPLEXITY.
+Each arm aborts at 70C at a different route depth, so the raw medians differ by scene, not by lever:
+baseline median frame 30,125 us (33.2 fps) vs dhr 52,984 us (18.9 fps) - **that +75.9% is SCENE, not the
+cvar.** Bucketing by `verts` fixes it.
+| verts band | baseline `between_us` | dhr `between_us` | delta | baseline frame | dhr frame |
+|---|---|---|---|---|---|
+| 50-120k | 7,159 | 6,111 | **-14.6%** | 20,339 | 19,475 |
+| 120-180k | 6,814 | 5,869 | **-13.9%** | 27,171 | 27,050 |
+| 180-230k | 6,227 | 5,439 | **-12.7%** | 45,788 | 63,987 ⚠ n=41 |
+| 230-300k | 6,253 | 5,430 | **-13.2%** | 63,569 | 62,955 |
+**⇒ THE LEVER DOES EXACTLY WHAT IT CLAIMS. -13 to -15% of between-pass time, consistent across all four
+bands and both run orders. That is not noise.**
+**⇒ AND IT IS WORTH ~1.3% OF THE FRAME.** `between_us` is ~6,500 us of a ~63,000 us frame (**10.4%**);
+saving 13% of it returns ~850 us. Frame time in matched bands moves -4.2%, -0.4%, +39.7% (n=41, scene
+mismatch), -1.0% - i.e. nothing outside noise.
+### 🔑 THE FRAME BUDGET, NOW MEASURED WITH A WORKING INSTRUMENT
+```
+gameplay frame ~53,000-64,000 us   (18.9 - 15.6 fps)
+  INSIDE passes  89.6%   <- ALU-bound (measured 2026-08-16: blend free, 2x bytes +8-10%, no cache cliff)
+  BETWEEN passes 10.4%   <- ALL 45 EDRAM ownership transfers + resolves + barriers
+```
+**⇒ THE ENTIRE EDRAM EMULATION MACHINERY IS A 10.4% BUDGET. Eliminating ALL of it perfectly caps at 10.4%.**
+**⚠ AND NOTE THE LIGHT-FRAME TRAP: over ALL frames the split reads 48.6% / 51.4%.** That is the statistic the
+truncated log accidentally reported, and it is why "17%" and "95%" both looked plausible earlier and were
+both about the wrong frames. **Always gate on `verts>50000`.**
+### ⇒ VERDICT
+- **Turn `vulkan_direct_host_resolve` ON.** It is a real, reproducible, correctness-neutral ~1.3% with 0
+  faults, and XenDroid already ships it on. It is not a headline win and must not be sold as one.
+- **In-pass EDRAM transfers remain the only other EDRAM lever worth building, inside a 10.4% ceiling.**
+- **The 89.6% is shading.** The only lever measured to move it is fewer or cheaper pixels (resolution: 71%
+  scale = -27.7% frame time). **That is where a "superspeed" answer has to come from, not from EDRAM.**
