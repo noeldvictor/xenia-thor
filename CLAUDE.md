@@ -8590,3 +8590,24 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 **⇒ And the CPU side remains unclaimed and is where this file says BD actually is:** review backlog P1, LLVM
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
+
+## 🔄🔄🔄 **CORRECTION: BD GAMEPLAY IS ~93% GPU-BOUND. THE INDEX LINE `BD FIELD IS CPU-BOUND` IS STALE (2026-08-16)**
+**The arithmetic closes to within 0.1%, from one instrumented gameplay frame:**
+```
+GPU in-pass work (sum of per-pass timestamp spans)   59,666 us
+CPU issue-draw   (cpu_issuedraw_us)                   4,355 us
+                                                     ---------
+                                                     64,021 us
+measured gpu_frame_us                                64,085 us
+```
+**With `vulkan_mid_frame_submission_draws=0` (the default, and what every route run uses) the CPU records the
+whole frame and THEN submits, so the two phases are SERIALIZED - and they sum to the frame.**
+**⇒ BD gameplay is ~93% GPU. Not CPU-bound.** The index entry predates the LLVM backend and the Edge kernel
+merge; treat it as history.
+**⇒ AND IT EXPLAINS THE MID-FRAME SUBMISSION NULL RESULT.** Overlapping a 4.4 ms CPU phase behind 59.7 ms of
+GPU work has a CEILING of ~7%, and we measured +2.5%/+0.9%/-0.8%. The lever is not broken; there is simply
+almost nothing to overlap.
+**⚠ CAVEAT: per-pass spans are inside a submitted command buffer, so they are real GPU execution - but a pass
+whose work is split across submissions could still hide a stall. Edge `61810b48e` (true GPU busy time) is
+still the instrument that would settle it beyond doubt.**
+**⇒ SO EVERY CPU-SIDE LEVER IS CAPPED AT ~7% FOR THIS SCENE, AND THE FIX FOR BD MUST REDUCE FRAGMENT WORK.**
