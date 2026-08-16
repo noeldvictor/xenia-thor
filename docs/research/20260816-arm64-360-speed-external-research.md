@@ -67,9 +67,10 @@ Weak-to-weak means we must place fences deliberately, because nothing hides a mi
 
 ---
 
-## IDEA 3 — The GPU lineage argument. ❌❌ IT IS FALSE FOR BD, AND WE ALREADY MEASURED THAT.
-
-**The fact is true. The conclusion people draw from it is wrong on this device.**
+## IDEA 3 — The GPU lineage argument. THE FACT IS TRUE. THE POPULAR CONCLUSION IS FALSE HERE.
+**❌ The conclusion ("prioritise pass structure") is wrong on this device, and we had already
+measured that. ✅ But the fact, chased properly, EXPLAINS our 42% binning result and NAMES the next
+lever. Read to the end of this section — the payoff is after the retraction.**
 
 **The true part.** Xenos and Adreno are the same family. The ATI R400 line branched into the
 **Imageon Z430, which became Qualcomm Adreno 200**. Both descend from one design.
@@ -89,17 +90,56 @@ traffic.** A pass break in direct mode costs a flush and re-setup, which is real
 `37005f22f` already retired the whole tile-oriented lever class on this evidence: GMEM residency,
 tile load/store elision, `VK_QCOM_tile_memory_heap`, subpass merging and LRZ.
 
-**🔑 THE LINEAGE FACT, APPLIED CORRECTLY, ARGUES THE OPPOSITE.** The shared ancestry is in the
-SHADER CORE, not the memory architecture. The 360's EDRAM is a separate daughter die with hardware
-resolve; Adreno's GMEM is tile memory driven by a binning pass. They are analogous in spirit and
-different in size and shape. **Our oversized EDRAM-span surfaces are exactly what makes attachments
-fail to fit GMEM — 2,068 passes said so out loud.** The 360 model pushes Adreno OUT of its tiler
-fast path rather than fitting it.
+### 🔑🔑 THE MECHANISM: ADRENO IS XENOS WITH THE EDRAM REMOVED
 
-**⚠ THIS IS WHY THE INDEX SAYS TO CHECK THE LEDGER FIRST.** The argument above is plausible, is
-repeated widely, and is wrong here. It was written into this document before the measurement was
-checked, and then corrected. **A general architectural argument does not outrank a device A/B on
-the actual title.**
+The lineage is real. The inheritance SPLIT. Only the shader core came across.
+| | Xenos, 2005 | Adreno 740, the Thor |
+|---|---|---|
+| fast on-chip memory | **10 MB EDRAM**, separate daughter die, hardware resolve/MSAA/blend | **~2 MB GMEM** (the 730's block is 2 MB; the 740 is that class) |
+| who manages it | the GAME, by explicit resolve | the DRIVER, by binning |
+| shader core | R400 VLIW: split CF and ALU/FETCH programs, one vec4 plus one scalar per ALU instruction | same lineage, evolved |
+**⇒ The descendant has ONE FIFTH the fast memory of the ancestor.** Mobile die budget would not
+carry 10 MB. And "keep the whole colour and Z buffer in fast memory" is the 360's defining trick.
+
+**⇒ THIS GIVES `37005f22f` A MECHANISM, WHICH IT DID NOT HAVE.** That commit recorded "autotune is
+correct and it is not close" as an empirical fact. The size gap says WHY: forcing binning on
+EDRAM-span attachments makes the driver cut a 10 MB-shaped surface into ~2 MB tiles, which means
+many bins and one geometry replay per bin. A 42% loss is the expected result, not a surprise. The
+2,068 "Can't fit attachments into gmem" reports are that same 5x gap, stated literally.
+**An empirical result with a mechanism GENERALISES. This one predicts that NO tile-oriented lever
+will ever pay on EDRAM-span surfaces** — which is what we found, one dead lever at a time.
+
+### ✅ WHAT THE LINEAGE ACTUALLY BOUGHT US — AND WE ALREADY CASHED IT, IN 2015
+`src/xenia/gpu/ucode.h:58`:
+```
+// Parts of this code also come from the freedreno project:
+// https://github.com/freedreno/freedreno/blob/master/includes/instr-a2xx.h
+```
+**Xenia's Xenos microcode decoder is DERIVED FROM freedreno's Adreno A2xx header.** That is the
+family resemblance being spent, and it is in the SHADER DECODER, which works fine. The resemblance
+is ABSENT in the part that holds pixels, which is where the wall is. We already took the useful
+half.
+
+### ⇒ WHERE THE CORRECTED ARGUMENT ACTUALLY POINTS
+If GMEM cannot hold what EDRAM held, the winning move is not to make the emulated EDRAM tile
+better. It is to **stop staging through emulated EDRAM at all.** That is one specific lever:
+**`vulkan_direct_host_resolve`** — compute-resolve the host render target straight into guest
+memory, with no EDRAM dump and no DRAM round trip.
+| | |
+|---|---|
+| where | `gpu_flags.cc:1422` |
+| default | **false** |
+| device-tested | **never** |
+| XenDroid | ships it **ON** |
+Its win, skipping the dump and the copy, is independent of tiling mode, so it should still pay in
+sysmem. **⚠ That is a PREDICTION, not a measurement.** It is a cheap one to settle, and the code is
+already written. Test it under item A.
+
+**⚠ THIS IS WHY THE INDEX SAYS TO CHECK THE LEDGER FIRST.** The "prioritise pass structure"
+conclusion is plausible, is repeated widely, and is wrong here. It was written into this document
+before the measurement was checked, and then corrected. **A general architectural argument does not
+outrank a device A/B on the actual title — but chased properly, it still earns its keep by
+explaining the A/B and naming the next lever.**
 
 ---
 
@@ -125,6 +165,9 @@ pile of ported, allowlisted, default-off levers that have **never been device-me
 (XenDroid ships **1300**, we default 0), `vulkan_direct_host_resolve`, `vulkan_cache_sampler_parameters`,
 `a64_spin_hint_isb`, `a64_vmx_nan_fixup_branchless`, `vulkan_fast_register_ranges`.
 **⚠ Read `A DEFAULT-OFF PATH IS NOT A CONTROL` before starting.** Some off-branches are untested code.
+**🔑 START WITH `vulkan_direct_host_resolve`.** Idea 3's corrected argument names it specifically:
+if GMEM cannot hold what EDRAM held, stop staging through emulated EDRAM. XenDroid ships it ON and
+we default it off, untested.
 **⇒ Free performance may already be sitting in the tree, switched off. Connect the Thor and find out.**
 
 ### 🥈 B. INLINE THE TRANSCENDENTALS IN THE LLVM BACKEND — buildable today, no device
