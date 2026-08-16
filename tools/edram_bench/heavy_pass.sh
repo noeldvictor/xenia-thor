@@ -88,13 +88,17 @@ for n in 1 8 32 128; do
   run "" --label "alu$n" $HEAVY --alu-iters "$n" | grep median
 done
 cool 50
-echo "--- (b) BLEND off/on, alu fixed at 8 ---"
+# ⚠ THE BANDWIDTH ARMS MUST RUN AT THE ALU FLOOR (--alu-iters 0).
+# Measured 2026-08-16: at alu-iters 8 this shape costs 208.8 us/Mpx and is
+# entirely ALU-bound, so a bandwidth effect is invisible under it. At the floor
+# it is 33.5 us/Mpx and any bandwidth signal is exposed.
+echo "--- (b) BLEND off/on, alu at the FLOOR ---"
 for b in "" "--blend"; do
-  run "" --label "blend${b:-off}" $HEAVY --alu-iters 8 $b | grep median
+  run "" --label "blend${b:-off}" $HEAVY --alu-iters 0 $b | grep median
 done
-echo "--- (c) FORMAT rgba8 (4B) vs rgba16f (8B), alu fixed at 8 ---"
+echo "--- (c) FORMAT rgba8 (4B) vs rgba16f (8B), alu at the FLOOR ---"
 for f in rgba8 rgba16f; do
-  run "" --label "fmt-$f" $HEAVY --alu-iters 8 --format "$f" | grep median
+  run "" --label "fmt-$f" $HEAVY --alu-iters 0 --format "$f" | grep median
 done
 
 cool 50

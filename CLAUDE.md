@@ -11,7 +11,7 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **A/B a cvar** | `A DEFAULT-OFF PATH IS NOT A CONTROL` | the off-branch may be untested code; ours crashed in 1s and would have inverted the conclusion |
 | **pick a CPU lever** | `ARM64 PERFORMANCE PLAYBOOK` (the five rules), `docs/reference/arm/` | the port model was wrong until checked against the manual; measure applicability before building |
 | **claim an instruction is too slow/strong** | `docs/reference/arm/` + diff the emitted asm | one `clang -S` killed an implemented `__sync_*` optimisation that was a pure no-op |
-| **touch GPU / EDRAM / render passes** | `THE BD EDRAM / D3D9-HLE ERA IS ARCHIVED`, `BD FIELD IS CPU-BOUND`, `docs/research/20260816-arm64-360-speed-external-research.md` Idea 3 | that entire era optimised the wrong processor; the archive lists what is already dead. **And the 42% binning result now has a MECHANISM: Adreno 740 carries ~2 MB of GMEM against Xenos's 10 MB of EDRAM, so EDRAM-span attachments can never tile well.** That predicts every tile-oriented lever dies - do not re-derive them one at a time |
+| **touch GPU / EDRAM / render passes** | ⭐ `EDRAM / GMEM / UMA: ANSWERED ON THE DEVICE` (2026-08-16, read this FIRST), then `THE BD EDRAM / D3D9-HLE ERA IS ARCHIVED`, `BD FIELD IS CPU-BOUND` | **MEASURED: the GPU frame is ALU-BOUND, not bandwidth-bound.** Blend is free, 2x bytes/pixel is +2.5%, the EDRAM-span RT costs ~1.5%, and forced GMEM never beats autotune (it converges to parity from 16 draws up). **⇒ The EDRAM redesign, screen-sized allocation and every tile-memory lever are all dead - they target 1.5% or a resource we are not short of.** Do not re-derive them |
 | **test an acceleration theory** | `STANDING DIRECTIVE ... BESPOKE HARNESS` | build a native ARM64 binary and run it over adb - ~45s loop vs 10-18min for an APK; the theory needs the DEVICE and the DRIVER, not the emulator |
 | **chase the BD EDRAM cost** | `EDRAM HARNESS RESULT` | measured: LOAD is FREE at any attachment height, only CLEAR scales (~35.8us/1000 rows). It is the clear, not the oversized RT - but re-run on TURNIP before acting |
 | **plan GPU work for BD** | `CORRECTION ... IN-PASS RESOLVE`, `WHERE THE FRAME ACTUALLY GOES` | `sr_fscomp = 0` killed the in-pass-resolve/dynamic-rendering track for BD; the oversized EDRAM-span RTs are the measured 37ms target |
@@ -8216,3 +8216,69 @@ like `POW2`/`LOG2`/`DOT_PRODUCT` already do.
   -I third_party/xbyak_aarch64/xbyak_aarch64 -I third_party/fmt/include -I build/version -DFMT_HEADER_ONLY`.
 - **qemu-aarch64 is available through WSL** and is the right oracle for any emitted-sequence rewrite. Both
   new harnesses in `tools/qemu/` run device-free in seconds.
+
+
+## 🏁🏁🏁 **EDRAM / GMEM / UMA: ANSWERED ON THE DEVICE (2026-08-16). THE FRAME IS ALU-BOUND, AND THE EDRAM REDESIGN IS NOT WORTH BUILDING.**
+**Thor over WiFi (`192.168.1.33:5555`), Turnip on Adreno 740, 70% charging, GPU 38-41C throughout.
+`tools/edram_bench/heavy_pass.sh` at the REPRESENTATIVE shape: 1280x2048 + DEPTH + up to 256 overlapping
+draws. The old harness drew 1-64 triangles into one colour attachment with no depth and NEVER BINNED. This
+one DOES (`tiledRender=true` x4, `numberOfBins=8`), so its numbers are finally about the right machine.**
+
+### 1️⃣ THE DISCRIMINATOR: **ALU-BOUND, DECISIVELY. BANDWIDTH IS NOT THE CONSTRAINT.**
+Pixels fixed in every arm. Only the named resource moves.
+| arm | result | reading |
+|---|---|---|
+| `--alu-iters` 1 / 8 / 32 / 128 | 9,249 / 49,265 / 183,872 / 722,424 us | **linear in ALU** (4x ALU -> 3.9x time) |
+| ALU floor (`--alu-iters 0`) | 7,905 us (33.5 us/Mpx) | the raster/ROP floor |
+| **blend OFF vs ON** (dest read-modify-write per fragment) | 36.79 vs **33.28** us/Mpx | **FREE.** Inside run-to-run spread |
+| **rgba8 vs rgba16f** (4B vs 8B per pixel) | 33.25 vs **34.07** us/Mpx | **+2.5%.** Doubling bytes/pixel is nearly free |
+**⇒ Doubling framebuffer bytes costs 2.5%. A per-fragment destination read costs nothing. At `alu-iters 8`
+the SAME shape costs 208.8 us/Mpx against a 33.5 floor - six times the floor, all of it ALU.**
+**🔑 GMEM BUYS BANDWIDTH. BANDWIDTH IS NOT WHAT WE LACK. That is the whole tiling question, closed.**
+**⚠ THE TRAP THIS ALMOST FELL INTO:** the bandwidth arms were first written at `--alu-iters 8`, where ALU is
+6x the floor and any bandwidth effect is invisible. **A bandwidth arm MUST run at the ALU floor.** The script
+now says so at the call site.
+
+### 2️⃣ ALLOCATION: **THE OVERSIZED EDRAM-SPAN RT IS EXONERATED - NOW IN THE RIGHT MODE AND SHAPE.**
+Attachment 1280x**720** vs 1280x**2048**, depth, 64 draws, both modes, `--alu-iters 0`:
+| mode | 720 load / dontcare | 2048 load / dontcare | penalty |
+|---|---|---|---|
+| autotune | 7,733 / 7,702 us | 7,847 / 7,824 us | **+1.5%** |
+| `gmem,forcebin` | 7,752 / 7,731 us | 7,840 / 7,822 us | **+1.1%** |
+**⇒ ~1.1-1.5% IN BOTH MODES.** The 2026-08-14 retraction estimated 4% and was still too pessimistic.
+**🔑 WHY THE EARLIER +42%/+84% NUMBERS WERE REAL AND MISLEADING: they were 1-DRAW passes, where per-pass
+fixed cost dominates and the attachment is the only variable. With 64 draws the fixed cost amortises and the
+attachment stops mattering.** BD's heavy passes carry thousands of draws. **Attachment oversize only hurts
+passes that are nearly empty - and our 61 nearly-empty passes are 6% of the frame in total.**
+
+### 3️⃣ GMEM ENGAGEMENT: **IT NEVER WINS. IT CONVERGES TO PARITY.**
+1280x2048 + depth, autotune vs forced binning, `--alu-iters 0`:
+| draws | autotune | forced gmem | delta |
+|---|---|---|---|
+| 1 | 231.1 us | 592.9 us | **+157% WORSE** |
+| 16 | 2,471.2 | 2,472.2 | **0.0%** |
+| 64 | 7,848.1 | 7,844.9 | **0.0%** |
+| 256 | 30,370.5 | 30,372.3 | **0.0%** |
+**⇒ Catastrophic at 1 draw, EXACTLY NEUTRAL from 16 draws up. Best case is parity. GMEM never pays.**
+**🔑 AND IT EXPLAINS THE GAME'S 42% AT LAST.** `TU_DEBUG=gmem` forces binning on ALL ~74 passes. The 61 light
+ones each take the +157%-class hit; the heavy ones gain nothing. Net 42% slower is the arithmetic of that.
+**Autotune is not merely "correct and not close" - it is correct FOR A REASON, and now we have it.**
+
+### ⇒⇒⇒ WHAT THIS SETTLES, AND WHAT TO STOP DOING
+| question | answer |
+|---|---|
+| Is the GPU frame bandwidth-bound? | **No. ALU-bound.** Blend free, 2x bytes = +2.5% |
+| Can GMEM help? | **No. Never wins, converges to parity.** Closed |
+| Is the EDRAM-span RT the 37 ms? | **No. ~1.5%** at the representative shape |
+| Is the EDRAM allocation redesign worth building? | **NO.** It targets a 1.5% cost |
+| Does UMA change any of this? | No. It is orthogonal, already shipping, and the copy it would remove is not on this path |
+**❌ STOP: the tag-namespace EDRAM redesign, screen-sized RT allocation, tile-memory levers, subpass/transient
+attachment work, and anything else whose payoff is framebuffer bandwidth. All of it is aimed at 1.5% or at a
+resource we are not short of.**
+**✅ THE GPU FRAME IS PER-PIXEL SHADING WORK.** That is what `alu-iters` scaling says and what the resolution
+curve already said (71% scale = -27.7% frame time, quarter area = 1.79x). **The levers that can pay are the
+ones that reduce shader cost or pixel count: resolution, shader complexity in the two heavy passes, overdraw.**
+**⚠ WHAT THIS DOES NOT PROVE.** A synthetic `fract()` loop is not BD's shader mix. Headless, so no compositor
+or present interaction. It says the HARDWARE is not bandwidth-limited at this shape and that GMEM cannot pay -
+it does not identify which of BD's shaders costs the 37 ms. **The next question is which two passes those are
+and what their shaders do, not how EDRAM is modelled.**
