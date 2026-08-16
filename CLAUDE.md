@@ -8494,3 +8494,40 @@ its own docs state. There is no BD renderer source in existence to read.
 **⇒ Any question about what BD RENDERS must be answered by our own instrumentation. Do not re-search this.**
 (One lead did come out of the Xenia compat issue #988: BD is reported to need `clear_memory_page_state=true`
 or it corrupts. **N/A here** - ours defaults false and BD renders correctly.)
+
+## 🔬🔬🔬 **WHAT THE TWO HEAVY BD PASSES ACTUALLY ARE — FIRST LOOK EVER (2026-08-16)**
+**The question this file has asked since 2026-08-10. `MaybeLogSmallGuestPass` had the answer all along and
+never printed it: it needs `gpu_trace_resolve_timing` (never enabled) AND it returned early for any pass above
+`kResolveTimingSmallPassDraws` - so the heavy passes were EXCLUDED BY DESIGN. Now tagged BIGPASS
+(commit `69f11fb9b`). 9,686 BIGPASS records from one BD route.**
+### THE CONCENTRATION IS SHARPER THAN PREVIOUSLY RECORDED
+```
+GPU pass split: n=94  pass_us=59,666  gap_us=4,241  head=11  tail=356
+                top_pass_us=[25,796  22,844  2,097]
+```
+**⇒ TWO PASSES OF 94 ARE 48,640 us = 81.5% OF ALL IN-PASS TIME.** The third is 2,097 us. The earlier "65%"
+figure understated it.
+### AND THEY ARE ALL THE SAME FRAMEBUFFER, WITH BLENDING ON
+| ps_hash | fb | dims | draws | state |
+|---|---|---|---|---|
+| `6BE11A2B6B84F1EC` | **e20d** | **720x1824** | **671** | `blendctl0=07060706` `colormask=0007` `depthctl=00700736` `ps_zwrite=0` |
+| `5E6B8038D6E50B65` | **e20d** | 720x1824 | 220 | same, `depthctl=00700732` |
+| `F48906D093A20C3F` | **e20d** | 720x1824 | 219 | same |
+**🔑 THE HEAVY PASSES ARE HUNDREDS OF ALPHA-BLENDED, DEPTH-TESTED DRAWS STACKED INTO ONE 720-WIDE TARGET.**
+`blendctl0=07060706` is blending ENABLED; `colormask=0007` writes RGB and not alpha; `ps_zwrite=0` means the
+pixel shader does not write depth.
+**⇒ THAT IS AN OVERDRAW PROFILE, AND IT EXPLAINS THE CONTROL RESULT.** Burnout: 1,278 mostly-opaque draws of
+small triangles, 19.6 us/1000 verts. BD: ~890 BLENDED draws into one buffer, 189.1 us/1000 verts. **The 10x
+per-vertex cost is layers of blended fragments, not geometry and not EDRAM transfers.**
+### 📌 ALSO VISIBLE: 77% OF BIGPASS RECORDS HAVE A NULL PIXEL SHADER
+4,364 + 1,684 + 1,448 = 7,496 of 9,686 records show `ps_hash=0000000000000000`, `colormask=0000`,
+`host_verts=1`, at 1280x2048 / 720x1824 / 1040x2528.
+**⚠ DO NOT OVERREAD THIS.** `last_guest_draw_desc_` is the LAST draw of the pass, not all of them - a null
+last draw does not make the pass empty. It is worth a look, not a conclusion.
+### ⇒ THE NEXT MEASUREMENT, AND IT IS CHEAP
+**If BD's frame is overdraw-bound, the question is why the depth test is not rejecting those fragments early.**
+This file already knows the driver will say, per pass: `lrz.valid` and **`lrz_disable_reason`** (see
+`THE SHIPPED DRIVER CAN TELL US...`). **Read that string on `fb=e20d`.**
+**⚠ AND NOTE THE PRIOR: an earlier LRZ attempt (`gpu_lrz_spike_depth_clear`) measured +13.1% WORSE and was
+visually broken.** So LRZ has been poked once and failed. What has NEVER been done is asking the driver WHY it
+is off. If the reason is EDRAM-emulation-shaped, that is the first mechanical link from EDRAM to the 81.5%.

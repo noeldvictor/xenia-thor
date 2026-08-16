@@ -115,3 +115,47 @@ between-pass bucket was unreadable because of a logcat truncation bug (now fixed
 | the between-pass 17% is dominated by these transfers | **PLAUSIBLE, UNMEASURED.** The instrument was broken until today |
 **⇒ NEXT ACTION: re-run `tools/thor/bd_direct_host_resolve_ab.sh` on a build with the logging fix, and read
 `between_us` against `rt_transfers`. That single number decides whether Stage 1 is worth building.**
+
+
+---
+
+# ADDENDUM (same day): THE HEAVY PASSES, IDENTIFIED
+
+Everything above argues about EDRAM within a 10.4% budget. Two measurements landed after it was written and
+they move the target.
+
+## 1. The control: Burnout vs BD, same build, driver and device
+| | BURNOUT (race) | BD (gameplay) |
+|---|---|---|
+| total_vertices | **862,632** | 159,324 |
+| frame | **16,900 us (59.2 fps)** | 30,125 us (33.2 fps) |
+| in-pass | **11,801 us** | **23,487 us** |
+| between-pass | 5,099 us | 6,638 us |
+| rt_transfers | 9 | **45** |
+| pass_break_barrier | 1 | **18** |
+**BD costs ~10x per vertex (189.1 vs 19.6 us/1000 verts).** It churns EDRAM 5x harder - that half of the
+hypothesis is confirmed - but between-pass time differs by only 1.3x while in-pass differs by 2.0x at one
+fifth the geometry. **The whole gap is inside the passes.**
+
+## 2. What those passes are
+`MaybeLogSmallGuestPass` carried the answer and never printed it: it needs `gpu_trace_resolve_timing`, and it
+returned early for any pass with many draws, so the heavy ones were excluded by design. Fixed in `69f11fb9b`
+(tagged BIGPASS).
+```
+GPU pass split: n=94  pass_us=59,666  top_pass_us=[25,796  22,844  2,097]
+    -> TWO passes of 94 are 81.5% of in-pass time
+```
+All the heavy shaders share one framebuffer, `fb=e20d`, 720x1824, with **blending enabled**
+(`blendctl0=07060706`), RGB-only colour mask, depth test on, and no shader depth write - at **671, 220 and 219
+draws**.
+**⇒ BD's frame is hundreds of ALPHA-BLENDED depth-tested draws stacked into one target. That is an overdraw
+profile, and it explains the 10x per-vertex cost far better than transfers, attachment size or bandwidth.**
+
+## 3. What this does to the design above
+- **Stage 2 (in-pass transfers) and Stage 3 (UMA resolve) stay valid but stay SMALL** - they live in the
+  between-pass bucket, which the control shows is only 1.3x Burnout's.
+- **The redesign is not where the 2x is.** If one exists it is in the 81.5%, i.e. in fragment work.
+- **The next measurement is `lrz_disable_reason` on `fb=e20d`** - if the depth test cannot early-reject those
+  blended layers, that is the mechanism, and it is the first mechanical link from EDRAM emulation to the 81.5%.
+  Prior: `gpu_lrz_spike_depth_clear` measured +13.1% WORSE and looked broken, so LRZ has been poked once and
+  failed - but nobody has ever asked the driver WHY it is off.
