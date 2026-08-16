@@ -149,3 +149,23 @@ _xenia.config.backup.toml
 # edram_bench build artifacts (the arm64 binary and generated SPIR-V)
 tools/edram_bench/edram_bench
 tools/edram_bench/shaders/*.spv
+
+# Session debris that lands in the repo ROOT. These were 60+ untracked
+# entries, which is enough noise to hide a real change in `git status`.
+# All three globs are root-anchored on purpose: 39 PNGs ARE tracked under
+# docs/, and must stay that way.
+/*.dll
+/*.png
+/*.obj
+/scratchpad/
+/tmp/
+
+# Android build output.
+android/android_studio_project/app/src/main/jniLibs/
+
+# Dumped GUEST executable images. This is commercial game data - it must
+# never enter the repo, however convenient the RE scripts beside it are.
+tools/xex/*.bin
+
+# Perf symbol map, regenerated per build.
+xenia_perf.map
