@@ -8443,3 +8443,54 @@ GPU-SIDE SPLITS.**
 **⇒ On a CPU-BOUND title where ~80% of entries are LLVM and ~20% a64, every a64->LLVM transition paying a
 full symbol resolve is exactly the shape of a large win. It is CPU-side, which is where this file says BD
 actually is.**
+
+## 🥇🥇🥇 **THE CONTROL WE NEVER HAD: BURNOUT vs BD, SAME BUILD/DRIVER/DEVICE (2026-08-16)**
+**User: *"we know it's edram, a couple of other games work fast."* That is a CONTROL, and this project had
+never run one. Burnout Revenge driven into a real race by hand (blind button injection could not navigate its
+menus; the user drove it with a controller), BD from the gameplay route. Identical launch method, so both
+arms are missing the shipping optimizations equally.**
+| | **BURNOUT (race)** | **BD (gameplay)** |
+|---|---|---|
+| total_vertices | **862,632** | 159,324 |
+| rendered draws | **1,278** | 647 |
+| frame | **16,900 us (59.2 fps)** | 30,125 us (33.2 fps) |
+| **in-pass** | **11,801 us** | **23,487 us** |
+| between-pass | 5,099 us | 6,638 us |
+| `rt_transfers` | **9** | **45** |
+| `pass_break_rt_change` | **13** | **27** |
+| `pass_break_barrier` | **1** | **18** |
+### 🔑 BD IS ~10x MORE EXPENSIVE PER VERTEX. THE ANOMALY IS REAL AND IT IS NOT THE GEOMETRY.
+```
+us per 1000 vertices:   BURNOUT 19.6      BD 189.1
+Burnout draws 5.4x the vertices and 2x the draws in 0.56x the frame time.
+```
+### ⚠ BUT THE EDRAM HYPOTHESIS ONLY HALF-SURVIVES
+**CONFIRMED:** BD churns EDRAM far harder - **5x the transfers (45 vs 9), 2x the RT-change breaks, 18x the
+barriers (18 vs 1)**. That is a real, controlled difference and it is not noise.
+**REFUTED AS THE CAUSE:** the TIME does not follow.
+| bucket | Burnout | BD | ratio |
+|---|---|---|---|
+| between-pass (where transfers + barriers live) | 5,099 | 6,638 | **1.3x** |
+| in-pass | 11,801 | 23,487 | **2.0x, at 1/5 the geometry** |
+**⇒ THE ENTIRE ~13 ms GAP IS INSIDE THE PASSES. Eliminating EVERY EDRAM transfer cannot reach it.**
+BD's per-draw in-pass cost is **36 us** against Burnout's **9 us**. That reads as fill/shader-bound - a JRPG
+field of few large triangles covering many pixels - versus a racing game of many small triangles.
+### 📌 METHOD NOTES, BOTH COST A RUN
+- **Burnout's "143 s load" is a COLD-CACHE figure.** Warm, it renders at t=10 s. A 150 s button offset built
+  from that note wastes the whole run sitting in the menu. **Check `total_vertices` live, not the clock:**
+  132 verts = menu, 862k = race.
+- **Gears cannot be measured without a warm-up run first.** A cold-cache Gears launch was still AOT-compiling
+  at t=180 s (`LLVMseq 14532` and climbing), 0 frames rendered, 0 faults. It looks like a light workload if
+  you only watch temperature.
+- **Blind `input keyevent 96` (BUTTON_A) DOES work** to advance the guest - that is how the race was entered.
+
+## ❌ THE BLUE DRAGON DECOMP CANNOT ANSWER GPU QUESTIONS — CHECKED, NOT ASSUMED (2026-08-16)
+Two repos exist (`WeiGustavo/reblue`, `rapidsamphire/reblue`), both ReXGlue-based. `src/bdengine/` is:
+```
+bd_init.h  file.h  file_cache.cpp  file_hooks.cpp  game_patches.cpp  heap.cpp  ramdisk.cpp
+```
+**No graphics code at all.** ReXGlue recompiles the PPC CPU and uses **Xenia's GPU backend wholesale**, which
+its own docs state. There is no BD renderer source in existence to read.
+**⇒ Any question about what BD RENDERS must be answered by our own instrumentation. Do not re-search this.**
+(One lead did come out of the Xenia compat issue #988: BD is reported to need `clear_memory_page_state=true`
+or it corrupts. **N/A here** - ours defaults false and BD renders correctly.)
