@@ -36,7 +36,30 @@ resource we have spare.
 transfers do not change format at all** - they are moves, not reinterpretations.
 **⇒ THIS is the EDRAM cost on this device. Not tiling, not bandwidth, not attachment size.**
 
-## 3. THE ROOT CAUSE, FROM XENIA'S OWN AUTHOR
+## 3. ❌❌ RETRACTED SAME DAY: "SPURIOUS TRANSFERS FROM A CONSERVATIVE EXTENT" IS **NOT** OUR ROOT CAUSE
+**I wrote section 3 below from the author's 2021 article, then read our code, and it refutes it. Correcting
+in place rather than deleting, because the distinction is the useful part.**
+**⚠ TWO DIFFERENT NUMBERS WERE CONFLATED - by me, and it is an easy mistake to repeat:**
+| | what it is | value on BD | narrowed by the estimator? |
+|---|---|---|---|
+| `GetRenderTargetHeight()` | the **ALLOCATION** - how tall the host image is | EDRAM-span, e.g. **2048**, up to 8192 | **NO.** Pure `kEdramTileCount / pitch` arithmetic |
+| `height_used` | the **OWNERSHIP EXTENT** - what range is claimed | `min(above, EstimateMaxY())` | **YES, ALREADY** |
+`render_target_cache.cc:853`:
+```cpp
+uint32_t height_used = std::min(
+    GetRenderTargetHeight(pitch_tiles_at_32bpp, msaa_samples),
+    draw_extent_estimator_.EstimateMaxY(..., vertex_shader));
+```
+**`EstimateMaxY` bounds by the SCISSOR** (`draw_extent_estimator.cc:491`), and only falls back to CPU vertex
+processing for `clip_disable` draws. **So ownership is ALREADY scissor-narrowed. The proposed "Stage 1" is
+already implemented, and has been all along.**
+**⇒ THE 45 TRANSFERS ARE NOT AN ARTEFACT OF A LOOSE ESTIMATE.** They are the guest genuinely re-binding
+overlapping EDRAM with different keys - 24 at the same format (differing in base/pitch/msaa/depth) and 14 at
+a different format. **BD really does ping-pong its render targets: `pass_break_rt_change=27` per frame.**
+**⇒ SO THE FIX IS NOT "ESTIMATE BETTER". It is "make the transfer not cost a pass break", which is Stage 2 -
+and Stage 2 already exists as a lever.**
+
+## 3b. THE ORIGINAL (NOW-REFUTED) REASONING, KEPT AS A WARNING
 Triang3l, *Leaving No Pixel Behind* (xenia.jp, 2021-04-27), on why transfers are generated:
 > The height **is not even passed** when drawing regular world geometry. The Xbox 360 does not require a
 > render target height, only width. Xenia must conservatively estimate the affected region from viewport and
@@ -60,15 +83,9 @@ a spurious "this range might have been touched" conclusion produces.
 Its job is to answer "is this the same surface the guest wrote before?". It should never dictate host image
 dimensions, and it should never force a copy that the guest's actual writes do not require.
 
-### Stage 1 — kill the spurious transfers (the measured win)
-**Narrow the conservative extent, never widen it.** We already compute real draw extents:
-`DrawExtentEstimator` exists in this tree (it appears in the draw-outcomes log with its own bail taxonomy).
-Feed the *actual* written extent into ownership tracking instead of "the rest of EDRAM".
-- **100% compatible by construction:** the fast path only ever REPLACES a conservative over-estimate with a
-  measured, provably-not-smaller one. When the estimator bails - and it has an explicit bail taxonomy for
-  exactly this - fall back to today's conservative behaviour. A game can lose performance, never pixels.
-- **Target:** the 24 same-format transfers/frame. A same-format move between ranges that the guest never
-  actually aliased is pure loss.
+### ~~Stage 1 — kill the spurious transfers~~ ❌ **DELETED. ALREADY IMPLEMENTED.** See section 3.
+`height_used` is already `min(GetRenderTargetHeight(), EstimateMaxY())`, and `EstimateMaxY` is
+scissor-bounded. There is no loose extent to tighten. **The 45 transfers are real guest behaviour.**
 
 ### Stage 2 — make the surviving transfers free of pass breaks
 `gpu_vulkan_inpass_edram_transfers` already executes transfers inside the guest pass. It measured FLAT on BD
@@ -92,8 +109,9 @@ between-pass bucket was unreadable because of a logcat truncation bug (now fixed
 | 45 transfers / 27 RT-change pass breaks / 24 same-format per gameplay frame | **MEASURED**, 159 frames, this device |
 | bandwidth, attachment shape and GMEM are all dead ends | **MEASURED** today |
 | Dolphin's 2.5x does not transfer to us | **VERIFIED IN CODE** - `vulkan_readback_resolve` is default off |
-| spurious transfers come from conservative extent estimation | **AUTHOR'S STATEMENT + consistent with `xfer_same_fmt=24`.** NOT yet proven on this device |
-| narrowing the estimate will remove a large share of the 45 | **HYPOTHESIS.** The next measurement, not a conclusion |
+| ~~spurious transfers come from conservative extent estimation~~ | ❌ **REFUTED BY OUR OWN CODE, same day.** `height_used` is already scissor-narrowed via `EstimateMaxY`. The idea came from the 2021 article and does not describe this tree |
+| ~~narrowing the estimate removes a large share of the 45~~ | ❌ **DEAD.** There is nothing left to narrow |
+| the 45 transfers are genuine guest RT re-binding | **INFERRED** from the extent already being tight, plus `pass_break_rt_change=27`. Consistent, not proven |
 | the between-pass 17% is dominated by these transfers | **PLAUSIBLE, UNMEASURED.** The instrument was broken until today |
 **⇒ NEXT ACTION: re-run `tools/thor/bd_direct_host_resolve_ab.sh` on a build with the logging fix, and read
 `between_us` against `rt_transfers`. That single number decides whether Stage 1 is worth building.**
