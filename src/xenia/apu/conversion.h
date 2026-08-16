@@ -15,6 +15,10 @@
 #include "xenia/base/byte_order.h"
 #include "xenia/base/platform.h"
 
+#if XE_ARCH_ARM64
+#include <arm_neon.h>
+#endif
+
 namespace xe {
 namespace apu {
 namespace conversion {
@@ -80,6 +84,57 @@ inline void sequential_6_BE_to_interleaved_2_LE(float* output,
     right = _mm_mul_ps(right, two_fifths);
     _mm_storeu_ps(&output[sample * 2], _mm_unpacklo_ps(left, right));
     _mm_storeu_ps(&output[(sample + 2) * 2], _mm_unpackhi_ps(left, right));
+  }
+}
+#elif XE_ARCH_ARM64
+// NEON mirror of the SSE2 path above (ported from xenia-edge b899a97a7, but
+// re-derived against OUR downmix, which is not theirs). Before this the Thor
+// ran the scalar #else path below, one byte swap per sample.
+// Two things must stay true of this mirror:
+//  1. The byte swap runs in the INTEGER domain (rev32 inside each 32-bit
+//     lane), so a NaN payload round-trips bit-exactly.
+//  2. The adds keep the SSE association ((fl + bl) + center_halved) so an
+//     ARM64 build produces the same samples as an x64 build.
+inline void sequential_6_BE_to_interleaved_6_LE(float* output,
+                                                const float* input,
+                                                size_t ch_sample_count) {
+  for (size_t sample = 0; sample < ch_sample_count; sample++) {
+    for (size_t channel = 0; channel < 6; channel++) {
+      output[sample * 6 + channel] =
+          xe::byte_swap(input[channel * ch_sample_count + sample]);
+    }
+  }
+}
+
+inline void sequential_6_BE_to_interleaved_2_LE(float* output,
+                                                const float* input,
+                                                size_t ch_sample_count) {
+  assert_true(ch_sample_count % 4 == 0);
+  const float32x4_t half = vdupq_n_f32(0.5f);
+  const float32x4_t two_fifths = vdupq_n_f32(1.0f / 2.5f);
+  const uint8_t* in_bytes = reinterpret_cast<const uint8_t*>(input);
+
+  // put center on left and right, discard low frequency
+  for (size_t sample = 0; sample < ch_sample_count; sample += 4) {
+    auto load_swap = [&](size_t channel) {
+      const uint8x16_t raw = vld1q_u8(
+          &in_bytes[(channel * ch_sample_count + sample) * sizeof(float)]);
+      return vreinterpretq_f32_u8(vrev32q_u8(raw));
+    };
+    const float32x4_t fl = load_swap(0);
+    const float32x4_t fr = load_swap(1);
+    const float32x4_t fc = load_swap(2);
+    const float32x4_t bl = load_swap(4);
+    const float32x4_t br = load_swap(5);
+
+    const float32x4_t center_halved = vmulq_f32(fc, half);
+    float32x4_t left = vaddq_f32(vaddq_f32(fl, bl), center_halved);
+    float32x4_t right = vaddq_f32(vaddq_f32(fr, br), center_halved);
+    left = vmulq_f32(left, two_fifths);
+    right = vmulq_f32(right, two_fifths);
+    // vzip1q/vzip2q have the lane order of unpacklo/unpackhi.
+    vst1q_f32(&output[sample * 2], vzip1q_f32(left, right));
+    vst1q_f32(&output[(sample + 2) * 2], vzip2q_f32(left, right));
   }
 }
 #else
