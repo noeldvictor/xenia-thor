@@ -7597,6 +7597,29 @@ GMEM/tiling behaviour is the entire question.
 **⚠ WHAT A HEADLESS HARNESS CANNOT TELL YOU - state it in every result:** no swapchain means no compositor
 interaction and no FlexRender mode switch driven by presentation. And a microbenchmark's draw pattern is not
 BD's. **A harness result is a MECHANISM check, not a game speedup.** Port the mechanism, then measure the game.
+### ✅✅ AMENDMENT (user, 2026-08-16): **BUILDING A BENCHMARK BINARY NEEDS NO PERMISSION. JUST BUILD IT.**
+**"it's okay to create benchmark binaries or something when we are doing shit like this."**
+Do not ask, and do not do a worse experiment because a better one needs a new binary. A harness, a qemu
+differential, a census tool or a scratch ARM64 executable is the CHEAP half of this work. Two landed on
+2026-08-16 in minutes each (`tools/qemu/apu_neon_conversion_equiv.c`,
+`tools/qemu/a64_membase_fixup_equiv.c`). **Put the durable ones in `tools/`. Throwaways go in the
+scratchpad.**
+
+### ⚠️⚠️⚠️ **BUT A HARNESS THAT IS NOT REPRESENTATIVE PRODUCES A CONFIDENT WRONG ANSWER**
+**This already happened, twice, on the same question.** `tools/edram_bench` drew **1-64 fullscreen triangles
+into ONE colour attachment, no depth**. On that workload:
+1. Turnip never binned it (`tilingDisableReason=Autotune selected sysmem`, *"too simple to bin"*) - so it
+   measured SYSMEM behaviour and reported *"LOAD is free at any attachment height"*.
+2. That became the entry **"OVERSIZED EDRAM-SPAN RENDER TARGETS ARE EXONERATED"**, which stood until
+   2026-08-14, when it was RETRACTED - the data was right and what the data was OF was wrong.
+**⇒ BEFORE TRUSTING A HARNESS NUMBER, CHECK THE HARNESS RAN THE MODE AND SHAPE YOU CARE ABOUT.**
+`MESA_GPU_TRACEFILE=... MESA_GPU_TRACES=print` prints `tiledRender=`, `tilingDisableReason=` and `drawCount=`
+per pass. **Read those on every arm and state them in the result.**
+**⇒ AND MATCH THE SHAPE OF THE REAL PASS.** BD's two dominant passes are **1280x2048 with depth and thousands
+of draws**, and they are **65% of the GPU frame**. A single-attachment 1-draw harness cannot speak about them.
+The open TODO at the end of that retraction still stands: **add depth, multi-attachment and real-draw-count
+arms.**
+
 ### 🥇 FIRST TARGET (user-chosen): EDRAM-SPAN vs SCREEN-SIZED RENDER TARGETS
 **This is the one with a measured 37 ms behind it** (see `WHERE THE FRAME ACTUALLY GOES`). Arms:
 ```
