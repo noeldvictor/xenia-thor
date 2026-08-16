@@ -190,7 +190,25 @@ struct Config {
   uint32_t area_height = 0;
   std::string flag_shader = "none";
   uint32_t flag_value = 0x5555u;
+  // ---- THE ALU-vs-BANDWIDTH DISCRIMINATOR (added 2026-08-16) ----
+  // BD's two dominant passes are 65% of the GPU frame and nobody knows which
+  // resource they are limited by. Bandwidth-bound and ALU-bound both scale
+  // linearly with pixel count, so the resolution curve cannot separate them -
+  // and the answer decides whether GMEM can EVER help (it buys bandwidth, not
+  // ALU). Hold pixels fixed and sweep these three:
+  //   alu_iters : fragment ALU cost, nothing else changes
+  //   blend     : forces a read-modify-write of the destination per fragment
+  //   format    : bytes per pixel (rgba8 = 4, rgba16f = 8)
+  // time tracks alu_iters -> ALU-bound. time tracks blend/format -> bandwidth.
+  uint32_t alu_iters = 8;  // 8 = the old hardcoded loop, so default = legacy
+  bool blend = false;
+  std::string format = "rgba8";  // rgba8 | rgba16f
 };
+
+VkFormat ParseFormat(const std::string& s) {
+  if (s == "rgba16f") return VK_FORMAT_R16G16B16A16_SFLOAT;
+  return VK_FORMAT_R8G8B8A8_UNORM;
+}
 
 VkAttachmentLoadOp ParseLoadOp(const std::string& s) {
   if (s == "load") return VK_ATTACHMENT_LOAD_OP_LOAD;
@@ -405,6 +423,9 @@ int main(int argc, char** argv) {
     else if (a == "--area-height") cfg.area_height = std::stoul(next());
     else if (a == "--flag-shader") cfg.flag_shader = next();
     else if (a == "--flag-value") cfg.flag_value = std::stoul(next(), nullptr, 0);
+    else if (a == "--alu-iters") cfg.alu_iters = std::stoul(next());
+    else if (a == "--blend") cfg.blend = true;
+    else if (a == "--format") cfg.format = next();
     else if (a == "--label") cfg.label = argv[i + 1], ++i;
     else {
       std::fprintf(stderr, "unknown arg: %s\n", a.c_str());
@@ -474,7 +495,7 @@ int main(int argc, char** argv) {
   VkQueue queue;
   vkGetDeviceQueue(dev, qfi, 0, &queue);
 
-  const VkFormat kFormat = VK_FORMAT_R8G8B8A8_UNORM;
+  const VkFormat kFormat = ParseFormat(cfg.format);
   VkImageCreateInfo img_ci{};
   img_ci.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
   img_ci.imageType = VK_IMAGE_TYPE_2D;
@@ -670,6 +691,18 @@ int main(int argc, char** argv) {
   ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
   VkPipelineColorBlendAttachmentState cba{};
   cba.colorWriteMask = 0xF;
+  if (cfg.blend) {
+    // Standard src-alpha blend. This is the point of the arm: the ROP must
+    // READ the destination for every fragment, which is exactly the traffic
+    // the 360's EDRAM made free and this device does not.
+    cba.blendEnable = VK_TRUE;
+    cba.srcColorBlendFactor = VK_BLEND_FACTOR_SRC_ALPHA;
+    cba.dstColorBlendFactor = VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA;
+    cba.colorBlendOp = VK_BLEND_OP_ADD;
+    cba.srcAlphaBlendFactor = VK_BLEND_FACTOR_ONE;
+    cba.dstAlphaBlendFactor = VK_BLEND_FACTOR_ZERO;
+    cba.alphaBlendOp = VK_BLEND_OP_ADD;
+  }
   VkPipelineColorBlendStateCreateInfo cb{};
   cb.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
   cb.attachmentCount = 1;
@@ -798,7 +831,10 @@ int main(int argc, char** argv) {
         struct {
           float t;
           uint32_t flags;
-        } push{float(d) * 0.031f + float(p) * 0.017f, cfg.flag_value};
+          // The flags shaders read this word as their system-flag bits; the
+          // fill shader reads it as the ALU trip count. One layout, two uses.
+        } push{float(d) * 0.031f + float(p) * 0.017f,
+               cfg.flag_shader == "none" ? cfg.alu_iters : cfg.flag_value};
         vkCmdPushConstants(cmd, layout, VK_SHADER_STAGE_FRAGMENT_BIT, 0,
                            sizeof(push), &push);
         vkCmdDraw(cmd, 3, 1, 0, 0);
