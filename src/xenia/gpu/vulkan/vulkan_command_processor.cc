@@ -10620,8 +10620,15 @@ void VulkanCommandProcessor::UpdateDynamicState(
     uint32_t pct = uint32_t(cvars::gpu_resolution_downscale_pct);
     scissor_rect.offset.x = scissor_rect.offset.x * int32_t(pct) / 100;
     scissor_rect.offset.y = scissor_rect.offset.y * int32_t(pct) / 100;
-    scissor_rect.extent.width = scissor_rect.extent.width * pct / 100u;
-    scissor_rect.extent.height = scissor_rect.extent.height * pct / 100u;
+    // Through the SINGLE SOURCE, which clamps to >= 1. The open-coded form
+    // here used to be `extent * pct / 100u` with no clamp, so a scissor
+    // narrower than 100/pct pixels floored to ZERO and silently dropped every
+    // draw using it - a correctness bug that only appears once the downscale
+    // is enabled, which is why it was never seen.
+    scissor_rect.extent.width =
+        RenderTargetCache::ApplyResolutionDownscale(scissor_rect.extent.width);
+    scissor_rect.extent.height =
+        RenderTargetCache::ApplyResolutionDownscale(scissor_rect.extent.height);
   }
   // gpu_flatten_predicated_tiling stage 2: during the frame's FIRST bin pass
   // (the one the flatten force-passes all predicated draws into), the guest's

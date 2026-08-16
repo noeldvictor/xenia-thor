@@ -22,6 +22,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/gpu/draw_util.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/register_file.h"
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/xenos.h"
@@ -1178,6 +1179,40 @@ uint32_t RenderTargetCache::GetRenderTargetHeight(
                                       tile_height_samples_scaled);
   assert_not_zero(tile_rows);
   return tile_rows * (xenos::kEdramTileHeightSamples >> msaa_samples_y_log2);
+}
+
+// ⭐ THE SINGLE SOURCE OF HOST RENDER TARGET SIZE - see the header comment.
+// Everything that needs a host RT dimension goes through here so a size can
+// never again be computed two different ways.
+bool RenderTargetCache::IsResolutionDownscaled() {
+  return cvars::gpu_resolution_downscale_pct > 0 &&
+         cvars::gpu_resolution_downscale_pct < 100 &&
+         !cvars::gpu_diag_raster_ab;
+}
+
+uint32_t RenderTargetCache::ApplyResolutionDownscale(uint32_t value) {
+  if (!IsResolutionDownscaled()) {
+    return value;
+  }
+  // Integer math on purpose: the same expression must be reproducible in the
+  // resolve/dump shader constants, which are integer-typed.
+  return std::max(uint32_t(1), value *
+                                   uint32_t(cvars::gpu_resolution_downscale_pct) /
+                                   100u);
+}
+
+uint32_t RenderTargetCache::GetHostRenderTargetWidth(
+    uint32_t pitch_tiles_at_32bpp, xenos::MsaaSamples msaa_samples) const {
+  return ApplyResolutionDownscale(
+      RenderTargetKey::GetWidth(pitch_tiles_at_32bpp, msaa_samples) *
+      draw_resolution_scale_x());
+}
+
+uint32_t RenderTargetCache::GetHostRenderTargetHeight(
+    uint32_t pitch_tiles_at_32bpp, xenos::MsaaSamples msaa_samples) const {
+  return ApplyResolutionDownscale(
+      GetRenderTargetHeight(pitch_tiles_at_32bpp, msaa_samples) *
+      draw_resolution_scale_y());
 }
 
 RenderTargetCache::RenderTarget*

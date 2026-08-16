@@ -3985,10 +3985,13 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   image_create_info.pNext = nullptr;
   image_create_info.flags = 0;
   image_create_info.imageType = VK_IMAGE_TYPE_2D;
-  image_create_info.extent.width = key.GetWidth() * draw_resolution_scale_x();
+  // Single-sourced: folds the integer upscale AND the fractional downscale.
+  // Do NOT open-code `GetWidth() * draw_resolution_scale_x()` here again - that
+  // is exactly what made the resolution win unshippable.
+  image_create_info.extent.width =
+      GetHostRenderTargetWidth(key.pitch_tiles_at_32bpp, key.msaa_samples);
   image_create_info.extent.height =
-      GetRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples) *
-      draw_resolution_scale_y();
+      GetHostRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples);
   // BD tile-I/O cut (THE REAL KNOB): Turnip's per-pass GMEM resolve / storeOp
   // covers the full ATTACHMENT IMAGE extent, not the renderArea - so clamping only
   // the framebuffer (host_extent, in GetHostRenderTargetsFramebuffer) was inert and
@@ -4007,14 +4010,6 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   // gpu_diag_raster_ab keeps the RT FULL-size (only the per-draw viewport
   // alternates) so the fill test isn't confounded by a shrunk RT clipping the
   // full-viewport phase.
-  if (cvars::gpu_resolution_downscale_pct > 0 &&
-      cvars::gpu_resolution_downscale_pct < 100 && !cvars::gpu_diag_raster_ab) {
-    uint32_t pct = uint32_t(cvars::gpu_resolution_downscale_pct);
-    image_create_info.extent.width =
-        std::max(1u, image_create_info.extent.width * pct / 100u);
-    image_create_info.extent.height =
-        std::max(1u, image_create_info.extent.height * pct / 100u);
-  }
   image_create_info.extent.depth = 1;
   image_create_info.mipLevels = 1;
   image_create_info.arrayLayers = 1;
@@ -4457,10 +4452,17 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   // Limiting to the device limit for the case of no attachments, for which
   // there's no limit imposed by the sizes of the attachments that have been
   // created successfully.
-  host_extent.width = std::min(host_extent.width * draw_resolution_scale_x(),
-                               device_properties.maxFramebufferWidth);
-  host_extent.height = std::min(host_extent.height * draw_resolution_scale_y(),
-                                device_properties.maxFramebufferHeight);
+  // Single-sourced (see RenderTargetCache::GetHostRenderTargetWidth). The
+  // framebuffer MUST agree with the image extent or the downscale silently
+  // renders into a size the attachment does not have.
+  host_extent.width =
+      std::min(ApplyResolutionDownscale(host_extent.width *
+                                        draw_resolution_scale_x()),
+               device_properties.maxFramebufferWidth);
+  host_extent.height =
+      std::min(ApplyResolutionDownscale(host_extent.height *
+                                        draw_resolution_scale_y()),
+               device_properties.maxFramebufferHeight);
   // BD tile-I/O cut: the host RT is tile-rounded to a huge height (e.g. 4096 /
   // 8192) for EDRAM aliasing, but at 720p only ~720 rows are ever rendered. On a
   // TBDR the storeOp/loadOp cover the FRAMEBUFFER height, so the unused rows are
@@ -12079,7 +12081,7 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
           ck.base_tiles != 0) {
         continue;
       }
-      uint32_t cw = ck.GetWidth() * draw_resolution_scale_x();
+      uint32_t cw = GetHostRenderTargetWidth(ck.pitch_tiles_at_32bpp, ck.msaa_samples);
       if (cw > rt_image_widest) {
         rt_image_widest = cw;
       }
@@ -12092,7 +12094,8 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       if (rt_image_key.is_depth ||
           rt_image_key.msaa_samples != xenos::MsaaSamples::k1X ||
           rt_image_key.base_tiles != 0 ||
-          rt_image_key.GetWidth() * draw_resolution_scale_x() !=
+          GetHostRenderTargetWidth(rt_image_key.pitch_tiles_at_32bpp,
+                                   rt_image_key.msaa_samples) !=
               rt_image_widest) {
         continue;
       }
@@ -12101,11 +12104,9 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       const ui::vulkan::VulkanDevice::Functions& dfn =
           vulkan_device->functions();
       const VkDevice device = vulkan_device->device();
-      uint32_t rt_width = rt_image_key.GetWidth() * draw_resolution_scale_x();
-      uint32_t rt_height =
-          GetRenderTargetHeight(rt_image_key.pitch_tiles_at_32bpp,
-                                rt_image_key.msaa_samples) *
-          draw_resolution_scale_y();
+      uint32_t rt_width = GetHostRenderTargetWidth(rt_image_key.pitch_tiles_at_32bpp, rt_image_key.msaa_samples);
+      uint32_t rt_height = GetHostRenderTargetHeight(
+          rt_image_key.pitch_tiles_at_32bpp, rt_image_key.msaa_samples);
       if (!rt_width || !rt_height) {
         break;
       }
@@ -12234,10 +12235,10 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       const ui::vulkan::VulkanDevice::Functions& dfn =
           vulkan_device->functions();
       const VkDevice device = vulkan_device->device();
-      uint32_t d_width = d_key.GetWidth() * draw_resolution_scale_x();
+      uint32_t d_width = GetHostRenderTargetWidth(d_key.pitch_tiles_at_32bpp, d_key.msaa_samples);
       uint32_t d_height =
-          GetRenderTargetHeight(d_key.pitch_tiles_at_32bpp, d_key.msaa_samples) *
-          draw_resolution_scale_y();
+          GetHostRenderTargetHeight(d_key.pitch_tiles_at_32bpp,
+                                    d_key.msaa_samples);
       if (!d_width || !d_height) {
         break;
       }

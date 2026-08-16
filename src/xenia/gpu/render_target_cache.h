@@ -193,6 +193,32 @@ class RenderTargetCache {
     return draw_resolution_scale_x() > 1 || draw_resolution_scale_y() > 1;
   }
 
+  // ⭐ THE SINGLE SOURCE OF A HOST RENDER TARGET'S PIXEL SIZE. USE THESE.
+  //
+  // A host RT's dimensions are the guest size times the INTEGER upscale
+  // (draw_resolution_scale_*) times the FRACTIONAL downscale
+  // (gpu_resolution_downscale_pct). Before 2026-08-16 that product was
+  // open-coded at ~14 sites and the downscale was applied at only TWO of them,
+  // so from the moment the cvar was set every other site computed a size the
+  // image no longer had. That is why the measured resolution win (1.38x at
+  // 71%, 1.79x at 50% on BD) was never shippable.
+  //
+  // This is the same defect class as the LLVM object-cache key: a derived
+  // quantity recomputed by hand in several places, one of which lies. The fix
+  // is the same - one definition, everything funnels through it.
+  //
+  // ⚠ ANY new code needing a host RT dimension MUST call these and must NOT
+  // write `key.GetWidth() * draw_resolution_scale_x()` again.
+  uint32_t GetHostRenderTargetWidth(uint32_t pitch_tiles_at_32bpp,
+                                    xenos::MsaaSamples msaa_samples) const;
+  uint32_t GetHostRenderTargetHeight(uint32_t pitch_tiles_at_32bpp,
+                                     xenos::MsaaSamples msaa_samples) const;
+  // Applies the fractional downscale alone, for callers that already hold a
+  // scaled dimension (viewport/scissor). Returns >= 1.
+  static uint32_t ApplyResolutionDownscale(uint32_t value);
+  // True when the fractional downscale is actually in effect.
+  static bool IsResolutionDownscaled();
+
   // Virtual (both the common code and the implementation may do something
   // here), don't call from destructors (does work not needed for shutdown
   // also).
