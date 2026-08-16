@@ -8352,3 +8352,42 @@ both about the wrong frames. **Always gate on `verts>50000`.**
 - **In-pass EDRAM transfers remain the only other EDRAM lever worth building, inside a 10.4% ceiling.**
 - **The 89.6% is shading.** The only lever measured to move it is fewer or cheaper pixels (resolution: 71%
   scale = -27.7% frame time). **That is where a "superspeed" answer has to come from, not from EDRAM.**
+
+## 🧩 **"ARE WE USING UMA/GMEM WELL?" — DEVICE-ENUMERATED ANSWER (2026-08-16), AND ONE REAL GAP**
+User challenge: *"i think we aren't using uma/gmem and arm64 stuff well to solve this edram issue."* Tested it
+rather than argued it.
+### ❌ `VK_EXT_external_memory_host` IS **NOT EXPOSED** ON THIS DEVICE
+`vulkan_device.cc:288` calls it *"the only remaining hybrid-UMA option"*. **Device-enumerated: 0 hits out of
+170 supported extensions on Turnip r11 / Adreno 740.** The route our own comment names does not exist here.
+### ✅ BUT TWO ANDROID-NATIVE EQUIVALENTS **ARE** PRESENT, AND WE NEVER CONSIDERED THEM
+```
+VK_ANDROID_external_memory_android_hardware_buffer   <- AHardwareBuffer, the Android zero-copy path
+VK_EXT_external_memory_dma_buf
+VK_KHR_external_memory + VK_KHR_external_memory_fd
+```
+**⇒ THE COMMENT PICKED THE WRONG EXTENSION.** On Android the zero-copy import is AHardwareBuffer, not
+`external_memory_host`. **That is a genuine unexplored UMA route.**
+**⚠ BUT SIZE IT FIRST.** It would remove the ONE remaining `memcpy` in the shared-memory upload path
+(`vulkan_shared_memory.cc:920`) - which is the TEXTURE/VERTEX upload path, **not EDRAM**. That path is already
+instrumented (`VulkanPerfCountersRecordSharedMemoryDirectWrite`) and **nobody has ever read the counter.**
+Read the bytes/frame before building anything. Rule 4: count before building.
+### 📊 AND THE CEILING IS NOT NEGOTIABLE
+| bucket | share of frame | can UMA/GMEM touch it? |
+|---|---|---|
+| in-pass guest shading | **89.6%** | **NO.** ALU-bound, and the census says the instructions are the GUEST'S OWN SHADER (4 thin emulation gates in a 2,195-instruction variant) |
+| EDRAM transfers + resolves + barriers | **10.4%** | yes - this is the whole EDRAM surface |
+| of which GMEM could recover | **0%** | measured: forced binning is +157% at 1 draw and EXACTLY neutral at 16/64/256. It never wins |
+| of which UMA already recovered | ~13-15% of the bucket | `vulkan_direct_host_resolve`, measured today |
+**⇒ "USE UMA/GMEM BETTER" HAS A HARD CEILING OF 10.4%, AND GMEM'S MEASURED CONTRIBUTION TO IT IS ZERO.**
+
+## 🐬 **WHAT THE WII EMULATOR DID, AND WHY MOST OF IT DOES NOT TRANSFER**
+Dolphin's EFB is the direct GameCube/Wii analogue of EDRAM, so it is the right place to look.
+| Dolphin technique | what it is | applies to us? |
+|---|---|---|
+| **EFB to Texture** (default) | keep the copy on the GPU as a texture | **WE ALREADY DO THIS.** `vulkan_readback_resolve` is default OFF, documented "very slow, bring-up parity only" |
+| **EFB to RAM** | accurate, reads back to emulated main RAM | We do not pay this cost at all |
+| **Deferred/batched EFB copies** (PR 7539) | queue copies, flush at the guest's own sync point, discard superseded ones. **Xenoblade 62 -> 156 fps** | **NO.** That 2.5x is on the EFB2RAM path. **We are already on the fast side of the trade** - verified in code, not assumed |
+| **Ubershaders / hybrid ubershaders** | avoid per-state shader compilation for fixed-function TEV | **NO, and the reason matters.** Dolphin needs them because GameCube TEV is FIXED-FUNCTION. Xenia compiles specialized SPIR-V from the guest's real shader microcode - **we are already on the "specialized shader" side Dolphin works to get back to** |
+| Android: "Store EFB to RAM" is hardware-dependent | Shield TV beat SD835 with it on; Snapdragon won with it off | Consistent with our own result that readback is the thing to avoid on Adreno |
+**🔑 THE PATTERN: every Dolphin EFB win is about AVOIDING A GPU->CPU READBACK. We already avoid it. There is
+no Dolphin trick left to take, and that is a real answer, not a shrug.**
