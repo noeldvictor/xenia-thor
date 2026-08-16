@@ -1491,8 +1491,23 @@ int InstrEmit_vsldoi_(PPCHIRBuilder& f, uint32_t vd, uint32_t va, uint32_t vb,
   // vsldoi128 vr63,vr63,vr63,4
   // (ABCD ABCD) << 4b = (BCDA)
   // (VA << SH) OR (VB >> (16 - SH))
-  Value* control = f.LoadConstantVec128(__vsldoi_table[sh]);
-  Value* v = f.Permute(control, f.LoadVR(va), f.LoadVR(vb), INT8_TYPE);
+  Value* v;
+  if (!(sh & 3)) {
+    // Word aligned, so a WORD permute does it and the byte table is not
+    // needed. The source word sh/4 + i encodes directly as a control byte:
+    // lane in bits 0-1, the vb select in bit 2. On a64 a consecutive run of
+    // source words is a byte aligned extract from the pair, so PERMUTE_I32
+    // collapses this to a single `ext`. (xenia-edge 42087f44b.)
+    uint32_t control = 0;
+    for (uint32_t i = 0; i < 4; ++i) {
+      control |= ((sh >> 2) + i) << (i * 8);
+    }
+    v = f.Permute(f.LoadConstantUint32(control), f.LoadVR(va), f.LoadVR(vb),
+                  INT32_TYPE);
+  } else {
+    Value* control = f.LoadConstantVec128(__vsldoi_table[sh]);
+    v = f.Permute(control, f.LoadVR(va), f.LoadVR(vb), INT8_TYPE);
+  }
   f.StoreVR(vd, v);
   return 0;
 }
