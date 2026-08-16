@@ -8531,3 +8531,16 @@ This file already knows the driver will say, per pass: `lrz.valid` and **`lrz_di
 **⚠ AND NOTE THE PRIOR: an earlier LRZ attempt (`gpu_lrz_spike_depth_clear`) measured +13.1% WORSE and was
 visually broken.** So LRZ has been poked once and failed. What has NEVER been done is asking the driver WHY it
 is off. If the reason is EDRAM-emulation-shaped, that is the first mechanical link from EDRAM to the 81.5%.
+
+### 🪤🪤 TWO SILENT `wrap.<pkg>` TRAPS, EACH COSTING A FULL DEVICE RUN (2026-08-16)
+Chasing `lrz_disable_reason` on BD. Both failures produce a NORMAL-LOOKING RUN with no trace file and no
+error anywhere in the log.
+| trap | symptom | fix |
+|---|---|---|
+| **`/data/local/tmp` is not writable by the APP** | wrap sets fine, `getprop` confirms it, route runs, scene gate passes - **and no trace file exists.** The standalone harness CAN write there because it runs as `shell`; the app runs as `u0_a163` and cannot | point the trace at `/data/data/<pkg>/files/...` and read it back with `run-as` |
+| **`setprop` VALUE MAX IS 92 BYTES** | `Value '...' is too long, 96 bytes vs a max of 92`, then **`getprop` returns EMPTY** and the run proceeds with no tracing at all | keep the whole wrap under 92. `MESA_GPU_TRACEFILE=/data/data/<pkg>/files/l MESA_GPU_TRACES=print` is 90 |
+**⇒ ALWAYS `getprop` THE WRAP BACK AND ABORT IF EMPTY, before spending the run.** A wrap that did not set is
+indistinguishable from a normal run in every other signal - fps, temperature, faults and the scene gate all
+look right.
+**⇒ AND THE EXISTING `tools/thor/*` TRACE SCRIPTS ALL POINT AT `/data/local/tmp`.** That works for
+`edram_bench` (shell) and silently yields nothing for the app.
