@@ -15,7 +15,8 @@ the two sections that apply instead of skimming all of it. **Every line below co
 | **test an acceleration theory** | `STANDING DIRECTIVE ... BESPOKE HARNESS` | build a native ARM64 binary and run it over adb - ~45s loop vs 10-18min for an APK; the theory needs the DEVICE and the DRIVER, not the emulator |
 | **chase the BD EDRAM cost** | `EDRAM HARNESS RESULT` | measured: LOAD is FREE at any attachment height, only CLEAR scales (~35.8us/1000 rows). It is the clear, not the oversized RT - but re-run on TURNIP before acting |
 | **plan GPU work for BD** | `CORRECTION ... IN-PASS RESOLVE`, `WHERE THE FRAME ACTUALLY GOES` | `sr_fscomp = 0` killed the in-pass-resolve/dynamic-rendering track for BD; the oversized EDRAM-span RTs are the measured 37ms target |
-| **port from XenDroid** | `XENDROID SWEEP 2026-08-13` (latest, has the author-filter recipe), `XENDROID IS THE BAR`, `XENDROID UPSTREAM PORT TRACK`, `APU/BASE SWEEP TRIAGE` | their tree is heavily diverged - port the idea, not the patch, and expect genuine N/A results |
+| **port from XenDroid or Edge** | `SWEEP 2026-08-16` (latest; both trees, the sweep recipe, the ranked next batch), `XENDROID SWEEP 2026-08-13`, `XENDROID IS THE BAR`, `XENDROID UPSTREAM PORT TRACK`, `APU/BASE SWEEP TRIAGE` | their trees are heavily diverged - port the idea, not the patch, and expect genuine N/A results |
+| **change ANY CPU semantics** | `SWEEP 2026-08-16`, the corpus at `src/xenia/cpu/ppc/testing/instr__gen_*.s` | 169,117 hardware-captured cases now exist. **35,917 of them fail today.** Get a before/after count; never ship a CPU change without one |
 | **fire the device** | `Never thrash the Thor`, `BLACK SCREEN? CHECK THE DISPLAY`, `TURNIP IS MANDATORY` | thermal limits are real; a sleeping panel looks exactly like a rendering bug; a bare launch uses the WRONG driver |
 | **chase a crash** | `BURNOUT ... LLVM WRITING x20`, `GEARS SIGTRAP`, `Android fault diagnosis` (memory) | decode the instruction before blaming a subsystem; x20/x21 state is the discriminator |
 | **hunt x86-shaped bugs** | `THE x86→ARM64 SWEEP: MEMORY ORDERING IS THE BUG CLASS` | TSO hides missing fences; look for an atomic index guarding a plain buffer, and check the POSIX `#elif` nobody profiles |
@@ -8087,3 +8088,108 @@ comes from**. Drivers: `bash tools/edram_bench/spec_ab.sh` (timing), `bash tools
 **⚠ NOT MEASURED. This is a manual-backed hypothesis with three supporting measurements, not a result.**
 Price it in the harness first (a shader with N runtime flag tests vs the same shader specialized), because a
 pipeline-variant explosion is the obvious way it backfires.
+
+
+## 🧲🧲🧲 SWEEP 2026-08-16 — EDGE + XENDROID. THE BIG FIND IS AN ORACLE, NOT A LEVER
+**Swept from the 2026-08-13 marks. `reference/xenia-edge` `origin/edge` = `01efb80ed`, 175 new commits.
+`reference/XenDroid` `origin/main` = `0b1120187`, 40 new rfandango commits.**
+```
+git -C reference/xenia-edge log --format='%h %ad %s' --date=short --no-merges 12eb05f8a..origin/edge
+git -C reference/XenDroid  log --format='%h %ad %s' --date=short --no-merges --author=rfandango b70d64374..origin/main
+```
+**⚠ The XenDroid author filter is still mandatory. Their default branch is `main`, and the unfiltered log
+replays the vendored xenia-edge history.**
+
+### 🔑🔑🔑 THE HEADLINE: EDGE HAS A HARDWARE-CAPTURE TEST CORPUS AND WE DID NOT
+**Edge's `src/xenia/cpu/ppc/testing/` holds 151 `instr__gen_*.s` files with 167,636 captured cases. The file
+format is IDENTICAL to ours, so they drop in with no runner change.** Imported at `fb9c3c622`.
+| | before | after |
+|---|---|---|
+| PPC test cases | 1,481 | **169,117** |
+| passing | 1,481 | 133,200 |
+| **failing** | 0 | **35,917 (21.2%)** |
+**⇒ Our CPU backends had never been measured against hardware. They fail one case in five.**
+**The failures are almost all FLOATING POINT NaN and FPSCR semantics:**
+| instruction | fail rate | instruction | fail rate |
+|---|---|---|---|
+| `vnmsubfp` | **82.1%** (12,808) | `vminfp` | 63.4% |
+| `vmaddfp` | **39.8%** (6,215) | `vmaxfp` | 58.5% |
+| `fnmadds`/`fnmsubs` | 59.3% | `vcmpbfp` | 59.9% |
+| `fnmadd`/`fnmsub` | 42.1% | `vaddfp`/`vsubfp` | 31.3% |
+| `fmadds`/`fmsubs` | 24.5% | `vlogefp`/`vrsqrtefp` | 92.3% |
+| `vsr`/`vsl` | 64-69% | `vpkpx` | 99.1% (unimplemented) |
+**🔑 EDGE WROTE THE FIXES FOR NEARLY ALL OF THESE BETWEEN 08-15 AND 08-17.** The mapping is close to
+one-to-one: `9804846f4` (multiply-add family NaN), `19fb3979d` + `01efb80ed` (x64 FMA NaN order),
+`ed9bfc9a4` + `6cc7c1835` (vmaxfp/vminfp NaN), `e4b13738c` (vcmpbfp), `cf43c4c52` (default QNaN from invalid
+add/sub/mul/div), `32920009d` + `de4d24493` (FPSCR from host FP status), `378c95215` (FPSCR from integer
+conversions), `36a7bb57f` (accurate VMX denormal flush).
+**⇒ This is the single largest known-good backlog in the tree. It is CORRECTNESS, not speed — but two of the
+commits (`9900f7ceb`, `b2d6a4140`) make the a64 NaN fixups BRANCHLESS on the hot FMA path, so that pair is
+both.**
+**⚠ RUN IT WITH `--break_on_unimplemented_instructions=false`, or it stops at the first `vpkpx`.**
+**⚠ The suite takes MORE THAN 10 MINUTES. The Bash tool caps at 10, so run it backgrounded.**
+
+### ✅ PORTED AND VALIDATED (4 commits, all pushed)
+| what | upstream | validation |
+|---|---|---|
+| **ARM64 NEON audio conversion** (`f578a0d3c`) | edge `b899a97a7` + `32177527f` | `tools/qemu/apu_neon_conversion_equiv.c`, **ALL PASS**, 4000 rounds each path under qemu-aarch64 |
+| **branch-free membase fixup** (`3390c9b62`) | edge `af082b6d0` (partial) | `tools/qemu/a64_membase_fixup_equiv.c`, **1,057,538 values, 0 mismatches**, executed under qemu |
+| **word aligned `vsldoi` as a word permute** (`d8d07494a`) | edge `42087f44b` | corpus byte-identical, all **2,603** `vsldoi` cases pass |
+| **skip `VECTOR_DENORMFLUSH` under FPCR.FZ** (`d8d07494a`) | XenDroid `0feaeede5` | compiles for aarch64; **NOT device-tested** |
+**🔑 THE APU FIND: `conversion.h` and `xma_context.cc` had an SSE2 path and NOTHING ELSE.** The Thor ran the
+scalar `#else` branch for every decoded XMA frame — one clamp, one convert, one byte swap per sample.
+**⚠ The downmix was RE-DERIVED, not copied. Edge's formula is not ours** (theirs
+`fl + 0.707*fc + 0.707*bl + 0.5*lfe`, ours `(fl + bl + fc*0.5) / 2.5`). Copying their NEON block would have
+changed the mix.
+**⚠ SIDE EFFECT, now fixed: the old scalar path read channel 4 as `br` and channel 5 as `bl`, the REVERSE of
+the SSE2 path. ARM64 surround channels were swapped against x64.**
+
+### ❌ N/A — CHECKED AGAINST OUR TREE. Do not re-check these.
+| upstream | why not |
+|---|---|
+| `af082b6d0` conditional branch shortening (the headline half) | **We have no long-form branch wrappers to shorten.** Edge routes `b.cond` through an inverse+`b` pair for ±128 MiB range, then optimizes it back. We call xbyak's `b(cond, label)` directly and **already emit one instruction**. Their win is recovering ground we never lost |
+| `af082b6d0` compare-immediate forms | `EmitCmpImm32` already does cmp/cmn/`LSL #12` selection |
+| `a3a4cd468` a64 vrsqrtefp as an emitted helper | Ours is ALREADY one call per vector. Theirs is also one call. **See the ABI note below** |
+| `d434ef516` halfword permute constant fold | **Our `hir/value.cc` has no `Permute` folding at all.** The bug cannot exist here |
+| `42087f44b` x64 `vshufps` half | Desktop-only micro-optimization. The device is ARM64 |
+| `7a3775d86` `#error` on an unknown architecture | Kept our scalar `#else`. It is now dead on both real targets anyway |
+
+### 🔍 A LATENT HAZARD FOUND AND MEASURED, NOT A LIVE BUG
+**`RSQRT_V128` calls `PpcVrsqrtefpVector` with a BARE `blr`, not through the guest-to-host thunk.** Our
+allocator hands out **v4-v31**, and AAPCS64 preserves only the LOW 64 BITS of v8-v15. A callee that touches
+any vector register would corrupt a guest value.
+**⇒ MEASURED, NOT ASSUMED: compiled the helper with NDK r25 clang at `-O2` for
+`aarch64-linux-android29` and disassembled it. It touches ZERO vector registers** — 225 integer
+instructions. So it is safe TODAY and fragile FOREVER: the 4-lane loop is auto-vectorizable, and any compiler
+or flag change that vectorizes it turns this into silent guest corruption.
+**Edge hit the same thing and fixed it by construction** (`a3a4cd468`: emit the helper, so the register
+allocator cannot hand out what the helper uses). Cheap hardening here is to route it through `CallNativeSafe`
+like `POW2`/`LOG2`/`DOT_PRODUCT` already do.
+
+### 🚧 THE RANKED NEXT BATCH
+| rank | work | size | why |
+|---|---|---|---|
+| 1 | **the FP NaN/FPSCR family** (8 edge commits above) | large | closes ~24,000 of the 35,917 corpus failures. `9900f7ceb`+`b2d6a4140` are also branchless-on-hot-path |
+| 2 | **inline `vexptefp`/`vlogefp`** (edge `fb225d975`) | ~280 lines | **the LLVM backend emits FOUR libm calls per instruction** (`llvm_assembler.cc:3220/3227`, `EmitVecLaneCall`). a64 calls a C helper. Edge replaced both with a branchless polynomial + a 2^-11 grid snap, which is CLOSER to the hardware estimator than libm is |
+| 3 | `e9582aca7` `stvlx`/`stvrx` as overlapping stores | ~110 a64 lines | replaces byte loops |
+| 4 | XenDroid `e0137c9a7` ADPF hint session for the audio pump | 105 lines | we already have ADPF plumbing, but **only in `gpu/command_processor.cc`**. Theirs holds clocks up for the APU |
+| 5 | XenDroid Vulkan descriptor/layout set (`68e78ca92`, `036fedb3e`, `8e48dd4af`, `162c86ed1`) | small each | needs a device to judge |
+| 6 | edge `34357e257` default-enable the guest scheduler | flag | **they now ship it ON.** Ours is still default-off with a known backlog |
+
+### 🔧 TOOLING TRAPS FROM THIS SESSION
+- **`python xenia-build gentests` CANNOT RUN HERE.** `import_vs_environment()` runs unconditionally at
+  startup and `tools/vswhere/vswhere.exe` reports **no Visual Studio instance**, so the script dies before
+  reaching any subcommand. MSBuild is present at
+  `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe`.
+  Work around it with a standalone assembler script; `gentests` needs only `third_party/binutils-ppc-cygwin`.
+- **A STALE `.git/index.lock` FROM 2026-08-14 BLOCKED EVERY COMMIT.** Check the lock's timestamp before you
+  blame a concurrent process. Two orphan `git.exe` processes were holding nothing.
+- **Build the solution BY PROJECT FILE, not by `/t:<name>`.** `xenia.sln /t:xenia-cpu-ppc-tests` fails with
+  MSB4057 against every unrelated project. Use
+  `MSBuild build\xenia-cpu-ppc-tests.vcxproj /p:Configuration="Release Windows" /p:Platform=x64`.
+  **The solution configuration is `Release|Windows`, NOT `Release|x64`.**
+- **Windows does not compile the a64 backend at all.** Syntax-check ARM64 edits with NDK clang:
+  `clang++ --target=aarch64-linux-android29 -fsyntax-only <file> -I src -I . -I third_party
+  -I third_party/xbyak_aarch64/xbyak_aarch64 -I third_party/fmt/include -I build/version -DFMT_HEADER_ONLY`.
+- **qemu-aarch64 is available through WSL** and is the right oracle for any emitted-sequence rewrite. Both
+  new harnesses in `tools/qemu/` run device-free in seconds.
