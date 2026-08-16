@@ -8391,3 +8391,55 @@ Dolphin's EFB is the direct GameCube/Wii analogue of EDRAM, so it is the right p
 | Android: "Store EFB to RAM" is hardware-dependent | Shield TV beat SD835 with it on; Snapdragon won with it off | Consistent with our own result that readback is the thing to avoid on Adreno |
 **🔑 THE PATTERN: every Dolphin EFB win is about AVOIDING A GPU->CPU READBACK. We already avoid it. There is
 no Dolphin trick left to take, and that is a real answer, not a shrug.**
+
+## 🚨🚨🚨 **EVERY HEADLESS ROUTE MEASUREMENT RUNS WITHOUT THE SHIPPING OPTIMIZATIONS (verified in code, 2026-08-16)**
+**This file's index already warns "A BARE `am start` DOES NOT TEST WHAT SHIPS". Here is the exact mechanism,
+and it is worse than "no LLVM/AOT".**
+```
+XeniaOptimizations.applyTo()  is called from EXACTLY ONE place:
+    XeniaAndroidSettings.java:276      <- the LAUNCHER path
+GameProfiles.applyTo()        likewise:
+    XeniaAndroidSettings.java:290
+EmulatorActivity contains NO SharedPreferences read and NO GameProfiles call.
+```
+**⇒ `am start -n .../EmulatorActivity` gets INTENT EXTRAS AND NOTHING ELSE.** Every optimization the app
+ships default-ON is OFF in a route run unless the route passes it explicitly:
+| optimization | app default | in a route run |
+|---|---|---|
+| `opt_xendroid_parity` -> `vulkan_mid_frame_submission_draws=1300`, `vulkan_fast_register_ranges`, `vulkan_skip_redundant_fetch_constant_writes`, `rt_cache_ownership_claim_memo`, `vulkan_cache_sampler_parameters` | **ON** | **OFF** |
+| `opt_uma_direct` -> `gpu_uma_direct_shared_memory` | **ON** | **OFF** |
+**⇒ SO THE 2026-08-16 EDRAM SESSION, AND ANY OTHER ROUTE-BASED NUMBER, MEASURED A CONFIGURATION NOBODY
+SHIPS.** It also means the earlier claim in this file that UMA zero-copy was "validated and shipping ON" was
+NOT true of those runs - it was off in all of them.
+**⇒ FIX THE ROUTE SCRIPTS, or state the delta in every result.**
+
+## ❌ `vulkan_mid_frame_submission_draws=1300` — MEASURED, NO EFFECT (2026-08-16)
+Hypothesis was the big one: if the CPU records the whole frame while the GPU idles, then submits, the two are
+SERIALIZED and overlapping them is worth up to 2x. XenDroid ships 1300; we default 0.
+**Measured on the BD route, matched on scene complexity (the raw medians are scene, not lever):**
+| verts band | midframe OFF | midframe=1300 | delta |
+|---|---|---|---|
+| 50-120k | 20,339 us | 20,856 | +2.5% |
+| 120-180k | 27,171 | 27,412 | +0.9% |
+| 230-300k | 63,569 | 63,047 | **-0.8%** |
+**⇒ NOTHING OUTSIDE NOISE. The GPU-idle-while-CPU-builds gap is either absent here or already covered.**
+(User watching the panel reported 15 fps during the arm, agreeing with the numbers.)
+
+## ⚠️⚠️ **`gpu_frame_us` IS A TIMESTAMP SPAN, NOT GPU BUSY TIME — SO "89.6% IN-PASS" DOES NOT MEAN 89.6% SHADING**
+`vulkan_command_processor.cc:2736`: `gpu_frame_us_ = (ts[1] - ts[0]) * period`. **A span counts GPU IDLE
+inside the window as if it were work.** Every "the GPU frame is 64 ms" statement in the 2026-08-16 entries is
+a span, and this instrument CANNOT distinguish a busy GPU from a starved one.
+**⇒ THIS MATTERS BECAUSE THIS FILE'S OWN INDEX SAYS `BD FIELD IS CPU-BOUND`.** If the GPU is largely idle,
+the EDRAM / GMEM / UMA / bandwidth measurements were all taken on the wrong processor.
+**⇒ THE INSTRUMENT EXISTS UPSTREAM AND WAS TRIAGED THIS MORNING WITHOUT BEING TAKEN: edge `61810b48e`
+"[Vulkan/Metal/Profiling] Report GPU busy time and render pass counts". PORT IT BEFORE TRUSTING ANY MORE
+GPU-SIDE SPLITS.**
+
+## 📌 STILL UNCLAIMED, AND THE REVIEW CALLS IT THE LARGEST: LLVM FNS ARE NOT IN THE a64 INDIRECTION TABLE
+`docs/research/20260731-full-codebase-review-findings.md` backlog P1:
+> *"LLVM fns never installed in the a64 indirection table - every a64->LLVM call pays full ResolveFunction
+> forever (largest unclaimed perf win; needs low-memory trampolines, raw JITLink addrs don't fit u32)."*
+**Still true 2026-08-16:** `llvm_backend.cc:251` - *"the indirection-table fast path is a later perf step."*
+**⇒ On a CPU-BOUND title where ~80% of entries are LLVM and ~20% a64, every a64->LLVM transition paying a
+full symbol resolve is exactly the shape of a large win. It is CPU-side, which is where this file says BD
+actually is.**
