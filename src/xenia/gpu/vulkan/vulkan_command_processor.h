@@ -2320,6 +2320,30 @@ class VulkanCommandProcessor : public CommandProcessor {
   // pass, which is what BD's frame turns out to be made of. Four adds a draw.
   // They are read by MaybeLogSmallGuestPass and cleared AFTER it - see the
   // reset site, and do not move the clear back above the log.
+  // PER-PASS draw sequence numbers for the thin factors, and the reason they
+  // are per-PASS is a rendering bug, not tidiness.
+  //
+  // gpu_foliage_thin_factor / gpu_blended_thin_factor keep 1 draw of every N by
+  // testing a running count. That count used to be the PER-FRAME
+  // draw_outcomes_*_draws_ tally - and BLUE DRAGON RENDERS ITS FIELD IN
+  // PREDICATED TILES, re-issuing the SAME geometry once per tile with a
+  // different scissor. A frame-scoped counter therefore keeps a draw in one
+  // tile and drops the identical geometry in the next, so the tiles disagree
+  // and a hard vertical seam appears at the tile boundary (guest x=608, which
+  // is the win_off the field draws share).
+  //
+  // Device-captured 2026-08-17: at factor 2, foliage thinning lost whole
+  // surfaces on one side of that seam, and blended thinning dropped a
+  // full-screen darkening layer on one side - the left third of the frame came
+  // out visibly brighter than the right.
+  //
+  // Per-PASS restarts the sequence for every tile, so every tile makes the
+  // IDENTICAL keep/drop decision and the seam cannot form. Reset with the rest
+  // of the per-pass state - and note the same ordering trap applies: the
+  // composition counters below are read by MaybeLogSmallGuestPass and must be
+  // cleared AFTER it, not before.
+  uint32_t pass_alphatest_seq_ = 0;
+  uint32_t pass_blended_seq_ = 0;
   uint32_t pass_blend_draws_ = 0;
   uint32_t pass_zwrite_draws_ = 0;
   uint32_t pass_first_blend_zwrite_ = 0;   // 1-based draw index, 0 = none yet

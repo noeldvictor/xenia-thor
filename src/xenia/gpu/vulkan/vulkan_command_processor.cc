@@ -4736,6 +4736,8 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // is assigned on this path - a mark set anywhere else could disagree with it.
   rt_pass_draws_ = 0;
   pass_blend_draws_ = 0;
+  pass_alphatest_seq_ = 0;
+  pass_blended_seq_ = 0;
   pass_zwrite_draws_ = 0;
   pass_first_blend_zwrite_ = 0;
   pass_zwrite_after_blend_ = 0;
@@ -5465,6 +5467,8 @@ void VulkanCommandProcessor::EndRenderPass() {
   MaybeLogSmallGuestPass();
   // Cleared only now that the log has read them (see the note above).
   pass_blend_draws_ = 0;
+  pass_alphatest_seq_ = 0;
+  pass_blended_seq_ = 0;
   pass_zwrite_draws_ = 0;
   pass_first_blend_zwrite_ = 0;
   pass_zwrite_after_blend_ = 0;
@@ -8491,7 +8495,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
               (cvars::gpu_force_tiny_draws ||
                (cvars::gpu_collapse_alphatest_coverage && is_at_merge) ||
                (cvars::gpu_foliage_thin_factor >= 2 && is_at_merge &&
-                (draw_outcomes_alphatest_draws_ %
+                (pass_alphatest_seq_ %
                  uint32_t(cvars::gpu_foliage_thin_factor)) != 0))
                   ? std::min<uint32_t>(idx_count, 3u)
                   : idx_count,
@@ -8528,7 +8532,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           (cvars::gpu_collapse_alphatest_depthonly && is_alphatest_draw &&
            normalized_color_mask == 0) ||
           (cvars::gpu_foliage_thin_factor >= 2 && is_alphatest_draw &&
-           (draw_outcomes_alphatest_draws_ %
+           (pass_alphatest_seq_ %
             uint32_t(cvars::gpu_foliage_thin_factor)) != 0);
       if (!collapse_this_draw && !is_alphatest_draw &&
           (cvars::gpu_collapse_blended_coverage ||
@@ -8547,7 +8551,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         if (cvars::gpu_collapse_blended_coverage && blends_draw) {
           collapse_this_draw = true;
         } else if (cvars::gpu_blended_thin_factor >= 2 && blends_draw &&
-                   (draw_outcomes_blended_draws_ %
+                   (pass_blended_seq_ %
                     uint32_t(cvars::gpu_blended_thin_factor)) != 0) {
           collapse_this_draw = true;
         } else if (cvars::gpu_collapse_opaque_coverage && !blends_draw &&
@@ -8814,8 +8818,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           rb_blendcontrol0.alpha_comb_fcn == xenos::BlendOp::kAdd);
     if (rb_colorcontrol_cls.alpha_test_enable) {
       ++draw_outcomes_alphatest_draws_;
+      ++pass_alphatest_seq_;
     } else if (blends) {
       ++draw_outcomes_blended_draws_;
+      ++pass_blended_seq_;
     } else if (normalized_depth_control.z_write_enable) {
       ++draw_outcomes_opaque_draws_;
       draw_outcomes_opaque_verts_ +=
