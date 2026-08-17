@@ -6,6 +6,10 @@ the two sections that apply instead of skimming all of it. **Every line below co
 
 | about to... | read first | why |
 |---|---|---|
+| **test whether a GPU change alters RENDERING** | ⚡ `THE OODA LOOP IS 1.2 SECONDS NOW` + `tools/pc/bd_trace_ab.sh` | **DO NOT USE THE DEVICE FOR THIS.** Replay one captured frame on the PC and diff render-target checksums: **~1.2s per arm vs ~20 min**, no thermals, and the SAME guest draw stream every run. Settle correctness here; spend device time only on the perf number |
+| **quote a Blue Dragon speed number** | `THE BD SPEED HACK, MEASURED AT LAST`, `THIN PER PASS, NOT PER FRAME` | **CAPTURE A FRAME BEFORE QUOTING A SPEEDUP.** The thin-factor wins (-9% to -30%) were measured while the renderer was DROPPING GEOMETRY - a frame rate measured on a corrupted frame is not a frame rate. And a visual-neutrality pass is NECESSARY, NOT SUFFICIENT: custom resolve renders identical AND is net-negative |
+| **reason about BD's MSAA / EDRAM capacity / tiling** | `BD's HEAVY PASS IS 2xMSAA` | **`msaa=0` and "the field is 1x today" ARE WRONG.** The 734-draw heavy pass is 2x multisampled, which is why 1280x720 does NOT fit 10 MB EDRAM and why BD predicate-tiles. Any reasoning starting "BD is 1x, so ..." must be re-derived |
+| **A/B a lever and get FLAT** | `INERT-LEVER AUDIT`, `gpu_vulkan_edram_roaa is INERT` | **SIX inert levers found in this tree now.** Before believing a flat result, prove the lever CAN fire: a reader for the cvar, a producer for the opcode it gates, and an allowlist entry. `edram_roaa` advertised ~22% of the frame and its member is read NOWHERE |
 | **benchmark anything** | `NEVER BENCHMARK A MOVIE`, `Measurement is the #1 trap` | attract mode invalidated a whole day; drift here is ~2.8%, larger than most wins |
 | **trust a measurement** | `CHECK THE PERSISTED DEVICE CONFIG`, `A BARE am start DOES NOT TEST WHAT SHIPS` | a stale `xenia.config.toml` cost 2.88%; headless launches run WITHOUT LLVM/AOT |
 | **A/B a cvar** | `A DEFAULT-OFF PATH IS NOT A CONTROL` | the off-branch may be untested code; ours crashed in 1s and would have inverted the conclusion |
