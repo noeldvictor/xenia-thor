@@ -8640,3 +8640,24 @@ by then - the expensive shading happened at the smaller size - and one blit per 
 ms of shading. **Not yet implemented. Not yet measured.**
 **⚠ DO NOT SHIP THE CVAR UNTIL A HUMAN CONFIRMS THE PANEL.** The expected cost is UNIFORM SOFTNESS. Anything
 else - small image, offset, tearing - means the resolve chain still disagrees with the image size.
+
+### 🔧 UPSCALE BLIT: THE PICTURE COMES BACK, BUT THE BLIT IS DESTRUCTIVE AND BD TILES (2026-08-16)
+**`f9b24bb99` moved the downscale off the ALLOCATION (image + framebuffer are full size again) and onto the
+VIEWPORT/SCISSOR only, then blits the rendered sub-rectangle back up to full extent before the dump.**
+| | before the blit | after the blit |
+|---|---|---|
+| picture | black frame, a few strips of garbage | **the game is VISIBLE** - character, terrain, sky |
+| fps at pct=50 | 29.6 shown | **26.0 shown** |
+| Vulkan validation errors | - | **0** (the single "error" grep hit is the layer LOADING) |
+**❌ BUT IT IS STILL WRONG: the frame is fragmented into vertical bands with DUPLICATED content.**
+**🔑 ROOT CAUSE, AND IT IS A DESIGN BUG IN THE BLIT, NOT A BARRIER BUG: THE BLIT IS DESTRUCTIVE AND BD RENDERS
+IN TILES.** BD's field uses predicated tiling - render tile, resolve, render next tile, resolve. The blit
+writes FULL-SIZE content back into the render target, so the next tile renders its half-scale content on top
+of already-upscaled pixels and the next dump re-upscales the mixture. That is exactly the duplication and
+banding on screen.
+**⇒ THE FIX: THE DUMP MUST READ A SEPARATE UPSCALED IMAGE, NOT AN UPSCALED-IN-PLACE RENDER TARGET.** Blit
+RT -> scratch (upscaled), leave the RT untouched, and bind the SCRATCH for the dump. That needs the scratch to
+have its own transfer-source descriptor set, which is the plumbing the blit approach was chosen to avoid -
+but it is now clearly required, because in-place upscaling cannot survive multi-tile rendering.
+**⚠ DO NOT retry "blit once per frame" or "skip if already upscaled" - both were considered and neither
+works: tiles render BETWEEN dumps, so any in-place scheme corrupts the next tile.**
