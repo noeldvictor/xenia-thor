@@ -2361,10 +2361,56 @@ struct MUL_SUB_F64
     }
   }
 };
+// PPC multiply-add NaN semantics, PACKED single (vnmsubfp).
+//
+// Branchless, because every lane may need a different answer - which is exactly
+// why this is NOT applied to vmaddfp. Upstream measured ~8.5fps for putting it
+// there, and vmaddfp is the only multiply-add hot enough to notice; vnmsubfp
+// gets it because the negated form was corrupting NaN signs outright. The gate
+// is ARITHMETIC_NEGATE_RESULT, so plain vmaddfp/vmsubfp are untouched.
+//
+// Built BEFORE the FMA into xmm3 for the same two reasons as the scalar form:
+// dest aliases a source, and LoadConstantXmm clobbers stash slot 0.
+//
+// Quieting uses XMMQNaN (0x7FC00000) as the OR mask rather than a dedicated
+// quiet-bit constant: a NaN lane's exponent is already all-ones, so the OR sets
+// only the mantissa MSB and leaves the SIGN alone, which is what PPC requires.
+// Non-NaN lanes are corrupted by that OR and then discarded by the blend.
+template <typename ARGS>
+static void EmitBuildPpcFmaNan_V128(X64Emitter& e, const ARGS& i) {
+  // ⚠ ONLY xmm0-xmm3 ARE SCRATCH HERE - xmm_reg_map_ allocates 4..15, so those
+  // hold LIVE GUEST VALUES. This needs exactly two: xmm3 for the answer and
+  // xmm0/xmm1 as temps, which is why operands are processed one at a time and
+  // the quieting happens ONCE at the end rather than per operand.
+  auto operand = [&e](const auto& src) -> Xmm {
+    if (src.is_constant) {
+      e.LoadConstantXmm(e.xmm0, src.constant());
+      return e.xmm0;
+    }
+    return src;
+  };
+  e.vmovaps(e.xmm3, e.GetXmmConstPtr(XMMQNaN));
+  // Lowest priority FIRST so a higher-priority operand overwrites it:
+  // C (src2), then B (src3), then A (src1) = PPC's A, B, C precedence.
+  for (int step = 0; step < 3; ++step) {
+    Xmm op = (step == 0) ? operand(i.src2)
+           : (step == 1) ? operand(i.src3)
+                         : operand(i.src1);
+    e.vcmpunordps(e.xmm1, op, op);
+    e.vblendvps(e.xmm3, e.xmm3, op, e.xmm1);
+  }
+  // Quiet ONCE. Safe for every lane: a selected NaN already has an all-ones
+  // exponent so the OR sets only the mantissa MSB and leaves the SIGN alone,
+  // and unselected lanes hold the default QNaN, which is already quiet.
+  e.vorps(e.xmm3, e.xmm3, e.GetXmmConstPtr(XMMQNaN));
+}
+
 struct MUL_SUB_V128
     : Sequence<MUL_SUB_V128,
                I<OPCODE_MUL_SUB, V128Op, V128Op, V128Op, V128Op>> {
   static void Emit(X64Emitter& e, const EmitArgType& i) {
+    const bool ppc_nan_fix = (i.instr->flags & ARITHMETIC_NEGATE_RESULT) != 0;
+    if (ppc_nan_fix) EmitBuildPpcFmaNan_V128(e, i);
     // FMA extension
     if (e.IsFeatureEnabled(kX64EmitFMA)) {
       EmitCommutativeBinaryXmmOp(e, i,
@@ -2418,6 +2464,11 @@ struct MUL_SUB_V128
     // 9804846f4, ~142 lines) - that is the next step, not this one.
     if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
       e.vxorps(i.dest, i.dest, e.GetXmmConstPtr(XMMSignMaskPS));
+    }
+    if (ppc_nan_fix) {
+      // Lanes whose RESULT is not NaN keep the arithmetic answer.
+      e.vcmpunordps(e.xmm1, i.dest, i.dest);
+      e.vblendvps(i.dest, i.dest, e.xmm3, e.xmm1);
     }
   }
 };
