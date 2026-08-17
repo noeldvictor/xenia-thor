@@ -8929,6 +8929,36 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## !!! THE EDRAM BUFFER PATH IS **NOT** PIXEL-CORRECT: ~4% GLOBAL COLOUR SHIFT vs FBO (2026-08-17)
+**The question the buffer-path entries below leave open, answered - and it corrects an eyeball verdict I gave
+three times. Matched by GUEST TIME (`gpu_freeze_at_guest_ms=42000`, engagement confirmed in the log:
+"froze guest at uptime 42000 ms"; the freeze scales time_scalar to 0.0001, so ~14 s of wall-clock advances the
+scene ~1.4 ms - the frames really are the same).**
+```
+window-handle captures, title bar/menu cropped, per-pixel RGB diff:
+  fbo vs fsi       95.37% of pixels differ    mean|diff| 10.82
+  fbo vs atomic    95.83% of pixels differ    mean|diff| 12.08
+  fsi vs atomic    74.38% of pixels differ    mean|diff|  3.62
+```
+**=> THE BUFFER PATH RENDERS THE RIGHT SCENE WITH THE WRONG COLOUR.** Geometry, lighting, bloom, lens flare
+and draw counts all match; ~95% of pixels are off from the shipping FBO path by ~11/255 (~4%). **The two
+BUFFER arms agree with each other far more closely (3.62) than either agrees with FBO (10.8 / 12.1)** - that
+pattern is a PATH difference, not temporal drift.
+**⇒ SO THE EDRAM SOLVE IS NOT LOSSLESS AS IT STANDS.** It eliminates all 16 render targets, every ownership
+transfer and every dump - and it shifts every pixel. **A faster path that moves the whole image is not "same
+visual quality"**, and the speed number must not be taken before the colour is fixed.
+**LEADING SUSPECT: the 7e3 / `k_2_10_10_10_FLOAT` conversion.** The FBO path stores colour as
+`R16G16B16A16_SFLOAT` and converts on resolve; the buffer path packs into the EDRAM SSBO directly. A
+systematic few-percent shift across the whole frame is what a precision / conversion mismatch looks like,
+not what a race looks like.
+**✅ AND THE GAP IS NOW CHEAPLY DEBUGGABLE, WHICH IS THE POINT: FBO IS GROUND TRUTH, the guest-time freeze
+gives byte-matched frames, and the loop is seconds.** Fix the conversion, re-diff, and the mean should fall to
+~0. Only then is a device speed run meaningful.
+**📌 AND THE PROCESS LESSON, THE THIRD INSTANCE TODAY: A PICTURE THAT LOOKS RIGHT IS NOT A MEASUREMENT.** I
+called this path "renders correctly" three times from eyeballing captures; a 20-line pixel diff said 95% of
+the frame is off. Same error as quoting the thin-factor speedups before looking at a frame, and as declaring
+the atomic path dead from a failed screen grab.
+
 ## +++ THE ATOMIC EDRAM ROP IS FAR MORE COMPLETE THAN ITS HELP TEXT SAYS - IT RENDERS, AND IT MATCHES FSI (2026-08-17)
 **`gpu_vulkan_edram_atomic`'s own text says "Non-functional until the atomic ROP SPIR-V lands". That is
 OUT OF DATE. Measured on desktop, where the atomic branch really is taken (`edram_atomic_no_fsi_` skips the
