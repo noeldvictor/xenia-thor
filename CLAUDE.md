@@ -8936,6 +8936,23 @@ happens, not what it produces.**
 **=> PC TRACE REPLAY: `--gpu_bd_native_keep_scissor=true` renders IDENTICAL (EDRAM checksum, 12/12 targets).**
 And `VK_EXT_custom_resolve` IS in the desktop GPU's supported-extension list, so the arm was not trivially
 skipped for want of the extension.
+### !!! CORRECTION, SAME SESSION: CUSTOM RESOLVE IS ALREADY MEASURED **NET-NEGATIVE** ON TURNIP. NOT A WIN.
+**I promoted it above and then read the code around its own gate, which records the opposite verdict**
+(`vulkan_render_target_cache.cc`, at the `use_custom_resolve` selection):
+> *"the DECOUPLE path deliberately uses the PLAIN producer on all platforms (incl. Turnip where the ext
+> exists): **the CR on-tile convert measured net-NEGATIVE** (it ADDS a convert subpass + **forces MSAA
+> materialization on TBDR**), whereas the plain path ... just COLLAPSES the pass count (98->72 begins/frame on
+> the field)"*
+**=> So the "IDENTICAL render" result is real and worth nothing on its own: the mechanism is visually neutral
+AND slower.** Do not A/B it expecting a win, and do not read my entry above as a recommendation.
+**=> AND IT SHARPENS WHICH MECHANISM IS ACTUALLY RIGHT.** The recorded objection to custom resolve is that it
+**forces MSAA materialization**. `VK_EXT_multisampled_render_to_single_sampled` is the extension that exists
+specifically to NOT materialize the multisampled attachment - it keeps MSAA in tile memory and stores only the
+resolved 1x. **So the objection that kills CR is the exact thing MSRTSS is designed to avoid**, which makes
+MSRTSS the candidate and CR the cautionary tale, not two equal options.
+**⚠ MSRTSS remains UNIMPLEMENTED (detected, feature requested, zero readers in `src/xenia/gpu/`), and its
+value is a TBDR tile-memory property - so it CANNOT be validated on the desktop trace loop. It needs the
+render-pass work and then a device run.**
 **⚠⚠ BUT ENGAGEMENT IS NOT PROVEN, AND THAT IS THE WHOLE CAVEAT.** There is no counter saying the
 custom-resolve path fired. "IDENTICAL" is equally consistent with "engaged and is lossless" and with "never
 engaged". **This file records four levers found inert by accident in one day and a fifth (`edram_roaa`, zero
