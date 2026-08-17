@@ -8925,6 +8925,36 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## !!! BD's HEAVY PASS IS 2xMSAA - "msaa=0, the field is 1x today" IS WRONG (2026-08-17)
+**Found in 1 second with the PC trace loop, and it corrects a load-bearing claim that several conclusions in
+this file rest on.**
+```
+replaying ONE captured BD frame, every render target created:
+    9x 1xMSAA      2x 2xMSAA      5x 4xMSAA
+the ONLY 720x1824 targets that exist are MULTISAMPLED:
+    Created a 720x1824 2xMSAA color render target  guest format 3  EDRAM base 0
+    Created a 720x1824 2xMSAA depth render target  guest format 0  EDRAM base 810
+and the heavy pass renders into exactly that:
+    BIGPASS fb=7f2e 720x1824 draws=734
+```
+**=> THE 734-DRAW HEAVY PASS - the one carrying ~81.5% of in-pass GPU time - IS 2x MULTISAMPLED.** The sample
+count comes from the GUEST render-target key; we do not invent it. So the game asks for 2xMSAA.
+### THIS EXPLAINS THREE THINGS THAT WERE PREVIOUSLY LOOSE ENDS
+1. **WHY BD TILES AT ALL.** 1280x720 at 2xMSAA with colour+depth does NOT fit the Xenos 10 MB EDRAM, so the
+   guest must split the frame into predicated tiles. This file previously reasoned "msaa=0, 7.4 MB, FITS, so
+   BD does not predicate-tile" - the premise was wrong, and the conclusion with it.
+2. **WHY THE HEAVY TARGET IS 720 WIDE** rather than 1280. At 2xMSAA a surface occupies twice the EDRAM per
+   pixel, so the EDRAM-span shape for the tiled surface is 720x1824, not 1280x2048.
+3. **WHY THE THIN FACTORS PRODUCED A SEAM AT GUEST x=608.** That is the tile boundary the predication creates.
+   The thin counter was frame-scoped, so it kept a draw in one tile and dropped the same geometry in the next.
+### => AND IT IS NOT A LOSSLESS LEVER, WHICH IS THE HONEST PART
+MSAA here is GUEST-REQUESTED anti-aliasing. Capping it to 1x would cut real rasterisation work in the pass
+that dominates the frame - but it removes anti-aliasing, so it spends image quality like every other lever
+that moves this title. **This file already records an MSAA cap being PULLED from BD on a user report that the
+graphics were busted.** Do not re-ship one as "lossless".
+**=> WHAT IT DOES CHANGE: any reasoning that starts from "BD is 1x, so ..." must be re-derived.** That includes
+the EDRAM capacity arithmetic and the "BD does not predicate-tile" verdict, both of which are now known false.
+
 ## /!\ THE OODA LOOP IS 1.2 SECONDS NOW, NOT 20 MINUTES: REPLAY A CAPTURED FRAME ON THE PC (2026-08-17)
 **User, after a day of device work: *"these all sucked can we think of better faster way to test on the pc?"*
 They were right, and the tool was already in the tree - `xenia-gpu-vulkan-trace-dump`, unused and unmentioned
