@@ -258,6 +258,38 @@ public final class XeniaOptimizations {
                 null,
                 new IntCvar[]{new IntCvar("gpu_vrs_foliage_rate", 2)}));
 
+        // Listed AFTER the other two so that applyTo (which runs in list order)
+        // lets this one win if a user enables several - it is the best-measured
+        // of the three.
+        list.add(new Optimization(
+                "opt_vrs_heavy_scenes",
+                "Smoother transparencies (heavy scenes only)",
+                "Half detail on see-through layers, and quarter detail only in "
+                        + "the busiest scenes. Best speed for the quality.",
+                "The other two options treat every part of the frame the same. "
+                        + "This one does not.\n\n"
+                        + "Most of what the console draws is cheap - menus, text, "
+                        + "the HUD, simple backgrounds. In Blue Dragon, 61 of the 74 "
+                        + "drawing steps in a frame contain a single object. Two of "
+                        + "them contain around 890 stacked see-through layers, and "
+                        + "those two are 81% of all the GPU time.\n\n"
+                        + "So this option only drops to quarter detail once a "
+                        + "drawing step is already piling up layers. Menus, text and "
+                        + "simple scenes keep the finer detail; the heavy scenes get "
+                        + "the extra speed where you cannot easily see it.\n\n"
+                        + "Measured on Blue Dragon on this device: 21.1 -> 24.5 fps "
+                        + "(+16%) on top of the balanced option, in the heaviest "
+                        + "scenes.\n\n"
+                        + "NOT YET EYE-CHECKED: the speed is measured, but nobody "
+                        + "has confirmed on-screen that it looks better than the "
+                        + "Performance option. If see-through effects shimmer while "
+                        + "the camera moves, turn it off and tell us.",
+                CATEGORY_GPU, false, false,
+                null,
+                new IntCvar[]{new IntCvar("gpu_vrs_foliage_rate", 1),
+                              new IntCvar("gpu_vrs_heavy_pass_rate", 2),
+                              new IntCvar("gpu_vrs_heavy_pass_draws", 16)}));
+
         list.add(new Optimization(
                 "opt_xendroid_parity",
                 "XenDroid-parity GPU fast paths",
