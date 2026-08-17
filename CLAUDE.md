@@ -8925,6 +8925,65 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## /!\ THE OODA LOOP IS 1.2 SECONDS NOW, NOT 20 MINUTES: REPLAY A CAPTURED FRAME ON THE PC (2026-08-17)
+**User, after a day of device work: *"these all sucked can we think of better faster way to test on the pc?"*
+They were right, and the tool was already in the tree - `xenia-gpu-vulkan-trace-dump`, unused and unmentioned
+in this file.**
+```
+tools/pc/bd_trace_ab.sh  "f2=--gpu_foliage_thin_factor=2"  "b2=--gpu_blended_thin_factor=2"
+  -> baseline + 4 arms, objective render-target diffs, ~15 SECONDS TOTAL
+```
+| step | device loop | trace-replay loop |
+|---|---|---|
+| build | 5 min APK | 1-2 min desktop exe, ONCE |
+| cool the Thor | **15 min** | none |
+| boot + route to the frame | 50 s | none |
+| get a result | screencap, thermally gated, often VOID | **1.2 s** |
+| iterations per hour | ~3 | **dozens** |
+### THE TWO THINGS IT REMOVES THAT MADE THE DEVICE NUMBERS UNTRUSTWORTHY
+1. **SCENE MATCHING, WHICH WAS SILENTLY BROKEN.** The route's button timings are absolute milliseconds, so I
+   assumed every arm sat at the same point at the same second. **It does not - the game's own progress is not
+   input-driven.** At t=42s baseline read 156,971 verts and f2 read 289,869: **a faster arm is FURTHER into
+   the cutscene**, so a fixed elapsed second captures different content per arm. A replayed trace is the SAME
+   guest draw stream every run, byte for byte.
+2. **THERMALS.** No 70C guard, no heat-soak spiral, no one-degree window between "cold enough to reach the
+   frame" and "voids". Three capture attempts VOIDED on that window in one afternoon.
+### THE RECIPE
+```
+1. build once:  MSBuild build/xenia-app.vcxproj                   /p:Configuration="Release Windows" /p:Platform=x64
+                MSBuild build/xenia-gpu-vulkan-trace-dump.vcxproj /p:Configuration="Release Windows" /p:Platform=x64
+   (from POWERSHELL - Git Bash rewrites the /p: switches into paths, MSB1008)
+2. capture once: xenia.exe <iso> --gpu=vulkan --hid=nop --hid_nop_button_sequence='<route>'
+                 then press F4 -> scratch/gpu/<titleid>_<n>.xtr    (BD: 23 MB for ONE frame)
+3. iterate:      bash tools/pc/bd_trace_ab.sh "label=--cvar=value" ...
+```
+**`--hid=nop --hid_nop_button_sequence` WORKS ON DESKTOP TOO**, so reaching a scene uses the same deterministic
+sequence as the device route, without the thermal budget.
+### WHAT IT CAN AND CANNOT ANSWER - THE SPLIT IS THE ENTIRE POINT
+| question | this loop |
+|---|---|
+| "does this cvar change what is RENDERED?" | **YES, objectively.** A property of the guest draw stream and our translation of it, so it is host-independent |
+| "how much FASTER on the Thor?" | **NO. The desktop GPU is not a TBDR and not an Adreno 740.** Never quote a speedup from this harness |
+**=> SETTLE CORRECTNESS ON THE PC IN SECONDS, AND SPEND DEVICE TIME ONLY ON THE PERF NUMBER, once there is
+nothing left to iterate on.** Every device run this session that voided, heat-soaked or captured the wrong
+scene was answering a question this loop answers for free.
+**⚠ The checksum is SPARSE (5,120 samples per target): a reported difference is real, but "IDENTICAL" means
+"no difference detected at this sampling", not "pixel identical".**
+**⚠ And the trace is ONE FRAME of whatever was on screen at F4.** The first BD capture is the opening windmill
+cinematic, which under-represents field foliage - capture a field trace too. That costs a DESKTOP run.
+### THE ISO IS NOW LOCAL: `scratch/blue-dragon/bd_disc1.iso`
+7.8 GB, gitignored twice (`/scratch/` and `*.iso`), pulled once with `adb pull` - a file copy, no emulator and
+no thermal cost. **Desktop xenia runs BD correctly**: same module hash `3C19B6F951F93D49` as the device, and
+the replay creates the same `720x1824 2xMSAA` render target the device census profiled, so it is
+representative.
+### FIRST RESULTS THROUGH THE NEW LOOP (rendering difference only, NOT speed)
+```
+f2      4 changed checksum lines   (only the 1280x2048 main colour RT: varying 3461 -> 3467)
+b2     18 changed lines            far more of the frame than f2 touches
+f2b2   18 changed lines            dominated by the b2 component
+vrs_r4 10 changed lines            per-pass VRS at 4x4 also alters output
+```
+
 ## 🚀🚀🚀 **THE BD SPEED HACK, MEASURED AT LAST: DRAW THINNING IS -30.2% FRAME TIME, 15.5 -> 22.2 fps (2026-08-17)**
 **Five arms, ONE session, every arm from a matched ~40C start, every arm scene-gated and compared WITHIN a
 vertex band, 0 faults everywhere. `tools/thor/bd_thin_report.py`.**
