@@ -8611,3 +8611,32 @@ almost nothing to overlap.
 whose work is split across submissions could still hide a stall. Edge `61810b48e` (true GPU busy time) is
 still the instrument that would settle it beyond doubt.**
 **⇒ SO EVERY CPU-SIDE LEVER IS CAPPED AT ~7% FOR THIS SCENE, AND THE FIX FOR BD MUST REDUCE FRAGMENT WORK.**
+
+## 🚀🚀🚀 **2.44x ON BLUE DRAGON, MEASURED (2026-08-16) — AND THE PRESENTED IMAGE IS WRONG, SO IT IS NOT DONE**
+**After single-sourcing the host RT size (`731c54d07`), `tools/thor/bd_resolution_ab.sh`, one arm per
+cooldown, gameplay-tier gated, 0 faults:**
+| arm | gpu_frame_us | fps | vs baseline |
+|---|---|---|---|
+| **off (control)** | 62,970 | **15.88** | 1.00x |
+| **71** | 33,972 | **29.44** | **1.85x** |
+| **50** | 25,797 | **38.76** | **2.44x** |
+**✅ THE NO-REGRESSION CONTROL PASSED: 15.88 fps against the historical 16.17.** With the cvar off
+`ApplyResolutionDownscale` is the identity, and the device agrees. The refactor is behaviour-neutral when
+disabled.
+**🔑 AND THE WIN IS BIGGER THAN THE 2026-08-10 MEASUREMENT (22.37 / 29.00) FOR A REASON:** back then the
+IMAGE was downscaled but the FRAMEBUFFER was not, because the two were computed at different sites. They now
+agree, so the saved fragment work is actually saved. **That is the single-source fix paying for itself.**
+### ❌❌ BUT IT IS NOT SHIPPABLE YET — USER LOOKED AT THE PANEL: **"way too tiny screen"**
+**The frame rate is real and the picture is not.** The guest-visible output ends up at the DOWNSCALED size
+instead of being restored to guest dimensions, so the image presents small instead of filling the panel.
+**⇒ THIS IS THE PART THE C++ SINGLE-SOURCING CANNOT FIX, AND THE 2026-08-10 ENTRY PREDICTED IT:** the win
+needs "a bounded refactor of the size invariant **plus its shader constants**". The size invariant is done.
+The resolve/dump path still assumes the RT is exactly `tiles x tile_pixels x INTEGER scale`, and
+`shaders/resolve.xesli:84` types `resolution_scale` as `uint2_xe` - **a fractional factor cannot be expressed
+there.** So a resolve from a 50%-sized RT lands a half-size image inside a full-size guest texture.
+**⇒ THE CANDIDATE FIX THAT AVOIDS THE SHADER ABI ENTIRELY: blit-upscale the downscaled RT to full guest size
+(`vkCmdBlitImage`, hardware bilinear) BEFORE the resolve reads it.** The fragment savings are already banked
+by then - the expensive shading happened at the smaller size - and one blit per resolve is cheap against ~20
+ms of shading. **Not yet implemented. Not yet measured.**
+**⚠ DO NOT SHIP THE CVAR UNTIL A HUMAN CONFIRMS THE PANEL.** The expected cost is UNIFORM SOFTNESS. Anything
+else - small image, offset, tearing - means the resolve chain still disagrees with the image size.
