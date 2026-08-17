@@ -8929,6 +8929,38 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## ### THE ONE STRUCTURAL REASON EVERY TILE-MEMORY LEVER FAILS: OUR RENDER TARGETS MUST BE READABLE OUTSIDE THE PASS (2026-08-17)
+**Chasing the transient-MSAA lever produced a better answer than the lever: a single mechanism that explains
+the whole family of dead tile-memory results, from code rather than from measurements.**
+```
+vulkan_render_target_cache.cc, RT image creation:
+    image_create_info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;            (:4229)
+    ... | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT   (:4873)
+```
+**=> EVERY EDRAM RENDER TARGET IS CREATED SAMPLEABLE AND COPYABLE, BECAUSE THAT IS HOW EDRAM CONTENTS REACH
+THE EDRAM BUFFER.** The dump/resolve path samples or copies the image AFTER the render pass ends. That is not
+a design choice we can drop - it IS the EDRAM emulation.
+**=> AND `VK_IMAGE_USAGE_TRANSIENT_ATTACHMENT_BIT` IS MUTUALLY EXCLUSIVE WITH THAT.** A transient image may
+carry only attachment usages (colour / depth-stencil / input). Combining it with SAMPLED or TRANSFER is
+invalid Vulkan. **So the Adreno guide's transient-attachment advice CANNOT apply to our render targets, no
+matter how large the MSAA attachment is.**
+### THIS IS THE COMMON CAUSE BEHIND RESULTS THAT WERE FILED SEPARATELY
+| lever | recorded result | now explained by |
+|---|---|---|
+| `VK_QCOM_tile_memory_heap` (keep EDRAM in GMEM across passes) | absent from Turnip, written off | would ALSO need the attachment to stay on-tile, which SAMPLED forbids |
+| forced GMEM / binning | converges to parity, never wins | the attachment must be materialised for the dump regardless |
+| `VK_EXT_custom_resolve` | measured **net-NEGATIVE** ("forces MSAA materialization") | materialisation is not optional here - the dump requires it |
+| `VK_EXT_multisampled_render_to_single_sampled` | never wired | its whole value is NOT materialising the MSAA attachment |
+| transient / `LAZILY_ALLOCATED` attachments | 0 uses | **structurally forbidden by SAMPLED usage** |
+**=> SO "KEEP IT ON TILE" IS NOT A TUNING PROBLEM, IT IS INCOMPATIBLE WITH EDRAM-AS-A-BUFFER.** Every lever in
+that family needs the attachment to never leave tile memory; our emulation needs to read it the moment the
+pass ends. **Stop proposing tile-memory levers for this architecture** - the answer will be the same one every
+time, and it is now written down once instead of re-measured.
+**⇒ THE ONLY WAY THE FAMILY BECOMES AVAILABLE is an EDRAM model that does not require reading the attachment
+after the pass** - i.e. resolving INSIDE the pass to the final destination. That is what the in-pass-resolve /
+`dynamic_rendering_local_read` track was for, and this file already measured its candidate population on BD as
+**`sr_fscomp = 0`** - empty. **Both halves are therefore closed for BD, and for the same underlying reason.**
+
 ## $$$ THE MANUAL NAMES A LOSSLESS TURNIP LEVER WE HAVE NEVER USED: TRANSIENT MSAA ATTACHMENTS (2026-08-17)
 **User: *"there must be lossless way to use turnip vulkan - read manuals"*. Read them with the CORRECTED
 premise (BD's heavy pass is 2xMSAA, not 1x), and the Adreno guide points straight at us.**
