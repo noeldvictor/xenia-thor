@@ -87,7 +87,20 @@ require_device() {
 # device those reads come back empty and silently pass.
 require_device
 busy=$("$ADB" -s "$DEV" shell 'ps -A -o NAME 2>/dev/null | grep -icE "rpcs"' | tr -d '\r')
-[ "$busy" = "0" ] || { echo "ABORT: rpcs3 is running - device is shared"; exit 1; }
+if [ "$busy" != "0" ]; then
+  # ALLOW_SHARED=1 is an EXPLICIT, PER-INVOCATION opt-in for the case where the
+  # user confirms the rpcs3 process is idle/their own. It is deliberately NOT a
+  # default and NOT persisted: this project has three recorded incidents of
+  # running on top of another session - burning their thermal budget twice and
+  # once injecting button presses into their live game. The abort stays the
+  # default so the next run re-asks.
+  if [ "${ALLOW_SHARED:-0}" = "1" ]; then
+    echo "WARNING: rpcs3 is running and ALLOW_SHARED=1 was set - proceeding."
+    echo "         Both measurements are CONTENDED if that session resumes."
+  else
+    echo "ABORT: rpcs3 is running - device is shared"; exit 1
+  fi
+fi
 t=$(temp); [ "$t" -lt 50000 ] || { echo "ABORT: GPU $((t/1000))C, need <50C"; exit 1; }
 lvl=$("$ADB" -s "$DEV" shell dumpsys battery 2>/dev/null | grep -i 'level' | grep -oE '[0-9]+' | head -1)
 [ "${lvl:-0}" -ge 30 ] || { echo "ABORT: battery ${lvl}%"; exit 1; }

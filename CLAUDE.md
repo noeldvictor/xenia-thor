@@ -7385,6 +7385,78 @@ already censused. **That is a modest epilogue, not a scaffolding tax.**
 concluded independently. NOT a substitute for measuring it** - `tools/thor/bd_shader_stats.sh` is written and
 owed a device run; this only bounds what that run can blame on us.
 
+## ✅✅✅ **PER-PASS VRS, SWEPT AND LANDED: 21.11 -> 24.53 fps (+16.2%) AT THRESHOLD 16 (2026-08-17)**
+**Three arms, ONE uncontended session (rpcs3 gone), matched thermal starts 41/42/42C, 0 faults, every arm
+scene-gated and compared WITHIN the 230k-300k vertex bucket.**
+```
+arm    frames  base_draws  escalated  esc%     gpu_frame_us      fps     vs base
+base     1555     560,631          0    0%       47,380        21.11       -
+hp16     1321      46,769    375,279   89%       40,770        24.53     -14.0%
+hp4      1356      12,156    433,879   97%       40,466        24.71     -14.6%
+```
+**Per bucket (base -> hp16): 50-120k -3.7%, 120-180k -4.8%, 180-230k -23.7%, 230-300k -14.0%.** The win
+concentrates in the heavy scenes, which is the whole design intent.
+**🔑 16 IS THE KNEE, AND THE CURVE IS FLAT BELOW IT.** 16 -> 4 coarsens 8 more percentage points of draws to
+buy **0.6%**. **Default changed 128 -> 16.**
+**❌ AND MY FIRST THRESHOLD WAS THE ERROR, NOT THE LEVER.** 128 captured only ~20% of the available win. The
+arithmetic was there all along: **BD's light passes carry AT MOST ONE draw each (61 of 74), so ANY threshold
+above ~2 already excludes every one of them.** The 388 draws/frame that 128 was "protecting" were in the HEAVY
+pass too, just early in it - coarsening them costs no extra quality and was worth 10 percentage points of
+frame time. **When a threshold is meant to separate two populations, size it from the SEPARATION (1 vs 671),
+not from a percentage of the big one.**
+**⚠ THE COMPARISON TO GLOBAL 2x2 (25.0 fps) IS CROSS-RUN AND MUST NOT BE QUOTED AS RIGOROUS.** That figure
+came from an earlier session with different thermal and contention conditions. What IS rigorous is
+base/hp16/hp4 against each other, measured together here. On that basis per-pass escalation reaches
+**within ~2% of what global 2x2 scored**, while by construction leaving every <16-draw pass at the finer rate.
+**⚠⚠ THE QUALITY CLAIM IS THE UNVALIDATED HALF, AND IT IS THE WHOLE POINT OF THE LEVER.** The thesis is that
+confining 2x2 to overdraw-heavy passes looks BETTER than global 2x2 (which a user called "a little blurry")
+for nearly the same speed. **Nobody has looked at the panel yet.** And VRS artifacts on blended particles are
+TEMPORAL - flicker under camera motion - so neither a screenshot nor a frame time can settle it. **A human
+must watch the field in motion before this ships as a default.**
+
+## 📊 (superseded by the sweep above - kept for the threshold lesson) PER-PASS VRS FIRST A/B (2026-08-17)
+**`gpu_vrs_heavy_pass_rate` A/B on BD gameplay, matched on scene by vertex bucket (230k-300k verts).
+⚠ CONTENDED - rpcs3 was running (user-authorised) - and thermally asymmetric, see the caveats.**
+```
+                              gpu_frame_us     fps      vs base
+base  2x1 everywhere eligible    48,590      20.58       -
+hp128 2x1, ->2x2 past draw 128   46,567      21.47      -4.2% frame time
+```
+**✅ ENGAGEMENT IS PROVEN, WHICH IS WHAT MAKES THE NUMBER READABLE AT ALL:**
+```
+gameplay frames with escalation : 214 of 214
+escalated draws / frame         : 720
+base-rate draws / frame         : 388     -> 65% of eligible draws coarsened
+```
+**❌ BUT -4.2% IS ONLY ~20% OF THE GAP BETWEEN 2x1 (20.4 fps) AND GLOBAL 2x2 (25.0 fps).**
+**🔑 THE THRESHOLD WAS SIZED WRONG, AND THE ARITHMETIC SAYS SO PLAINLY.** 128 was picked to cover ~81% of the
+671-draw pass. **But BD's light passes carry AT MOST ONE DRAW EACH (61 of 74), so ANY threshold above ~2
+already excludes every one of them.** At 128 we left **388 eligible draws/frame at the fine rate for no
+quality benefit whatsoever** - they are in the heavy pass too, just early in it. **Sweep DOWNWARD: a threshold
+of 4-16 should approach global 2x2's win while still leaving UI, text and menus untouched, which is the entire
+reason to do this per-pass instead of globally.**
+**⚠ TWO CAVEATS, AND THE FIRST FAVOURS THE RESULT:** base started at **35C** and hp128 at **42C**, so the
+winning arm was the thermally DISADVANTAGED one - the true effect is plausibly larger than 4.2%. Both arms were
+contended by a live rpcs3. **Re-run uncontended with matched cooldowns before quoting the magnitude.**
+
+## 🪤🪤 **TWO HARNESS BUGS THAT EACH VOIDED HALF AN A/B (2026-08-17) - BOTH NOW FIXED IN THE SCRIPT**
+**1. GIT BASH `/tmp` != WINDOWS PYTHON `/tmp`. FOURTH INSTANCE OF THIS CLASS.**
+A bash `> /tmp/vrs_base.txt` writes to the MSYS temp dir; a Windows `python open('/tmp/vrs_base.txt')`
+resolves to **`C:\tmp`**. Same literal path, different files. The A/B captured 273 perfectly good frames and
+then died with `FileNotFoundError` reading them back.
+**⇒ NEVER hand a POSIX-looking absolute path to BOTH bash and a Windows tool.** Write into the repo
+(`scratchpad/`) and pass the path as argv. Same family as MSBuild `/p:`, `adb push` destinations, and the
+unquoted `adb shell cat /sys/...` that made a thermal guard read 0C.
+**2. A LOGCAT PULL IMMEDIATELY AFTER `am force-stop` CAN RETURN EMPTY.**
+The heavy arm's pull produced **0 bytes**; the identical query seconds later returned **1,342 lines**. An empty
+pull is a RACE, not "the lever produced nothing" - and it presents exactly like a void arm.
+**⇒ RETRY THE PULL (5x with a short sleep) and only then call the arm VOID.**
+**3. AND A THIRD, MINE: RESTORING THE LOGCAT BUFFER TO 256K BREAKS THE ROUTE.**
+`bd_gameplay_route.sh` counts frames with `grep -c 'GPU draw outcomes'` over the WHOLE buffer, so once
+eviction starts the cumulative count DROPS and the run prints **NEGATIVE fps** (`-31`, `-15`). I had reset the
+buffer to 256K as shared-device courtesy after a trace run. **The route should raise its own buffer
+(`logcat -G 64M`) rather than inherit whatever the previous run left.** Negative fps is the tell.
+
 ## ❌❌❌ **THE OCCUPANCY / GPR HYPOTHESIS IS REFUTED ON BD's OWN FIELD SHADERS - FULL OCCUPANCY, TINY REGISTER FOOTPRINT (2026-08-16)**
 **The measurement this file has owed since the Xenos specs landed. Blue Dragon, FIELD confirmed by the scene
 gate at a peak of 293,401 verts/frame (BD's recorded field is ~263k), Turnip r11, warm object cache.**

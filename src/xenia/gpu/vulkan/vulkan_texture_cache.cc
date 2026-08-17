@@ -2155,6 +2155,53 @@ bool VulkanTextureCache::Initialize() {
     host_format_dxt5a.format_unsigned.format = VK_FORMAT_R8_UNORM;
     host_format_dxt5a.format_unsigned.block_compressed = false;
   }
+  // ⭐ DIAGNOSTIC (2026-08-17): report the S3TC decompression fallback, because
+  // until now it was COMPLETELY SILENT and it is expensive.
+  //
+  // If the host lacks linear-filterable BC, every guest DXT texture is expanded
+  // to RGBA8 by a load shader: DXT1 goes 4 bpp -> 32 bpp (8x), DXT3/DXT5 go
+  // 8 bpp -> 32 bpp (4x). That multiplies texture footprint AND texture cache
+  // misses - and the Adreno guide names both as direct causes of texture-pipe
+  // stalls ("compress all textures to reduce memory usage and texture stalls",
+  // "minimize texture cache misses ... they significantly contribute to any
+  // texture pipe bottleneck").
+  //
+  // WHY IT IS WORTH A LOG LINE: the 2026-08-16 shader-stat capture refuted the
+  // occupancy hypothesis (every complete BD field variant at max_waves=16, 1-6
+  // registers) but left ONE signal live - systall at or above the instruction
+  // count on the textured variants. Occupancy cannot hide a stall if every
+  // resident wave is queued on the same texture pipe. Whether we are feeding
+  // that pipe 8x the bytes the guest authored is a question this line answers
+  // in ONE launch, and nothing in the tree could answer before.
+  {
+    uint32_t decompressed = 0;
+    const char* kNames[] = {"DXT1", "DXT2_3", "DXT4_5", "DXN", "DXT5A"};
+    const HostFormatPair* kPairs[] = {&host_format_dxt1, &host_format_dxt2_3,
+                                      &host_format_dxt4_5, &host_format_dxn,
+                                      &host_format_dxt5a};
+    std::string expanded;
+    for (size_t i = 0; i < xe::countof(kPairs); ++i) {
+      if (!kPairs[i]->format_unsigned.block_compressed) {
+        ++decompressed;
+        if (!expanded.empty()) {
+          expanded += ' ';
+        }
+        expanded += kNames[i];
+      }
+    }
+    if (decompressed) {
+      XELOGW(
+          "TEXcompress: {} of 5 guest block-compressed formats are DECOMPRESSED "
+          "on this host ({}) - DXT1 costs 8x the bytes as RGBA8, DXT3/5 cost 4x. "
+          "Expect texture-pipe stalls.",
+          decompressed, expanded);
+    } else {
+      XELOGI(
+          "TEXcompress: all 5 guest block-compressed formats map to native BC - "
+          "no decompression, texture footprint is as authored.");
+    }
+  }
+
   // k_16, k_16_16, k_16_16_16_16 - UNORM / SNORM are optional, fall back to
   // SFLOAT, which is mandatory and is always filterable (the guest 16-bit
   // format is filterable, 16-bit fixed-point is the full texture filtering

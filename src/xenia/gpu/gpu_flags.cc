@@ -619,15 +619,24 @@ DEFINE_int32(
     "Default 0 = inert (behaviour is exactly gpu_vrs_foliage_rate).",
     "GPU");
 DEFINE_int32(
-    gpu_vrs_heavy_pass_draws, 128,
+    gpu_vrs_heavy_pass_draws, 16,
     "Draw depth into a render pass at which gpu_vrs_heavy_pass_rate takes over "
     "from gpu_vrs_foliage_rate. Counted against the existing per-pass draw "
     "counter, which is reset on every pass begin/end, so it is genuinely "
-    "per-pass and not a per-frame index.\n"
-    "Sizing (BD, measured): the light passes issue AT MOST ONE draw (61 of 74), "
-    "so any threshold above 1 excludes them entirely; the heavy passes issue "
-    "671/220/219, so 128 escalates ~81% of the big pass's draws while leaving "
-    "the first 128 at the base rate. Inert unless gpu_vrs_heavy_pass_rate > 0.",
+    "per-pass and not a per-frame index. Inert unless "
+    "gpu_vrs_heavy_pass_rate > 0.\n"
+    "⭐ SWEPT ON DEVICE 2026-08-17 (BD gameplay, uncontended, matched thermal "
+    "starts, scene-matched by vertex bucket at 230-300k). 16 IS THE KNEE:\n"
+    "    base 2x1      47,380 us  21.11 fps    0% of eligible draws coarsened\n"
+    "    threshold 16  40,770 us  24.53 fps   89%   -14.0% frame time\n"
+    "    threshold  4  40,466 us  24.71 fps   97%   -14.6%\n"
+    "    threshold 128 (the first guess) captured only ~20% of the win\n"
+    "Dropping 16 -> 4 coarsens 8 more percentage points of draws to buy 0.6% - "
+    "the curve is flat below 16, so there is no reason to pay the extra quality "
+    "for it. And 128 was far too conservative: BD's light passes carry AT MOST "
+    "ONE draw each (61 of 74), so ANY threshold above ~2 already excludes every "
+    "one of them - the draws 128 was protecting were in the HEAVY pass too, "
+    "just early in it, and coarsening them costs nothing extra visually.",
     "GPU");
 DEFINE_bool(
     gpu_vrs_all_draws, false,

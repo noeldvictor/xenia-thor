@@ -43,13 +43,22 @@ cool_to() {
 
 battery() { "$ADB" -s "$DEV" shell dumpsys battery | grep -m1 level | grep -oE '[0-9]+'; }
 
+# ⚠ DATA LANDS IN THE REPO, NOT /tmp. Git Bash's /tmp is the MSYS temp dir while
+# Windows python resolves '/tmp' to C:\tmp - so a bash `>` redirect and a python
+# open() of the same literal path touch DIFFERENT FILES. That silently voided the
+# reporting half of the 2026-08-17 run (the data was fine; the reader looked in
+# the wrong place). Fourth instance of the Git Bash path-rewrite class here.
+OUTDIR="$HERE/../../scratchpad"
+mkdir -p "$OUTDIR" 2>/dev/null
+
 report() {
   local label="$1"
-  python - "$label" <<'PY'
+  python - "$OUTDIR/vrs_$label.txt" <<'PY'
 import re, sys
-label = sys.argv[1]
+path = sys.argv[1]
+label = path.replace('\\', '/').split('vrs_')[-1].replace('.txt', '')
 rows = []
-for line in open('/tmp/vrs_%s.txt' % label, encoding='utf-8', errors='replace'):
+for line in open(path, encoding='utf-8', errors='replace'):
     m = re.search(r'gpu_frame_us=(\d+).*?verts=(\d+).*?vrs_base=(\d+) vrs_esc=(\d+)', line)
     if m:
         rows.append(tuple(int(g) for g in m.groups()))
@@ -82,15 +91,41 @@ arm() {  # arm <label> <extra cvars...>
   echo "extra: $*"
   EXTRA="--ez vulkan_trace_pass_timestamps true $*" \
     bash "$HERE/bd_gameplay_route.sh" || { echo "ARM $label VOID/ABORTED"; return 1; }
-  "$ADB" -s "$DEV" shell "logcat -d -s xenia:*" 2>/dev/null | tr -d '\r' \
-    | grep "GPU pass timing" > "/tmp/vrs_$label.txt"
+  # ⚠ RETRY THE PULL. The route force-stops the app, and a pull issued
+  # immediately after can come back EMPTY while the very same query a moment
+  # later returns thousands of lines - observed 2026-08-17 (0 bytes captured,
+  # 1,342 lines present seconds afterwards). Treat an empty pull as a race, not
+  # as "the lever produced nothing", or a good arm reads as VOID.
+  local i n
+  for i in 1 2 3 4 5; do
+    "$ADB" -s "$DEV" shell "logcat -d -s xenia:*" 2>/dev/null | tr -d '\r' \
+      | grep "GPU pass timing" > "$OUTDIR/vrs_$label.txt"
+    n=$(wc -l < "$OUTDIR/vrs_$label.txt")
+    [ "$n" -gt 0 ] && break
+    echo "  pull returned 0 lines, retrying ($i/5)..."
+    sleep 3
+  done
+  [ "$n" -gt 0 ] || { echo "ARM $label VOID: no pass-timing lines after 5 pulls"; return 1; }
   report "$label"
 }
 
-# base  : the currently recommended shipping setting (2x1 on blended/alpha-test)
-# heavy : same base rate, escalating to 2x2 once a pass is 128 draws deep
-arm base  --ei gpu_vrs_foliage_rate 1
-arm heavy --ei gpu_vrs_foliage_rate 1 --ei gpu_vrs_heavy_pass_rate 2 --ei gpu_vrs_heavy_pass_draws 128
+# base   : the currently recommended shipping setting (2x1 on blended/alpha-test)
+# hp<N>  : same base rate, escalating to 2x2 once a pass is N draws deep
+#
+# ⭐ THRESHOLD SIZING, corrected by the 2026-08-17 run. 128 was chosen to cover
+# ~81% of the 671-draw pass and it was FAR TOO CONSERVATIVE: BD's light passes
+# carry AT MOST ONE draw each, so ANY threshold above ~2 already excludes all of
+# them. At 128 we left 388 eligible draws/frame at the fine rate for no quality
+# benefit, and captured only ~20% of the gap between 2x1 and global 2x2.
+#   => sweep DOWNWARD. A low threshold approaches global 2x2's win while still
+#      leaving every light pass (UI, text, menus) untouched, which is the whole
+#      point of doing this per-pass instead of globally.
+THRESHOLDS="${THRESHOLDS:-128}"
+arm base --ei gpu_vrs_foliage_rate 1
+for t in $THRESHOLDS; do
+  arm "hp$t" --ei gpu_vrs_foliage_rate 1 --ei gpu_vrs_heavy_pass_rate 2 \
+             --ei gpu_vrs_heavy_pass_draws "$t"
+done
 
 echo
 echo "READ IT IN THIS ORDER:"
