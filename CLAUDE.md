@@ -8744,3 +8744,32 @@ must carry the same in-run 70C abort as the route script.** Battery also fell to
 **⚠ THE "ANR" IS NOT A CRASH.** `Reason: Input dispatching timed out` - the emulator UI thread does not service
 input while the route injects buttons under load. Rendering continued throughout (1,753 pass-timing lines).
 Do not read ANR dialogs during a route run as instability.
+
+## 📌📌 **REVIEW BACKLOG P1 IS STALE AS WRITTEN — a64->LLVM CALLS ARE ALREADY DIRECT (2026-08-16)**
+`docs/research/20260731-full-codebase-review-findings.md` P1 says:
+> *"LLVM fns never installed in the a64 indirection table - every a64->LLVM call pays full ResolveFunction
+> forever (largest unclaimed perf win)."*
+**❌ NOT TRUE OF THIS TREE.** `llvm_assembler.cc:3627` calls
+`static_cast<a64::A64Function*>(function)->Setup(code, 0)` on every JIT'd function, so `machine_code()` IS
+set - and `A64Emitter::Call` takes its DIRECT path (`mov x9, machine_code; blr x9`) whenever
+`fn->machine_code()` is non-null. **The a64 -> LLVM direction already skips ResolveFunction.**
+**The resolve cache is also already there** for the other direction (`llvm_backend.cc:258`): a lock-free,
+self-validating, direct-mapped 8192-entry cache that skips the `EntryTable` hash lookup on hits.
+### ⇒ WHAT IS ACTUALLY LEFT IS THE LLVM -> GUEST **INLINE CACHE**, AND IT IS BLOCKED WITH A DERIVED CAUSE
+Tried TWICE, qemu byte-correct (2624 assertions), **crashes BD at opt=2 on device.** The 2026-07-24 consult
+note at `llvm_assembler.cc:795` corrects the original "abandoned frame" theory and names the real cause:
+**AN ABI MISMATCH, living in REGISTER ALLOCATION (so the IR alone cannot show it).**
+| the a64 guest entry expects | what LLVM does |
+|---|---|
+| `x19` = a64 backend context | LLVM does not reserve x19 |
+| clobbers `x22-x28` and FULL `q8-q15` | AAPCS guarantees only the LOW 64 bits of `v8-v15` |
+At `opt=2` LLVM allocates exactly those registers for values live across the call, so the callee destroys
+them - an immediate fault in the a64 prologue / `PushStackpoint` when x19 is garbage, or delayed guest-state
+corruption otherwise.
+**⇒ THE FIX DIRECTION IS ALREADY SPECIFIED (3 steps, in that comment):** reserve `x19`; call a64 guest
+entries through a small **AAPCS adapter thunk** in the a64 code cache, raw machine code ONLY for entries known
+to be LLVM/AAPCS; cache the resolved entry per call site as ONE atomic pointer to an immutable
+`{guest_address, entry}` record, self-validating. **Keep `CALL_TAIL` off it in the first patch** - a retained
+adapter frame across a musttail edge grows unboundedly in a guest tail loop.
+**⚠ AND THE HONEST SIZING: it is worth ~13% of the DISPATCH path, on the CPU. BD measured ~93% GPU-BOUND, so
+this is NOT a Blue Dragon lever** - it is for CPU-bound titles. Do not sell it as a BD fix.
