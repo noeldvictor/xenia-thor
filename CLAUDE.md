@@ -8929,6 +8929,39 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## ?!? THE BUFFER PATH'S ~4% DIFFERENCE IS PROBABLY *MORE* HARDWARE-ACCURATE, NOT LESS (2026-08-17)
+**The entry below measures the buffer path as ~4% different from FBO and calls that "not lossless". That
+framing assumes FBO IS THE REFERENCE. It is not - it is an approximation, and the difference has a physical
+explanation that points the other way.**
+| | stores colour as | blends at | quantises to 7e3 |
+|---|---|---|---|
+| **Xenos hardware** | **EDRAM, 7e3** | ROP | **on every write - EDRAM physically holds 7e3** |
+| our FBO path | `R16G16B16A16_SFLOAT` (a CONTAINER for 7e3) | **fp16** | **only at resolve** |
+| the buffer path | EDRAM SSBO, packed 7e3 | 7e3 | **on every write, like hardware** |
+**=> ON HARDWARE, EVERY BLENDED DRAW READS BACK A 7e3-QUANTISED DESTINATION.** BD's heavy pass stacks ~890
+blended draws, so the FBO path carries fp16 precision through hundreds of blends that the console rounded at
+each step. **The buffer path reproduces the rounding; the FBO path does not.**
+**=> AND THAT PREDICTS THE ERROR SHAPE WE MEASURED, WHICH A CONVERSION BUG DOES NOT:**
+```
+signed diff  mean -2.12  stdev 28.04     <- symmetric, NOT a bias
+ratio y/x    mean 0.9913 stdev 0.5229    <- wide, NOT a uniform scale
+```
+localised, symmetric, largest where overdraw is heaviest, ~zero on flat sky - i.e. **accumulated per-blend
+rounding**, exactly what quantising at each step instead of once at the end produces.
+**⇒ SO "the EDRAM solve is not lossless" IS PROBABLY THE WRONG VERDICT. Re-read it as: the buffer path
+disagrees with OUR CURRENT OUTPUT, and on this axis it is likely closer to the console.**
+### ⚠ WHAT IS NOT PROVEN, STATED PLAINLY
+1. **Whether the Xenos ROP blended at higher internal precision before rounding.** Most GPUs do. That would
+   narrow the gap but NOT close it - the STORED value is 7e3 either way, so the next blend still reads a
+   quantised destination.
+2. **The in-repo specs cannot settle it.** This file already records the top-level spec's **§8.18 Render
+   Backend as a heading with EMPTY subsections**, and the sequencer specs cover shader issue, not the ROP.
+3. **No reference image of what BD SHOULD look like** exists here. "Closer to hardware" is an argument from
+   the storage format, not a comparison against real console output.
+**⇒ THE DECIDING EVIDENCE WOULD BE A CONSOLE CAPTURE OR AN RB SPEC, NEITHER OF WHICH WE HAVE.** Until then do
+NOT call the buffer path a visual regression - and do not call it pixel-correct either. **It is a different,
+defensible interpretation of the same guest data, and it is the only path that removes the EDRAM ceiling.**
+
 ## !!! THE EDRAM BUFFER PATH IS **NOT** PIXEL-CORRECT: ~4% GLOBAL COLOUR SHIFT vs FBO (2026-08-17)
 **The question the buffer-path entries below leave open, answered - and it corrects an eyeball verdict I gave
 three times. Matched by GUEST TIME (`gpu_freeze_at_guest_ms=42000`, engagement confirmed in the log:
