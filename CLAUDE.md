@@ -8925,6 +8925,32 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## >>> THE 2xMSAA FINDING UNLOCKS TWO *LOSSLESS* MECHANISMS NOBODY COULD SEE (2026-08-17)
+**Both were dismissed or never wired because this file said BD's field was 1x. It is 2x. That changes which
+levers are even applicable, and these two are LOSSLESS BY CONSTRUCTION - they change WHERE the MSAA resolve
+happens, not what it produces.**
+| mechanism | status | why it matters now |
+|---|---|---|
+| **`VK_EXT_custom_resolve`** (Turnip) | **IMPLEMENTED, gated behind `gpu_bd_native_keep_scissor` (default OFF)** | shader-resolve subpass that resolves MSAA float16 AND converts to A2B10 **on-tile** - its own comment says it "deletes BD's EDRAM color transfers". Its gate requires `samples != VK_SAMPLE_COUNT_1_BIT`, which BD's heavy pass NOW SATISFIES |
+| **`VK_EXT_multisampled_render_to_single_sampled`** | **detected + feature requested, and READ NOWHERE in `src/xenia/gpu/`** | keeps MSAA in tile memory and stores only the resolved 1x. The header names the intent verbatim: *"BD direct-native: on-tile MSAA->1x resolve for the field producer, avoids off-chip MSAA spill"* |
+**=> PC TRACE REPLAY: `--gpu_bd_native_keep_scissor=true` renders IDENTICAL (EDRAM checksum, 12/12 targets).**
+And `VK_EXT_custom_resolve` IS in the desktop GPU's supported-extension list, so the arm was not trivially
+skipped for want of the extension.
+**⚠⚠ BUT ENGAGEMENT IS NOT PROVEN, AND THAT IS THE WHOLE CAVEAT.** There is no counter saying the
+custom-resolve path fired. "IDENTICAL" is equally consistent with "engaged and is lossless" and with "never
+engaged". **This file records four levers found inert by accident in one day and a fifth (`edram_roaa`, zero
+readers) today - do NOT promote this to a win before adding an announce-on-first-use counter.**
+### => THE RANKED LOSSLESS TRACK FOR BD, WHICH IS NOT EMPTY AFTER ALL
+1. **Add an engagement counter to the custom-resolve path, then A/B it.** It targets the EDRAM colour
+   transfers - BD does **45 a frame** where Burnout does 9 - and the frame is 89.6% shading / **10.4% EDRAM
+   machinery**, so this aims at the only bucket that is addressable without spending quality.
+2. **Wire `multisampled_render_to_single_sampled`.** Detected, requested, unused. Same target, different
+   mechanism, and independent of the deleted BD-native-renderer scaffolding that `keep_scissor` still carries.
+3. Only then conclude the lossless budget is exhausted.
+**📌 AND THE PROCESS POINT: A WRONG FACT HID A WHOLE FAMILY OF LEVERS.** "msaa=0" made every MSAA mechanism
+look inapplicable, so nobody wired them. The correction cost one second on the PC trace loop. **Re-check the
+premises of a dead end before accepting it** - especially premises that were measured in a different scene.
+
 ## !!! BD's HEAVY PASS IS 2xMSAA - "msaa=0, the field is 1x today" IS WRONG (2026-08-17)
 **Found in 1 second with the PC trace loop, and it corrects a load-bearing claim that several conclusions in
 this file rest on.**
