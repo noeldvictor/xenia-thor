@@ -600,6 +600,29 @@ DEFINE_int32(
     "the extension REQUEST behind this cvar keeps the default device-creation "
     "path byte-identical when off. Default off, validate per-title.",
     "GPU");
+DEFINE_bool(
+    gpu_no_depth_write_on_blend, false,
+    "SPEED HACK for fill-bound titles: suppress the depth WRITE on blended "
+    "draws. The depth TEST is untouched, so occlusion still works. "
+    "WHY, from Turnip's own per-pass report on Blue Dragon: lrz=true with "
+    "lrzWriteDisableReason='Depth write + blending' and "
+    "lrzWriteDisabledAtDraw=1. BD's two dominant passes carry ~890 "
+    "alpha-blended draws that ALSO write depth, so the driver stops updating "
+    "LRZ at the FIRST such draw and every later draw in the pass - including "
+    "the OPAQUE ones - is tested against a low-resolution depth buffer that "
+    "never learns anything. A recorded BD frame mixes opaque=117, "
+    "alphatest=325 and blended=321, so the opaque geometry is exactly what is "
+    "being locked out of LRZ by the blended draws. "
+    "The Adreno guide states the rule directly: LRZ WRITE operations are "
+    "disabled until the next surface clear by fixed-function blending, or a "
+    "color-masked write, followed by a depth-write in the same draw - and BD "
+    "does all three at once (colormask=0007 writes RGB but not alpha). "
+    "Writing depth from TRANSLUCENT geometry is unusual, since translucency "
+    "does not occlude, so suppressing it is often visually near-neutral. It is "
+    "NOT free: a title that relies on blended geometry occluding later draws "
+    "will render differently. Quality-affecting, per-title, default off - "
+    "validate with a human looking at the panel.",
+    "GPU");
 DEFINE_int32(
     gpu_vrs_heavy_pass_rate, 0,
     "PER-PASS VRS ESCALATION. Same rate scale as gpu_vrs_foliage_rate (0=off, "

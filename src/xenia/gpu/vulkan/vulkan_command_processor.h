@@ -2307,6 +2307,25 @@ class VulkanCommandProcessor : public CommandProcessor {
   // per-frame reset block, and the skew silently made every break read as a
   // zero-draw pass. Reset only where a pass is entered.
   uint32_t rt_pass_draws_ = 0;
+  // Per-pass draw COMPOSITION, to decide whether gpu_no_depth_write_on_blend
+  // has a mechanism at all. Turnip reports LRZ writes dying at draw 1 of BD's
+  // heavy pass ("Depth write + blending"), but that only COSTS something if
+  // depth-writing draws come AFTER it - those are the ones whose LRZ
+  // contribution is being thrown away. If the pass is all-blended, nothing
+  // writes depth, LRZ has nothing to learn, and the hack is worthless.
+  //   pass_zwrite_after_blend_ IS THE NUMBER THAT DECIDES IT.
+  uint32_t pass_blend_draws_ = 0;
+  uint32_t pass_zwrite_draws_ = 0;
+  uint32_t pass_first_blend_zwrite_ = 0;   // 1-based draw index, 0 = none yet
+  uint32_t pass_zwrite_after_blend_ = 0;
+  // Of those, how many ALSO carry a partial colour mask. The Adreno rule is a
+  // CONJUNCTION - (blend OR colour-mask OR ...) AND a depth-write in the same
+  // draw - so a depth-writing draw that is itself colour-masked re-triggers the
+  // LRZ-write disable on its own and CANNOT be recovered by suppressing blended
+  // depth-writes. Recoverable = zwrite_after_blend - zwrite_masked_after_blend.
+  // If BD sets colormask=0007 globally, that difference is zero and the hack is
+  // dead however promising the first number looks.
+  uint32_t pass_zwrite_masked_after_blend_ = 0;
   // gpu_vrs_heavy_pass_rate engagement counters, PER FRAME (reset in the
   // per-frame trace block, not per pass - they answer "did the lever fire this
   // frame", which is a frame-level question).

@@ -235,7 +235,16 @@ public final class XeniaOptimizations {
                         + "closely.\n\n"
                         + "If you want more speed and do not mind a blurrier "
                         + "picture, use the Performance option instead.",
-                CATEGORY_GPU, false, true,
+                // ⭐ DEFAULT-ON since 2026-08-17. It shipped OFF, which meant BD ran at
+                // 15.5-15.7 fps in heavy scenes while 21.1 was one toggle away and
+                // nobody was toggling it - measured same-session, same build, heavy
+                // buckets n=248-356: no VRS 15.5/15.7, VRS 2x1 21.1 (+35%).
+                // The cost is the one a user already described from the panel:
+                // "slightly softer foliage". Solid geometry, text and UI are
+                // untouched because the gate is the blend/alpha-test state.
+                // Still a QUALITY TRADE, so it stays a toggle and honours the
+                // per-game override - this changes the DEFAULT, not the choice.
+                CATEGORY_GPU, true, true,
                 null,
                 new IntCvar[]{new IntCvar("gpu_vrs_foliage_rate", 1)}));
 

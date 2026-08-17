@@ -202,6 +202,19 @@ struct Config {
   // time tracks alu_iters -> ALU-bound. time tracks blend/format -> bandwidth.
   uint32_t alu_iters = 8;  // 8 = the old hardcoded loop, so default = legacy
   bool blend = false;
+  // ⭐ BLUE DRAGON SHAPE. BD's two dominant passes are ~890 alpha-blended draws
+  // that ALSO write depth, with colormask=0007 (RGB, no alpha). Turnip responds
+  // with lrzWriteDisableReason="Depth write + blending" at draw 1, so every
+  // later draw is tested against an LRZ buffer that never updates.
+  //
+  // ⚠ THE DEPTH COMPARE OP MATTERS AND THE OLD DEFAULT MADE THIS UNTESTABLE:
+  // the harness hardcoded VK_COMPARE_OP_ALWAYS, and the Adreno guide lists
+  // ALWAYS (and NOT_EQUAL) as disabling LRZ TEST AND WRITE outright. With that
+  // op no arm can ever show an LRZ effect - the harness would have reported a
+  // confident null for a mechanism it had disabled itself.
+  bool depth_write = true;     // --depth-write off  = the proposed hack
+  bool depth_always = false;   // --depth-always     = old behaviour, LRZ off
+  bool colormask_rgb = false;  // --colormask-rgb    = BD's 0007
   std::string format = "rgba8";  // rgba8 | rgba16f
 };
 
@@ -425,6 +438,9 @@ int main(int argc, char** argv) {
     else if (a == "--flag-value") cfg.flag_value = std::stoul(next(), nullptr, 0);
     else if (a == "--alu-iters") cfg.alu_iters = std::stoul(next());
     else if (a == "--blend") cfg.blend = true;
+    else if (a == "--depth-write") cfg.depth_write = (std::string(argv[++i]) != "off");
+    else if (a == "--depth-always") cfg.depth_always = true;
+    else if (a == "--colormask-rgb") cfg.colormask_rgb = true;
     else if (a == "--format") cfg.format = next();
     else if (a == "--label") cfg.label = argv[i + 1], ++i;
     else {
@@ -690,7 +706,12 @@ int main(int argc, char** argv) {
   ms.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
   ms.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
   VkPipelineColorBlendAttachmentState cba{};
-  cba.colorWriteMask = 0xF;
+  // BD masks alpha off (colormask=0007). A partial colour mask is itself one of
+  // the LRZ-write disablers, so it has to be reproducible here.
+  cba.colorWriteMask = cfg.colormask_rgb
+                           ? (VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+                              VK_COLOR_COMPONENT_B_BIT)
+                           : 0xF;
   if (cfg.blend) {
     // Standard src-alpha blend. This is the point of the arm: the ROP must
     // READ the destination for every fragment, which is exactly the traffic
@@ -719,8 +740,11 @@ int main(int argc, char** argv) {
   VkPipelineDepthStencilStateCreateInfo ds{};
   ds.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO;
   ds.depthTestEnable = VK_TRUE;
-  ds.depthWriteEnable = VK_TRUE;
-  ds.depthCompareOp = VK_COMPARE_OP_ALWAYS;
+  ds.depthWriteEnable = cfg.depth_write ? VK_TRUE : VK_FALSE;
+  // LESS by default so LRZ can actually function; ALWAYS is kept only to
+  // reproduce the harness's old (LRZ-disabled) behaviour on demand.
+  ds.depthCompareOp =
+      cfg.depth_always ? VK_COMPARE_OP_ALWAYS : VK_COMPARE_OP_LESS;
   gp_ci.pColorBlendState = &cb;
   if (cfg.depth) gp_ci.pDepthStencilState = &ds;
   gp_ci.layout = layout;

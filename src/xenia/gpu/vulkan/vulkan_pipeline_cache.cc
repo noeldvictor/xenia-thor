@@ -1042,8 +1042,28 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
       !hybrid_fsi_composite) {
     if (render_pass_key.depth_and_color_used & 1) {
       if (normalized_depth_control.z_enable) {
-        description_out.depth_write_enable =
-            normalized_depth_control.z_write_enable;
+        bool z_write = normalized_depth_control.z_write_enable;
+        // SPEED HACK (gpu_no_depth_write_on_blend): a blended draw that also
+        // writes depth makes the driver stop updating LRZ - Turnip reports
+        // "Depth write + blending" and disables LRZ writes at the FIRST such
+        // draw, so every later draw in the pass is tested against a depth
+        // buffer that never learns anything. Dropping the WRITE (never the
+        // TEST) on blended draws lets LRZ keep accumulating and reject
+        // occluded fragments across the stack.
+        if (z_write && cvars::gpu_no_depth_write_on_blend) {
+          auto bc = register_file_.Get<reg::RB_BLENDCONTROL>();
+          const bool trivial_blend =
+              bc.color_srcblend == xenos::BlendFactor::kOne &&
+              bc.color_destblend == xenos::BlendFactor::kZero &&
+              bc.color_comb_fcn == xenos::BlendOp::kAdd &&
+              bc.alpha_srcblend == xenos::BlendFactor::kOne &&
+              bc.alpha_destblend == xenos::BlendFactor::kZero &&
+              bc.alpha_comb_fcn == xenos::BlendOp::kAdd;
+          if (!trivial_blend) {
+            z_write = false;
+          }
+        }
+        description_out.depth_write_enable = z_write;
         description_out.depth_compare_op = normalized_depth_control.zfunc;
       } else {
         description_out.depth_compare_op = xenos::CompareFunction::kAlways;

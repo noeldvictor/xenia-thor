@@ -72,6 +72,7 @@ DECLARE_string(dump_guest_mem_path);
 DECLARE_bool(gpu_blue_dragon_kick_wait_token);
 DECLARE_int32(gpu_blue_dragon_kick_wait_token_budget);
 DECLARE_int32(gpu_vrs_foliage_rate);
+DECLARE_bool(gpu_no_depth_write_on_blend);
 DECLARE_int32(gpu_vrs_heavy_pass_rate);
 DECLARE_int32(gpu_vrs_heavy_pass_draws);
 DECLARE_bool(gpu_vrs_all_draws);

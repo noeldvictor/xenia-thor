@@ -444,6 +444,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "gpu_blended_thin_factor");
             copyIntExtra(intent, launchArguments, "gpu_foliage_thin_factor");
             copyIntExtra(intent, launchArguments, "gpu_vrs_foliage_rate");
+            copyBooleanExtra(intent, launchArguments, "gpu_no_depth_write_on_blend");
             copyIntExtra(intent, launchArguments, "gpu_vrs_heavy_pass_rate");
             copyIntExtra(intent, launchArguments, "gpu_vrs_heavy_pass_draws");
             copyBooleanExtra(intent, launchArguments, "gpu_vrs_all_draws");

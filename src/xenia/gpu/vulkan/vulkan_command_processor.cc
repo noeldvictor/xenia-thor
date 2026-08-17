@@ -4735,6 +4735,11 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   // when it ends. Set unconditionally here, which is the ONLY place the tracker
   // is assigned on this path - a mark set anywhere else could disagree with it.
   rt_pass_draws_ = 0;
+  pass_blend_draws_ = 0;
+  pass_zwrite_draws_ = 0;
+  pass_first_blend_zwrite_ = 0;
+  pass_zwrite_after_blend_ = 0;
+  pass_zwrite_masked_after_blend_ = 0;
   // LEVEL 4 color-only native HLE (gpu_bd_native_color_lifetime_hle >= 4): if
   // this guest pass's framebuffer carries a private native color producer, SEED
   // it (LLE color -> native) now - BEFORE BeginRenderPass is recorded, while no
@@ -5427,6 +5432,11 @@ void VulkanCommandProcessor::EndRenderPass() {
     ++rt_endhere_dm_;
   }
   rt_pass_draws_ = 0;
+  pass_blend_draws_ = 0;
+  pass_zwrite_draws_ = 0;
+  pass_first_blend_zwrite_ = 0;
+  pass_zwrite_after_blend_ = 0;
+  pass_zwrite_masked_after_blend_ = 0;
   // gpu_vulkan_retro_depth_none: hindsight depth-none patch for the ending pass.
   RetroPatchDepthNoneAtPassEnd();
   // Lever 2 (vulkan_merge_draws): the pending draw-concatenation run's draws
@@ -5563,14 +5573,17 @@ void VulkanCommandProcessor::MaybeLogSmallGuestPass() {
       "{} fb={:04x} {}x{} draws={} host_verts={} idx={} prim={} "
       "ps_hash={:016X} vs_hash={:016X} blendctl0={:08X} colorctl={:08X} "
       "colormask={:04X} depthctl={:08X} color0_info={:08X} depth_info={:08X} "
-      "ps_zwrite={} ps_kill={}",
+      "ps_zwrite={} ps_kill={} blend_draws={} zwrite_draws={} "
+      "first_blend_zwrite={} zwrite_after_blend={} zwrite_masked_after={}",
       is_big_pass ? "BIGPASS" : "SMALLPASS",
       uint32_t((reinterpret_cast<uintptr_t>(current_framebuffer_) >> 4) &
                0xFFFFu),
       host_w, host_h, pass_draws, d.host_vertex_count, d.index_count,
       d.prim_type, d.ps_hash, d.vs_hash, d.blendcontrol0, d.colorcontrol,
       d.color_mask, d.depthcontrol, d.color0_info, d.depth_info,
-      d.ps_writes_depth, d.ps_kills);
+      d.ps_writes_depth, d.ps_kills, pass_blend_draws_, pass_zwrite_draws_,
+      pass_first_blend_zwrite_, pass_zwrite_after_blend_,
+      pass_zwrite_masked_after_blend_);
 }
 
 VkDescriptorSet VulkanCommandProcessor::AllocateSingleTransientDescriptor(
@@ -8533,6 +8546,43 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         } else if (cvars::gpu_collapse_opaque_coverage && !blends_draw &&
                    normalized_depth_control.z_write_enable) {
           collapse_this_draw = true;
+        }
+      }
+      // PER-PASS COMPOSITION (always counted - it is four adds and it answers
+      // whether the LRZ hack has anything to gain).
+      {
+        auto bc_c = register_file_->Get<reg::RB_BLENDCONTROL>();
+        const bool blends_c =
+            !(bc_c.color_srcblend == xenos::BlendFactor::kOne &&
+              bc_c.color_destblend == xenos::BlendFactor::kZero &&
+              bc_c.color_comb_fcn == xenos::BlendOp::kAdd &&
+              bc_c.alpha_srcblend == xenos::BlendFactor::kOne &&
+              bc_c.alpha_destblend == xenos::BlendFactor::kZero &&
+              bc_c.alpha_comb_fcn == xenos::BlendOp::kAdd);
+        const bool zwrite_c = normalized_depth_control.z_enable &&
+                              normalized_depth_control.z_write_enable;
+        if (blends_c) ++pass_blend_draws_;
+        if (zwrite_c) ++pass_zwrite_draws_;
+        if (blends_c && zwrite_c && !pass_first_blend_zwrite_) {
+          pass_first_blend_zwrite_ = rt_pass_draws_ + 1;
+        }
+        // The opportunity: a depth-writing draw AFTER LRZ writes were killed.
+        if (zwrite_c && pass_first_blend_zwrite_ &&
+            (rt_pass_draws_ + 1) > pass_first_blend_zwrite_) {
+          ++pass_zwrite_after_blend_;
+          // A partial colour mask re-triggers the disable by itself, so such a
+          // draw cannot be recovered by suppressing blended depth-writes.
+          const uint32_t cmask =
+              register_file_->Get<reg::RB_COLOR_MASK>().value & 0xFFFFu;
+          bool fully_masked_in = true;
+          for (uint32_t rt = 0; rt < 4; ++rt) {
+            const uint32_t nib = (cmask >> (rt * 4)) & 0xFu;
+            if (nib != 0u && nib != 0xFu) {
+              fully_masked_in = false;
+              break;
+            }
+          }
+          if (!fully_masked_in) ++pass_zwrite_masked_after_blend_;
         }
       }
       // VRS (gpu_vrs_foliage_rate, Thor novel-hardware lever): coarse-shade the
