@@ -8694,3 +8694,35 @@ on a corrupted frame is not a frame rate** - all three arms above rendered far l
 - **`UpscaleDownscaledRenderTarget` / `Restore...`** are correct and validation-clean; they would be the right
   machinery for a NON-TILED title. Left in, gated, unused when the cvar is off.
 **⇒ FOR BD, THE FRAGMENT-COST LEVER MUST COME FROM SOMEWHERE THAT DOES NOT TOUCH THE SCISSOR.**
+
+## ✅✅✅ **BD SLOWDOWN: A REAL, WORKING FIX — VRS 2x1 ON BLENDED DRAWS, +33% WITH A CORRECT PICTURE (2026-08-16)**
+**`gpu_vrs_foliage_rate=1`. BD gameplay route, screenshot and frame time from the SAME run, both arms.**
+| | baseline | **VRS 2x1** |
+|---|---|---|
+| fps (on-screen overlay) | 15.3 | **20.4** |
+| `gpu_frame_us` | 64,548 | **49,064 (-24.0%)** |
+| `verts` | 262,957 | 263,255 |
+| picture | correct | **CORRECT** |
+**🔑 THE VERTEX COUNTS MATCH (262,957 vs 263,255). THAT IS THE VALIDITY CHECK THE RESOLUTION DOWNSCALE
+FAILED** - same scene, same work submitted, less time to render it. **+33% fps, and the frame is complete.**
+### WHY THIS ONE WORKS WHERE THE DOWNSCALE COULD NOT
+**It never touches the scissor.** BD's field separates its predicated tiles BY the scissor, so any lever that
+scales it collapses the tile layout at draw time. VRS changes only the SHADING RATE, per draw, via dynamic
+state - geometry, scissor, tile layout and EDRAM addressing are all untouched.
+### WHAT WAS ACTUALLY MISSING, AND IT WAS ONE LINE OF EXPRESSIVENESS
+`gpu_vrs_foliage_rate` and the `RB_BLENDCONTROL` gate were ALREADY HERE - the targeting was already right.
+The rate was emitted as `{r, r}`, i.e. SQUARE only: 1x1, 2x2, 4x4. **4x4 is what got VRS pulled from this
+project on a user report of broken graphics, and 2x1 - the rate XenDroid SHIPS by default - could not be
+expressed at all.** The rate is now an index into `{1x1, 2x1, 2x2, 4x2, 4x4}`. Existing values keep their
+meaning (2 = 2x2, 4 = 4x4).
+**⇒ An asymmetric rate halves fragment work while coarsening ONE AXIS ONLY, which is why it survives visual
+inspection where 4x4 did not.**
+### THE QUALITY COST, STATED HONESTLY
+**Visible, small, and confined to where the theory said it would be: the alpha-blended FOLIAGE is slightly
+coarser** (the bushes). Terrain, character, buildings, fence and text are unchanged, because the blend gate
+leaves unblended draws at the native rate. **This is a quality-for-speed trade, not a free win - ship it as a
+user-facing toggle, not a silent default.**
+### 📌 AND IT LANDS ON THE MEASURED BOTTLENECK
+BD is ~93% GPU-bound; 81.5% of GPU in-pass time is two passes of ~890 ALPHA-BLENDED draws. The blend gate
+selects exactly that population. **This is the first BD GPU lever in this file whose target was identified by
+measurement (BIGPASS pass identification) before the lever was chosen.**
