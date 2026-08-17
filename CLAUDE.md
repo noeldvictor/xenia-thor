@@ -7682,6 +7682,53 @@ the bug.
 **⇒ THE FORM: one script per experiment, in `tools/`, with the abort conditions inside it.** `tools/thor/`
 for device routes, `tools/edram_bench/` for harness arms. Keep inline commands to short reads.
 
+## ✅✅✅ **THE PPC FMA NaN/CR1 PORT: 35,917 -> 19,120 CORPUS FAILURES (-46.8%), ZERO REGRESSIONS (2026-08-17)**
+```
+step                                     failures    delta
+baseline                                  35,917       -
+scalar multiply-add NaN semantics         31,201    -4,716
+packed vnmsubfp NaN semantics             23,711    -7,490
+vcmpbfp NaN bounds                        23,160      -551
+FPSCR invalid-operation summary for CR1   19,120    -4,040
+```
+**Every step measured against the 169,117-case hardware corpus, per-instruction, with NO regressions at any
+point. The CR1 step came out at EXACTLY -505 on each of the eight multiply-add forms, which is what a single
+common cause looks like.**
+### 🔑 THE QNaN SIGN CONTRADICTION IS RESOLVED, AND BOTH SIDES WERE RIGHT
+This file recorded a qemu differential proving **PPC's generated default NaN is NEGATIVE (`FFC00000`)**, while
+upstream's commit states it is **POSITIVE**. The corpus settles it - they are **DIFFERENT UNITS**:
+```
+scalar FPU (fmadds)   Expected: f4 == 0x7FF8000000000000     <- POSITIVE
+VMX        (vaddfp)   qemu differential:  FFC00000            <- NEGATIVE
+```
+**Use `0x7FF8000000000000` for the scalar FPU and `FFC00000` for VMX. Neither source was wrong; they were
+measuring different halves of the machine.** The scalar fix works precisely because it uses the positive form.
+### ⚡ THE COST DESIGN, because "is this a speed hack?" is the right question
+| path | when the fixup runs | why |
+|---|---|---|
+| scalar FMA | **only when the result is ALREADY NaN** | a NaN operand always yields a NaN result, and an invalid op without NaN operands also does - so a `vucomisd` + not-taken branch is the whole hot-path cost |
+| `vnmsubfp` | unconditional branchless blend | lanes may each need a different answer, so it cannot branch. Justified by 12,808 failures |
+| **`vmaddfp`** | **NEVER - deliberately** | it is the only multiply-add hot enough to notice (upstream measured ~8.5fps). Gated on `ARITHMETIC_NEGATE_RESULT` so the exclusion is STRUCTURAL, not a comment that can drift |
+| Rc=0 forms | **never** | CR1 derivation runs only for recording forms |
+### 🚧 WHAT REMAINS, AND THE RESIDUAL IS NOT WHAT IT LOOKS LIKE
+```
+vmaddfp    6,215     vnmsubfp  5,318     -s forms  2,692     vpkpx 644 (unimplemented)
+```
+**⚠ THE PACKED RESIDUAL IS MOSTLY DENORMAL FLUSH, NOT NaN.** A failing `vmaddfp` case reads
+`Expected [00000000, ...] Actual [00010203, ...]` - lane 0 is a tiny DENORMAL that hardware flushes to zero and
+we keep. **That is upstream `36a7bb57f` (opt-in accurate VMX denormal flush), and it is fixable WITHOUT paying
+the vmaddfp NaN-fixup cost the speed trade rejects.** Best next target.
+**⚠ AND THE DOUBLE-PRECISION FMA FORMS ARE NOW CLEAN - only the `-s` variants remain**, at ~672 each. Those go
+through `Convert(Convert(v, FLOAT32), FLOAT64)`, so the residual is in the round-to-single round trip.
+### 🪤 TWO x64 EMITTER TRAPS THAT COST REAL TIME
+1. **`LoadConstantXmm` MATERIALIZES THROUGH STASH SLOT 0** - its own header says *"Implies possible
+   StashXmm(0, ...)!"*. Stashing operands before an FMA sequence does NOT survive; the sequence overwrites slot
+   0 when src3 is constant. The first attempt did exactly that and crashed on the first `fmadd`. Combined with
+   dest commonly ALIASING a source, **the operands cannot be read after the FMA at all** - build the answer
+   BEFORE it instead. Upstream avoids this with out-of-line tail code (`AddToTail`) this backend lacks.
+2. **ONLY `xmm0-xmm3` ARE SCRATCH.** `xmm_reg_map_` allocates **4..15**, so a draft using xmm4/xmm5 as temps
+   would have silently corrupted live guest vector state. Caught in review, not by a crash.
+
 ## 🧲🧲 XENDROID SWEEP 2026-08-13 — 54 NEW COMMITS TRIAGED, 8 PORTED, TWO REAL MEMORY BUGS FOUND
 **`reference/XenDroid` `origin/main` = `b70d64374` (2026-08-10). The default branch is `main`, NOT `master` —
 the local clone tracks `master` at `84edc9b00`, so `git log HEAD..origin/HEAD` reports 4,429 commits. That number
