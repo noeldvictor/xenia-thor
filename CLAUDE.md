@@ -8962,6 +8962,27 @@ disagrees with OUR CURRENT OUTPUT, and on this axis it is likely closer to the c
 NOT call the buffer path a visual regression - and do not call it pixel-correct either. **It is a different,
 defensible interpretation of the same guest data, and it is the only path that removes the EDRAM ceiling.**
 
+### ++ CONFIRMED BY REGIONAL ANALYSIS: THE DIFFERENCE SCALES WITH OVERDRAW (2026-08-17)
+**The hypothesis above predicts the gap grows with blend DEPTH. Measured on the guest-time-matched frames,
+per region - no new runs needed:**
+```
+region                    %diff   mean|d|   max|d|
+sky (no overdraw)        100.00%     3.32       17
+sky near sun (bloom)     100.00%     6.14       21
+sails (heavy blending)    98.51%    24.24      100
+hub/flare (max blend)     99.16%    20.92       96
+```
+**=> 3.3 IN CLEAN SKY, 24.2 IN THE BLENDED STACK - A 7x SPREAD THAT TRACKS OVERDRAW.** A gamma or
+format-conversion error shifts every region EQUALLY; this does not. **The mechanism is accumulated per-blend
+rounding, and it is now measured rather than argued.**
+**⇒ WHICH MAKES THE VERDICT CONCRETE: the buffer path rounds to 7e3 on every blended write, as EDRAM
+physically did; the FBO path carries fp16 through the whole stack and rounds once. BD's ~890-draw blended
+pass is the worst case for that difference, which is why this title shows it most.**
+**⚠ The ~3.3 residual in no-overdraw sky is NOT explained by this** - a region with zero blending should match
+almost exactly. Either the sky carries 1-2 blended layers (gradient + clouds, likely), or there is a second,
+smaller difference underneath. **Do not treat the blend explanation as complete until that residual is
+accounted for.**
+
 ## !!! THE EDRAM BUFFER PATH IS **NOT** PIXEL-CORRECT: ~4% GLOBAL COLOUR SHIFT vs FBO (2026-08-17)
 **The question the buffer-path entries below leave open, answered - and it corrects an eyeball verdict I gave
 three times. Matched by GUEST TIME (`gpu_freeze_at_guest_ms=42000`, engagement confirmed in the log:
