@@ -8661,3 +8661,36 @@ have its own transfer-source descriptor set, which is the plumbing the blit appr
 but it is now clearly required, because in-place upscaling cannot survive multi-tile rendering.
 **⚠ DO NOT retry "blit once per frame" or "skip if already upscaled" - both were considered and neither
 works: tiles render BETWEEN dumps, so any in-place scheme corrupts the next tile.**
+
+## 🛑🛑🛑 **THE RESOLUTION DOWNSCALE IS ARCHITECTURALLY INCOMPATIBLE WITH BD's FIELD (2026-08-16, FINAL)**
+**Three implementations, three device runs, and the blocker is not any of them - it is the lever itself.**
+| attempt | picture | fps |
+|---|---|---|
+| shrink the RT IMAGE | black frame + strips of garbage | 29.6 |
+| in-place upscale blit before the dump | game VISIBLE, banded + duplicated | 26.0 |
+| **non-destructive blit (upscale, dump, restore)** | **UNCHANGED - still banded + duplicated** | 26.9 |
+**The third attempt is what proves it.** If the corruption were the blit being destructive across BD's tiles,
+restoring the render target would have fixed it. It changed nothing.
+### 🔑 THE REAL BLOCKER, AND THIS TREE ALREADY DOCUMENTED IT
+`vulkan_command_processor.cc:10604`:
+> *"BD native tiling: a uniform viewport x-shift by -win_off did NOT separate the tiles (most field draws
+> share win_off=-608 - **the tiles differ by SCISSOR**, not win_off)."*
+**BD's field uses PREDICATED TILING and its tiles are distinguished BY THE SCISSOR. The downscale SCALES THE
+SCISSOR. So it collapses the tile layout at DRAW time** - every tile's rectangle is squashed toward the
+origin, several tiles overlap, and the frame comes out as the scene repeated in vertical bands. **No amount of
+post-hoc blitting can undo that, because the damage happens before any blit runs.**
+**⇒ THE LEVER CANNOT WORK ON A TILED TITLE without also rescaling the tile->EDRAM mapping, which means
+teaching BD's tiling emulation about a fractional factor. That is a much larger project than the size
+invariant, and it is NOT what the 2026-08-10 entry scoped.**
+**⚠ AND IT REVISES THE 2026-08-10 "uniform softness" QUALITY NOTE.** That entry recorded the downscale's cost
+as uniform softness and the win as shippable-after-a-refactor. **On the tiled field the cost is not softness,
+it is a broken frame.** The earlier note was presumably taken in a non-tiled scene. **A frame rate measured
+on a corrupted frame is not a frame rate** - all three arms above rendered far less than the game intended.
+### ✅ WHAT IS STILL WORTH KEEPING FROM THIS WORK
+- **`731c54d07` single-sourced host RT size** - kills the "computed two ways at ~14 sites" defect and is
+  behaviour-neutral with the cvar off (device-confirmed: 15.88 fps vs the historical 16.17).
+- **The scissor floor-to-zero bug is fixed** - `extent * pct / 100u` with no clamp could floor to 0 and drop
+  every draw using that scissor.
+- **`UpscaleDownscaledRenderTarget` / `Restore...`** are correct and validation-clean; they would be the right
+  machinery for a NON-TILED title. Left in, gated, unused when the cvar is off.
+**⇒ FOR BD, THE FRAGMENT-COST LEVER MUST COME FROM SOMEWHERE THAT DOES NOT TOUCH THE SCISSOR.**
