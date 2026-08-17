@@ -8929,6 +8929,39 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## *** THE EDRAM SOLVE IS REAL AND BD RENDERS ON IT: FSI BUFFER PATH CREATES **ZERO** RENDER TARGETS (2026-08-17)
+**User: *"use vulkan smart like other emu to solve the edram thing"*. They were right, and the answer is not a
+lever - it is the OTHER render-target path, which this fork already has.**
+```
+same captured BD frame, same binary, only --render_target_path_vulkan changes:
+    fbo  selected=fbo   RTs created = 16
+    fsi  selected=fsi   RTs created =  0      <- NO render-to-texture allocations AT ALL
+and the FSI frame RENDERS CORRECTLY (desktop capture): windmill sails, lattice, rope
+rigging, brass hub, sky gradient, sun bloom + lens flare, bird sprite, MGS text.
+```
+**=> `kPixelShaderInterlock` IS EDRAM-AS-ONE-SSBO. No ownership transfers, no dumps, and - the part that
+matters most - NO `SAMPLED` USAGE REQUIREMENT.** That requirement is the single constraint this file just
+identified as closing off transient attachments, tile-memory heap, MSRTSS and on-tile residency.
+**=> SO THE ~10% LOSSLESS CEILING IS A PROPERTY OF THE PATH WE ARE ON, NOT OF THE FRAME.** The EDRAM machinery
+is 10.4% of the frame and BD does 45 ownership transfers where Burnout does 9. On the buffer path that
+machinery does not get optimised - **it does not exist**. That is what Dolphin does structurally by never
+reading back, and what this file has been trying to approximate with copy-avoidance levers for months.
+### WHY IT IS NOT SHIPPING ON THE THOR, AND WHAT IS ACTUALLY MISSING
+| | |
+|---|---|
+| desktop | **has `VK_EXT_fragment_shader_interlock`** - which is why the path runs here, and why the PC is a working REFERENCE ORACLE for it |
+| Turnip / Adreno 740 | **NO fragment_shader_interlock.** This file records it ABSENT and previously wrote the whole idea off for that reason |
+| the workaround | `gpu_vulkan_edram_atomic` - replaces interlock-ordered depth+colour RMW with order-INDEPENDENT 64-bit `atomicMin` on packed (depth\|fragment-id), winner-gated colour. **Bypasses the FSI feature gate entirely** |
+| what is unfinished | its own text: *"Opaque/depth draws are correct-by-construction; **blends race (minor)** until the visibility-buffer colour resolve lands"* |
+**⚠ AND THE UNFINISHED PIECE LANDS EXACTLY ON BD: the heavy pass is ~92% BLENDED draws.** So "blends race" is
+not a minor caveat for this title, it is the title. **That is the work item, and it is now a specific one.**
+### => THE PC LOOP CAN DEVELOP IT WITHOUT THE DEVICE, WHICH IS THE UNLOCK
+Desktop has NATIVE FSI, so it is a correctness ORACLE: implement the atomic colour resolve, replay the same
+trace under `fsi` (reference) and under `edram_atomic` (candidate), and diff. **Seconds per iteration, no
+Thor.** Only the final "is it faster on Adreno" number needs the device.
+**⚠ WHAT IS NOT ESTABLISHED: ANY SPEED NUMBER.** 16 RTs -> 0 is a COUNT of work removed, not a measurement of
+time saved, and desktop frame times say nothing about a TBDR. **Do not quote a speedup from this entry.**
+
 ## ### THE ONE STRUCTURAL REASON EVERY TILE-MEMORY LEVER FAILS: OUR RENDER TARGETS MUST BE READABLE OUTSIDE THE PASS (2026-08-17)
 **Chasing the transient-MSAA lever produced a better answer than the lever: a single mechanism that explains
 the whole family of dead tile-memory results, from code rather than from measurements.**
