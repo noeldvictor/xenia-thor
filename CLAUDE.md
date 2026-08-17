@@ -7411,6 +7411,28 @@ GPU conclusion here rests on is the UNCLAMPED shape.**
 **⚠ DO NOT pass `gpu_frame_limit_fps` from the profile into a measurement - BD's profile sets it to 30 and
 would cap the very thing being measured.**
 
+## ❌ **`gpu_vulkan_edram_roaa` ENABLES ON BD AND DOES NOTHING - AND THE ENGAGEMENT CHECK IS WHAT SAVED IT (2026-08-17)**
+**The last large LOSSLESS candidate. Its own help claims it "eliminates the EDRAM ownership-transfer copies
+(device-measured ~9ms / ~22% of the BTTF GPU frame)", which is aimed exactly at BD's addressable bucket - BD
+does 45 ownership transfers a frame where Burnout does 9. It had NEVER been tested on BD.**
+```
+arm            180k-230k     230k-300k        rt_transfers
+dhr             64,126 us     62,929 us            45
+dhr + roaa      63,794        62,925              45      <- IDENTICAL to 4 s.f.
+```
+**✅ IT IS NOT A CAPABILITY GAP - the gate LOGS ITS OWN DECISION and it says `edram_roaa=true`.** The extension
+and both feature bits are present (`roaa_color=1 roaa_depth=1`).
+**🔑 BUT `rt_transfers` IS 45 IN BOTH ARMS - THE EXACT QUANTITY IT CLAIMS TO ELIMINATE.** So the lever
+ENABLES and the render path does not change. Combined with timing identical to four significant figures, the
+honest reading is that nothing happened, not that the copies got cheaper.
+**⇒ VERDICT: ROAA does not help BD.** Whether the implementation is incomplete (it is marked "Track #6
+EXPERIMENTAL, in progress") or BD's transfers are simply not eligible cannot be separated without deeper
+instrumentation - and is not worth it, because either way the frame does not move.
+**📌 AND THIS IS WHY THE ENGAGEMENT RULE EXISTS.** The timing alone reads as a clean "ROAA is flat on BD",
+which would have gone into this file as a measured negative about the TECHNIQUE. It is not - it is a VOID run
+about a lever that enabled but did nothing. **`rt_transfers` was already in the per-frame trace; the check cost
+one grep.** A flat result from a lever whose mechanism did not move is not evidence about the mechanism.
+
 ## 🚨🚨🚨 **BD's RT-HEIGHT CLAMPS ARE A ~9% REGRESSION IN HEAVY SCENES - SHIPPED SINCE JUNE, NOW DISABLED (2026-08-17)**
 **`gpu_clamp_rt_framebuffer_height` / `_image_height` = 768 have been in BD's profile since 2026-06-29 as
 "~10% each, lossless, device-validated". A properly sampled re-measurement says they COST ~9% in exactly the

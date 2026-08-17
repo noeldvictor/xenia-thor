@@ -53,7 +53,7 @@ for a in ${ARMS:-noprofile shipgpu}; do
   case "$a" in
     noprofile) arm noprofile ;;
     shipgpu)   arm shipgpu $SHIP ;;
-    roaa)      arm roaa $SHIP --ez gpu_vulkan_edram_roaa true ;;
+    roaa)      arm roaa --ez vulkan_direct_host_resolve true --ez gpu_vulkan_edram_roaa true ;;
     clamps)    arm clamps --ei gpu_clamp_rt_framebuffer_height 768                           --ei gpu_clamp_rt_image_height 768 ;;
     dhr)       arm dhr --ez vulkan_direct_host_resolve true ;;
     *) echo "unknown arm: $a"; exit 1 ;;
