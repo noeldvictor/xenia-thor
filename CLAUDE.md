@@ -7411,6 +7411,27 @@ GPU conclusion here rests on is the UNCLAMPED shape.**
 **⚠ DO NOT pass `gpu_frame_limit_fps` from the profile into a measurement - BD's profile sets it to 30 and
 would cap the very thing being measured.**
 
+## 📊 **THE LOSSLESS SHIPPING GPU SET IS WORTH ~5-6% ON BD - MEASURED AT LAST (2026-08-17)**
+**First run ever to include BD's own profile cvars. Same session, warm shader cache, matched cooldowns,
+0 faults, scene-matched by vertex bucket. Arms: route-as-usual vs route + `gpu_clamp_rt_framebuffer_height=768`
++ `gpu_clamp_rt_image_height=768` + `vulkan_direct_host_resolve=true`. ALL THREE ARE LOSSLESS.**
+```
+bucket            noprofile     shipgpu     delta      n
+ 50k-120k         20,467 us    19,462 us    -4.9%    84 / 77
+120k-180k         27,843 us    26,049 us    -6.4%   150 /114
+180k-230k         64,942 us    69,744 us    +7.4%     9 / 11   <- TOO THIN
+230k-300k         65,369 us    64,574 us    -1.2%    12 / 12   <- TOO THIN
+```
+**⇒ ~5-6% AT ZERO QUALITY COST, in the two buckets with enough frames to mean anything.**
+**⚠ AND THE HEAVY BUCKETS ARE NOT A RESULT.** n=9-12 and the two disagree in SIGN. Both arms hit the 70C guard
+before accumulating deep-scene frames, so the buckets that matter most for BD are the ones this harness samples
+WORST. **Do not quote +7.4% or -1.2% as anything.** Fixing it needs a colder start or a shorter route, not more
+runs of the same shape.
+**⚠ IT IS ALSO WELL SHORT OF THE ~20% THE PROFILE COMMENTS IMPLY** (~10% per clamp, device-validated
+2026-06-29). Those predate the EDRAM work, the Edge kernel merge and the LLVM backend; several of the costs
+they trimmed have since been reduced by other means. **The 2026-06-29 figures are not additive with today's
+tree - treat ~5-6% as the current number.**
+
 ## ✅ **SHIPPED: `vulkan_direct_host_resolve` IN BD's PROFILE (2026-08-17) - MEASURED, LOSSLESS, PREVIOUSLY UNUSED**
 Measured 2026-08-16 at **-13 to -15% of the between-pass bucket** across four vertex bands, both run orders,
 0 faults - **~1.3% of frame time**. It was recommended then and **shipped NOWHERE**: not in `GameProfiles`, not
