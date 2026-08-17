@@ -8929,6 +8929,39 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## $$$ THE MANUAL NAMES A LOSSLESS TURNIP LEVER WE HAVE NEVER USED: TRANSIENT MSAA ATTACHMENTS (2026-08-17)
+**User: *"there must be lossless way to use turnip vulkan - read manuals"*. Read them with the CORRECTED
+premise (BD's heavy pass is 2xMSAA, not 1x), and the Adreno guide points straight at us.**
+> **`mobile_best_practices.txt` L359:** *"use `VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT` for buffers that are
+> not read from outside of the renderpass (**especially MSAA attachments, which are larger than non-MSAA
+> attachments**). For example, a Z-buffer that exists only to be cleared and used for typical z-buffering
+> within a single renderpass should use this flag."*
+> **L407:** *"**MSAAx2 is likely to be practically free** ... the additional resolve time [is] usually small
+> enough to be hidden by other bottlenecks"*
+**=> READ TOGETHER, THOSE TWO LINES SAY THE SAMPLES ARE NOT THE COST - THE ATTACHMENT MEMORY IS.** On a TBDR a
+LAZILY_ALLOCATED transient attachment may never be backed by system memory at all: the tile memory suffices.
+Identical pixels, allocation and traffic gone. **That is lossless by construction.**
+```
+LAZILY_ALLOCATED / TRANSIENT_ATTACHMENT across src/xenia/gpu + src/xenia/ui/vulkan:   0 HITS
+```
+**We back EVERY attachment in system memory, including BD's 720x1824 2xMSAA colour AND depth.**
+### WHY THIS WAS INVISIBLE UNTIL TODAY
+This file recorded the transient-attachment advice once, as "bounded, never considered ... a bandwidth /
+allocation win". Nobody acted on it because the same file said BD's field was **1x**, which made "especially
+MSAA attachments" read as not-applicable. **It is applicable, and the attachment in question is the one inside
+the pass that carries ~81.5% of in-pass GPU time.**
+### THE HONEST SCOPE - COLOUR PROBABLY CANNOT, DEPTH PROBABLY CAN
+| attachment | transient? |
+|---|---|
+| the 2xMSAA **colour** RT | **probably NOT.** Our EDRAM emulation READS it after the pass (the EDRAM dump), which is exactly the condition the flag forbids |
+| the 2xMSAA **depth** RT | **the candidate.** The guide's own worked example is a Z-buffer used only within a render pass, which is what BD's depth looks like - but CONFIRM whether our EDRAM path dumps depth to guest memory before assuming it |
+**⚠ SO THIS IS A CANDIDATE, NOT A RESULT. It is UNMEASURED**, it needs the depth-dump question answered first,
+and its value is a TBDR tile-memory property - **the desktop trace loop CANNOT validate it.** It needs the
+render-target allocation change and then a device run.
+**⚠ AND DO NOT CONFUSE IT WITH REDUCING SAMPLES.** L407's "use fewer MSAA samples" spends anti-aliasing and is
+NOT lossless; this file already records an MSAA cap being pulled from BD after a user reported busted graphics.
+The transient-attachment lever keeps 2x and changes only where it lives.
+
 ## >>> THE 2xMSAA FINDING UNLOCKS TWO *LOSSLESS* MECHANISMS NOBODY COULD SEE (2026-08-17)
 **Both were dismissed or never wired because this file said BD's field was 1x. It is 2x. That changes which
 levers are even applicable, and these two are LOSSLESS BY CONSTRUCTION - they change WHERE the MSAA resolve

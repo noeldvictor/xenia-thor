@@ -2344,6 +2344,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // cleared AFTER it, not before.
   uint32_t pass_alphatest_seq_ = 0;
   uint32_t pass_blended_seq_ = 0;
+  // The guest scissor the thin sequences above are currently counting under.
+  // BD's predicated tiles differ by SCISSOR, so a change here means a new tile
+  // and the sequences restart - that is what keeps the tiles agreeing about
+  // which geometry was kept. Per-PASS scoping alone was NOT enough: the tiles
+  // are not separate render passes, so the sequence ran straight through them
+  // and the seam survived.
+  uint32_t thin_scissor_id_ = 0xFFFFFFFFu;
   uint32_t pass_blend_draws_ = 0;
   uint32_t pass_zwrite_draws_ = 0;
   uint32_t pass_first_blend_zwrite_ = 0;   // 1-based draw index, 0 = none yet

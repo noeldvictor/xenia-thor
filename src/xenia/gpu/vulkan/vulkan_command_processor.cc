@@ -8816,6 +8816,24 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           rb_blendcontrol0.alpha_srcblend == xenos::BlendFactor::kOne &&
           rb_blendcontrol0.alpha_destblend == xenos::BlendFactor::kZero &&
           rb_blendcontrol0.alpha_comb_fcn == xenos::BlendOp::kAdd);
+    // TILE-COHERENT THINNING. BD renders its field in PREDICATED TILES that
+    // differ by SCISSOR (this file: "the tiles differ by SCISSOR, not
+    // win_off"), re-issuing the SAME geometry once per tile. A sequence that
+    // runs continuously across tiles keeps a draw in one tile and drops the
+    // identical geometry in the next, and the tiles visibly disagree - missing
+    // surfaces and a hard seam at the tile boundary (guest x=608).
+    // Restarting the sequence whenever the scissor changes gives every tile
+    // the same keep/drop pattern over the same geometry, so the tiles agree.
+    {
+      const uint32_t scissor_id =
+          register_file_->Get<reg::PA_SC_WINDOW_SCISSOR_TL>().value ^
+          (register_file_->Get<reg::PA_SC_WINDOW_SCISSOR_BR>().value << 1);
+      if (scissor_id != thin_scissor_id_) {
+        thin_scissor_id_ = scissor_id;
+        pass_alphatest_seq_ = 0;
+        pass_blended_seq_ = 0;
+      }
+    }
     if (rb_colorcontrol_cls.alpha_test_enable) {
       ++draw_outcomes_alphatest_draws_;
       ++pass_alphatest_seq_;
