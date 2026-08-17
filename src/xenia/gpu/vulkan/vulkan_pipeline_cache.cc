@@ -1042,28 +1042,17 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
       !hybrid_fsi_composite) {
     if (render_pass_key.depth_and_color_used & 1) {
       if (normalized_depth_control.z_enable) {
-        bool z_write = normalized_depth_control.z_write_enable;
-        // SPEED HACK (gpu_no_depth_write_on_blend): a blended draw that also
-        // writes depth makes the driver stop updating LRZ - Turnip reports
-        // "Depth write + blending" and disables LRZ writes at the FIRST such
-        // draw, so every later draw in the pass is tested against a depth
-        // buffer that never learns anything. Dropping the WRITE (never the
-        // TEST) on blended draws lets LRZ keep accumulating and reject
-        // occluded fragments across the stack.
-        if (z_write && cvars::gpu_no_depth_write_on_blend) {
-          auto bc = register_file_.Get<reg::RB_BLENDCONTROL>();
-          const bool trivial_blend =
-              bc.color_srcblend == xenos::BlendFactor::kOne &&
-              bc.color_destblend == xenos::BlendFactor::kZero &&
-              bc.color_comb_fcn == xenos::BlendOp::kAdd &&
-              bc.alpha_srcblend == xenos::BlendFactor::kOne &&
-              bc.alpha_destblend == xenos::BlendFactor::kZero &&
-              bc.alpha_comb_fcn == xenos::BlendOp::kAdd;
-          if (!trivial_blend) {
-            z_write = false;
-          }
-        }
-        description_out.depth_write_enable = z_write;
+        // NOTE: suppressing the depth WRITE on blended draws was tried here
+        // (gpu_no_depth_write_on_blend) to stop Turnip disabling the LRZ write
+        // with "Depth write + blending". It is REMOVED - measured dead on BD
+        // 2026-08-17, and for a reason no LRZ lever can get around: in the
+        // dominant pass zwrite_draws EQUALS blend_draws (674 == 674), so every
+        // depth-writing draw is a blended one. The hack would strip the depth
+        // write from all of them and leave NOTHING to populate LRZ. The
+        // recoverable count was 673 of 673 already partial-colour-masked, i.e.
+        // exactly zero. Do not re-add it; see CLAUDE.md.
+        description_out.depth_write_enable =
+            normalized_depth_control.z_write_enable;
         description_out.depth_compare_op = normalized_depth_control.zfunc;
       } else {
         description_out.depth_compare_op = xenos::CompareFunction::kAlways;

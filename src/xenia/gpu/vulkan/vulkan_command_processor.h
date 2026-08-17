@@ -2307,13 +2307,19 @@ class VulkanCommandProcessor : public CommandProcessor {
   // per-frame reset block, and the skew silently made every break read as a
   // zero-draw pass. Reset only where a pass is entered.
   uint32_t rt_pass_draws_ = 0;
-  // Per-pass draw COMPOSITION, to decide whether gpu_no_depth_write_on_blend
-  // has a mechanism at all. Turnip reports LRZ writes dying at draw 1 of BD's
-  // heavy pass ("Depth write + blending"), but that only COSTS something if
-  // depth-writing draws come AFTER it - those are the ones whose LRZ
-  // contribution is being thrown away. If the pass is all-blended, nothing
-  // writes depth, LRZ has nothing to learn, and the hack is worthless.
-  //   pass_zwrite_after_blend_ IS THE NUMBER THAT DECIDES IT.
+  // Per-pass draw COMPOSITION. Built to decide whether an LRZ hack had a
+  // mechanism at all, and it ANSWERED THAT - no. Measured on BD 2026-08-17:
+  // the dominant pass runs 729 draws of which 674 blend and 674 write depth,
+  // i.e. EVERY depth-writing draw is a blended one, so suppressing blended
+  // depth-writes leaves nothing to populate LRZ; and 673 of the 673
+  // post-first-blend depth-writers already carry a partial colour mask, which
+  // disables the LRZ write on its own. The lever is gone.
+  //
+  // THE COUNTERS STAY, because the question they answer is general: they are
+  // the only instrument here that can describe the OVERDRAW COMPOSITION of a
+  // pass, which is what BD's frame turns out to be made of. Four adds a draw.
+  // They are read by MaybeLogSmallGuestPass and cleared AFTER it - see the
+  // reset site, and do not move the clear back above the log.
   uint32_t pass_blend_draws_ = 0;
   uint32_t pass_zwrite_draws_ = 0;
   uint32_t pass_first_blend_zwrite_ = 0;   // 1-based draw index, 0 = none yet

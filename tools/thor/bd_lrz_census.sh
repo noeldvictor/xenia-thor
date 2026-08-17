@@ -54,7 +54,15 @@ SAMPLES="${SAMPLES:-18}"
 # BEFORE the scene it was launched to sample and ended at 158k vertices. The
 # heat is front-loaded (45C -> 63C in the first 11s, which is the load), so
 # every degree at the start buys most of a second at the end.
-COLD="${COLD:-37000}"
+#
+# ⚠️ A CHARGING DEVICE HAS A TEMPERATURE FLOOR, AND IT IS ABOVE 37C. Measured
+# 2026-08-17: plugged in at 64%, the GPU oscillated 38-39C for three minutes of
+# idle and never reached 37C. Charging current is the heat source, so no amount
+# of waiting gets there. A gate below the floor does not fail loudly - it burns
+# the entire 20-minute cooldown allowance and THEN aborts, which costs more
+# than the warm start would have. Set 38500 when the device is on USB power,
+# 37000 when it is not; `dumpsys battery | grep -i "USB powered"` says which.
+COLD="${COLD:-38500}"
 OUT="${OUT:-scratchpad/bd_lrz_census.log}"
 
 # Sentinel, never empty - an unreachable device must read as TOO HOT so callers

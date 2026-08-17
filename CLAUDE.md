@@ -8925,6 +8925,47 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## ❌❌❌ **THE LRZ SPEED HACK IS DEAD, AND THE REASON IS NOT LRZ: BD's HEAVY PASS HAS NO OPAQUE DEPTH-WRITER TO POPULATE IT (2026-08-17)**
+**Measured on device, 9,548 BIGPASS records, 360 gameplay frames >=180k vertices, peak 293,161, 0 faults.
+The hypothesis was that `gpu_no_depth_write_on_blend` would stop blended draws from killing Adreno's LRZ
+WRITE, so later draws could be rejected. The mechanism is real. The population is not there.**
+```
+across every pass:  draws 629,162   blend_draws 393,687   zwrite_draws 394,358
+                    zwrite_after_blend 392,088   zwrite_masked_after 391,246
+  RECOVERABLE = 392,088 - 391,246 = 842   = 0.21%, and that is an UPPER BOUND
+
+the dominant 720x1824 pass, six heaviest records, all the same shape:
+  draws=729  blend=674  zwrite=674  after_blend=673  masked=673   <- masked == after_blend EXACTLY
+  blendctl0=07060706 (srcalpha / one-minus-srcalpha)  depthctl=00700732
+```
+**⇒ IN THE HEAVY PASSES THE RECOVERABLE COUNT IS EXACTLY ZERO.** `zwrite_masked_after` equals
+`zwrite_after_blend` on every one of them, so every depth-writing draw after the first blend carries a partial
+colour mask. A partial mask disables the LRZ write by itself, independently of blending.
+**🔑 AND THE SECOND NUMBER IS THE ONE THAT CLOSES IT: `zwrite_draws` (674) EQUALS `blend_draws` (674).**
+Every depth-writing draw in that pass is a blended draw. **So the hack would strip the depth write from ALL of
+them and leave NOTHING to populate the LRZ buffer.** Re-enabling the LRZ write buys an empty buffer.
+| the two ways this could have paid | what the device says |
+|---|---|
+| stop blended draws disabling the LRZ write | the partial colour mask disables it anyway - 673 of 673 |
+| let opaque draws populate LRZ afterwards | there are no opaque depth-writers - zwrite == blend |
+**⇒ DROP `gpu_no_depth_write_on_blend`. It is removed, not left default-off** - this file already records
+that inert levers accumulate and that four were found dead by accident in one day.
+**⇒ AND IT AGREES WITH THE EARLIER TURNIP READING RATHER THAN CONTRADICTING IT.** The driver reported
+`lrzWriteDisableReason="Depth write + blending"` at draw 1, and this file concluded LRZ was blocked by the
+GUEST's own state. That conclusion stands and is now quantified: BD's heavy pass is ~92% alpha-blended
+geometry that writes depth. **LRZ has nothing to reject with, so no LRZ lever can work on this title.**
+**⚠ THE COUNTERS THAT MEASURED THIS ARE KEPT.** They cost four adds per draw and they are the only
+instrument that can answer an overdraw-composition question. Only the hack is gone.
+**📌 AND THE MEASUREMENT ONLY BECAME POSSIBLE AFTER TWO FIXES, BOTH WORTH KNOWING:**
+1. **The counters were read AFTER they were reset.** Two pass-teardown paths disagreed - one logs then resets,
+   the other reset at the top and logged 30 lines later. Every BIGPASS line reported `blend_draws=0` on a
+   194-draw blended pass. `pass_draws` survived because it is computed from a MARK, not a member, which is
+   what made the output look plausible instead of obviously broken.
+2. **The route never reached the scene.** A 45C start hit the 70C guard at t=46s, and the route does not reach
+   gameplay until t=68s - so the run stopped BEFORE its own destination and reported its last frame (158,380
+   vertices) as the scene. A 38C start reached 293,161 and 360 heavy frames. **Read the vertex DISTRIBUTION,
+   never the last frame: "never got there" and "got there and came back" look identical from the last frame.**
+
 ## 🔄🔄🔄 **CORRECTION: BD GAMEPLAY IS ~93% GPU-BOUND. THE INDEX LINE `BD FIELD IS CPU-BOUND` IS STALE (2026-08-16)**
 **The arithmetic closes to within 0.1%, from one instrumented gameplay frame:**
 ```
