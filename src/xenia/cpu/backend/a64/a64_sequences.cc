@@ -5527,6 +5527,17 @@ struct MUL_ADD_F32
       e.fmov(e.s2, e.w0);
     }
     EmitFmaWithPpcNan_F32(e, i.dest, s1, s2, s3, /*is_sub=*/false);
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
+    // exact NEG the PPC emitters used to append after the FMA, so moving the
+    // negation into the opcode is BEHAVIOUR-PRESERVING here.
+    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
+    // fneg flips it. The correct form threads negate_result INTO
+    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
+    // that is the next step. Doing it here would be a second, conflicting
+    // NaN rule bolted onto a helper that already has one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      e.fneg(i.dest, i.dest);
+    }
   }
 };
 struct MUL_ADD_F64
@@ -5563,6 +5574,17 @@ struct MUL_ADD_F64
       e.fmov(e.d2, e.x0);
     }
     EmitFmaWithPpcNan_F64(e, i.dest, s1, s2, s3, /*is_sub=*/false);
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
+    // exact NEG the PPC emitters used to append after the FMA, so moving the
+    // negation into the opcode is BEHAVIOUR-PRESERVING here.
+    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
+    // fneg flips it. The correct form threads negate_result INTO
+    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
+    // that is the next step. Doing it here would be a second, conflicting
+    // NaN rule bolted onto a helper that already has one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      e.fneg(i.dest, i.dest);
+    }
   }
 };
 struct MUL_ADD_V128
@@ -5743,6 +5765,20 @@ struct MUL_ADD_V128
       e.EmitAtomicIncrement64(dest_copy_counter);
       e.mov(VReg(d).b16, VReg(2).b16);
     }
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
+    // exact NEG the PPC emitters used to append after the FMA, so moving the
+    // negation into the opcode is BEHAVIOUR-PRESERVING here.
+    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
+    // fneg flips it. The correct form threads negate_result INTO
+    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
+    // that is the next step. Doing it here would be a second, conflicting
+    // NaN rule bolted onto a helper that already has one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      EmitWithVmxFpcr(e, [&] {
+        e.fneg(VReg(i.dest.reg().getIdx()).s4,
+               VReg(i.dest.reg().getIdx()).s4);
+      });
+    }
   }
 };
 EMITTER_OPCODE_TABLE(OPCODE_MUL_ADD, MUL_ADD_F32, MUL_ADD_F64, MUL_ADD_V128);
@@ -5786,6 +5822,17 @@ struct MUL_SUB_F64
       e.fmov(e.d2, e.x0);
     }
     EmitFmaWithPpcNan_F64(e, i.dest, s1, s2, s3, /*is_sub=*/true);
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
+    // exact NEG the PPC emitters used to append after the FMA, so moving the
+    // negation into the opcode is BEHAVIOUR-PRESERVING here.
+    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
+    // fneg flips it. The correct form threads negate_result INTO
+    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
+    // that is the next step. Doing it here would be a second, conflicting
+    // NaN rule bolted onto a helper that already has one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      e.fneg(i.dest, i.dest);
+    }
   }
 };
 struct MUL_SUB_V128
@@ -5839,6 +5886,20 @@ struct MUL_SUB_V128
       }
       e.mov(VReg(d).b16, VReg(2).b16);
     });
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
+    // exact NEG the PPC emitters used to append after the FMA, so moving the
+    // negation into the opcode is BEHAVIOUR-PRESERVING here.
+    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
+    // fneg flips it. The correct form threads negate_result INTO
+    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
+    // that is the next step. Doing it here would be a second, conflicting
+    // NaN rule bolted onto a helper that already has one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      EmitWithVmxFpcr(e, [&] {
+        e.fneg(VReg(i.dest.reg().getIdx()).s4,
+               VReg(i.dest.reg().getIdx()).s4);
+      });
+    }
   }
 };
 EMITTER_OPCODE_TABLE(OPCODE_MUL_SUB, MUL_SUB_F64, MUL_SUB_V128);

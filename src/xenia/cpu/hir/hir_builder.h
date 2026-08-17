@@ -222,8 +222,13 @@ class HIRBuilder {
   Value* Mul(Value* value1, Value* value2, uint32_t arithmetic_flags = 0);
   Value* MulHi(Value* value1, Value* value2, uint32_t arithmetic_flags = 0);
   Value* Div(Value* value1, Value* value2, uint32_t arithmetic_flags = 0);
-  Value* MulAdd(Value* value1, Value* value2, Value* value3);  // (1 * 2) + 3
-  Value* MulSub(Value* value1, Value* value2, Value* value3);  // (1 * 2) - 3
+  // (1 * 2) + 3, optionally negated. Pass negate_result instead of wrapping in
+  // Neg(): PPC leaves a NaN result's sign alone and a NEG cannot know that.
+  Value* MulAdd(Value* value1, Value* value2, Value* value3,
+                bool negate_result = false);
+  // (1 * 2) - 3, optionally negated. See MulAdd.
+  Value* MulSub(Value* value1, Value* value2, Value* value3,
+                bool negate_result = false);
   Value* Neg(Value* value);
   Value* Abs(Value* value);
   Value* Sqrt(Value* value);

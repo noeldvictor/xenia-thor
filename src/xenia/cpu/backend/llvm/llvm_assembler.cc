@@ -2783,9 +2783,22 @@ bool Lowerer::LowerInstr(Instr* i) {
         auto* a_nan = b_.CreateFCmpUNO(a, a);
         auto* c_nan = b_.CreateFCmpUNO(c, c);
         auto* d_nan = b_.CreateFCmpUNO(d, d);
-        auto* nan_src = b_.CreateSelect(a_nan, a, b_.CreateSelect(c_nan, c, d));
+        // ⚠ THE WALK IS src1, src3, src2 - NOT OPERAND ORDER. Hardware returns
+        // the first NaN in PPC's A, B, C order, and the HIR operands here are
+        // (A, C, B): a=src1=FRA=A, c=src2=FRC=C, d=src3=FRB=B. Walking a,c,d
+        // picks C before B and returns the wrong operand whenever B and C are
+        // BOTH NaN. That was this backend's share of the corpus's 12,086 scalar
+        // multiply-add failures.
+        auto* nan_src = b_.CreateSelect(a_nan, a, b_.CreateSelect(d_nan, d, c));
         auto* any_nan = b_.CreateOr(a_nan, b_.CreateOr(c_nan, d_nan));
-        Def(i->dest, b_.CreateSelect(any_nan, quiet(nan_src), gen));
+        auto* fma_out = b_.CreateSelect(any_nan, quiet(nan_src), gen);
+        // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub): negate, but NEVER a NaN -
+        // PPC leaves a NaN result's sign alone.
+        if (i->flags & ARITHMETIC_NEGATE_RESULT) {
+          fma_out = b_.CreateSelect(b_.CreateFCmpUNO(fma_out, fma_out), fma_out,
+                                    b_.CreateFNeg(fma_out));
+        }
+        Def(i->dest, fma_out);
         return true;
       }
       if (!cvars::cpu_backend_llvm_lower_vmaddfp) return false;
@@ -2812,6 +2825,15 @@ bool Lowerer::LowerInstr(Instr* i) {
       // NaN fixup uses the UN-negated flushed sources (a64 saves un-negated s3).
       resi = VmxNanFixup(resi, {s1i, s2i, s3i});
       resi = VmxFlushDenorm(resi);
+      // ARITHMETIC_NEGATE_RESULT (vnmsubfp): negate per lane, but NEVER a NaN
+      // lane - PPC leaves a NaN result's sign alone, which is exactly why the
+      // negation moved into the opcode instead of staying a following NEG.
+      if (i->flags & ARITHMETIC_NEGATE_RESULT) {
+        auto* fres = b_.CreateBitCast(resi, f32x4);
+        fres = b_.CreateSelect(b_.CreateFCmpUNO(fres, fres), fres,
+                               b_.CreateFNeg(fres));
+        resi = b_.CreateBitCast(fres, i32x4);
+      }
       Def(i->dest, b_.CreateBitCast(resi, T(VEC128_TYPE)));
       return true;
     }

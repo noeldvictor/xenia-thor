@@ -2026,6 +2026,16 @@ struct MUL_ADD_F32
 
       e.vaddss(i.dest, i.dest, src3);  // $0 = $1 + $2
     }
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This restores the
+    // exact NEG the PPC emitters used to append, so this refactor is
+    // BEHAVIOUR-PRESERVING on x64 and the corpus count must not move.
+    // ⚠ IT IS NOT YET PPC-CORRECT: hardware leaves a NaN result's sign
+    // alone and this flips it, which is precisely the bug the flag exists
+    // to fix. Completing it needs the full x64 NaN fixup (upstream
+    // 9804846f4, ~142 lines) - that is the next step, not this one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      e.vxorps(i.dest, i.dest, e.GetXmmConstPtr(XMMSignMaskPS));
+    }
   }
 };
 struct MUL_ADD_F64
@@ -2074,6 +2084,16 @@ struct MUL_ADD_F64
           });
 
       e.vaddsd(i.dest, i.dest, src3);  // $0 = $1 + $2
+    }
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This restores the
+    // exact NEG the PPC emitters used to append, so this refactor is
+    // BEHAVIOUR-PRESERVING on x64 and the corpus count must not move.
+    // ⚠ IT IS NOT YET PPC-CORRECT: hardware leaves a NaN result's sign
+    // alone and this flips it, which is precisely the bug the flag exists
+    // to fix. Completing it needs the full x64 NaN fixup (upstream
+    // 9804846f4, ~142 lines) - that is the next step, not this one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      e.vxorps(i.dest, i.dest, e.GetXmmConstPtr(XMMSignMaskPD));
     }
   }
 };
@@ -2126,6 +2146,16 @@ struct MUL_ADD_V128
           });
 
       e.vaddps(i.dest, i.dest, src3);  // $0 = $1 + $2
+    }
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This restores the
+    // exact NEG the PPC emitters used to append, so this refactor is
+    // BEHAVIOUR-PRESERVING on x64 and the corpus count must not move.
+    // ⚠ IT IS NOT YET PPC-CORRECT: hardware leaves a NaN result's sign
+    // alone and this flips it, which is precisely the bug the flag exists
+    // to fix. Completing it needs the full x64 NaN fixup (upstream
+    // 9804846f4, ~142 lines) - that is the next step, not this one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      e.vxorps(i.dest, i.dest, e.GetXmmConstPtr(XMMSignMaskPS));
     }
   }
 };
@@ -2190,6 +2220,16 @@ struct MUL_SUB_F32
 
       e.vsubss(i.dest, i.dest, src3);  // $0 = $1 - $2
     }
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This restores the
+    // exact NEG the PPC emitters used to append, so this refactor is
+    // BEHAVIOUR-PRESERVING on x64 and the corpus count must not move.
+    // ⚠ IT IS NOT YET PPC-CORRECT: hardware leaves a NaN result's sign
+    // alone and this flips it, which is precisely the bug the flag exists
+    // to fix. Completing it needs the full x64 NaN fixup (upstream
+    // 9804846f4, ~142 lines) - that is the next step, not this one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      e.vxorps(i.dest, i.dest, e.GetXmmConstPtr(XMMSignMaskPS));
+    }
   }
 };
 struct MUL_SUB_F64
@@ -2238,6 +2278,16 @@ struct MUL_SUB_F64
           });
 
       e.vsubsd(i.dest, i.dest, src3);  // $0 = $1 - $2
+    }
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This restores the
+    // exact NEG the PPC emitters used to append, so this refactor is
+    // BEHAVIOUR-PRESERVING on x64 and the corpus count must not move.
+    // ⚠ IT IS NOT YET PPC-CORRECT: hardware leaves a NaN result's sign
+    // alone and this flips it, which is precisely the bug the flag exists
+    // to fix. Completing it needs the full x64 NaN fixup (upstream
+    // 9804846f4, ~142 lines) - that is the next step, not this one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      e.vxorps(i.dest, i.dest, e.GetXmmConstPtr(XMMSignMaskPD));
     }
   }
 };
@@ -2288,6 +2338,16 @@ struct MUL_SUB_V128
           });
 
       e.vsubps(i.dest, i.dest, src3);  // $0 = $1 - $2
+    }
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This restores the
+    // exact NEG the PPC emitters used to append, so this refactor is
+    // BEHAVIOUR-PRESERVING on x64 and the corpus count must not move.
+    // ⚠ IT IS NOT YET PPC-CORRECT: hardware leaves a NaN result's sign
+    // alone and this flips it, which is precisely the bug the flag exists
+    // to fix. Completing it needs the full x64 NaN fixup (upstream
+    // 9804846f4, ~142 lines) - that is the next step, not this one.
+    if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
+      e.vxorps(i.dest, i.dest, e.GetXmmConstPtr(XMMSignMaskPS));
     }
   }
 };

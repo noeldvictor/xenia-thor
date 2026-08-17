@@ -1761,38 +1761,52 @@ Value* HIRBuilder::Div(Value* value1, Value* value2,
   return i->dest;
 }
 
-Value* HIRBuilder::MulAdd(Value* value1, Value* value2, Value* value3) {
+Value* HIRBuilder::MulAdd(Value* value1, Value* value2, Value* value3,
+                          bool negate_result) {
   ASSERT_TYPES_EQUAL(value1, value2);
   ASSERT_TYPES_EQUAL(value1, value3);
 
   bool c1 = value1->IsConstant();
   bool c2 = value2->IsConstant();
-  if (c1 && c2) {
+  // ⚠ SKIP THE FOLD WHEN NEGATING. This partial fold (src1*src2, then Add)
+  // produces a value with no way to express "negate unless it is a NaN", so
+  // folding here would drop the negation entirely - silently wrong, at compile
+  // time, for every constant-operand fnmadd. Upstream has no such fold and so
+  // never had to make this choice. Losing a partial fold on the negated forms
+  // is a trivial price for not baking in a wrong sign.
+  if (c1 && c2 && !negate_result) {
     Value* dest = CloneValue(value1);
     dest->Mul(value2);
     return Add(dest, value3);
   }
 
-  Instr* i = AppendInstr(OPCODE_MUL_ADD_info, 0, AllocValue(value1->type));
+  Instr* i = AppendInstr(OPCODE_MUL_ADD_info,
+                         negate_result ? ARITHMETIC_NEGATE_RESULT : 0,
+                         AllocValue(value1->type));
   i->set_src1(value1);
   i->set_src2(value2);
   i->set_src3(value3);
   return i->dest;
 }
 
-Value* HIRBuilder::MulSub(Value* value1, Value* value2, Value* value3) {
+Value* HIRBuilder::MulSub(Value* value1, Value* value2, Value* value3,
+                          bool negate_result) {
   ASSERT_TYPES_EQUAL(value1, value2);
   ASSERT_TYPES_EQUAL(value1, value3);
 
   bool c1 = value1->IsConstant();
   bool c2 = value2->IsConstant();
-  if (c1 && c2) {
+  // See MulAdd: the fold cannot express "negate unless NaN", so it is skipped
+  // for the negated forms rather than silently dropping the negation.
+  if (c1 && c2 && !negate_result) {
     Value* dest = CloneValue(value1);
     dest->Mul(value2);
     return Sub(dest, value3);
   }
 
-  Instr* i = AppendInstr(OPCODE_MUL_SUB_info, 0, AllocValue(value1->type));
+  Instr* i = AppendInstr(OPCODE_MUL_SUB_info,
+                         negate_result ? ARITHMETIC_NEGATE_RESULT : 0,
+                         AllocValue(value1->type));
   i->set_src1(value1);
   i->set_src2(value2);
   i->set_src3(value3);

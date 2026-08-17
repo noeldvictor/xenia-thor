@@ -577,7 +577,12 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_MUL_ADD:
+          // ⚠ NEVER FOLD A NEGATED FMA. ARITHMETIC_NEGATE_RESULT means "negate
+          // unless the result is a NaN" (PPC leaves a NaN's sign alone), and
+          // none of the fold helpers below can express that - folding would
+          // silently drop the negation and bake a wrong constant.
           if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !(i->flags & ARITHMETIC_NEGATE_RESULT) &&
               !SkipFloatConstantFold(v)) {
             if (i->src3.value->IsConstant()) {
               v->set_from(i->src1.value);
@@ -600,7 +605,12 @@ bool ConstantPropagationPass::Run(HIRBuilder* builder, bool& result) {
           }
           break;
         case OPCODE_MUL_SUB:
+          // ⚠ NEVER FOLD A NEGATED FMA. ARITHMETIC_NEGATE_RESULT means "negate
+          // unless the result is a NaN" (PPC leaves a NaN's sign alone), and
+          // none of the fold helpers below can express that - folding would
+          // silently drop the negation and bake a wrong constant.
           if (i->src1.value->IsConstant() && i->src2.value->IsConstant() &&
+              !(i->flags & ARITHMETIC_NEGATE_RESULT) &&
               !SkipFloatConstantFold(v)) {
             // Multiply part is constant.
             if (i->src3.value->IsConstant()) {

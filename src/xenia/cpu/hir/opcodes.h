@@ -49,6 +49,17 @@ enum CacheControlType {
 enum ArithmeticFlags {
   ARITHMETIC_UNSIGNED = (1 << 2),
   ARITHMETIC_SATURATE = (1 << 3),
+  // MUL_ADD/MUL_SUB: negate the result. Part of the OPCODE rather than a
+  // following NEG because PPC leaves the sign of a NaN result ALONE, and a NEG
+  // cannot know to do that - it flipped the sign of every NaN fnmadd, fnmsub
+  // and vnmsubfp ever produced.
+  //
+  // ⚠ EVERY MUL_ADD/MUL_SUB CONSUMER MUST HONOUR THIS OR IT SILENTLY COMPUTES
+  // THE WRONG SIGN. In this tree that is FIVE places, two more than upstream
+  // has: the x64 backend, the a64 backend, the LLVM backend (upstream has no
+  // LLVM backend at all), ConstantPropagationPass, and HIRBuilder's own inline
+  // constant fold.
+  ARITHMETIC_NEGATE_RESULT = (1 << 4),
 };
 
 constexpr uint32_t MakePermuteMask(uint32_t sel_x, uint32_t x, uint32_t sel_y,

@@ -1181,7 +1181,10 @@ int InstrEmit_vnmsubfp_(PPCHIRBuilder& f, uint32_t vd, uint32_t va, uint32_t vb,
   // (VD) <- -(((VA) * (VC)) - (VB))
   // NOTE: only one rounding should take place, but that's hard...
   // This really needs VFNMSUB132PS/VFNMSUB213PS/VFNMSUB231PS but that's AVX.
-  Value* v = f.Neg(f.MulSub(f.LoadVR(va), f.LoadVR(vc), f.LoadVR(vb)));
+  // The negation belongs to the opcode: hardware leaves a NaN result's sign
+  // alone, so negating afterwards would flip every NaN this produces.
+  Value* v = f.MulSub(f.LoadVR(va), f.LoadVR(vc), f.LoadVR(vb),
+                      /*negate_result=*/true);
   f.StoreVR(vd, v);
   return 0;
 }
