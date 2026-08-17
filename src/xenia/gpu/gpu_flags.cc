@@ -64,13 +64,22 @@ DEFINE_bool(
 
 DEFINE_bool(
     gpu_vulkan_edram_roaa, false,
-    "Track #6 (EXPERIMENTAL, in progress): use the rasterization-order "
-    "attachment-access EDRAM render path that keeps EDRAM resident in tile "
-    "memory and eliminates the EDRAM ownership-transfer copies (device-measured "
-    "~9ms / ~22% of the BTTF GPU frame). Requires "
+    "!! NOT IMPLEMENTED - THIS CVAR DOES NOTHING (verified 2026-08-17). It sets "
+    "VulkanRenderTargetCache::edram_roaa_, and that member is READ NOWHERE: the "
+    "only three mentions in the whole tree are its declaration, this "
+    "assignment, and a log line. The transfer / render-pass / pipeline / "
+    "pixel-shader sites the design calls for were never wired, so enabling it "
+    "changes no rendering and removes no copy. Device A/B on Blue Dragon "
+    "measured it flat with rt_transfers UNCHANGED at 45 (the exact quantity it "
+    "claims to eliminate), and a PC trace replay measured the output "
+    "byte-identical - both consistent with a lever that cannot fire. "
+    "DESIGN INTENT, if anyone finishes it: use the rasterization-order "
+    "attachment-access path to keep EDRAM resident in tile memory and eliminate "
+    "the ownership-transfer copies; the ~9ms / ~22%-of-frame figure is from "
+    "BTTF and has NEVER been reproduced here. Requires "
     "VK_EXT_rasterization_order_attachment_access (present on Turnip Adreno "
-    "740). Falls back to the default host-render-target (transfer) path when "
-    "off or unsupported. Default off until the path is complete + validated.",
+    "740). Until the consumers exist, do not A/B this - a flat result from a "
+    "lever with no readers is not evidence about the technique.",
     "GPU");
 
 DEFINE_bool(
