@@ -8929,6 +8929,40 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## +++ THE ATOMIC EDRAM ROP IS FAR MORE COMPLETE THAN ITS HELP TEXT SAYS - IT RENDERS, AND IT MATCHES FSI (2026-08-17)
+**`gpu_vulkan_edram_atomic`'s own text says "Non-functional until the atomic ROP SPIR-V lands". That is
+OUT OF DATE. Measured on desktop, where the atomic branch really is taken (`edram_atomic_no_fsi_` skips the
+FSI feature checks AND skips `OpBeginInvocationInterlockEXT`):**
+```
+                 frames traced   peak verts   max draws/frame
+  fsi (reference)      910         237,815         1,194
+  atomic (candidate)   901         237,815         1,203     <- statistically identical
+```
+**And a WINDOW-HANDLE capture of both shows the same picture** - windmill, sails, lattice, rigging, sun bloom,
+lens flare. The prismatic gradient on the backlit sails appears in BOTH, so it is how the BUFFER path renders
+that lighting, **not** an atomic-ordering artefact.
+**=> SO THE TURNIP ROUTE IS VIABLE TODAY, NOT HYPOTHETICAL.** The atomic path draws BD at full draw counts
+with **ZERO render targets** - no ownership transfers, no dumps, and none of the `SAMPLED` constraint that
+closes off every tile-memory lever.
+### ⚠ WHAT IS STILL OPEN, STATED PRECISELY
+1. **Is the BUFFER path pixel-correct against the FBO path?** Both buffer arms agree with each OTHER; that is
+   a different question from agreeing with the shipping path. The captures compared here are at different
+   camera moments, so **that comparison is NOT made** - it needs matched scenes.
+2. **Blend ordering.** The help text's "blends race" concern is unproven either way at this sampling; a race
+   need not show on one frame.
+3. **Turnip.** All of this is desktop. Adreno has no FSI, which is the whole point of the atomic path, but it
+   has never been run there.
+### 🪤 AND TWO INSTRUMENT FAILURES THAT NEARLY PRODUCED FALSE VERDICTS, BOTH MINE
+1. **I declared "the atomic path renders nothing" from two failed SCREEN captures.** The window was not
+   foreground, so the grab caught the desktop. **The log said 901 frames and 237,815 verts the whole time.**
+   Same "silence is not absence" error this file already records twice today - a broken instrument reads
+   exactly like a negative result.
+   **⇒ CAPTURE THE WINDOW BY HANDLE (`PrintWindow`), never the screen** - a screen grab depends on focus,
+   which a background emulator does not have.
+2. **I read `selected=fsi` as "it took the real FSI path".** That string is the PATH ENUM NAME
+   (`kPixelShaderInterlock`); whether the interlock is actually emitted is `edram_atomic_no_fsi_`, a different
+   flag. **A log line naming a path does not tell you which branch inside it ran.**
+
 ## *** THE EDRAM SOLVE IS REAL AND BD RENDERS ON IT: FSI BUFFER PATH CREATES **ZERO** RENDER TARGETS (2026-08-17)
 **User: *"use vulkan smart like other emu to solve the edram thing"*. They were right, and the answer is not a
 lever - it is the OTHER render-target path, which this fork already has.**
