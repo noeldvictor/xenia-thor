@@ -7385,6 +7385,44 @@ already censused. **That is a modest epilogue, not a scaffolding tax.**
 concluded independently. NOT a substitute for measuring it** - `tools/thor/bd_shader_stats.sh` is written and
 owed a device run; this only bounds what that run can blame on us.
 
+## 🚨🚨🚨 **`GameProfiles` NEVER REACHES A HEADLESS RUN - SO NO BD MEASUREMENT EVER INCLUDED BD's OWN PROFILE (2026-08-17)**
+**This file already records that `am start` skips `XeniaOptimizations`. It skips `GameProfiles` TOO, and that is
+the worse half, because BD's profile carries the LOSSLESS clamps.**
+```
+GameProfiles.applyTo()  is called from EXACTLY ONE place:
+    XeniaAndroidSettings.java:290      <- the LAUNCHER path only
+tools/thor/bd_gameplay_route.sh passes NONE of the profile cvars.
+```
+**⇒ EVERY BD NUMBER IN THIS FILE WAS TAKEN WITHOUT:**
+| profile cvar | value | recorded worth |
+|---|---|---|
+| `gpu_clamp_rt_framebuffer_height` | 768 | ~10%, LOSSLESS (device-validated 2026-06-29) |
+| `gpu_clamp_rt_image_height` | 768 | ~10%, LOSSLESS - "THE REAL KNOB" for Turnip's per-pass store |
+| `gpu_present_fxaa` | false | quality |
+| `xboxkrnl_ntreadfile_force_complete` | true | boot correctness |
+**🔑 AND THERE IS DIRECT EVIDENCE THE CLAMPS WERE INACTIVE: the BIGPASS census measured BD's two dominant
+passes at `720x1824`.** A 768 image clamp cannot coexist with an 1824-row pass. **So the pass geometry every
+GPU conclusion here rests on is the UNCLAMPED shape.**
+**⇒ CONSEQUENCES, and they cut both ways:**
+1. **The ~15.4 fps "baseline" is NOT the shipping config.** BD in the real app may already be faster.
+2. **The per-pass VRS result (21.11 -> 24.53) was measured on an UNCLAMPED frame.** The lever is real and the
+   arms were mutually consistent, but the magnitude may differ once the clamps are in.
+3. **Any future route measurement must pass the profile cvars explicitly, or state that it did not.**
+**⚠ DO NOT pass `gpu_frame_limit_fps` from the profile into a measurement - BD's profile sets it to 30 and
+would cap the very thing being measured.**
+
+## ✅ **SHIPPED: `vulkan_direct_host_resolve` IN BD's PROFILE (2026-08-17) - MEASURED, LOSSLESS, PREVIOUSLY UNUSED**
+Measured 2026-08-16 at **-13 to -15% of the between-pass bucket** across four vertex bands, both run orders,
+0 faults - **~1.3% of frame time**. It was recommended then and **shipped NOWHERE**: not in `GameProfiles`, not
+in `XeniaOptimizations`, default `false`. XenDroid ships it on. Now in BD's profile.
+**It is LOSSLESS by construction** - it changes the PATH a resolve takes (compute straight to guest memory
+instead of a dump back through EDRAM), not the pixels, and ineligible cases fall back automatically.
+**⇒ AND IT SIZES THE WHOLE LOSSLESS GPU BUDGET FOR BD: the frame is 89.6% in-pass shading / 10.4% EDRAM
+machinery. Only that 10.4% is addressable without touching quality** - the shading is the guest's own work, at
+full occupancy, on 17-118 instruction shaders. **So eliminating ALL EDRAM overhead is worth ~10%, i.e. roughly
+15.4 -> 17 fps. At strictly unchanged visual quality, 30 fps is NOT reachable on the GPU side** - every lever
+that got BD to 24.5 spends quality.
+
 ## ✅✅✅ **PER-PASS VRS, SWEPT AND LANDED: 21.11 -> 24.53 fps (+16.2%) AT THRESHOLD 16 (2026-08-17)**
 **Three arms, ONE uncontended session (rpcs3 gone), matched thermal starts 41/42/42C, 0 faults, every arm
 scene-gated and compared WITHIN the 230k-300k vertex bucket.**

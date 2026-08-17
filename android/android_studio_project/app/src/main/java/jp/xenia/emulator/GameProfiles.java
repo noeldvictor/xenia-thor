@@ -106,6 +106,23 @@ public final class GameProfiles {
                         + "transfers = 0. NOTE the resolve is mostly per-pass LATENCY (this is "
                         + "the ~10% size component); the bulk 74ms tile-resolve is the 42-pass "
                         + "fixed pipeline (bloom/blur/shadow) that runs regardless of scene.")
+                .add("vulkan_direct_host_resolve", Boolean.TRUE,
+                        "Resolve eligible host render targets STRAIGHT to guest "
+                        + "memory with compute shaders instead of dumping them back "
+                        + "through EDRAM first, removing a render-pass break and a "
+                        + "DRAM round-trip per resolve (BD does ~23-45 a frame). "
+                        + "LOSSLESS: it changes the PATH a resolve takes, not the "
+                        + "pixels, and ineligible cases (gamma, unsupported formats, "
+                        + "multi-sample selects, resolution scaling) fall back to the "
+                        + "old path automatically. "
+                        + "Device-measured 2026-08-16 on the BD gameplay route, "
+                        + "matched on scene by vertex bucket (raw medians are NOT "
+                        + "comparable - each arm aborts at the thermal guard at a "
+                        + "different route depth): between-pass time -14.6/-13.9/"
+                        + "-12.7/-13.2 percent across four vertex bands, both run "
+                        + "orders, 0 faults. That bucket is ~10.4 percent of the "
+                        + "frame, so this is ~1.3 percent of frame time - real and "
+                        + "reproducible, NOT a headline. XenDroid ships it on.")
                 .add("kernel_object_handle_cache", Boolean.TRUE,
                         "BD's heavy field is actually CPU/LOCK-bound, not GPU-bound "
                         + "(device-profiled 2026-06-23: GPU idle ~98%, busy 0%, turnip "
