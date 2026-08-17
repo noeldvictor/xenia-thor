@@ -213,6 +213,51 @@ public final class XeniaOptimizations {
                 CATEGORY_GPU, true, true,
                 new BoolCvar[]{new BoolCvar("gpu_uma_direct_shared_memory")}, null));
 
+        // ---- Coarse shading (VRS). Two ALTERNATIVES, not two features. ----
+        // Both write gpu_vrs_foliage_rate, and applyTo runs in list order, so
+        // if a user enables both the PERFORMANCE one wins (it is listed second).
+        // That is stated in its description rather than hidden.
+        list.add(new Optimization(
+                "opt_vrs_balanced",
+                "Smoother transparencies (balanced)",
+                "Speeds up smoke, foliage and other see-through effects by "
+                        + "shading them at half detail. Recommended.",
+                "Games like Blue Dragon stack a lot of see-through layers - "
+                        + "grass, smoke, glows, water - on top of each other. Every "
+                        + "layer has to be drawn over the ones behind it, and that "
+                        + "is usually what makes these games run slowly.\n\n"
+                        + "This shades those see-through layers in 2x1 blocks "
+                        + "instead of pixel by pixel, so the GPU does about half the "
+                        + "work on them. Solid things - characters, buildings, "
+                        + "ground, menus and text - are NOT affected and stay sharp.\n\n"
+                        + "Measured on Blue Dragon on this device: 15.3 -> 20.4 fps "
+                        + "(+33%). Cost: foliage looks slightly softer if you look "
+                        + "closely.\n\n"
+                        + "If you want more speed and do not mind a blurrier "
+                        + "picture, use the Performance option instead.",
+                CATEGORY_GPU, false, true,
+                null,
+                new IntCvar[]{new IntCvar("gpu_vrs_foliage_rate", 1)}));
+
+        list.add(new Optimization(
+                "opt_vrs_performance",
+                "Smoother transparencies (performance)",
+                "Same idea, twice as coarse. Faster, but visibly blurrier.",
+                "The stronger version of the balanced option: see-through "
+                        + "layers are shaded in 2x2 blocks instead of 2x1, so the GPU "
+                        + "does about a quarter of the work on them.\n\n"
+                        + "Measured on Blue Dragon on this device: 15.3 -> 25.0 fps "
+                        + "(+63%), against +33% for balanced.\n\n"
+                        + "The trade is real and you will see it: transparent "
+                        + "effects look noticeably blurry, not just soft. Try "
+                        + "balanced first and only move here if you need the extra "
+                        + "frames.\n\n"
+                        + "If both this and the balanced option are turned on, this "
+                        + "one takes effect.",
+                CATEGORY_GPU, false, false,
+                null,
+                new IntCvar[]{new IntCvar("gpu_vrs_foliage_rate", 2)}));
+
         list.add(new Optimization(
                 "opt_xendroid_parity",
                 "XenDroid-parity GPU fast paths",
