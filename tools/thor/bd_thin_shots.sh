@@ -40,7 +40,14 @@ SEQ='start@20000:1500;a@28000:1500;a@34000:1500;a@40000:1500;start@46000:1500;a@
 OUT=scratchpad/shots
 COOL="${COOL:-38500}"     # see bd_lossless_ab.sh: a charging device floors ~38C
 MINV="${MINV:-180000}"    # heavy-scene threshold
-HOLD="${HOLD:-2}"         # consecutive heavy samples required (kills the cinematic)
+# MINT is the anti-cinematic gate, and it REPLACED a "2 consecutive heavy
+# samples" rule that could never fire. Measured 2026-08-17: the field's
+# vertex count oscillates hard sample to sample (225,975 -> 147,214 ->
+# 290,292), so consecutive-heavy is unsatisfiable and the run captured
+# NOTHING. Elapsed time separates cinematic from field far better, and
+# unlike the wall-clock gate that failed before, 30s is well inside what
+# the run survives to - every arm this session hit the 70C guard at t=56-68s.
+MINT="${MINT:-30}"        # seconds before a capture is believed
 
 temp(){ t=$("$ADB" -s "$DEV" shell 'cat /sys/class/kgsl/kgsl-3d0/temp' 2>/dev/null | tr -d '\r')
         case "$t" in ''|*[!0-9]*) echo 99999;; *) echo "$t";; esac; }
@@ -67,17 +74,21 @@ shot_arm(){
     --es gpu_vulkan_driver_lib libvulkan_freedreno.so \
     --es gpu_vulkan_driver_hooks_path '$NATIVE'" >/dev/null 2>&1
 
-  best=0; heavy=0
+  best=0
   for i in $(seq 1 20); do
     sleep 6
     tt=$(temp)
     [ "$tt" -ge 70000 ] && { echo "  70C guard"; break; }
-    v=$("$ADB" -s "$DEV" logcat -d 2>/dev/null | grep -oE 'total_vertices=[0-9]+' \
+    # -s xenia:* - never dump the whole buffer on a polling loop. See the
+    # route script: a tracing run inflates it to tens of MB, and every second
+    # spent in the dump is a second the thermal check is not happening.
+    v=$("$ADB" -s "$DEV" logcat -d -s xenia:* 2>/dev/null | grep -oE 'total_vertices=[0-9]+' \
         | tail -3 | grep -oE '[0-9]+' | sort -n | tail -1)
     v=${v:-0}
-    if [ "$v" -ge "$MINV" ]; then heavy=$((heavy+1)); else heavy=0; fi
-    printf "  %3ds verts=%-8s heavy=%d %3dC\n" $((i*6)) "$v" "$heavy" "$((tt/1000))"
-    [ "$heavy" -lt "$HOLD" ] && continue
+    el=$((i*6))
+    echo "  ${el}s verts=$v $((tt/1000))C"
+    [ "$el" -lt "$MINT" ] && continue
+    [ "$v" -lt "$MINV" ] && continue
 
     # Guard 4: a capture is only ours if OUR activity is on top. This device is
     # shared, and a 2.4 MB screencap once turned out to be another emulator.
@@ -109,6 +120,10 @@ for a in ${ARMS:-baseline f2 b2}; do
     f2)       shot_arm f2 --ei gpu_foliage_thin_factor 2 ;;
     f4)       shot_arm f4 --ei gpu_foliage_thin_factor 4 ;;
     b2)       shot_arm b2 --ei gpu_blended_thin_factor 2 ;;
+    # The measured shipping candidate: -30.2% frame time, 15.5 -> 22.2 fps.
+    # It stacks additively with itself because the two factors act on DISJOINT
+    # draw sets - the blended branch is gated `&& !is_alphatest_draw`.
+    f2b2)     shot_arm f2b2 --ei gpu_foliage_thin_factor 2 --ei gpu_blended_thin_factor 2 ;;
     r2)       shot_arm r2 --ei gpu_vrs_foliage_rate 1 --ei gpu_vrs_heavy_pass_rate 2 --ei gpu_vrs_heavy_pass_draws 16 ;;
     *) echo "unknown arm: $a"; exit 1 ;;
   esac
