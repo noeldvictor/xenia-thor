@@ -127,21 +127,35 @@ T0=$(date +%s); prev=0
 echo "t(s)  frames/10s   fps   gpuC"
 for i in $(seq 1 "$SAMPLES"); do
   sleep 10
-  n=$("$ADB" -s "$DEV" logcat -d 2>/dev/null | grep -c 'GPU draw outcomes')
-  d=$((n - prev)); prev=$n
+  # ⚠️ TEMPERATURE IS READ FIRST, AND THE STOP HAPPENS BEFORE ANYTHING SLOW.
+  # It used to be read AFTER the frame count, and the frame count dumps the
+  # WHOLE logcat buffer - which a tracing run inflates to tens of MB (a
+  # BIGPASS census left 89,152 lines / 17 MB). Every slow step between the
+  # sample and the force-stop is time the device spends ABOVE the limit, and
+  # the limit is a hard safety rule on shared hardware. A guard that measures
+  # late is not a guard. Observed 2026-08-17: the device reached 74.5C with a
+  # run still live.
   tt=$(temp)
-  printf "%4d  %8d  %5s  %3dC\n" "$(( $(date +%s) - T0 ))" "$d" \
-         "$(awk "BEGIN{printf \"%.1f\", $d/10}")" "$((tt/1000))"
-  # A MID-RUN disconnect must end the run. The pre-flight is point-in-time, and
-  # temp() returns the 99999 sentinel when the device is unreachable - without
-  # this the loop would keep sampling nothing while the emulator it launched
-  # stays running on shared hardware (exactly what happened 2026-08-10).
   if [ "$tt" -ge 99999 ]; then
-    echo "ABORT: lost the device mid-run"; break
+    # The pre-flight is point-in-time; temp() returns the sentinel when the
+    # device is unreachable. Without this the loop samples nothing while the
+    # emulator it launched keeps running on shared hardware (2026-08-10).
+    echo "ABORT: lost the device mid-run"
+    "$ADB" -s "$DEV" shell am force-stop $PKG >/dev/null 2>&1
+    break
   fi
   if [ "$tt" -ge 70000 ]; then
-    echo "THERMAL LIMIT 70C - force-stopping"; break
+    echo "THERMAL LIMIT 70C - force-stopping"
+    "$ADB" -s "$DEV" shell am force-stop $PKG >/dev/null 2>&1
+    break
   fi
+  # -s xenia:* cuts the dump to our own tag. Counting our frame lines never
+  # needed the whole system log, and the full dump is what made each sample
+  # cost seconds instead of milliseconds once tracing was on.
+  n=$("$ADB" -s "$DEV" logcat -d -s xenia:* 2>/dev/null | grep -c 'GPU draw outcomes')
+  d=$((n - prev)); prev=$n
+  printf "%4d  %8d  %5s  %3dC\n" "$(( $(date +%s) - T0 ))" "$d" \
+         "$(awk "BEGIN{printf \"%.1f\", $d/10}")" "$((tt/1000))"
 done
 
 "$ADB" -s "$DEV" shell am force-stop $PKG; sleep 2
