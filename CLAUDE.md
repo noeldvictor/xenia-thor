@@ -7411,6 +7411,39 @@ GPU conclusion here rests on is the UNCLAMPED shape.**
 **⚠ DO NOT pass `gpu_frame_limit_fps` from the profile into a measurement - BD's profile sets it to 30 and
 would cap the very thing being measured.**
 
+## 🚨🚨🚨 **BD's RT-HEIGHT CLAMPS ARE A ~9% REGRESSION IN HEAVY SCENES - SHIPPED SINCE JUNE, NOW DISABLED (2026-08-17)**
+**`gpu_clamp_rt_framebuffer_height` / `_image_height` = 768 have been in BD's profile since 2026-06-29 as
+"~10% each, lossless, device-validated". A properly sampled re-measurement says they COST ~9% in exactly the
+scenes BD is slow in. Four arms, one session, matched cooldowns, 0 faults, bucketed by vertex count.**
+```
+arm            180k-230k        230k-300k        vs baseline        n
+baseline      64,349 us        63,866 us            -            324 / 248
+clamps        70,585           69,414         +9.7% / +8.7% SLOWER  324 / 355
+clamps+dhr    69,485           68,417         +8.0% / +7.1%         325 / 356
+dhr alone     64,126           62,929         -0.3% / -1.5% FASTER  134 / 246
+```
+**✅ THE ATTRIBUTION IS CLEAN AND SELF-CONSISTENT: the bundle is ~1-1.5% BETTER than clamps alone, which is
+exactly `vulkan_direct_host_resolve`'s independently measured win.** So the clamps carry the whole regression
+and dhr partly offsets it.
+**✅ AND IT IS NOT RUN LENGTH OR THERMALS.** The winning arm ran LONGER, so the obvious objection is thermal
+position. Comparing only HEAVY frames inside matched elapsed windows: **+6.4% (30-60s, n=329/317)** and
+**+8.0% (60-90s, n=243/364)**. Same answer both windows.
+**🔑 WHY IT REVERSED, and it is a general warning about old measurements: the clamps were validated BEFORE the
+EDRAM work, the Edge kernel merge and the LLVM backend.** Clamping the RT image changes the EDRAM TILE MAPPING,
+and BD performs **45 ownership transfers a frame where Burnout performs 9** - so trimming wasted tile-store
+rows now costs more transfer work than it saves. Independently, tall attachments measured only **~1.5%** on
+2026-08-16, which is consistent with the rows never having been worth much.
+**⚠ THEY DO STILL HELP LIGHT SCENES (-1.8%). BD is slow in HEAVY scenes, so the trade is one-directional.**
+**⇒ BOTH SET TO 0 (= disabled) IN BD's PROFILE. This is a ~9% LOSSLESS speedup in the scenes that matter, and
+it comes from DELETING configuration, not adding any.**
+**📌 THE PROCESS LESSON, AND IT IS THE EXPENSIVE ONE: THE JUNE MEASUREMENT WAS NOT WRONG, IT WENT STALE.** A
+device-validated number is only valid against the tree that produced it. **Anything measured before a major
+subsystem landed should be re-taken before it is trusted - and this file is full of such numbers.**
+**📌 AND IT ONLY BECAME VISIBLE AFTER A HARNESS FIX.** At a 42C cooldown the 70C guard ended runs before deep
+scenes, so the heavy buckets carried **n=9-12** and could not support any conclusion; the first attempt today
+read +7.4%/-1.2% with signs disagreeing. Cooling to 37-38C first took those buckets to **n=248-356**. **The
+buckets that matter most for BD were the ones the harness sampled worst.**
+
 ## 📊 **THE LOSSLESS SHIPPING GPU SET IS WORTH ~5-6% ON BD - MEASURED AT LAST (2026-08-17)**
 **First run ever to include BD's own profile cvars. Same session, warm shader cache, matched cooldowns,
 0 faults, scene-matched by vertex bucket. Arms: route-as-usual vs route + `gpu_clamp_rt_framebuffer_height=768`

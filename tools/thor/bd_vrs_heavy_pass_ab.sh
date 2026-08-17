@@ -21,7 +21,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ADB="${ADB:-C:/Users/leanerdesigner/AppData/Local/Android/Sdk/platform-tools/adb.exe}"
 DEV="${DEV:-192.168.1.33:5555}"
 export ADB DEV
-COOL="${COOL:-42}"
+# ⭐ COOL TO 36C, NOT 42C (2026-08-17). The 70C guard ends a run ~60-70s into
+# gameplay from a 42C start, which is BEFORE the route reaches deep scenes - so
+# the 180k-300k vertex buckets collected only n=9-12 frames and could not
+# support a conclusion, while the light buckets got n=77-150. The buckets that
+# matter most for BD were the ones sampled WORST.
+# Measured: a 35C start ran 109s vs ~60-70s from 42C. Cooling further nearly
+# doubles the usable window at no safety cost - the guard is unchanged.
+COOL="${COOL:-36}"
 
 temp() {
   local t

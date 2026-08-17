@@ -86,7 +86,23 @@ public final class GameProfiles {
                         + "re-averages the aliased bright thin geometry at ~0.5ms/720p. "
                         + "Engagement device-confirmed (kFxaa replaces the final bilinear "
                         + "blit); reuses the bilinear pipeline layout (2026-06-30).")
-                .add("gpu_clamp_rt_framebuffer_height", Integer.valueOf(768),
+                // DISABLED 2026-08-17 (0 = no clamp). These shipped since 2026-06-29 as "~10% each, lossless". A properly sampled re-measurement says the opposite in the scenes that matter: they cost ~9% in BD's HEAVY scenes. Four arms, one session, matched cooldowns, 0 faults, bucketed by vertex count, heavy buckets n=324-355 (the June-era runs could not sample them - an earlier attempt today got n=11):
+                //   baseline      64,349 / 63,866 us   (180-230k / 230-300k)
+                //   clamps        70,585 / 69,414 us   +9.7% / +8.7% SLOWER
+                //   clamps+dhr    69,485 / 68,417 us   +8.0% / +7.1%
+                //   dhr alone     64,126 / 62,929 us   -0.3% / -1.5% faster
+                // Survives thermal control: matched elapsed windows give
+                // +6.4% (30-60s) and +8.0% (60-90s), so it is not run length.
+                // WHY IT REVERSED: the clamps were validated BEFORE the EDRAM
+                // work, the Edge kernel merge and the LLVM backend. Clamping the
+                // RT image changes the EDRAM tile mapping, and BD does 45
+                // ownership transfers a frame (Burnout does 9) - so trimming
+                // wasted tile-store rows now costs more transfer work than it
+                // saves. Tall attachments were independently measured at only
+                // ~1.5% on 2026-08-16, which is consistent.
+                // They still help LIGHT scenes slightly (-1.8%); BD is slow in
+                // HEAVY scenes, so the trade is clear.
+                .add("gpu_clamp_rt_framebuffer_height", Integer.valueOf(0),
                         "BD's host render targets are tile-rounded to huge heights "
                         + "(4096/8192) for EDRAM aliasing, but at 720p only ~720 rows ever "
                         + "render; the TBDR storeOp/loadOp cover the framebuffer height, so "
@@ -94,7 +110,7 @@ public final class GameProfiles {
                         + "Clamping to 768 trims it, lossless (BD aliasing transfers = 0). "
                         + "Device-validated 2026-06-29 matched-OSD: 8.3->9.1 fps no-VRS; "
                         + "stacks ~+10% on the VRS ceiling. Commit 87cde3efd.")
-                .add("gpu_clamp_rt_image_height", Integer.valueOf(768),
+                .add("gpu_clamp_rt_image_height", Integer.valueOf(0),
                         "THE REAL KNOB the framebuffer clamp above missed: on Turnip the "
                         + "per-pass GMEM resolve / storeOp covers the full ATTACHMENT IMAGE "
                         + "extent, not the renderArea - so clamping only the framebuffer left "
