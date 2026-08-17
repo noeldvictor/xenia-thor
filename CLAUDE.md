@@ -8798,3 +8798,53 @@ VRS.**
 | VRS 2x2 (`opt_vrs_performance`) | 25.0 | user called it "a little blurry" |
 **Both exposed in the app optimization list with player-facing copy, both DEFAULT OFF, balanced marked
 recommended. The quality trade is the user's to make.**
+
+## 🚫🚫 **STANDING DIRECTIVE (user, 2026-08-16): FRAME GENERATION IS **OFF** IN EVERY MEASUREMENT. ALWAYS.**
+*"our tests should be with frame generation off ... always ... that's just icing on cake for some users."*
+**`present_frame_extrapolation` synthesizes a PRESENTED frame between guest frames. It does NOT make the
+emulation faster** - guest logic, input and simulation still run at the guest rate. Including it in a
+measurement inflates the on-screen fps while real work is unchanged, which is the same class of error as the
+resolution-downscale "2.44x" measured on a corrupted frame.
+**⇒ It is a USER OPTION, not a perf lever. All 2026-08-16 VRS numbers were taken with it OFF and stand.**
+**⚠ AND ITS FACTOR CVAR IS DEAD:** the ledger already flags `present_frame_gen_factor` as the worst dead cvar
+in the tree - user-facing, in the in-game menu, allowlisted, and **read NOWHERE**. Verified still true.
+`present_frame_extrapolation` itself IS implemented and read (`presenter.cc:581/775/784`,
+`vulkan_presenter.cc:2306/2358`), so the feature works but is permanently 2x. **A setting that appears to do
+something and does nothing is a UI honesty bug - fix or hide it.**
+
+## 📚 EXTERNAL VALIDATION OF THE VRS WORK, AND ONE RISK SCREENSHOTS CANNOT SEE (2026-08-16)
+**Qualcomm's own guidance backs the approach.** `docs/reference/adreno/mobile_best_practices.txt`:
+*"Maximize use of Variable Rate Shading"* (L165), *"Use VRS as aggressively as your content allows"* (L1273),
+and it names the target as *"heavy fragment-bound draw calls ... where the color variance is small"*.
+Published gains are typically **~10% or higher**; **we measured +33% (2x1) and +63% (2x2)**, which is larger
+because BD is unusually fragment-bound (81.5% of GPU time in ~890 blended draws).
+### ⚠️⚠️ THE RISK, AND IT IS INVISIBLE TO EVERYTHING WE MEASURED
+A third-party Adreno VRS study warns: **"avoid VRS on geometries using alpha-testing or transparent
+particles - these create FLICKERING and blocky artifacts."** Our gate applies VRS to blended AND alpha-test
+draws, which is exactly that population.
+**Flickering is TEMPORAL. A screenshot cannot show it and a frame time cannot show it.** Both of our quality
+checks were single frames. **⇒ Anyone evaluating VRS must watch it IN MOTION, specifically foliage and
+particles while the camera pans.** The user reported 2x2 as "a little blurry" from live play - which is a
+motion observation and is why 2x1 is the default.
+### 🔑 AND THE MANUAL CONFIRMS THE LRZ DEAD END FROM A PRIMARY SOURCE (L585-L605)
+*"LRZ **write** operations will be disabled until next API-surface-clear ... by performing any of the below,
+and then later performing a depth-write in the same draw: **blending implemented with the fixed-function
+pipeline** ... **a color-masked write** ..."*
+**BD's heavy passes do ALL THREE** - `blendctl0=07060706` (fixed-function blend), `colormask=0007` (RGB not
+alpha = a masked write), depth-write on. That is precisely `lrzWriteDisabledAtDraw=1`. **The manual says this
+is architectural, so the earlier "LRZ is a dead end, it is the guest's own state" verdict is now confirmed by
+Qualcomm, not just by inference.**
+
+## 🐛 THE "ISN'T RESPONDING" POPUP: DIAGNOSED, NOT YET FIXED (2026-08-16)
+User report: the Android ANR dialog keeps appearing during play. **`Reason: Input dispatching timed out`.**
+**It is NOT a crash and NOT a hang** - the app keeps rendering throughout (1,753 pass-timing lines across one
+ANR-heavy run). The existing comment at `EmulatorActivity.java:1050` already has the mechanism: during a
+stall the main thread sits idle in `MessageQueue.nativePollOnce` behind a **ViewRootImpl SYNC BARRIER** that
+it holds while waiting on a frame/surface. Input events queue behind that barrier; 5 s later Android files an
+ANR.
+**⇒ SO THE TRIGGER IS A LONG GAP BETWEEN PRESENTED FRAMES** (AOT compile, disc load, a heavy scene), not
+emulator deadlock. `startUiThreadWatchdog` already distinguishes the two cases by pinging with BOTH a sync
+and an async message - async landing while sync stalls proves a barrier rather than a wedge.
+**⇒ NOT FIXED YET. The fix direction is to keep the surface updating during long no-frame phases** so the
+barrier clears; `asyncMain()` already exists for overlay updates and is the right vehicle. **Do not "fix" it
+by suppressing the dialog - the dialog is a symptom of a real multi-second input stall.**
