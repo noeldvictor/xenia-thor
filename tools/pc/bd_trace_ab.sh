@@ -48,16 +48,43 @@ echo "trace: $(basename "$TRACE")  ($(( $(stat -c%s "$TRACE" 2>/dev/null || echo
 # arm <label> [cvars...]
 arm() {
   local label="$1"; shift
-  local t0 t1
+  local t0 t1 rc n
   t0=$(date +%s%N)
-  "$EXE" --target_trace_file="$TRACE" --vulkan_trace_dump_rt_image=true "$@" \
+  # SIGNAL selects what is compared.
+  #   rt_image - copies the colour render target and checksums it. The most
+  #              direct signal, but it needs a heavy readback that FAILS ON
+  #              THIS DESKTOP GPU for some cvars ("Failed to submit Vulkan
+  #              sparse binds"), which voids the arm rather than answering.
+  #   edram    - checksums the EDRAM buffer. Lighter, and arguably the better
+  #              signal anyway: EDRAM is the guest-visible framebuffer memory,
+  #              so a difference there is a difference the GAME can observe.
+  # Use edram whenever an arm voids under rt_image.
+  local sig
+  case "${SIGNAL:-rt_image}" in
+    edram)    sig="--vulkan_trace_edram_checksum=true" ;;
+    rt_image) sig="--vulkan_trace_dump_rt_image=true" ;;
+    *) echo "unknown SIGNAL: ${SIGNAL}"; exit 1 ;;
+  esac
+  "$EXE" --target_trace_file="$TRACE" "$sig" "$@" \
       > "$OUT/$label.log" 2>&1
+  rc=$?
   t1=$(date +%s%N)
   # Strip the log prefix so runs are comparable; keep only the checksum payload.
-  grep -o 'rt_key=.*' "$OUT/$label.log" > "$OUT/$label.sums" 2>/dev/null
-  printf "  %-12s %6.1fs  %3d targets\n" "$label" \
-      "$(awk "BEGIN{printf \"%.1f\", ($t1-$t0)/1000000000}")" \
-      "$(wc -l < "$OUT/$label.sums")"
+  case "${SIGNAL:-rt_image}" in
+    edram)    grep -o 'edram checksum.*' "$OUT/$label.log" > "$OUT/$label.sums" 2>/dev/null ;;
+    rt_image) grep -o 'rt_key=.*'        "$OUT/$label.log" > "$OUT/$label.sums" 2>/dev/null ;;
+  esac
+  n=$(wc -l < "$OUT/$label.sums")
+  # A SHORT RUN IS A CRASH, NOT A RENDERING DIFFERENCE. An arm that segfaults
+  # part-way emits FEWER checksum lines, and a naive diff then reports every
+  # missing line as "changed" - which reads as a huge rendering change and is
+  # the single most misleading failure this harness can produce. Record the
+  # target count and the exit code, and let the diff refuse to interpret an
+  # arm whose count does not match baseline.
+  echo "$n $rc" > "$OUT/$label.meta"
+  printf "  %-12s %6.1fs  %3d targets%s\n" "$label" \
+      "$(awk "BEGIN{printf \"%.1f\", ($t1-$t0)/1000000000}")" "$n" \
+      "$( [ "$rc" -ge 128 ] && echo "  <-- CRASHED (signal $((rc-128)))" || true )"
 }
 
 echo "arms:"
@@ -70,8 +97,18 @@ done
 
 echo
 echo "=== rendering differences vs baseline ==="
+base_n=$(cut -d' ' -f1 "$OUT/baseline.meta")
 for spec in "$@"; do
   label="${spec%%=*}"
+  arm_n=$(cut -d' ' -f1 "$OUT/$label.meta"); arm_rc=$(cut -d' ' -f2 "$OUT/$label.meta")
+  # Refuse to interpret an arm that did not finish. Reporting a crash as a
+  # rendering difference is worse than reporting nothing.
+  if [ "$arm_rc" -ge 128 ] || [ "$arm_n" -ne "$base_n" ]; then
+    echo "  $label: VOID - $arm_n targets vs baseline $base_n, exit $arm_rc"
+    echo "      the arm did not complete; this is NOT a rendering difference."
+    grep -iE "error|fail|assert|Fatal" "$OUT/$label.log" | tail -2 | sed 's/^/      /'
+    continue
+  fi
   if diff -q "$OUT/baseline.sums" "$OUT/$label.sums" >/dev/null 2>&1; then
     echo "  $label: IDENTICAL (no difference detected at this sampling)"
   else
