@@ -56,6 +56,15 @@ for a in ${ARMS:-noprofile shipgpu}; do
     roaa)      arm roaa --ez vulkan_direct_host_resolve true --ez gpu_vulkan_edram_roaa true ;;
     clamps)    arm clamps --ei gpu_clamp_rt_framebuffer_height 768                           --ei gpu_clamp_rt_image_height 768 ;;
     dhr)       arm dhr --ez vulkan_direct_host_resolve true ;;
+    # SPEED-HACK SWEEP. The user's call: BD is fill-bound, not geometry-bound
+    # (Burnout pushes 5.4x the vertices and 2x the draws in 0.56x the frame
+    # time), so the lever has to cut FRAGMENTS. These go COARSER only once a
+    # pass is already 16 draws deep, which is where the most-occluded blended
+    # layers are and where coarsening is least visible. Light passes - menus,
+    # text, HUD - never reach the threshold and keep the fine rate.
+    r2)        arm r2 --ei gpu_vrs_foliage_rate 1 --ei gpu_vrs_heavy_pass_rate 2                       --ei gpu_vrs_heavy_pass_draws 16 ;;
+    r3)        arm r3 --ei gpu_vrs_foliage_rate 1 --ei gpu_vrs_heavy_pass_rate 3                       --ei gpu_vrs_heavy_pass_draws 16 ;;
+    r4)        arm r4 --ei gpu_vrs_foliage_rate 1 --ei gpu_vrs_heavy_pass_rate 4                       --ei gpu_vrs_heavy_pass_draws 16 ;;
     *) echo "unknown arm: $a"; exit 1 ;;
   esac
 done

@@ -666,6 +666,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // and depth formats are frequently not linear-filterable. Depth resolves are
   // therefore NOT rescaled, which matches the cvar's documented caveat.
   void UpscaleDownscaledRenderTarget(VulkanRenderTarget& render_target);
+  // Puts the render target back the way the guest left it, from the scratch
+  // copy taken by UpscaleDownscaledRenderTarget. REQUIRED: BD renders in tiles
+  // (render tile, resolve, render next tile, resolve), so leaving the RT
+  // upscaled makes the next tile draw half-scale content over full-scale
+  // pixels and the next dump re-upscale the mixture.
+  void RestoreDownscaledRenderTarget(VulkanRenderTarget& render_target);
   bool EnsureUpscaleScratchImage(VkFormat format, uint32_t width,
                                  uint32_t height);
   void DestroyUpscaleScratchImage();

@@ -3943,6 +3943,55 @@ void VulkanRenderTargetCache::UpscaleDownscaledRenderTarget(
                          VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 }
 
+void VulkanRenderTargetCache::RestoreDownscaledRenderTarget(
+    VulkanRenderTarget& render_target) {
+  if (!IsResolutionDownscaled() || upscale_scratch_image_ == VK_NULL_HANDLE) {
+    return;
+  }
+  RenderTargetKey key = render_target.key();
+  if (key.is_depth || key.msaa_samples != xenos::MsaaSamples::k1X) {
+    return;
+  }
+  uint32_t full_width =
+      GetHostRenderTargetWidth(key.pitch_tiles_at_32bpp, key.msaa_samples);
+  uint32_t full_height =
+      GetHostRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples);
+  uint32_t src_width = ApplyResolutionDownscale(full_width);
+  uint32_t src_height = ApplyResolutionDownscale(full_height);
+  if (src_width >= full_width && src_height >= full_height) {
+    return;
+  }
+  VkImageSubresourceRange color_range =
+      ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT);
+  command_processor_.PushImageMemoryBarrier(
+      render_target.image(), color_range, render_target.current_stage_mask(),
+      VK_PIPELINE_STAGE_TRANSFER_BIT, render_target.current_access_mask(),
+      VK_ACCESS_TRANSFER_WRITE_BIT, render_target.current_layout(),
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+  DeferredCommandBuffer& command_buffer =
+      command_processor_.deferred_command_buffer();
+  // 1:1 back into the sub-rectangle the guest actually renders into. The area
+  // outside it is left holding upscaled pixels, which is harmless: the next
+  // upscale overwrites the whole image anyway, and the guest never renders
+  // there while the downscale is active.
+  VkImageBlit blit_back = {};
+  blit_back.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  blit_back.srcSubresource.layerCount = 1;
+  blit_back.srcOffsets[1].x = int32_t(src_width);
+  blit_back.srcOffsets[1].y = int32_t(src_height);
+  blit_back.srcOffsets[1].z = 1;
+  blit_back.dstSubresource = blit_back.srcSubresource;
+  blit_back.dstOffsets[1] = blit_back.srcOffsets[1];
+  command_buffer.CmdVkBlitImage(
+      upscale_scratch_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      render_target.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+      &blit_back, VK_FILTER_NEAREST);
+  render_target.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_ACCESS_TRANSFER_WRITE_BIT,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+}
+
 void VulkanRenderTargetCache::LatchBoundColorRTForDecoupledCapture() {
   // Blue Dragon native-draw HLE decoupled present: latch color[0] of the last
   // Update (index [1]; [0] is depth). When a native draw redirected RB_COLOR_INFO
@@ -12567,18 +12616,28 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   DumpPitches last_pitches;
   DumpOffsets last_offsets;
   bool pitches_bound = false, offsets_bound = false;
-  // Fractional downscale: restore each source render target to its FULL extent
-  // before the dump reads it, because the dump addresses the image in integer
-  // tile space and cannot express a fractional scale. Once per RENDER TARGET,
-  // not per invocation - several invocations share one.
-  if (IsResolutionDownscaled()) {
-    for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
-      UpscaleDownscaledRenderTarget(
-          *static_cast<VulkanRenderTarget*>(rectangle.render_target));
-    }
-  }
+  // Fractional downscale: the dump addresses the image in INTEGER TILE SPACE
+  // and cannot express a fractional scale, so each render target is blitted up
+  // to its full extent before the dump reads it and put back afterwards.
+  //
+  // ONE AT A TIME, because there is a single scratch image and because the
+  // restore must happen before the next tile renders. BD's field is tiled -
+  // render tile, resolve, render next tile, resolve - so an RT left upscaled
+  // corrupts the following tile.
+  VulkanRenderTarget* downscale_upscaled_rt = nullptr;
   for (const DumpInvocation& invocation : dump_invocations_) {
     const ResolveCopyDumpRectangle& rectangle = invocation.rectangle;
+    if (IsResolutionDownscaled()) {
+      auto* invocation_rt =
+          static_cast<VulkanRenderTarget*>(rectangle.render_target);
+      if (invocation_rt != downscale_upscaled_rt) {
+        if (downscale_upscaled_rt) {
+          RestoreDownscaledRenderTarget(*downscale_upscaled_rt);
+        }
+        UpscaleDownscaledRenderTarget(*invocation_rt);
+        downscale_upscaled_rt = invocation_rt;
+      }
+    }
     auto& vulkan_rt =
         *static_cast<VulkanRenderTarget*>(rectangle.render_target);
     RenderTargetKey rt_key = vulkan_rt.key();
@@ -12685,6 +12744,11 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
       command_buffer.CmdVkDispatch(group_count_x, group_count_y, 1);
     }
     MarkEdramBufferModified();
+  }
+  // Put the last upscaled render target back before anything else renders into
+  // it - see RestoreDownscaledRenderTarget.
+  if (downscale_upscaled_rt) {
+    RestoreDownscaledRenderTarget(*downscale_upscaled_rt);
   }
 }
 
