@@ -966,17 +966,30 @@ void Value::VectorCompareEQ(Value* other, TypeName type) {
       }
       break;
     case INT32_TYPE:
-    case FLOAT32_TYPE:
       for (int i = 0; i < 4; i++) {
         constant.v128.u32[i] =
             constant.v128.u32[i] == other->constant.v128.u32[i] ? -1 : 0;
       }
       break;
     case INT64_TYPE:
-    case FLOAT64_TYPE:
       for (int i = 0; i < 2; i++) {
         constant.v128.u64[i] =
             constant.v128.u64[i] == other->constant.v128.u64[i] ? -1 : 0;
+      }
+      break;
+    // Float compares are UNORDERED and treat the two zeroes as EQUAL. A bitwise
+    // compare gets both wrong: -0.0 != +0.0 bitwise but compares equal, and a
+    // NaN equals itself bitwise but must not compare equal.
+    case FLOAT32_TYPE:
+      for (int i = 0; i < 4; i++) {
+        constant.v128.u32[i] =
+            constant.v128.f32[i] == other->constant.v128.f32[i] ? -1 : 0;
+      }
+      break;
+    case FLOAT64_TYPE:
+      for (int i = 0; i < 2; i++) {
+        constant.v128.u64[i] =
+            constant.v128.f64[i] == other->constant.v128.f64[i] ? -1 : 0;
       }
       break;
     default:

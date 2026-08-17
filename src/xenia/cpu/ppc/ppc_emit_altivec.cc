@@ -620,17 +620,22 @@ int InstrEmit_vcfpuxws128(PPCHIRBuilder& f, const InstrData& i) {
 
 int InstrEmit_vcmpbfp_(PPCHIRBuilder& f, const InstrData& i, uint32_t vd,
                        uint32_t va, uint32_t vb, uint32_t rc) {
-  // if vA or vB are NaN, the 2 high-order bits are set (0xC0000000)
   Value* va_value = f.LoadVR(va);
   Value* vb_value = f.LoadVR(vb);
   Value* gt = f.VectorCompareSGT(va_value, vb_value, FLOAT32_TYPE);
-  Value* lt =
-      f.Not(f.VectorCompareSGE(va_value, f.Neg(vb_value), FLOAT32_TYPE));
-  Value* v =
-      f.Or(f.And(gt, f.LoadConstantVec128(vec128i(0x80000000, 0x80000000,
-                                                  0x80000000, 0x80000000))),
-           f.And(lt, f.LoadConstantVec128(vec128i(0x40000000, 0x40000000,
-                                                  0x40000000, 0x40000000))));
+  // NOT the negation of SGE: an unordered compare is false either way round, so
+  // Not(SGE) reported a NaN lane as in-bounds-low instead of out of bounds.
+  Value* lt = f.VectorCompareSGT(f.Neg(vb_value), va_value, FLOAT32_TYPE);
+  // A NaN in EITHER operand is out of bounds BOTH ways, so both bits get set.
+  Value* nan =
+      f.Not(f.And(f.VectorCompareEQ(va_value, va_value, FLOAT32_TYPE),
+                  f.VectorCompareEQ(vb_value, vb_value, FLOAT32_TYPE)));
+  Value* v = f.Or(f.And(f.Or(gt, nan),
+                        f.LoadConstantVec128(vec128i(0x80000000, 0x80000000,
+                                                     0x80000000, 0x80000000))),
+                  f.And(f.Or(lt, nan),
+                        f.LoadConstantVec128(vec128i(0x40000000, 0x40000000,
+                                                     0x40000000, 0x40000000))));
   f.StoreVR(vd, v);
   if (rc) {
     // CR0:4 = 0; CR0:5 = VT == 0; CR0:6 = CR0:7 = 0;
