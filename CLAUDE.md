@@ -8925,6 +8925,52 @@ already measured at **-27.7% frame time at 71% scale, 1.79x at quarter area**.
 functions never installed in the a64 indirection table, every a64->LLVM call paying a full `ResolveFunction`
 (`llvm_backend.cc:251`, still true).
 
+## 🚀🚀🚀 **THE BD SPEED HACK, MEASURED AT LAST: DRAW THINNING IS -30.2% FRAME TIME, 15.5 -> 22.2 fps (2026-08-17)**
+**Five arms, ONE session, every arm from a matched ~40C start, every arm scene-gated and compared WITHIN a
+vertex band, 0 faults everywhere. `tools/thor/bd_thin_report.py`.**
+```
+band          baseline      b2        f2        f4        f2+b2
+180-230k       64,421   -9.1%    -19.2%    -30.7%    -30.2%     15.5 -> 22.2 fps
+230-300k       63,980   -8.5%    -13.8%    -20.8%    -23.2%     15.6 -> 20.4 fps
+120-180k       26,913   -4.3%     -3.8%     -6.2%       -
+ 50-120k       20,255   -5.1%     -2.2%     -3.4%       -
+  b2 = gpu_blended_thin_factor 2      f2/f4 = gpu_foliage_thin_factor 2/4
+```
+**⇒ THE TWO LEVERS STACK ALMOST EXACTLY ADDITIVELY, AND THAT IS PREDICTABLE FROM THE CODE RATHER THAN
+LUCK.** The blended branch is gated `&& !is_alphatest_draw`, so the two thin factors act on **DISJOINT** draw
+sets. Predicted -28.3% and -22.3%; measured **-30.2%** and **-23.2%**.
+**⇒ AND f2+b2 IS THE BETTER SHIPPING POINT THAN f4.** It matches or beats f4 on speed while halving TWO
+categories instead of removing three quarters of one. **Thinning also scales SUB-linearly** (f2 -19.2% ->
+f4 -30.7%), so pushing a single factor harder pays less each step.
+### ❌ THE CVAR HELP'S OWN NUMBERS ARE STALE BY ~4x - DO NOT QUOTE THEM
+`gpu_foliage_thin_factor` claims foliage overdraw is *"~43% of the GPU frame (865ms->492ms)"* and `~1.48x` at
+factor 4; `gpu_blended_thin_factor` claims *"~34% (865ms->571ms)"*. **An 865ms frame is 1.15 fps** - the BD
+EDRAM/HLE era, before the Edge kernel merge, the LLVM backend and the EDRAM work. Today's frame is ~64ms and
+f4 measures **-20.8 to -30.7%**, not -43%.
+**This is the RT-clamp pattern again**: a device-validated number that did not go wrong, it went STALE. **Any
+number in this file predating a major subsystem must be re-taken before it is trusted.**
+### 📉 AND A PREDICTION I GOT BACKWARDS, BECAUSE I MISREAD MY OWN COUNTER
+I predicted f2 would do almost nothing and b2 would carry the win, because the composition census says the
+heavy pass is 92% BLENDED. **f2 beat b2 by 2x.** The error: `pass_blend_draws_` increments on blend state
+**regardless of alpha-test**, but the thinning code tests `is_alphatest_draw` FIRST and only sends
+non-alpha-test blended draws down the blended path. So the heavy pass's 674 "blended" draws are largely
+alpha-test foliage DRAWN WITH alpha blending - a population `f2` thins and `b2` never sees.
+**⇒ THE LESSON IS ABOUT COUNTERS, NOT ABOUT FOLIAGE: a census counts what its predicate says, and a lever
+acts on what ITS predicate says. Two predicates that both mention "blended" are not the same set.** Check the
+routing before predicting which lever owns a population.
+### ⚠⚠ THE QUALITY COST IS UNVALIDATED, AND IT IS THE WHOLE DECISION
+These are SPEED HACKS. f2 drops half the alpha-test foliage draws; b2 drops half the non-alpha-test blended
+draws. **Nobody has looked at the panel.** A collapsed draw is still ISSUED with its index count clamped to 3,
+so vertex counts and draw counts are unchanged by construction (213k-215k verts across every arm) - which
+means **the frame trace CANNOT show the quality cost, and neither can fps.**
+**⇒ A HUMAN MUST SEE IT, AND IN MOTION.** Thinning removes overdraw LAYERS, so the failure mode is
+popping and density flicker as the camera pans, not a bad still. `tools/thor/bd_thin_shots.sh` captures one
+gameplay frame per arm for a side-by-side, but a still cannot settle a temporal artefact.
+**⚠ ENGAGEMENT IS INFERRED, NOT COUNTED.** There is no collapsed-draw counter, and by design a collapsed
+draw still appears in `rendered`. The evidence that thinning fired is a 9-30% delta appearing consistently
+across all four vertex bands, well outside this device's ~2.8% drift. That is strong, but it is not the
+announce-on-first-event counter this file demands of a new lever. **Add one before defaulting anything on.**
+
 ## ❌❌❌ **THE LRZ SPEED HACK IS DEAD, AND THE REASON IS NOT LRZ: BD's HEAVY PASS HAS NO OPAQUE DEPTH-WRITER TO POPULATE IT (2026-08-17)**
 **Measured on device, 9,548 BIGPASS records, 360 gameplay frames >=180k vertices, peak 293,161, 0 faults.
 The hypothesis was that `gpu_no_depth_write_on_blend` would stop blended draws from killing Adreno's LRZ
