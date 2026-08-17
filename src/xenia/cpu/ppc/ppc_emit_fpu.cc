@@ -155,83 +155,103 @@ int InstrEmit_fsqrtsx(PPCHIRBuilder& f, const InstrData& i) {
 // Floating-point multiply-add (A-9)
 
 int InstrEmit_fmaddx(PPCHIRBuilder& f, const InstrData& i) {
+  Value* fma_a = f.LoadFPR(i.A.FRA);
+  Value* fma_c = f.LoadFPR(i.A.FRC);
+  Value* fma_b = f.LoadFPR(i.A.FRB);
   // frD <- (frA x frC) + frB
   Value* v =
-      f.MulAdd(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC), f.LoadFPR(i.A.FRB));
+      f.MulAdd(fma_a, fma_c, fma_b);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fma_a, fma_b, fma_c}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fmaddsx(PPCHIRBuilder& f, const InstrData& i) {
+  Value* fma_a = f.LoadFPR(i.A.FRA);
+  Value* fma_c = f.LoadFPR(i.A.FRC);
+  Value* fma_b = f.LoadFPR(i.A.FRB);
   // frD <- (frA x frC) + frB
   Value* v =
-      f.MulAdd(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC), f.LoadFPR(i.A.FRB));
+      f.MulAdd(fma_a, fma_c, fma_b);
   v = f.Convert(f.Convert(v, FLOAT32_TYPE), FLOAT64_TYPE);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fma_a, fma_b, fma_c}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fmsubx(PPCHIRBuilder& f, const InstrData& i) {
+  Value* fma_a = f.LoadFPR(i.A.FRA);
+  Value* fma_c = f.LoadFPR(i.A.FRC);
+  Value* fma_b = f.LoadFPR(i.A.FRB);
   // frD <- (frA x frC) - frB
   Value* v =
-      f.MulSub(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC), f.LoadFPR(i.A.FRB));
+      f.MulSub(fma_a, fma_c, fma_b);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fma_a, fma_b, fma_c}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fmsubsx(PPCHIRBuilder& f, const InstrData& i) {
+  Value* fma_a = f.LoadFPR(i.A.FRA);
+  Value* fma_c = f.LoadFPR(i.A.FRC);
+  Value* fma_b = f.LoadFPR(i.A.FRB);
   // frD <- (frA x frC) - frB
   Value* v =
-      f.MulSub(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC), f.LoadFPR(i.A.FRB));
+      f.MulSub(fma_a, fma_c, fma_b);
   v = f.Convert(f.Convert(v, FLOAT32_TYPE), FLOAT64_TYPE);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fma_a, fma_b, fma_c}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fnmaddx(PPCHIRBuilder& f, const InstrData& i) {
+  Value* fma_a = f.LoadFPR(i.A.FRA);
+  Value* fma_c = f.LoadFPR(i.A.FRC);
+  Value* fma_b = f.LoadFPR(i.A.FRB);
   // frD <- -([frA x frC] + frB)
   // The negation belongs to the OPCODE: hardware leaves a NaN result's sign
   // alone, so negating afterwards flipped the sign of every NaN this produced.
-  Value* v = f.MulAdd(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC),
-                      f.LoadFPR(i.A.FRB), /*negate_result=*/true);
+  Value* v = f.MulAdd(fma_a, fma_c, fma_b, /*negate_result=*/true);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fma_a, fma_b, fma_c}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fnmaddsx(PPCHIRBuilder& f, const InstrData& i) {
+  Value* fma_a = f.LoadFPR(i.A.FRA);
+  Value* fma_c = f.LoadFPR(i.A.FRC);
+  Value* fma_b = f.LoadFPR(i.A.FRB);
   // frD <- -([frA x frC] + frB)
   // See fnmaddx: the negation is part of the opcode so a NaN keeps its sign.
-  Value* v = f.MulAdd(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC),
-                      f.LoadFPR(i.A.FRB), /*negate_result=*/true);
+  Value* v = f.MulAdd(fma_a, fma_c, fma_b, /*negate_result=*/true);
   v = f.Convert(f.Convert(v, FLOAT32_TYPE), FLOAT64_TYPE);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fma_a, fma_b, fma_c}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fnmsubx(PPCHIRBuilder& f, const InstrData& i) {
+  Value* fma_a = f.LoadFPR(i.A.FRA);
+  Value* fma_c = f.LoadFPR(i.A.FRC);
+  Value* fma_b = f.LoadFPR(i.A.FRB);
   // frD <- -([frA x frC] - frB)
   // See fnmaddx: the negation is part of the opcode so a NaN keeps its sign.
-  Value* v = f.MulSub(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC),
-                      f.LoadFPR(i.A.FRB), /*negate_result=*/true);
+  Value* v = f.MulSub(fma_a, fma_c, fma_b, /*negate_result=*/true);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fma_a, fma_b, fma_c}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fnmsubsx(PPCHIRBuilder& f, const InstrData& i) {
+  Value* fma_a = f.LoadFPR(i.A.FRA);
+  Value* fma_c = f.LoadFPR(i.A.FRC);
+  Value* fma_b = f.LoadFPR(i.A.FRB);
   // frD <- -([frA x frC] - frB)
   // See fnmaddx: the negation is part of the opcode so a NaN keeps its sign.
-  Value* v = f.MulSub(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC),
-                      f.LoadFPR(i.A.FRB), /*negate_result=*/true);
+  Value* v = f.MulSub(fma_a, fma_c, fma_b, /*negate_result=*/true);
   v = f.Convert(f.Convert(v, FLOAT32_TYPE), FLOAT64_TYPE);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fma_a, fma_b, fma_c}, i.A.Rc);
   return 0;
 }
 

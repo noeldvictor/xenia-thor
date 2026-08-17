@@ -554,34 +554,63 @@ void PPCHIRBuilder::StoreFPSCR(Value* value) {
   trace_reg.value = value;
 }
 
-void PPCHIRBuilder::UpdateFPSCR(Value* result, bool update_cr1) {
-  // TODO(benvanik): detect overflow and nan cases.
-  // fx and vx are the most important.
-  Value* fx = LoadConstantInt8(0);
-  Value* fex = LoadConstantInt8(0);
-  Value* vx = LoadConstantInt8(0);
-  Value* ox = LoadConstantInt8(0);
-
+void PPCHIRBuilder::StoreFPSCRSummary(Value* vx, bool update_cr1) {
+  // TODO(benvanik): detect overflow and the inexact cases; the latter needs a
+  // status register read after every operation.
   if (update_cr1) {
-    // Store into the CR1 field.
-    // We do this instead of just calling CopyFPSCRToCR1 so that we don't
-    // have to read back the bits and do shifting work.
-    StoreContext(offsetof(PPCContext, cr1.cr1_fx), fx);
-    StoreContext(offsetof(PPCContext, cr1.cr1_fex), fex);
+    // Store into the CR1 field directly rather than calling CopyFPSCRToCR1, so
+    // we do not have to read the bits back and shift them.
+    StoreContext(offsetof(PPCContext, cr1.cr1_fx), vx);
+    StoreContext(offsetof(PPCContext, cr1.cr1_fex), LoadConstantInt8(0));
     StoreContext(offsetof(PPCContext, cr1.cr1_vx), vx);
-    StoreContext(offsetof(PPCContext, cr1.cr1_ox), ox);
+    StoreContext(offsetof(PPCContext, cr1.cr1_ox), LoadConstantInt8(0));
   }
-
-  // Generate our new bits.
-  Value* new_bits = Shl(ZeroExtend(fx, INT32_TYPE), 31);
-  new_bits = Or(new_bits, Shl(ZeroExtend(fex, INT32_TYPE), 30));
-  new_bits = Or(new_bits, Shl(ZeroExtend(vx, INT32_TYPE), 29));
-  new_bits = Or(new_bits, Shl(ZeroExtend(ox, INT32_TYPE), 28));
-
-  // Mix into fpscr while preserving sticky bits (FX and OX).
+  // FX summarizes VX, so both carry the same value here.
+  Value* vx32 = ZeroExtend(vx, INT32_TYPE);
+  Value* new_bits = Or(Shl(vx32, 31), Shl(vx32, 29));
+  // Hardware ACCUMULATES these until software clears them, but VX is only
+  // derived for the recording forms, so an accumulated summary would report a
+  // stale answer rather than a missing one. Each instruction keeps its own.
   Value* bits = LoadFPSCR();
-  bits = Or(And(bits, LoadConstantUint32(0x9FFFFFFF)), new_bits);
+  bits = Or(And(bits, LoadConstantUint32(0x1FFFFFFF)), new_bits);
   StoreFPSCR(bits);
+}
+
+void PPCHIRBuilder::ClearFPSCRExceptions(bool update_cr1) {
+  StoreFPSCRSummary(LoadConstantInt8(0), update_cr1);
+}
+
+void PPCHIRBuilder::UpdateFPSCR(Value* result,
+                                std::initializer_list<Value*> operands,
+                                bool update_cr1) {
+  if (!update_cr1) {
+    // Rc=0 pays nothing: it clears as before.
+    ClearFPSCRExceptions(false);
+    return;
+  }
+  // An invalid operation is the only way a NaN can appear that did not come
+  // from an operand, and an SNaN operand is invalid however it propagates.
+  Value* any_nan = nullptr;
+  Value* any_snan = nullptr;
+  for (Value* operand : operands) {
+    Value* is_nan = IsNan(operand);
+    Value* quiet_bit = And(Cast(operand, INT64_TYPE),
+                           LoadConstantUint64(0x0008000000000000ull));
+    Value* is_snan = And(is_nan, IsFalse(quiet_bit));
+    any_nan = any_nan ? Or(any_nan, is_nan) : is_nan;
+    any_snan = any_snan ? Or(any_snan, is_snan) : is_snan;
+  }
+  Value* vx;
+  if (any_nan) {
+    vx = And(IsNan(result), Or(any_snan, IsFalse(any_nan)));
+  } else {
+    vx = LoadConstantInt8(0);
+  }
+  StoreFPSCRSummary(vx, true);
+}
+
+void PPCHIRBuilder::UpdateFPSCR(Value* result, bool update_cr1) {
+  ClearFPSCRExceptions(update_cr1);
 }
 
 void PPCHIRBuilder::CopyFPSCRToCR1() {

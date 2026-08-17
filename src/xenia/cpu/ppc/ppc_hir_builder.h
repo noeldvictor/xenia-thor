@@ -65,6 +65,19 @@ class PPCHIRBuilder : public hir::HIRBuilder {
   void UpdateCR6(Value* src_value);
   Value* LoadFPSCR();
   void StoreFPSCR(Value* value);
+  // Writes FX, FEX, VX and OX - the four bits CR1 mirrors. FEX and OX are not
+  // derived, so both are always zero; FX summarizes VX and carries its value.
+  void StoreFPSCRSummary(Value* vx, bool update_cr1);
+  void ClearFPSCRExceptions(bool update_cr1);
+  // Derives VX (invalid operation) from the RESULT and OPERANDS, with no host
+  // status register read: a NaN result has only two origins, propagation from a
+  // NaN operand or generation, and only an invalid operation generates one - so
+  // VX = result is NaN AND (some operand is an SNaN OR no operand is a NaN).
+  void UpdateFPSCR(Value* result, std::initializer_list<Value*> operands,
+                   bool update_cr1);
+  // Legacy form: clears the exception bits, which is what this did before VX
+  // was derivable. Call sites not yet migrated keep exactly today's behaviour
+  // (CR1 = 0) rather than silently getting a half-derived answer.
   void UpdateFPSCR(Value* result, bool update_cr1);
   void CopyFPSCRToCR1();
   Value* LoadXER();
