@@ -8773,3 +8773,28 @@ to be LLVM/AAPCS; cache the resolved entry per call site as ONE atomic pointer t
 adapter frame across a musttail edge grows unboundedly in a guest tail loop.
 **⚠ AND THE HONEST SIZING: it is worth ~13% of the DISPATCH path, on the CPU. BD measured ~93% GPU-BOUND, so
 this is NOT a Blue Dragon lever** - it is for CPU-bound titles. Do not sell it as a BD fix.
+
+## 🏁🏁 **FINAL BD NUMBERS (2026-08-16): VRS STACKS ON THE SHIPPING CONFIG - 15.4 -> 21.7 fps (+41%)**
+**Both arms same config +/- VRS, matched vertex counts, in-run 70C guard active (both aborted cleanly).**
+| arm | `gpu_frame_us` | fps | verts |
+|---|---|---|---|
+| shipping optimizations only | 64,953 | **15.4** | 213,078 |
+| shipping optimizations **+ VRS 2x1** | 46,106 | **21.7 (+41%)** | 215,329 |
+**⇒ VRS IS ADDITIVE with the shipping set - it is not overlapping any lever already on.**
+### ⚠️⚠️ AND THE UNCOMFORTABLE SECOND RESULT: **THE SHIPPING OPTIMIZATION SET IS WORTH ~0% ON BD**
+`ship_only` = 64,953 us against the no-optimizations baseline of 64,548 us. **Within noise.** That set is
+`opt_xendroid_parity` (mid-frame submission 1300, fast register ranges, redundant-fetch skip, claim memo,
+sampler cache) plus `opt_uma_direct` (UMA zero-copy) - **all default-ON in the app, and together they move BD
+by nothing measurable.**
+**⚠ Do NOT read this as "they are useless".** Each was ported for a reason and several were measured on other
+titles or other workloads; BD is ~93% GPU-bound and fragment-limited, which is the one profile none of them
+target. **But it does mean the app's default-on set is not what makes BD fast, and the honest BD story is
+VRS.**
+### ⇒ THE SHIPPABLE BD RESULT
+| setting | fps | cost |
+|---|---|---|
+| nothing | 15.3-15.4 | - |
+| **VRS 2x1 (`opt_vrs_balanced`)** | **20.4-21.7** | foliage slightly softer |
+| VRS 2x2 (`opt_vrs_performance`) | 25.0 | user called it "a little blurry" |
+**Both exposed in the app optimization list with player-facing copy, both DEFAULT OFF, balanced marked
+recommended. The quality trade is the user's to make.**
