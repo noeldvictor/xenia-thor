@@ -8726,3 +8726,21 @@ user-facing toggle, not a silent default.**
 BD is ~93% GPU-bound; 81.5% of GPU in-pass time is two passes of ~890 ALPHA-BLENDED draws. The blend gate
 selects exactly that population. **This is the first BD GPU lever in this file whose target was identified by
 measurement (BIGPASS pass identification) before the lever was chosen.**
+
+### 📈 VRS RATE CURVE ON BD, AND THE USER'S EYE PICKS THE KNEE (2026-08-16)
+| `gpu_vrs_foliage_rate` | rate | `gpu_frame_us` | fps | verts | user verdict |
+|---|---|---|---|---|---|
+| 0 | 1x1 | 64,548 | 15.3 | 262,957 | sharp |
+| **1** | **2x1** | **49,064** | **20.4 (+33%)** | 263,255 | slightly coarse foliage |
+| 2 | 2x2 | 40,010 | **25.0 (+63%)** | 263,093 | **"a little blurry"** |
+**Vertex counts are identical across all three (262,957 / 263,255 / 263,093) - same scene, so these are real
+frame times, not the corrupted-frame artefact the resolution downscale produced.**
+**⇒ 2x2 IS THE SPEED PICK AND 2x1 IS THE QUALITY PICK.** The user watched 2x2 and called it blurry unprompted,
+which is the same judgement that got 4x4 pulled in August. **Default to 1 (2x1) - two thirds of the gain for a
+fraction of the cost, and it is what XenDroid ships. Expose 2 as an option, do not make it the default.**
+**⚠ RUN ABORTED AT 71C - MY SWEEP HAD NO MID-RUN THERMAL GUARD.** `bd_gameplay_route.sh` aborts at 70C; the
+inline `run_arm` loop I wrote only cooled BETWEEN arms and then slept 95s regardless. **Any ad-hoc device loop
+must carry the same in-run 70C abort as the route script.** Battery also fell to 48% across the session.
+**⚠ THE "ANR" IS NOT A CRASH.** `Reason: Input dispatching timed out` - the emulator UI thread does not service
+input while the route injects buttons under load. Rendering continued throughout (1,753 pass-timing lines).
+Do not read ANR dialogs during a route run as instability.
