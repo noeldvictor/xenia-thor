@@ -174,3 +174,4 @@ xenia_perf.map
 # what keeps the Stop hook grinding, so committing it would ship the loop
 # switched on to every checkout.
 .claude/thor-loop-active
+B13EBABEBABEBABE/
