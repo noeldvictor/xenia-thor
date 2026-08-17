@@ -37,52 +37,64 @@ using xe::cpu::hir::Value;
 
 int InstrEmit_faddx(PPCHIRBuilder& f, const InstrData& i) {
   // frD <- (frA) + (frB)
-  Value* v = f.Add(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRB));
+  Value* fp_x = f.LoadFPR(i.A.FRA);
+  Value* fp_y = f.LoadFPR(i.A.FRB);
+  Value* v = f.Add(fp_x, fp_y);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fp_x, fp_y}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_faddsx(PPCHIRBuilder& f, const InstrData& i) {
   // frD <- (frA) + (frB)
-  Value* v = f.Add(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRB));
+  Value* fp_x = f.LoadFPR(i.A.FRA);
+  Value* fp_y = f.LoadFPR(i.A.FRB);
+  Value* v = f.Add(fp_x, fp_y);
   v = f.Convert(f.Convert(v, FLOAT32_TYPE), FLOAT64_TYPE);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fp_x, fp_y}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fdivx(PPCHIRBuilder& f, const InstrData& i) {
   // frD <- frA / frB
-  Value* v = f.Div(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRB));
+  Value* fp_x = f.LoadFPR(i.A.FRA);
+  Value* fp_y = f.LoadFPR(i.A.FRB);
+  Value* v = f.Div(fp_x, fp_y);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fp_x, fp_y}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fdivsx(PPCHIRBuilder& f, const InstrData& i) {
   // frD <- frA / frB
-  Value* v = f.Div(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRB));
+  Value* fp_x = f.LoadFPR(i.A.FRA);
+  Value* fp_y = f.LoadFPR(i.A.FRB);
+  Value* v = f.Div(fp_x, fp_y);
   v = f.Convert(f.Convert(v, FLOAT32_TYPE), FLOAT64_TYPE);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fp_x, fp_y}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fmulx(PPCHIRBuilder& f, const InstrData& i) {
   // frD <- (frA) x (frC)
-  Value* v = f.Mul(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC));
+  Value* fp_x = f.LoadFPR(i.A.FRA);
+  Value* fp_y = f.LoadFPR(i.A.FRC);
+  Value* v = f.Mul(fp_x, fp_y);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fp_x, fp_y}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fmulsx(PPCHIRBuilder& f, const InstrData& i) {
   // frD <- (frA) x (frC)
-  Value* v = f.Mul(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRC));
+  Value* fp_x = f.LoadFPR(i.A.FRA);
+  Value* fp_y = f.LoadFPR(i.A.FRC);
+  Value* v = f.Mul(fp_x, fp_y);
   v = f.Convert(f.Convert(v, FLOAT32_TYPE), FLOAT64_TYPE);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fp_x, fp_y}, i.A.Rc);
   return 0;
 }
 
@@ -107,18 +119,22 @@ int InstrEmit_frsqrtex(PPCHIRBuilder& f, const InstrData& i) {
 
 int InstrEmit_fsubx(PPCHIRBuilder& f, const InstrData& i) {
   // frD <- (frA) - (frB)
-  Value* v = f.Sub(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRB));
+  Value* fp_x = f.LoadFPR(i.A.FRA);
+  Value* fp_y = f.LoadFPR(i.A.FRB);
+  Value* v = f.Sub(fp_x, fp_y);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fp_x, fp_y}, i.A.Rc);
   return 0;
 }
 
 int InstrEmit_fsubsx(PPCHIRBuilder& f, const InstrData& i) {
   // frD <- (frA) - (frB)
-  Value* v = f.Sub(f.LoadFPR(i.A.FRA), f.LoadFPR(i.A.FRB));
+  Value* fp_x = f.LoadFPR(i.A.FRA);
+  Value* fp_y = f.LoadFPR(i.A.FRB);
+  Value* v = f.Sub(fp_x, fp_y);
   v = f.Convert(f.Convert(v, FLOAT32_TYPE), FLOAT64_TYPE);
   f.StoreFPR(i.A.FRT, v);
-  f.UpdateFPSCR(v, i.A.Rc);
+  f.UpdateFPSCR(v, {fp_x, fp_y}, i.A.Rc);
   return 0;
 }
 
