@@ -5432,11 +5432,12 @@ void VulkanCommandProcessor::EndRenderPass() {
     ++rt_endhere_dm_;
   }
   rt_pass_draws_ = 0;
-  pass_blend_draws_ = 0;
-  pass_zwrite_draws_ = 0;
-  pass_first_blend_zwrite_ = 0;
-  pass_zwrite_after_blend_ = 0;
-  pass_zwrite_masked_after_blend_ = 0;
+  // ⚠ THE COMPOSITION COUNTERS ARE **NOT** RESET HERE. MaybeLogSmallGuestPass()
+  // runs further down this same function and READS them, so zeroing here made
+  // every BIGPASS line report blend_draws=0 zwrite_draws=0 even for a 194-draw
+  // blended pass. pass_draws survived only because it is computed from a MARK
+  // rather than a member. They are cleared AFTER the log instead.
+  // This is the per-pass-lifecycle trap this file already records once.
   // gpu_vulkan_retro_depth_none: hindsight depth-none patch for the ending pass.
   RetroPatchDepthNoneAtPassEnd();
   // Lever 2 (vulkan_merge_draws): the pending draw-concatenation run's draws
@@ -5462,6 +5463,12 @@ void VulkanCommandProcessor::EndRenderPass() {
   // gpu_trace_resolve_timing: identify the small-draw oversized-RT pass that just
   // ended (current_pass_kind_ / current_framebuffer_ still valid here).
   MaybeLogSmallGuestPass();
+  // Cleared only now that the log has read them (see the note above).
+  pass_blend_draws_ = 0;
+  pass_zwrite_draws_ = 0;
+  pass_first_blend_zwrite_ = 0;
+  pass_zwrite_after_blend_ = 0;
+  pass_zwrite_masked_after_blend_ = 0;
   current_render_pass_ = VK_NULL_HANDLE;
   current_framebuffer_ = nullptr;
   // gpu_vulkan_skip_unused_depth_store: the depth-store-NONE state belongs to the
