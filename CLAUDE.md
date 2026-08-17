@@ -7385,6 +7385,89 @@ already censused. **That is a modest epilogue, not a scaffolding tax.**
 concluded independently. NOT a substitute for measuring it** - `tools/thor/bd_shader_stats.sh` is written and
 owed a device run; this only bounds what that run can blame on us.
 
+## ❌❌❌ **THE OCCUPANCY / GPR HYPOTHESIS IS REFUTED ON BD's OWN FIELD SHADERS - FULL OCCUPANCY, TINY REGISTER FOOTPRINT (2026-08-16)**
+**The measurement this file has owed since the Xenos specs landed. Blue Dragon, FIELD confirmed by the scene
+gate at a peak of 293,401 verts/frame (BD's recorded field is ~263k), Turnip r11, warm object cache.**
+```
+complete FRAG variants: 10 (of 13 seen)
+  instructions  min=17   med=94   max=118   mean=62.5
+  full regs     min=1    med=6    max=6     mean=4.2
+  max_waves     min=16   med=16   max=16    mean=16.0     <- FULL OCCUPANCY, EVERY ONE
+  NOPs          197 of 625 = 31.5%
+  variants at <=4 waves: 0 of 10 (0%)
+```
+**⇒ NOTHING RESEMBLING XENDROID'S 2,195 instrs / 31 GPRs / 4 waves. Our heaviest fully-captured field variant
+is 118 instructions at 6 registers and 16 waves.**
+**⇒ SO THE MANUAL'S GPR CHAPTER DOES NOT BIND HERE, AND THE "SPLIT THE SHADER / MINIMIZE GPRs" TRACK IS
+CLOSED.** Qualcomm's rule is *"keeping every shader's register usage under the device limits will ensure that
+the maximum number of simultaneous waves execute"* - we are already at the maximum, on every variant measured.
+**🔑 AND IT RETIRES THE LAST "SMARTER XENOS EMULATION" CANDIDATE.** This file recorded one surviving
+possibility: *"we have never compared a translated pixel shader against its Xenos original... if our SPIR-V
+inflates instruction count or GPR pressure, occupancy collapses and the SP is busy while half-idle."* **It does
+not. ATI budgeted UNDER 8 GPRs for a typical Xenos pixel shader; we measure 1-6.** Our translation is not
+inflating the shaders.
+**⇒ WHICH CONFIRMS THE VRS DIRECTION RATHER THAN OPENING A NEW ONE: BD's fragment cost is FRAGMENT VOLUME
+times a MODEST shader, not a heavy shader or a starved SP.** That is exactly why the only levers that ever
+moved this title are the ones that shade fewer fragments (VRS +33%/+63%, resolution -27.7%), and why ten
+structural/bandwidth levers measured flat.
+### ⚠ THREE HONEST GAPS - do not quote this as airtight
+1. **The two HEAVIEST variants are incomplete.** `98/1` (231 instr) and `161/1` (159 instr) printed only their
+   FIRST stat line; the register/occupancy line never arrived. **19,438 MESA lines were captured and logcat
+   drops under that volume**, so their occupancy is UNKNOWN, not zero. They are still an order of magnitude
+   under 2,195.
+2. **13 variants seen; XenDroid counted 40 on their title.** The 70C guard cut collection at t=74s. This is a
+   sample of the field, not a census of it.
+3. **A Turnip `FRAG prog N/M` id cannot be linked to our `ps_hash`**, so "this is the 671-draw pass's shader"
+   is not provable from this data - only "these are the variants compiling while the field was on screen".
+### 🔍 THE ONE SIGNAL THAT DID NOT GO QUIET: TEXTURE STALL
+```
+variant  instr  nops  systall  sstall  full  waves
+121/1     118    33      28       0      6     16
+73/1       96    30      29       0      6     16
+19/1       94    25      37      10      6     16
+62/1       34    12      66       0      4     16   <- 2x the instruction count, in stall
+134/1      17     5       0      24      1     16
+```
+**`systall` runs comparable to or ABOVE the instruction count on the textured variants.** Occupancy cannot
+help if every resident wave is waiting on the same texture pipe. **This is the one place the Adreno guide's
+"Texture Fetch Bottleneck Optimization" section could still apply**, and it names checkable causes: texture
+cache misses, uncompressed textures, missing mipmaps, and wide formats.
+**⚠ RULE 4 BEFORE ANY OF IT: `systall` IS A COMPILE-TIME ESTIMATE, NOT A RUNTIME STALL COUNT.** It is the
+scheduler's inserted sync distance, not measured cycles. **Do not build against it without a runtime counter.**
+**⇒ AND CHECK WHOSE PROBLEM IT IS FIRST:** filtering and mip chains come from the GUEST fetch constant (we
+only clamp aniso to the device max - verified, we force nothing). **The emulation-side question worth asking
+is whether we hand Adreno the guest's COMPRESSED texture or a decompressed one**, since the guide says
+"compress all textures to reduce memory usage and texture stalls."
+
+## ⏱️🪤 **A COLD OBJECT CACHE SILENTLY VOIDS EVERY ROUTE RUN - THE PRESSES FIRE INTO THE LOADING SCREEN (2026-08-16)**
+**`hid_nop_button_sequence` timings are ABSOLUTE FROM LAUNCH, and every route in `tools/thor/` is sized for a
+WARM object cache (title in ~15-20s). On a COLD cache the title took 280s, so all eleven presses (scheduled
+25s-125s) landed during loading, the route never left the title screen, and the capture was 20 TITLE-SCREEN
+fragment variants - which is the exact WRONG POPULATION the run existed to stop sampling.**
+```
+LLVMobjload = 0        <- the run COMPILED the cache instead of using it
+LLVMseq     = 18,860   <- ~18.8k functions, i.e. a full cold AOT
+hid_nop log hits = 0   <- the sequence never reached a running guest
+frag_stat_lines FROZEN at 20 for 150s   <- nothing new compiling = static screen
+```
+**🔑 THE TELL IS A FROZEN COUNTER, NOT AN ERROR.** The run looks perfect in every other signal: title reached,
+0 faults, temperature climbing, the instrument emitting real data. **A per-frame counter that stops advancing
+is the discriminator between "driving through content" and "parked on one screen."**
+**⇒ TWO GUARDS NOW IN `bd_shader_stats.sh`, AND EVERY ROUTE HARNESS SHOULD CARRY BOTH:**
+1. **`LLVMobjload == 0` -> ABORT.** A cold-cache run CANNOT land an absolute-timed route. This file already
+   said *"Check `LLVMobjload` before you trust a route run"*; it is now enforced in shell instead of trusted.
+2. **A SCENE GATE on peak `total_vertices` (>50,000).** Requires `--ez vulkan_trace_draw_outcomes_per_frame`.
+   Without it a title-screen capture is indistinguishable from a field capture in the output file.
+**⚠ AND A REBUILD IS WHAT MAKES THE CACHE COLD, EVEN FOR GPU-ONLY WORK.** This file records that GPU-only
+edits are free because the stamp keys on `llvm_assembler.cc`'s `__DATE__ " " __TIME__`. **A full gradle native
+build recompiles that TU anyway**, so the stamp moves and the cache is pruned. **Budget a throwaway
+cache-warming run after EVERY APK build, not only after LLVM-backend edits.**
+**📌 PROCESS NOTE: I EDITED THE SHELL SCRIPT WHILE BASH WAS EXECUTING IT.** Bash reads a script incrementally
+by byte offset, so inserting lines above the running point can corrupt its parse - including the `trap` that
+unsets `wrap.<pkg>`, whose failure mode is a package that cannot launch until reboot on a SHARED device. It
+happened to work here (the running shell picked up the new guard and aborted on it, correctly). **Do not rely
+on that. Edit a copy, or wait for the run to exit.**
+
 ## 🧰 TOOLING RULE (user, 2026-08-14): **PUT DEVICE COMMANDS IN A SCRIPT, DO NOT RUN HUGE INLINE COMMANDS**
 *"don't run huge commands, create scripts and use that."*
 **Why it matters here specifically, beyond readability:** this file already records five distinct Git Bash

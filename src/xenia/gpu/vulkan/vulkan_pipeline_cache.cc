@@ -2747,7 +2747,12 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   // = not added = the pipeline keeps the static 1x1 rate = fully inert. The cvar
   // is constant per run (set at launch), like the EDS dynamic-state gates above,
   // so it needs no pipeline-key entry.
-  if (cvars::gpu_vrs_foliage_rate > 0 &&
+  // NOTE: the predicate is GpuVrsPathEnabled(), NOT a bare gpu_vrs_foliage_rate
+  // test, because gpu_vrs_heavy_pass_rate can drive the VRS path on its own
+  // (base rate 0 = native everywhere, coarse only deep inside an overdraw-heavy
+  // pass). The consumer in VulkanCommandProcessor gates on the same function -
+  // see the comment on it for why this must not be duplicated by hand.
+  if (GpuVrsPathEnabled() &&
       vulkan_device->extensions().ext_KHR_fragment_shading_rate) {
     dynamic_states[dynamic_state.dynamicStateCount++] =
         VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE_KHR;

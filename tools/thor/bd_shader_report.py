@@ -29,8 +29,9 @@ for line in open(path, encoding="utf-8", errors="replace"):
 
 full = [v for v in variants.values() if "instr" in v and "full" in v and "max_waves" in v]
 if not full:
-    sys.exit(f"no complete variants in {path} "
-             f"({len(variants)} partial) - was the shader cache disabled?")
+    sys.exit(f"no complete variants in {path} ({len(variants)} partial) - a "
+             f"variant served from Turnip's on-disk cache prints NO stats, so "
+             f"check MESA_SHADER_CACHE_DIR was wiped before the run")
 
 print(f"complete FRAG variants: {len(full)}  (of {len(variants)} seen)")
 

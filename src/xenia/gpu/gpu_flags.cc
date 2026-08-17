@@ -600,6 +600,35 @@ DEFINE_int32(
     "the extension REQUEST behind this cvar keeps the default device-creation "
     "path byte-identical when off. Default off, validate per-title.",
     "GPU");
+DEFINE_int32(
+    gpu_vrs_heavy_pass_rate, 0,
+    "PER-PASS VRS ESCALATION. Same rate scale as gpu_vrs_foliage_rate (0=off, "
+    "1=2x1, 2=2x2, 3=4x2, 4=4x4). When >0, a VRS-eligible draw uses THIS rate "
+    "instead of gpu_vrs_foliage_rate once the current render pass has already "
+    "issued gpu_vrs_heavy_pass_draws draws. Escalation is MONOTONE (max of the "
+    "two), so it can only coarsen, never sharpen.\n"
+    "WHY IT EXISTS, measured 2026-08-16: BD's frame is 94 passes, and TWO of "
+    "them - ~890 alpha-blended depth-writing draws into one 720x1824 target - "
+    "are 81.5% of ALL in-pass GPU time. Global 2x2 measured +63% fps but a user "
+    "watching the panel called it 'a little blurry', because it also coarsened "
+    "UI, text and menus, which are in passes costing almost nothing. Gating the "
+    "coarse rate on pass draw depth targets the overdraw concentration and "
+    "leaves every light pass at the base rate.\n"
+    "Self-targeting: it keys on draw depth, NOT on a hardcoded framebuffer, so "
+    "it needs no per-title table and generalizes to any overdraw-heavy pass. "
+    "Default 0 = inert (behaviour is exactly gpu_vrs_foliage_rate).",
+    "GPU");
+DEFINE_int32(
+    gpu_vrs_heavy_pass_draws, 128,
+    "Draw depth into a render pass at which gpu_vrs_heavy_pass_rate takes over "
+    "from gpu_vrs_foliage_rate. Counted against the existing per-pass draw "
+    "counter, which is reset on every pass begin/end, so it is genuinely "
+    "per-pass and not a per-frame index.\n"
+    "Sizing (BD, measured): the light passes issue AT MOST ONE draw (61 of 74), "
+    "so any threshold above 1 excludes them entirely; the heavy passes issue "
+    "671/220/219, so 128 escalates ~81% of the big pass's draws while leaving "
+    "the first 128 at the base rate. Inert unless gpu_vrs_heavy_pass_rate > 0.",
+    "GPU");
 DEFINE_bool(
     gpu_vrs_all_draws, false,
     "DIAGNOSTIC: apply gpu_vrs_foliage_rate to ALL draws (not just alpha-test/"

@@ -2307,6 +2307,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // per-frame reset block, and the skew silently made every break read as a
   // zero-draw pass. Reset only where a pass is entered.
   uint32_t rt_pass_draws_ = 0;
+  // gpu_vrs_heavy_pass_rate engagement counters, PER FRAME (reset in the
+  // per-frame trace block, not per pass - they answer "did the lever fire this
+  // frame", which is a frame-level question).
+  //   vrs_base_draws_      : VRS-eligible draws that took gpu_vrs_foliage_rate
+  //   vrs_escalated_draws_ : VRS-eligible draws that took the heavy-pass rate
+  // A flat A/B with vrs_escalated_draws_ == 0 is VOID, not a null result.
+  uint32_t vrs_base_draws_ = 0;
+  uint32_t vrs_escalated_draws_ = 0;
   // Passes ended through EndRenderPass() - the MASTER teardown, which the
   // rt_change site deliberately bypasses with a raw CmdVkEndRenderPass. The
   // rt_change classifier alone saw only its own breaks and reported every ending

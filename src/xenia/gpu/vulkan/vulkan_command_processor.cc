@@ -3253,11 +3253,20 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     if (cvars::vulkan_trace_pass_timestamps) {
       XELOGI(
           "GPU pass timing: gpu_frame_us={} gpu_pass_us={} between_us={} "
-          "verts={} rt_transfer_calls={} rt_transfers={}",
+          "verts={} rt_transfer_calls={} rt_transfers={} vrs_base={} vrs_esc={}",
           gpu_frame_us_, gpu_pass_us_,
           gpu_frame_us_ >= gpu_pass_us_ ? gpu_frame_us_ - gpu_pass_us_ : 0,
-          draw_outcomes_total_vertices_, rt_transfer_calls_, rt_transfers_);
+          draw_outcomes_total_vertices_, rt_transfer_calls_, rt_transfers_,
+          vrs_base_draws_, vrs_escalated_draws_);
     }
+    // ENGAGEMENT COUNTER for gpu_vrs_heavy_pass_rate. Required, not optional:
+    // this file records a texture-UBWC A/B that read "+0.70%, flat" from a lever
+    // that HAD NEVER EXECUTED. vrs_esc=0 with the cvar on means the threshold is
+    // never reached (or the draws are not VRS-eligible) - i.e. a VOID run, not a
+    // flat result. Reported per frame, so the first frame already carries it and
+    // no throttle can hide a zero.
+    vrs_base_draws_ = 0;
+    vrs_escalated_draws_ = 0;
     XELOGI("hwvtx engage: elig={} redir={} (cvar={})",
            draw_outcomes_hwvtx_elig_draws_, draw_outcomes_hwvtx_redir_draws_,
            cvars::gpu_hw_vertex_fetch ? 1 : 0);
@@ -8530,10 +8539,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       // overdraw-heavy foliage class (alpha-test OR blended) at 2x2/4x4 to cut
       // per-covered-fragment FS + alpha-test-discard + texture-fetch work on
       // Adreno; 1x1 (full rate) for every other draw so only foliage coarsens.
-      // The pipeline declares the dynamic state only when this cvar is on (see
-      // vulkan_pipeline_cache.cc), so default-off (rate 0) short-circuits here =
-      // fully inert + zero per-draw overhead.
-      if (cvars::gpu_vrs_foliage_rate > 0 &&
+      // The pipeline declares the dynamic state under the SAME predicate
+      // (GpuVrsPathEnabled(), see vulkan_pipeline_cache.cc), so with both rate
+      // cvars at 0 this short-circuits = fully inert + zero per-draw overhead.
+      if (GpuVrsPathEnabled() &&
           GetVulkanDevice()->extensions().ext_KHR_fragment_shading_rate) {
         // Diagnostic: suppress VRS (1x1) until guest uptime crosses the gate, so
         // a title can boot+navigate VRS-off (matching the VRS-off baseline's nav
@@ -8568,6 +8577,30 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             !vrs_active
                 ? 0u
                 : uint32_t(std::min(std::max(cvars::gpu_vrs_foliage_rate, 0), 4));
+        // ⭐ PER-PASS ESCALATION (2026-08-16). 81.5% of BD's in-pass GPU time is
+        // TWO passes carrying ~890 blended draws; 61 of its 74 passes issue AT
+        // MOST ONE draw. So "how deep are we into this pass" separates the
+        // overdraw concentration from the UI/text/light passes exactly, with no
+        // per-title framebuffer table.
+        //
+        // rt_pass_draws_ is the EXISTING per-pass counter (reset at both pass
+        // teardown paths) and is incremented BELOW this block, so here it reads
+        // as draws already issued in this pass - 0 for the first draw.
+        //
+        // std::max keeps escalation MONOTONE: a heavy-pass rate lower than the
+        // base rate can never sharpen a draw back up, which would be a
+        // surprising way to configure a quality regression.
+        bool vrs_escalated_this_draw = false;
+        if (vrs_active && cvars::gpu_vrs_heavy_pass_rate > 0 &&
+            rt_pass_draws_ >=
+                uint32_t(std::max(cvars::gpu_vrs_heavy_pass_draws, 0))) {
+          uint32_t heavy_index = uint32_t(
+              std::min(std::max(cvars::gpu_vrs_heavy_pass_rate, 0), 4));
+          if (heavy_index > vrs_rate_index) {
+            vrs_rate_index = heavy_index;
+            vrs_escalated_this_draw = true;
+          }
+        }
         bool vrs_foliage = cvars::gpu_vrs_all_draws || is_alphatest_draw;
         if (!vrs_foliage) {
           auto bc_vrs = register_file_->Get<reg::RB_BLENDCONTROL>();
@@ -8578,6 +8611,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                 bc_vrs.alpha_srcblend == xenos::BlendFactor::kOne &&
                 bc_vrs.alpha_destblend == xenos::BlendFactor::kZero &&
                 bc_vrs.alpha_comb_fcn == xenos::BlendOp::kAdd);
+        }
+        // Engagement accounting. Counted only for draws that actually TAKE a
+        // coarse rate, so a nonzero vrs_esc proves the escalation reached real
+        // geometry - not merely that the cvar was parsed.
+        if (vrs_foliage && vrs_rate_index != 0u) {
+          if (vrs_escalated_this_draw) {
+            ++vrs_escalated_draws_;
+          } else {
+            ++vrs_base_draws_;
+          }
         }
         VkExtent2D frag_size = kVrsRates[vrs_foliage ? vrs_rate_index : 0u];
         deferred_command_buffer_.CmdVkSetFragmentShadingRate(

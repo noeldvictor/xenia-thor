@@ -72,6 +72,8 @@ DECLARE_string(dump_guest_mem_path);
 DECLARE_bool(gpu_blue_dragon_kick_wait_token);
 DECLARE_int32(gpu_blue_dragon_kick_wait_token_budget);
 DECLARE_int32(gpu_vrs_foliage_rate);
+DECLARE_int32(gpu_vrs_heavy_pass_rate);
+DECLARE_int32(gpu_vrs_heavy_pass_draws);
 DECLARE_bool(gpu_vrs_all_draws);
 DECLARE_uint32(gpu_vrs_enable_after_guest_ms);
 DECLARE_bool(gpu_freeze_ab_alternate_vrs);
@@ -216,5 +218,19 @@ DECLARE_bool(half_pixel_offset);
 DECLARE_int32(query_occlusion_fake_sample_count);
 
 #define XE_GPU_FINE_GRAINED_DRAW_SCOPES 1
+
+// Is the VRS path wanted at all?
+//
+// ⚠ THIS MUST BE ONE FUNCTION, NOT A DUPLICATED CONDITION. It gates TWO things
+// that have to agree exactly:
+//   1. vulkan_pipeline_cache.cc declaring VK_DYNAMIC_STATE_FRAGMENT_SHADING_RATE
+//   2. vulkan_command_processor.cc issuing CmdVkSetFragmentShadingRate
+// If (1) is true and (2) is false the shading rate is UNDEFINED; if (2) is true
+// and (1) is false the dynamic state was never declared. Both are wrong-pixel
+// failures with no crash. A hand-maintained predicate at two sites is the exact
+// defect that broke the LLVM object-cache key four times - so it lives here.
+inline bool GpuVrsPathEnabled() {
+  return cvars::gpu_vrs_foliage_rate > 0 || cvars::gpu_vrs_heavy_pass_rate > 0;
+}
 
 #endif  // XENIA_GPU_GPU_FLAGS_H_
