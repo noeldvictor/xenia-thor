@@ -7506,6 +7506,24 @@ help if every resident wave is waiting on the same texture pipe. **This is the o
 cache misses, uncompressed textures, missing mipmaps, and wide formats.
 **⚠ RULE 4 BEFORE ANY OF IT: `systall` IS A COMPILE-TIME ESTIMATE, NOT A RUNTIME STALL COUNT.** It is the
 scheduler's inserted sync distance, not measured cycles. **Do not build against it without a runtime counter.**
+**✅✅ ANSWERED ON DEVICE 2026-08-17, AND IT IS A CLEAN NEGATIVE - WE ARE NOT DECOMPRESSING ANYTHING:**
+```
+TEXcompress: all 5 guest block-compressed formats map to native BC -
+             no decompression, texture footprint is as authored.
+```
+Turnip r11 on the Adreno 740 supports **BC1/BC2/BC3/BC4/BC5 with linear filtering**, so the S3TC ->
+`VK_FORMAT_R8G8B8A8_UNORM` fallback in `vulkan_texture_cache.cc` **never fires here**. We hand Adreno the
+guest's textures at the authored size. **The "are we feeding the texture pipe 8x the bytes" hypothesis is
+DEAD** - and it cost ONE MINUTE to settle, because the log line fires at texture-cache init and needs no route
+and no gameplay (`tools/thor/bd_texcompress_check.sh`).
+**⇒ SO systall REMAINS UNEXPLAINED, AND IT IS NOT OUR TEXTURE HANDLING.** What is left: the guest's own mip
+chains and filter modes (which we only clamp, never force), texture cache locality, and the fact that
+`systall` is a COMPILE-TIME scheduling estimate rather than a measured stall. **Do not reopen this without a
+runtime counter.**
+**📌 AND THE DIAGNOSTIC WAS WORTH ADDING EVEN THOUGH THE ANSWER WAS "NO".** The fallback was SILENT before -
+an 8x texture-footprint change with no log line anywhere - so "we might be decompressing" could have been
+argued indefinitely in either direction. **A cheap permanent probe beats a clever argument.**
+
 **⇒ AND CHECK WHOSE PROBLEM IT IS FIRST:** filtering and mip chains come from the GUEST fetch constant (we
 only clamp aniso to the device max - verified, we force nothing). **The emulation-side question worth asking
 is whether we hand Adreno the guest's COMPRESSED texture or a decompressed one**, since the guide says
