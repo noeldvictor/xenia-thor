@@ -1201,18 +1201,32 @@ uint32_t RenderTargetCache::ApplyResolutionDownscale(uint32_t value) {
                                    100u);
 }
 
+// ⚠⚠ THESE ARE FULL SIZE AND MUST STAY FULL SIZE.
+//
+// 2026-08-16, learned on device: shrinking the IMAGE for the fractional
+// downscale produced a 2.44x speedup and a BROKEN PICTURE - the frame came back
+// black with a few scattered strips of garbage. The reason is that the EDRAM
+// dump/resolve addresses the render target in INTEGER TILE SPACE
+// (`edram_offset_scaled`/`width_div_8_scaled` multiplied by an integer
+// `resolution_scale`), so a fractionally-smaller image is walked with a
+// full-size stride and the rows land in the wrong places. A fractional factor
+// is not representable in that shader at all - it is not a typing oversight.
+//
+// So the downscale must NOT touch the allocation. It applies to the VIEWPORT
+// and SCISSOR only - which is where the fragment saving actually comes from -
+// and the rendered sub-rectangle is blit-upscaled back to full size before the
+// dump reads it (VulkanRenderTargetCache::UpscaleDownscaledRenderTarget).
+// Everything downstream then keeps addressing a full-size image, unchanged.
 uint32_t RenderTargetCache::GetHostRenderTargetWidth(
     uint32_t pitch_tiles_at_32bpp, xenos::MsaaSamples msaa_samples) const {
-  return ApplyResolutionDownscale(
-      RenderTargetKey::GetWidth(pitch_tiles_at_32bpp, msaa_samples) *
-      draw_resolution_scale_x());
+  return RenderTargetKey::GetWidth(pitch_tiles_at_32bpp, msaa_samples) *
+         draw_resolution_scale_x();
 }
 
 uint32_t RenderTargetCache::GetHostRenderTargetHeight(
     uint32_t pitch_tiles_at_32bpp, xenos::MsaaSamples msaa_samples) const {
-  return ApplyResolutionDownscale(
-      GetRenderTargetHeight(pitch_tiles_at_32bpp, msaa_samples) *
-      draw_resolution_scale_y());
+  return GetRenderTargetHeight(pitch_tiles_at_32bpp, msaa_samples) *
+         draw_resolution_scale_y();
 }
 
 RenderTargetCache::RenderTarget*

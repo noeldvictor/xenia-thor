@@ -1433,6 +1433,8 @@ bool VulkanRenderTargetCache::Initialize(uint32_t shared_memory_binding_count) {
 }
 
 void VulkanRenderTargetCache::Shutdown(bool from_destructor) {
+  // Fractional-downscale upscale scratch (no-op unless the cvar was used).
+  DestroyUpscaleScratchImage();
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
@@ -3787,6 +3789,160 @@ VulkanRenderTargetCache::GetResolveSourceRenderTargetViewForSampling(
   return render_target.view_color_transfer();
 }
 
+bool VulkanRenderTargetCache::EnsureUpscaleScratchImage(VkFormat format,
+                                                        uint32_t width,
+                                                        uint32_t height) {
+  if (upscale_scratch_image_ != VK_NULL_HANDLE &&
+      upscale_scratch_format_ == format && upscale_scratch_width_ >= width &&
+      upscale_scratch_height_ >= height) {
+    return true;
+  }
+  DestroyUpscaleScratchImage();
+  VkImageCreateInfo image_create_info = {};
+  image_create_info.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO;
+  image_create_info.imageType = VK_IMAGE_TYPE_2D;
+  image_create_info.format = format;
+  image_create_info.extent.width = width;
+  image_create_info.extent.height = height;
+  image_create_info.extent.depth = 1;
+  image_create_info.mipLevels = 1;
+  image_create_info.arrayLayers = 1;
+  image_create_info.samples = VK_SAMPLE_COUNT_1_BIT;
+  image_create_info.tiling = VK_IMAGE_TILING_OPTIMAL;
+  image_create_info.usage =
+      VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+  image_create_info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+  if (!ui::vulkan::util::CreateDedicatedAllocationImage(
+          command_processor_.GetVulkanDevice(), image_create_info,
+          ui::vulkan::util::MemoryPurpose::kDeviceLocal,
+          upscale_scratch_image_, upscale_scratch_memory_)) {
+    XELOGE("Resolution downscale: failed to create the {}x{} upscale scratch",
+           width, height);
+    upscale_scratch_image_ = VK_NULL_HANDLE;
+    upscale_scratch_memory_ = VK_NULL_HANDLE;
+    return false;
+  }
+  upscale_scratch_format_ = format;
+  upscale_scratch_width_ = width;
+  upscale_scratch_height_ = height;
+  return true;
+}
+
+void VulkanRenderTargetCache::DestroyUpscaleScratchImage() {
+  const ui::vulkan::VulkanDevice* vulkan_device =
+      command_processor_.GetVulkanDevice();
+  if (upscale_scratch_image_ != VK_NULL_HANDLE) {
+    vulkan_device->functions().vkDestroyImage(vulkan_device->device(),
+                                              upscale_scratch_image_, nullptr);
+    upscale_scratch_image_ = VK_NULL_HANDLE;
+  }
+  if (upscale_scratch_memory_ != VK_NULL_HANDLE) {
+    vulkan_device->functions().vkFreeMemory(vulkan_device->device(),
+                                            upscale_scratch_memory_, nullptr);
+    upscale_scratch_memory_ = VK_NULL_HANDLE;
+  }
+  upscale_scratch_format_ = VK_FORMAT_UNDEFINED;
+  upscale_scratch_width_ = 0;
+  upscale_scratch_height_ = 0;
+}
+
+// Blit the rendered sub-rectangle back up to the render target full extent, so
+// the EDRAM dump - which addresses the image in INTEGER TILE SPACE - keeps
+// reading a full-size image. Without this the dump walks a full-size stride
+// over a partially written image and the rows scatter. Measured 2026-08-16: a
+// black frame with a few strips of garbage, at a real 2.44x frame rate.
+void VulkanRenderTargetCache::UpscaleDownscaledRenderTarget(
+    VulkanRenderTarget& render_target) {
+  if (!IsResolutionDownscaled()) {
+    return;
+  }
+  RenderTargetKey key = render_target.key();
+  // vkCmdBlitImage rejects multisampled images, and depth formats are commonly
+  // not linear-filterable. Leave both alone - a documented caveat of the cvar.
+  if (key.is_depth || key.msaa_samples != xenos::MsaaSamples::k1X) {
+    return;
+  }
+  uint32_t full_width =
+      GetHostRenderTargetWidth(key.pitch_tiles_at_32bpp, key.msaa_samples);
+  uint32_t full_height =
+      GetHostRenderTargetHeight(key.pitch_tiles_at_32bpp, key.msaa_samples);
+  uint32_t src_width = ApplyResolutionDownscale(full_width);
+  uint32_t src_height = ApplyResolutionDownscale(full_height);
+  if (src_width >= full_width && src_height >= full_height) {
+    return;
+  }
+  if (!EnsureUpscaleScratchImage(GetColorOwnershipTransferVulkanFormat(
+                                     key.GetColorFormat()),
+                                 full_width, full_height)) {
+    return;
+  }
+
+  VkImageSubresourceRange color_range =
+      ui::vulkan::util::InitializeSubresourceRange(VK_IMAGE_ASPECT_COLOR_BIT);
+
+  // RT -> TRANSFER_SRC, scratch -> TRANSFER_DST.
+  command_processor_.PushImageMemoryBarrier(
+      render_target.image(), color_range, render_target.current_stage_mask(),
+      VK_PIPELINE_STAGE_TRANSFER_BIT, render_target.current_access_mask(),
+      VK_ACCESS_TRANSFER_READ_BIT, render_target.current_layout(),
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  command_processor_.PushImageMemoryBarrier(
+      upscale_scratch_image_, color_range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+
+  DeferredCommandBuffer& command_buffer =
+      command_processor_.deferred_command_buffer();
+
+  // 1:1 copy of the rendered sub-rectangle into the scratch.
+  VkImageBlit blit_down = {};
+  blit_down.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  blit_down.srcSubresource.layerCount = 1;
+  blit_down.srcOffsets[1].x = int32_t(src_width);
+  blit_down.srcOffsets[1].y = int32_t(src_height);
+  blit_down.srcOffsets[1].z = 1;
+  blit_down.dstSubresource = blit_down.srcSubresource;
+  blit_down.dstOffsets[1] = blit_down.srcOffsets[1];
+  command_buffer.CmdVkBlitImage(
+      render_target.image(), VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      upscale_scratch_image_, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1,
+      &blit_down, VK_FILTER_NEAREST);
+
+  // Scratch -> RT, UPSCALED to the full extent with hardware bilinear.
+  command_processor_.PushImageMemoryBarrier(
+      upscale_scratch_image_, color_range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+      VK_ACCESS_TRANSFER_READ_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+      VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+  command_processor_.PushImageMemoryBarrier(
+      render_target.image(), color_range, VK_PIPELINE_STAGE_TRANSFER_BIT,
+      VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+      VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  command_processor_.SubmitBarriers(true);
+
+  VkImageBlit blit_up = {};
+  blit_up.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+  blit_up.srcSubresource.layerCount = 1;
+  blit_up.srcOffsets[1].x = int32_t(src_width);
+  blit_up.srcOffsets[1].y = int32_t(src_height);
+  blit_up.srcOffsets[1].z = 1;
+  blit_up.dstSubresource = blit_up.srcSubresource;
+  blit_up.dstOffsets[1].x = int32_t(full_width);
+  blit_up.dstOffsets[1].y = int32_t(full_height);
+  blit_up.dstOffsets[1].z = 1;
+  command_buffer.CmdVkBlitImage(
+      upscale_scratch_image_, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+      render_target.image(), VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &blit_up,
+      VK_FILTER_LINEAR);
+
+  render_target.SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                         VK_ACCESS_TRANSFER_WRITE_BIT,
+                         VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+}
+
 void VulkanRenderTargetCache::LatchBoundColorRTForDecoupledCapture() {
   // Blue Dragon native-draw HLE decoupled present: latch color[0] of the last
   // Update (index [1]; [0] is depth). When a native draw redirected RB_COLOR_INFO
@@ -4028,6 +4184,13 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   // readback diagnostic is enabled so the normal path stays unchanged.
   if (cvars::vulkan_trace_dump_rt_image || cvars::vulkan_trace_dump_depth_image) {
     image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+  }
+  // The fractional downscale blits the rendered sub-rectangle back up to the
+  // full extent (UpscaleDownscaledRenderTarget), so the image must be both a
+  // blit source and a blit destination. Gated, so the normal path is untouched.
+  if (IsResolutionDownscaled()) {
+    image_create_info.usage |=
+        VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   }
   // LEVEL 4 mirror round-trip prerequisite (gpu_bd_native_color_lifetime_hle >= 4,
   // 5.6-sol step 1 + #1 risk): the seed (LLE color -> native) + mirror (native ->
@@ -4455,14 +4618,12 @@ VulkanRenderTargetCache::GetHostRenderTargetsFramebuffer(
   // Single-sourced (see RenderTargetCache::GetHostRenderTargetWidth). The
   // framebuffer MUST agree with the image extent or the downscale silently
   // renders into a size the attachment does not have.
-  host_extent.width =
-      std::min(ApplyResolutionDownscale(host_extent.width *
-                                        draw_resolution_scale_x()),
-               device_properties.maxFramebufferWidth);
-  host_extent.height =
-      std::min(ApplyResolutionDownscale(host_extent.height *
-                                        draw_resolution_scale_y()),
-               device_properties.maxFramebufferHeight);
+  // FULL SIZE - the downscale never touches the framebuffer either, or the
+  // attachment and the dump would disagree. See GetHostRenderTargetWidth.
+  host_extent.width = std::min(host_extent.width * draw_resolution_scale_x(),
+                               device_properties.maxFramebufferWidth);
+  host_extent.height = std::min(host_extent.height * draw_resolution_scale_y(),
+                                device_properties.maxFramebufferHeight);
   // BD tile-I/O cut: the host RT is tile-rounded to a huge height (e.g. 4096 /
   // 8192) for EDRAM aliasing, but at 720p only ~720 rows are ever rendered. On a
   // TBDR the storeOp/loadOp cover the FRAMEBUFFER height, so the unused rows are
@@ -12406,6 +12567,16 @@ void VulkanRenderTargetCache::DumpRenderTargets(uint32_t dump_base,
   DumpPitches last_pitches;
   DumpOffsets last_offsets;
   bool pitches_bound = false, offsets_bound = false;
+  // Fractional downscale: restore each source render target to its FULL extent
+  // before the dump reads it, because the dump addresses the image in integer
+  // tile space and cannot express a fractional scale. Once per RENDER TARGET,
+  // not per invocation - several invocations share one.
+  if (IsResolutionDownscaled()) {
+    for (const ResolveCopyDumpRectangle& rectangle : dump_rectangles_) {
+      UpscaleDownscaledRenderTarget(
+          *static_cast<VulkanRenderTarget*>(rectangle.render_target));
+    }
+  }
   for (const DumpInvocation& invocation : dump_invocations_) {
     const ResolveCopyDumpRectangle& rectangle = invocation.rectangle;
     auto& vulkan_rt =

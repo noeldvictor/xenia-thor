@@ -652,6 +652,29 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       EdramBufferModificationStatus commit_status =
           EdramBufferModificationStatus::kViaFragmentShaderInterlock);
 
+  // VulkanRenderTarget is defined further down in this class.
+  class VulkanRenderTarget;
+
+  // ---- Fractional resolution downscale (gpu_resolution_downscale_pct) ----
+  // The guest renders into a SUB-RECTANGLE of a full-size render target (the
+  // viewport/scissor are scaled; the allocation is NOT - see
+  // RenderTargetCache::GetHostRenderTargetWidth for why). This blits that
+  // sub-rectangle back up to the full extent before the EDRAM dump reads it,
+  // so the dump's INTEGER tile addressing keeps working unchanged.
+  //
+  // ⚠ COLOR ONLY, 1xMSAA ONLY. vkCmdBlitImage cannot blit multisampled images,
+  // and depth formats are frequently not linear-filterable. Depth resolves are
+  // therefore NOT rescaled, which matches the cvar's documented caveat.
+  void UpscaleDownscaledRenderTarget(VulkanRenderTarget& render_target);
+  bool EnsureUpscaleScratchImage(VkFormat format, uint32_t width,
+                                 uint32_t height);
+  void DestroyUpscaleScratchImage();
+  VkImage upscale_scratch_image_ = VK_NULL_HANDLE;
+  VkDeviceMemory upscale_scratch_memory_ = VK_NULL_HANDLE;
+  VkFormat upscale_scratch_format_ = VK_FORMAT_UNDEFINED;
+  uint32_t upscale_scratch_width_ = 0;
+  uint32_t upscale_scratch_height_ = 0;
+
   VulkanCommandProcessor& command_processor_;
   TraceWriter& trace_writer_;
 
