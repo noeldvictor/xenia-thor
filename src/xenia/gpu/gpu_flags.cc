@@ -591,7 +591,12 @@ DEFINE_int32(
     "alpha-test (foliage) draws so the fragment shader + alpha-test discard run "
     "once per NxN block instead of per covered sample - up to N*N fewer "
     "alpha-test invocations on the overdraw-heavy BD foliage. 0=off (1x1, normal); "
-    "2=2x2 (~4x fewer); 4=4x4. Quality-toggle (coarsens foliage edges). Gating "
+    "1=2x1; 2=2x2 (~4x fewer); 3=4x2; 4=4x4. ⭐ 1 (2x1) IS THE ONE TO TRY FIRST: "
+    "this project pulled 4x4 on a user report of broken graphics, and XenDroid "
+    "SHIPS 2x1 on blended draws by default - an asymmetric rate halves fragment "
+    "work while staying far less visible than any square rate. The rate is "
+    "clamped to what the device reports for the current sample count. "
+    "Quality-toggle (coarsens edges). Gating "
     "the extension REQUEST behind this cvar keeps the default device-creation "
     "path byte-identical when off. Default off, validate per-title.",
     "GPU");

@@ -8549,10 +8549,25 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         if (gpu_ab_alt_active_) {
           vrs_active = gpu_freeze_vrs_phase_on_;
         }
-        uint32_t vrs_rate = !vrs_active                        ? 1u
-                            : cvars::gpu_vrs_foliage_rate >= 4 ? 4u
-                            : cvars::gpu_vrs_foliage_rate >= 2 ? 2u
-                                                              : 1u;
+        // ⭐ ASYMMETRIC RATES (2026-08-16). This used to emit only SQUARE rates
+        // (1x1 / 2x2 / 4x4), and 4x4 is what got VRS pulled from this project
+        // on a user report of broken graphics. XenDroid ships 2x1 on blended
+        // draws BY DEFAULT: an asymmetric rate halves fragment work while
+        // staying far less visible than any square rate, because it coarsens
+        // in one axis only.
+        //
+        // This is the fragment-cost lever for BD that does NOT touch the
+        // scissor - which matters, because BD's field separates its predicated
+        // tiles BY the scissor, so anything that scales it collapses the tile
+        // layout (see THE RESOLUTION DOWNSCALE IS ARCHITECTURALLY INCOMPATIBLE).
+        // BD's two dominant passes are ~890 BLENDED draws, which is exactly
+        // what the blend test below selects.
+        static const VkExtent2D kVrsRates[] = {{1, 1}, {2, 1}, {2, 2},
+                                               {4, 2}, {4, 4}};
+        uint32_t vrs_rate_index =
+            !vrs_active
+                ? 0u
+                : uint32_t(std::min(std::max(cvars::gpu_vrs_foliage_rate, 0), 4));
         bool vrs_foliage = cvars::gpu_vrs_all_draws || is_alphatest_draw;
         if (!vrs_foliage) {
           auto bc_vrs = register_file_->Get<reg::RB_BLENDCONTROL>();
@@ -8564,8 +8579,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                 bc_vrs.alpha_destblend == xenos::BlendFactor::kZero &&
                 bc_vrs.alpha_comb_fcn == xenos::BlendOp::kAdd);
         }
-        const uint32_t r = vrs_foliage ? vrs_rate : 1u;
-        VkExtent2D frag_size = {r, r};
+        VkExtent2D frag_size = kVrsRates[vrs_foliage ? vrs_rate_index : 0u];
         deferred_command_buffer_.CmdVkSetFragmentShadingRate(
             frag_size, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
             VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR);
