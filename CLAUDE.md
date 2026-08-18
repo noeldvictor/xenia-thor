@@ -10395,3 +10395,34 @@ INSTEAD OF FROM THE CODE.** The refuting lines were ~20 lines away in `module.cc
 **This file already carries the rule - "a citation in a comment is not evidence, read the cited source" - and
 the same applies to a mechanism you infer from a comment: `DefineFunction`'s "will block and return DECLARED"
 comment is what I built the theory on, and the implementation does something safer than the comment implies.**
+
+## 🎯🎯🎯 **THE SIGTRAP, FINALLY CHARACTERISED: A `kDeclared` FUNCTION WITH NO EXTENT IS RETURNED AS RESOLVED**
+**The diagnostic answered it in one run, and it refutes BOTH of my hypotheses (the race, and saverest):**
+```
+RESOLVE FAILED (no machine code after retry):
+   guest target=823AA318  caller_lr=823BF7B0  r1=7036FD50
+   status=2   behavior=0   is_guest=true   range=823AA318-00000000
+```
+**Decoded against the enums (`symbol.h`, `function.h`):**
+| field | value | meaning |
+|---|---|---|
+| `status=2` | **`kDeclared`** (kNew0 kDeclaring1 **kDeclared2** kDefining3 kDefined4 kFailed5) | **declared but NEVER DEFINED** |
+| `behavior=0` | `kDefault` | **NOT a `kProlog`/`kEpilogReturn` saverest helper - that hypothesis is DEAD** |
+| `range` | `823AA318-00000000` | **NO END ADDRESS.** `has_end_address()` is `end_address_ > 0`, so this function has no extent |
+| retry | did not recover | **not transient** - the race hypothesis is dead twice over |
+**⇒ SO THE RESOLVE PATH HANDS BACK A FUNCTION THAT WAS ONLY EVER *DECLARED*: no extent, no body, no code -
+and the thunk then traps.** `Processor::ResolveFunction` only runs `LookupFunction`+`DemandFunction` when the
+entry-table status is `STATUS_NEW`; on `STATUS_READY` it returns `entry->function` unchecked. **Something is
+marking a declared-only function READY.**
+**⚠ AND IT IS NOT ONE BAD FUNCTION - THE TARGET CHANGES BETWEEN RUNS** (`829FF638`, then `823AA318`, from
+different callers). So it is not a specific broken symbol; it is whatever indirect target the guest reaches
+first that analysis never gave a body to.
+### => THE NEXT STEP IS BOUNDED AND NAMED
+Find who inserts a `kDeclared` function into the entry table as `STATUS_READY` - the candidates are the AOT
+precompile walk and `LookupFunction`'s declare path. **Then either define-on-demand at that point, or refuse
+to report it resolved so the failure surfaces as "no function" (which already fails loudly and correctly).**
+**📌 AND THE HONEST SCORECARD FOR THIS INVESTIGATION: I FORMED THREE ROOT-CAUSE HYPOTHESES AND THE DIAGNOSTIC
+KILLED ALL THREE** - the unsignalled-I/O-export theory (tripwire fired zero times), the AOT race (refuted by
+`DefineSymbol`'s spin loop), and the saverest helper (`behavior=0`). **What actually moved this forward was
+never a theory; it was making the silent failure print four fields.** The bug had been an anonymous SIGTRAP in
+this file since 2026-08-07.
