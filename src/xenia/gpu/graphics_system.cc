@@ -13,10 +13,13 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <mutex>
 #include <utility>
+#include <vector>
+#include <string>
 
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/byte_order.h"
@@ -117,6 +120,33 @@ uint32_t MaybeReadGuestU32(Memory* memory, uint32_t address) {
     return 0;
   }
   return xe::load_and_swap<uint32_t>(memory->TranslateVirtual(address));
+}
+
+// Parse a comma-separated list of HEX guest addresses. Tolerates spaces and an
+// optional 0x prefix; skips anything that does not parse, so a typo costs one
+// entry rather than the whole watch.
+std::vector<uint32_t> ParseGuestAddrList(const std::string& spec) {
+  std::vector<uint32_t> out;
+  size_t i = 0;
+  while (i < spec.size()) {
+    size_t j = spec.find(',', i);
+    if (j == std::string::npos) {
+      j = spec.size();
+    }
+    std::string tok = spec.substr(i, j - i);
+    size_t b = tok.find_first_not_of(" 	");
+    size_t e = tok.find_last_not_of(" 	");
+    if (b != std::string::npos) {
+      tok = tok.substr(b, e - b + 1);
+      char* end = nullptr;
+      unsigned long v = std::strtoul(tok.c_str(), &end, 16);
+      if (end && end != tok.c_str()) {
+        out.push_back(static_cast<uint32_t>(v));
+      }
+    }
+    i = j + 1;
+  }
+  return out;
 }
 
 }  // namespace
@@ -605,6 +635,40 @@ void GraphicsSystem::MarkVblank() {
       } else {
         XELOGE("guest-mem dump: failed to open {}",
                cvars::dump_guest_mem_path.c_str());
+      }
+    }
+  }
+
+  // Periodic guest-memory watch. Runs on the vblank path deliberately: that
+  // path is PROVEN to keep running during the Gears freeze (frames still
+  // present at ~35/s), so the watch cannot go silent for the same reason the
+  // thing it is watching is stuck.
+  if (cvars::guest_watch_ms > 0 && memory_) {
+    static uint64_t s_next_ms = 0;
+    static int s_lines = 0;
+    const uint64_t now = Clock::QueryGuestUptimeMillis();
+    if (now >= s_next_ms) {
+      s_next_ms = now + uint64_t(cvars::guest_watch_ms);
+      if (s_lines < cvars::guest_watch_budget) {
+        ++s_lines;
+        std::string out;
+        for (uint32_t a : ParseGuestAddrList(cvars::guest_watch_addrs)) {
+          out += fmt::format(" [{:08X}]={:08X}", a,
+                             MaybeReadGuestU32(memory_, a));
+        }
+        // Follow one level, so a read-pointer and the record it selects are
+        // sampled together rather than in two runs that cannot be correlated.
+        for (uint32_t a : ParseGuestAddrList(cvars::guest_watch_ptrs)) {
+          const uint32_t v = MaybeReadGuestU32(memory_, a);
+          out += fmt::format(" [{:08X}]={:08X}->{:08X}", a, v,
+                             MaybeReadGuestU32(memory_, v));
+        }
+        XELOGI("GUESTWATCH ms={}{}", now, out);
+        if (s_lines == cvars::guest_watch_budget) {
+          XELOGI("GUESTWATCH budget reached ({} lines) - further samples are "
+                 "suppressed; raise guest_watch_budget",
+                 s_lines);
+        }
       }
     }
   }

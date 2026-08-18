@@ -69,6 +69,11 @@ DECLARE_int32(dump_guest_mem_at_ms);
 DECLARE_uint32(dump_guest_mem_base);
 DECLARE_int32(dump_guest_mem_size_mb);
 DECLARE_string(dump_guest_mem_path);
+
+DECLARE_int32(guest_watch_ms);
+DECLARE_string(guest_watch_addrs);
+DECLARE_string(guest_watch_ptrs);
+DECLARE_int32(guest_watch_budget);
 DECLARE_bool(gpu_blue_dragon_kick_wait_token);
 DECLARE_int32(gpu_blue_dragon_kick_wait_token_budget);
 DECLARE_int32(gpu_vrs_foliage_rate);

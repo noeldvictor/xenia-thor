@@ -587,6 +587,29 @@ DEFINE_int32(dump_guest_mem_size_mb, 64,
              "Size in MB of the guest-memory dump.", "GPU");
 DEFINE_string(dump_guest_mem_path, "/data/local/tmp/guestmem.bin",
               "Output path for the guest-memory dump.", "GPU");
+
+// Periodic guest-memory WATCH. The one-shot dump above is ONE CONTIGUOUS RANGE,
+// so it structurally cannot observe two structures that are far apart - e.g.
+// Gears' command-buffer HEADER at 0x82C0CB24 and its CONTENTS at 0x40160000,
+// ~1.07 GB apart. This samples an arbitrary address list instead, and can
+// FOLLOW a pointer, so a queue header and the record it points at are read in
+// the same instant. Default-off / inert.
+DEFINE_int32(guest_watch_ms, 0,
+             "Sample period in ms for the periodic guest-memory watch (0=off).",
+             "GPU");
+DEFINE_string(guest_watch_addrs, "",
+              "Comma-separated HEX guest addresses; each is logged as a u32.",
+              "GPU");
+DEFINE_string(guest_watch_ptrs, "",
+              "Comma-separated HEX guest addresses whose VALUE is followed one "
+              "level: logs addr -> *addr -> *(*addr). Use this to read a queue "
+              "read-pointer AND the record it points at in one sample.",
+              "GPU");
+DEFINE_int32(guest_watch_budget, 600,
+             "Maximum guest-memory watch log lines (a throttle, not a count - "
+             "the line says when it is reached so truncation cannot look like "
+             "a result).",
+             "GPU");
 DEFINE_bool(gpu_blue_dragon_kick_wait_token, false,
             "Experimental Blue Dragon Android bring-up hack: increment the "
             "graphics wait token when a GPU interrupt is dispatched.",
