@@ -10558,3 +10558,68 @@ from the RAW IMAGE, independently of our VFS** - which is the only way to tell "
 "it is not there", and it took seconds. **Do not reason about disc contents from emulator logs again.**
 **⚠ Run it with the device IDLE.** Reading sectors over WiFi while the emulator is hammering the same image
 makes `dd` return nothing, which looks exactly like "not an XDVDFS image".
+
+
+## THE GEARS FREEZE, ROOT SHAPE MEASURED FROM GUEST MEMORY: A COMMAND BUFFER THAT STOPS DRAINING (2026-08-18)
+**The freeze is now measured in the guest's own words instead of inferred from wait traces. Four candidate
+fixes were tested and ALL FOUR FAILED - recorded so nobody re-runs them.**
+### WHAT THE THREE CALL SITES ACTUALLY ARE, DISASSEMBLED
+```
+827A7B08   lwz r11,0x100(r13) / lwz r3,0x14C(r11) / blr   = current_thread->thread_id
+           (PCR+0x100 = prcb_data, whose field 0 is current_thread; X_KTHREAD+0x14C is thread_id)
+82613DA8   WaitForSingleObjectEx(handle, timeout, alertable) - where ALL five workers block
+82444EF0   the COMMAND PUMP:  while (read != write) { c = read; n = c->vt[1](); c->vt[0](0); read += n; }
+82445278   the DISPATCHER:    atomic_inc(*counter); if (!enabled) { atomic_dec; return; }
+                              slot = alloc(cmdbuf, 8); slot->vtable = 0x82106D58; slot->counter = counter;
+                              sync; cmdbuf->write += 8
+824453A0   the DRAIN BARRIER: while (*counter > threshold) Sleep(0)     <- main burns 58% of a core here
+```
+**Main does `82445278(&counter)` then `824453A0(&counter, 1)`: queue a command, then wait for the count to
+drain. The queued command's execute is what decrements the counter.**
+### THE MEASURED STATE DURING THE FREEZE (`tools/thor/gears_memdump.sh`, 16 MB guest dump at t=40s)
+```
+counter  @82BFB3F0 = 2          <- main spins until this is <= 1
+enable   @82BFA380 = 1          <- the job system IS enabled
+cmdbuf   @82C0CB24  base=40160000 read=4018AF20 write=4018CF3C limit=4019FFA0
+                    PENDING = 8,220 BYTES OF QUEUED, UNEXECUTED COMMANDS
+```
+**⇒ NOTHING IS LEAKED, AND THE DISPATCHER IS CORRECT.** counter=2 matches EXACTLY the 2 commands found in the
+buffer carrying vtable `82106D58` (both pointing at counter `82BFB3F0`). **The failure is entirely on the
+CONSUMER side: work is queued and the pump stops executing it.**
+**⇒ AND `read != write`, SO THE PUMP'S OWN CONDITION SAYS IT SHOULD BE EXECUTING.** Traced by hand against the
+measured values: write<limit, read!=limit, read!=write -> the loop falls through to the execute path. So the
+pump is either not running that loop, or is stuck inside one command's `vt[0]`.
+### ❌ FOUR CANDIDATE FIXES, ALL MEASURED, ALL NEGATIVE - DO NOT RE-RUN THESE
+| arm | result |
+|---|---|
+| `xboxkrnl_ntreadfile_force_complete=true` | identical freeze, peakverts=13,725, stalls=6 |
+| `threading_per_object_condvar=true` | identical freeze, peakverts=13,713, stalls=5 |
+| `thor_guest_thread_affinity_mask=248` (float across the big cluster instead of the 1:1 hard pin) | identical freeze, peakverts=13,713 |
+| **`guest_scheduler=true`** | **WORSE - it CRASHES Gears**: `Host-side crash on fiber thread (handle 0xF8000008, guest tid 0x00000006) at guest lr 0x82613DE0`, 2 frames rendered |
+**🔑 THE guest_scheduler CRASH IS A SEPARATE, NEW DEFECT AND IT IS AT THE SAME ADDRESS THE WORKERS BLOCK ON**
+(`82613DE0`, the return from `NtWaitForSingleObjectEx` inside the WaitForSingleObjectEx wrapper). Edge now
+DEFAULT-ENABLES the guest scheduler; ours cannot be enabled on this title until that crash is fixed.
+### ❌ AND TWO MORE HYPOTHESES DIED
+- **Async I/O completion is NOT the ring.** All **933** NtReadFile calls in the run carry `event=00000000` and
+  complete synchronously with `status=0` and `bytes_read == request`. The game does no event-based async reads.
+- **The workers are not silently starved.** They show ~38,000 voluntary switches per 15 s (~2,500/sec), i.e.
+  they are woken constantly and re-park - which matches `F8000044` being set ~2,000/sec. They are awake and
+  correctly finding their own event unsignalled.
+### 🧰 THREE INSTRUMENTS ADDED, AND THE CHEAPEST ONE SHOULD HAVE BEEN USED FIRST
+| tool | cost | what it answers |
+|---|---|---|
+| `tools/thor/gears_disasm.sh` | **~20 s, no route** | guest disassembly for a comma list of addresses. Dumps land at LOAD |
+| `tools/thor/gears_memdump.sh` | ~60 s | one-shot guest memory dump mid-freeze; reads the actual queue/counter words |
+| `tools/thor/gears_fix_ab.sh` | ~60 s/arm | candidate-fix arms from argv, PASS = peakverts past 13,725 AND stalls==0 |
+**⚠ `am start --ei` PARSES A SIGNED INT32, SO A GUEST BASE >= 0x80000000 SILENTLY KILLS THE LAUNCH.**
+`--ei dump_guest_mem_base 0x82BF0000` (2,193,883,136) made `am start` fail outright: **zero xenia log lines,
+peakverts=0, temperature flat** - which reads exactly like a broken route or a hung emulator. Omit the base
+(the 0x82000000 default covers the globals) or pass a DECIMAL that fits, e.g. `1073741824` for 0x40000000.
+**⚠ AND THE DUMP MUST GO TO THE APP'S OWN FILES DIR.** `/data/local/tmp` is not writable by the app (it runs
+as `u0_aNNN`, not `shell`); the dump silently never appears. Read it back with `run-as`.
+### ⇒ WHAT IS STILL OPEN, AND IT IS ONE QUESTION
+**Why the pump stops executing a buffer that its own condition says is non-empty.** The two dumps that would
+settle it cannot be taken together - the buffer HEADER is at 0x82C0CB24 and its CONTENTS at 0x40160000, ~1.07 GB
+apart, and the dump is one contiguous range. **The next instrument is therefore a code change, not another
+dump: log the pump's read/write pointers and the executing command's vtable from inside the emulator**, so the
+header and the contents are observed in the same instant.
