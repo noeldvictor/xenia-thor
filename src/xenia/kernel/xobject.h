@@ -216,6 +216,18 @@ class XObject {
   const std::string& name() const { return name_; }
   uint32_t guest_object() const { return guest_object_ptr_; }
 
+  // WHO CREATED THIS OBJECT. A static string, set at the creation site.
+  //
+  // WHY typeid() IS NOT ENOUGH: four places construct an XEvent (NtCreateEvent,
+  // xam_net, restore, and the lazy wrap of a GUEST dispatcher header in
+  // XObject::GetNativeObject). All four share one typeid, so the existing
+  // `Added handle:{} for {typeid}` diagnostic CANNOT tell a guest-owned event
+  // from one our own HLE made - which is exactly the discrimination the Gears
+  // Act-1 stall needs (five threads parked on events nobody ever signals).
+  // A static const char* costs one pointer store at creation, nothing after.
+  const char* creation_origin() const { return creation_origin_; }
+  void set_creation_origin(const char* origin) { creation_origin_ = origin; }
+
   // Has this object been created for use by the host?
   // Host objects are persisted through reloads/etc.
   bool is_host_object() const { return host_object_; }
@@ -353,6 +365,7 @@ class XObject {
   // if we allocated it!
   uint32_t guest_object_ptr_ = 0;
   bool allocated_guest_object_ = false;
+  const char* creation_origin_ = "unknown";
 };
 
 template <typename T>

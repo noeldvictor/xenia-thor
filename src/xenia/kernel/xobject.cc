@@ -455,10 +455,30 @@ X_STATUS XObject::Wait(uint32_t wait_reason, uint32_t processor_mode,
                                          std::chrono::seconds(30))) ==
            xe::threading::WaitResult::kTimeout) {
       waited_s += 30;
+      // NAME THE OBJECT, do not just count seconds. The old line reported only
+      // a type number, so a stall said "5 threads are parked on a 2" and gave
+      // nothing to act on. The three fields added here are the ones that split
+      // the fork:
+      //   handle       - ties this wait to a specific object across threads,
+      //                  so N stalled threads can be grouped by what they
+      //                  await instead of guessed at.
+      //   guest_object - nonzero => the dispatcher header lives in GUEST
+      //                  memory (the XDK inlined KeInitialize and we wrapped
+      //                  it on first use). Zero => our own HLE made it.
+      //   origin       - which of the four creation sites produced it; typeid
+      //                  cannot tell them apart because all four are XEvent.
+      // This fires only on a >=30s wait, so it is ~10 lines on a stall and
+      // costs nothing in normal play - unlike raising the log level to Debug,
+      // which floods (~135 handle adds/sec on UE3 asset loads) and evicts the
+      // very lines it was raised to capture.
+      auto stall_handles = handles();
       XELOGW(
-          "XObject::Wait: host thread has waited {}s on a {} (tid={:08X})",
+          "XObject::Wait: host thread has waited {}s on a {} "
+          "(tid={:08X} handle={:08X} guest_object={:08X} origin={} name='{}')",
           waited_s, static_cast<uint32_t>(type()),
-          XThread::IsInThread() ? XThread::GetCurrentThread()->thread_id() : 0);
+          XThread::IsInThread() ? XThread::GetCurrentThread()->thread_id() : 0,
+          stall_handles.empty() ? 0 : stall_handles[0], guest_object(),
+          creation_origin(), name());
     }
   } else {
     result =
@@ -913,6 +933,13 @@ object_ref<XObject> XObject::GetNativeObject(KernelState* kernel_state,
     }
     // InitializeNative paths call SetNativePointer, which stashes the handle.
     // New object types (when implemented) must do the same.
+
+    // Tag the origin. This is the branch that wraps a GUEST-owned dispatcher
+    // header the XDK initialized inline (so we never saw a KeInitialize), and
+    // it is indistinguishable from an HLE-created object by typeid alone.
+    if (result) {
+      result->set_creation_origin("guest-native");
+    }
   }
 
   if (!already_locked) {

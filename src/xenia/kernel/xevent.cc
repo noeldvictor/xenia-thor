@@ -158,6 +158,7 @@ bool XEvent::Save(ByteStream* stream) {
 object_ref<XEvent> XEvent::Restore(KernelState* kernel_state,
                                    ByteStream* stream) {
   auto evt = new XEvent(nullptr);
+  evt->set_creation_origin("XEvent::Restore");
   evt->kernel_state_ = kernel_state;
 
   evt->RestoreObject(stream);

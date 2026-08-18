@@ -388,6 +388,7 @@ DECLARE_XAM_EXPORT2(NetDll_WSAWaitForMultipleEvents, kNetworking, kImplemented,
 
 dword_result_t NetDll_WSACreateEvent_entry() {
   XEvent* ev = new XEvent(kernel_state());
+  ev->set_creation_origin("NetDll_WSACreateEvent");
   ev->Initialize(true, false);
   return ev->handle();
 }
