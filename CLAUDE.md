@@ -11349,3 +11349,43 @@ are FIVE copies of every object in this repo across two build systems and two AB
 **=> SCOPE THE SEARCH TO THE TREE THAT PRODUCED THE BINARY (`find ./obj -name ...`), and never `head -1` a
 find whose whole purpose is to locate the right one of several.** Same shape as the grep-truncation trap this
 file already records - both times a `head` turned a complete answer into a confidently wrong one.
+
+
+## *** THE x64 QNaN SIGN, TAKEN AFTER ALL: 14,671 -> 14,591 (-80) - AND A REGRESSION THE TOTAL HID (2026-08-18)
+**I declined this TWICE as "high risk, 89 cases, non-shipping backend". That risk assessment was STALE, and
+noticing why is the transferable part: it assumed validation was expensive. THE CORPUS NOW RUNS IN ~4 MINUTES
+WITH A PER-INSTRUCTION BREAKDOWN, so a silent break is visible immediately and revertible.** Re-priced on that
+basis, the change is cheap. It took one build.
+```
+fadd 4->0   fadds 4->0   fsub 4->0   fsubs 4->0   fmul 16->0   fmuls 16->0   fdiv 16->0
+fdivs 36->20   (the remaining 20 are a different cause)
+```
+### THE FIX
+PPC answers an invalid operation with its own POSITIVE default QNaN; x86 supplies its NEGATIVE real
+indefinite. **A NaN OPERAND is propagated sign-and-payload intact and x86 already does that, so only the
+GENERATED case is rewritten** - which needs the operand test taken BEFORE the op, while both sources are still
+live, because dest commonly aliases a source. **That is the same constraint `EmitBuildPpcFmaNan_F64` already
+documents, and it is why the fix goes INSIDE the lambda** rather than around the sequence.
+### !!! THE REGRESSION, AND IT WAS INVISIBLE IN THE TOTAL
+The first build read **-70 and looked clean**. The per-instruction diff showed **`fres` 11 -> 21, +10**.
+**`fres` lowers to `Div(1.0f, x)`, so it rides DIV_F32 - and an ESTIMATE has different NaN expectations from an
+arithmetic divide.** `fdiv`/`fdivs` operate on FPR doubles and use DIV_F64, so **excluding DIV_F32 alone
+removed the regression and cost nothing**: -80 instead of -70, zero regressions.
+**=> THAT IS THE WHOLE CASE FOR THE STANDING RULE IN ONE DATA POINT. A NET-NEGATIVE TOTAL CAN CONTAIN A REAL
+REGRESSION.** Never accept a corpus delta without the per-instruction breakdown.
+**=> AND THE GENERAL TRAP: A LOWERING THAT REUSES ANOTHER OPCODE INHERITS ITS SEMANTICS CHANGES.** `fres` is
+not a divide, but it is EMITTED as one, so a "fix the divide" change silently redefined it. **Before changing
+any HIR opcode's semantics, grep for which OTHER guest instructions lower through it** - `ppc_emit_fpu.cc` has
+several of these (fres via Div, frsqrte via Div+Sqrt).
+
+## $$$ SESSION TOTAL, x64: 17,851 -> 14,591 (-3,260, -18.3%), ZERO REGRESSIONS SHIPPED (2026-08-18)
+```
+step                                       failures   delta   validated by
+baseline                                    17,851      -
+single-precision denormal -> default QNaN   15,315   -2,536   10 recorded counts byte-identical
+vpkpx implemented                           14,671     -644   exactly 1 instruction changed
+x64 generated-NaN sign                      14,591      -80   per-instruction diff; fres regression caught
+```
+**The first two are SHARED-LAYER and the a64 run inherits them; the third is x64-only (a64 already had it).**
+a64 baseline 7,907, of which 876 is undefined-behaviour noise and 644 was vpkpx. **Predicted a64: ~4,800-5,300,
+and the ARM64 binary is already built and waiting.**
