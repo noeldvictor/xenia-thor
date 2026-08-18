@@ -10038,3 +10038,41 @@ needs the guest code at `lr=82613800` / `822158C4` / `82613DE0` - i.e. a disasse
 AND THE TRACE SAID 67,993.** `timeout=0` proves the caller is TESTING, not that the test always fails. **A
 count is not a behaviour - go get the count.** The event trace's default budget of 160 is what made an earlier
 attempt look empty; at 120,000 it answered in one run.
+
+### => THE SPIN SITE, DISASSEMBLED: IT IS THE GUEST'S OWN `Sleep(0)`, AND OUR KERNEL ANSWERS IT CORRECTLY
+`--es disassemble_function_filter '82613800,82613DE0,822158C4'` dumps the containing function
+**826137A0-826138E4**, and it decodes unambiguously:
+```
+826137B0  cmpi   r3, -1              ; ms == INFINITE?
+826137C8  mulli  r10, r10, -0x2710   ; ms * -10000  -> 100ns relative ticks
+826137F0  or     r5, r30, r30        ; r5 = &timeout          <-- loop target
+826137F4  or     r4, r29, r29        ; r4 = alertable
+826137F8  addi   r3, r0, 1           ; r3 = wait mode
+826137FC  bl     0x82AC6564          ; -> KeDelayExecutionThread
+82613800  cmpli  r31, 0              ; alertable?             <-- lr seen in every trace line
+82613804  beq    82613810            ;   no -> done
+82613808  cmpi   r3, 0x101           ; STATUS_ALERTED?
+8261380C  beq    826137F0            ;   yes -> DELAY AGAIN
+```
+**⇒ 826137A0 IS A `Sleep(ms)` WRAPPER with the standard SleepEx alerted-retry loop.**
+**❌ AND THE OBVIOUS EMULATOR-BUG READING IS REFUTED BY THE TRACE.** If our `KeDelayExecutionThread` returned
+`STATUS_ALERTED` spuriously, the guest would spin at `826137F0 <-> 8261380C` forever and it would be OUR bug.
+It does not:
+```
+KeDelayExecutionThread end:  status 00000000   x384   (SUCCESS, never 0x101)
+                    begin:   alertable 0       x405   (so the retry branch is not even reachable)
+                             timeout  0000000000000000   x405   (Sleep(0))
+```
+**⇒ THE GUEST CALLS `Sleep(0)`, WE RETURN SUCCESS IMMEDIATELY AND CORRECTLY, AND THE **CALLER** LOOPS.** The
+spin is a guest-side spin-wait, not a kernel-status bug - and `lr=82613800` appears in every trace line simply
+because it is the return address inside the shared Sleep wrapper, **so it identifies the WRAPPER, not the
+spinner.** That is a trap for anyone reading the wait trace: a hot `lr` may name a common helper.
+### ⇒ WHERE THIS LANDS, AND THE NEXT PHASE
+**PROVEN this session, reproducibly, across five runs:** the freeze starts at t~20s; worker wake-ups stop at
+that instant and never resume; one blocked worker's event (`F80000F8`) is never signalled once in the whole
+run; the cascade head is `thid 0000000B`, which wakes two of the workers and is itself blocked; the main
+thread and `thid D` stay alive spinning `Sleep(0)` while setting `F8000044` ~2,000x/sec.
+**NOT PROVEN, and it is now a REVERSE-ENGINEERING task rather than an instrumentation one: WHAT the caller of
+the Sleep wrapper is polling, and why `thid B` stopped.** Getting it needs the CALLER of `826137A0`, which the
+wait trace cannot give (it logs `lr`, and `lr` is inside the wrapper). That means a guest stack walk from the
+recorded `r1`, or Ghidra on the XEX. **Do not attempt another trace for this - the instruments are exhausted.**
