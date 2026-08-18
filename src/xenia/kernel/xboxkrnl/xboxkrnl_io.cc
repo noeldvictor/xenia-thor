@@ -254,6 +254,44 @@ dword_result_t NtCreateFile_entry(lpdword_t handle_out, dword_t desired_access,
         (create_options & CreateOptions::FILE_DIRECTORY_FILE) != 0,
         (create_options & CreateOptions::FILE_NON_DIRECTORY_FILE) != 0,
         uint32_t(result));
+    // ON "NAME NOT FOUND", SAY WHAT THE PARENT DIRECTORY ACTUALLY CONTAINS.
+    //
+    // WHY: "NtCreateFile failed ... C0000034" is ambiguous in the one way that
+    // matters. It can mean (a) the file is genuinely absent from the disc, in
+    // which case the guest's own handling is what to study, or (b) the file IS
+    // there and OUR VFS cannot see it, which is an emulator bug. Those need
+    // opposite work, and the log could not tell them apart.
+    //
+    // Built for Gears of War, which fails to open all three of its intro
+    // movies (\WarGame\Movies\{EpicLogo,MGSLogo,Startup}.xxx) about two
+    // seconds before five worker threads park forever.
+    if (result == X_STATUS_OBJECT_NAME_NOT_FOUND) {
+      static std::atomic<int32_t> listing_budget{8};
+      if (listing_budget.fetch_sub(1) > 0) {
+        auto last_sep = target_path.find_last_of("\\");
+        std::string parent = last_sep != std::string::npos
+                                 ? target_path.substr(0, last_sep)
+                                 : std::string();
+        vfs::Entry* parent_entry =
+            kernel_state()->file_system()->ResolvePath(parent);
+        if (parent_entry) {
+          std::string names;
+          size_t shown = 0;
+          for (const auto& child : parent_entry->children()) {
+            if (shown++ >= 24) {
+              names += " ...";
+              break;
+            }
+            names += " ";
+            names += child->name();
+          }
+          XELOGW("  parent '{}' HAS {} entries:{}", parent,
+                 parent_entry->child_count(), names);
+        } else {
+          XELOGW("  parent '{}' does not resolve either", parent);
+        }
+      }
+    }
   }
   object_ref<XFile> file = nullptr;
 
