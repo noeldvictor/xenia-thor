@@ -10282,3 +10282,45 @@ cause is elsewhere. **That is one run on a title that cooperates.**
 **📌 AND NOTE WHAT IT SAYS ABOUT THE PROJECT'S BENCHMARK PROBLEM: of 8 profiled titles, the only untried
 uncapped one turns out to be the LARGEST, and it dies in the compiler rather than in the game.** The second
 benchmark title is not blocked by a GPU or a kernel bug - it is blocked by AOT memory.
+
+## 🎯🎯 **THE ANONYMOUS SIGTRAP IS A *RESOLVE FAILURE*, AND GEARS AND MAGNACARTA 2 HIT THE SAME STUB (2026-08-17)**
+**MagnaCarta 2 on the a64 backend gets MUCH further than on LLVM - it reaches `Title name: Magnacarta2` and
+renders - then dies. The tombstone is the one this file has recorded since 2026-08-07 and never explained:**
+```
+Fatal signal 5 (SIGTRAP), code 1 (TRAP_BRKPT), fault addr 0x2a000025c   in tid "Main XThread"
+  #00 pc 0x25c   /dev/ashmem/xenia_code_cache_... (deleted)
+  x20 = 00000077a0032b40   <- guest context VALID (so NOT the LLVM-writes-x20 bug)
+  x21 = 0000000100000000   <- membase VALID
+  x0  = 0000000082e44428   <- a GUEST address
+```
+**⚠ AND THE FAULT ADDRESS IS BYTE-IDENTICAL TO THE RECORDED GEARS SIGTRAP (`0x2a000025c`).** Two different
+titles trapping at the same tiny offset means it is not a per-title quirk - **it is one shared stub near the
+start of the code cache.**
+### => IT IS `EmitResolveFunctionThunk`'s FAILURE PATH, AND THE CODE SAYS SO OUTRIGHT
+`a64_backend.cc`:
+```
+  blr(x9);      // ResolveFunction(context, target_address)
+  ...
+  cbz(x9, 8);   // resolved == null?  skip the branch...
+  br(x9);       // ...jump to the resolved function
+  brk(0xF000);  // Resolution failed - trap for debugging.
+```
+**⇒ THE CRASH MEANS `ResolveFunction` RETURNED NULL: an indirect guest call whose target we could not turn
+into executable code.** And `x0` is meaningful at that point - the thunk's epilog reloads it - so
+**`x0 = 82E44428` is the GUEST RETURN ADDRESS of the failing call site.**
+**⇒ THERE ARE TWO DISTINCT CAUSES BEHIND THE ONE CRASH, AND THEY WERE INDISTINGUISHABLE:**
+| path | meaning |
+|---|---|
+| `!fn` | the address resolves to NO FUNCTION - a discovery / jump-table problem |
+| `!code` | it IS a known function but was never COMPILED - a compilation problem |
+**Both silently `return 0`. Fixed: both now log the guest target, the caller `lr` and `r1`, and say which
+path ran** (`87ed26141`). **One log line turns an anonymous SIGTRAP into an address you can disassemble** -
+which is what the Gears entry has been missing since August 7th.
+**📌 AND NOTE THE BACKEND ASYMMETRY THIS EXPOSES, worth remembering when triaging any title:**
+```
+MagnaCarta 2, LLVM backend : dies in AOT at 33,280/47,353 - Scudo map failure, never reaches the title
+MagnaCarta 2, a64  backend : compiles ~47,104 functions in ~10s, REACHES THE TITLE, then resolve-trap
+```
+**a64 compiles the whole title in seconds and gets to the title screen; LLVM cannot even finish compiling it.**
+`--ez cpu_backend_llvm false` is therefore the right first move on ANY large title that dies during load, and
+it splits "our compiler cannot cope" from "our emulation cannot cope" in one run.
