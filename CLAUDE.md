@@ -11282,3 +11282,45 @@ that ships on the Thor - ALREADY HAS THIS FIX** (it was worth 9,715 -> 7,907 the
 desktop reference, against touching five separate codegen sequences. **Worth doing when someone is already in
 `x64_sequences.cc`; not worth a dedicated risk budget.** The fix shape is already written in that file - copy
 MUL_ADD_F64's "no NaN operand, so any NaN result is generated -> load PPC's default" tail.
+
+
+## *** vpkpx IMPLEMENTED: x64 15,315 -> 14,671 (-644), EXACTLY ONE INSTRUCTION CHANGED (2026-08-18)
+**The last `XEINSTRNOTIMPLEMENTED` in the corpus, and this file had been treating it as inert scenery -
+"expected", listed next to the real defects for weeks. It was the cheapest 644 cases in the tree.**
+```
+before 15,315   after 14,671
+instructions whose count changed: 1     vpkpx 644 -> 0
+regressions: 0
+```
+### THE RULE, DERIVED FROM THE CAPTURE AND EXACT ON ALL 650 CASES FIRST TRY
+Each source word becomes a 1-5-5-5 pixel halfword from PPC bits 7, 8-12, 16-20, 24-28:
+```
+h = (w & 0x01F80000) >> 9 | (w & 0x0000F800) >> 6 | (w & 0x000000F8) >> 3
+```
+**Alpha and red share the shift of 9, so THREE mask-shifts cover all four fields.**
+### => AND IT NEEDED NO NEW OPCODE, WHICH IS WHY BOTH BACKENDS GET IT
+Each pixel lands in the low half of its word, which is exactly what `PACK_TYPE_16_IN_32` already gathers - the
+same pack `vpkuwum` uses. **So it is pure shared HIR built from lowerings both backends already have, and a64
+loses the same 644 without a line of backend work.**
+**== AND THE REASON IT SAT THERE: "UNIMPLEMENTED" READ AS "A FEATURE REQUEST", NOT AS "644 FAILING TESTS".**
+Every corpus table in this file annotated it `(XEINSTRNOTIMPLEMENTED - expected)` and moved on. **It was also
+the LOWEST-RISK item available and nobody noticed, because the current behaviour is an ASSERT - there was no
+working code to regress.** When triaging a failure list, sort by risk as well as by count: an unimplemented
+instruction is a pure addition, while every other class means changing code that already runs.
+
+## $$$ SESSION TOTAL, x64: 17,851 -> 14,671 (-3,180, -17.8%), ZERO REGRESSIONS THROUGHOUT (2026-08-18)
+```
+step                                          failures   delta   validated by
+baseline                                       17,851      -
+single-precision denormal -> default QNaN      15,315   -2,536   10 recorded counts byte-identical
+vpkpx implemented                              14,671     -644   exactly 1 instruction changed
+```
+**Both are SHARED-LAYER, so the queued a64 run inherits both.** a64 was 7,907, of which 876 is known
+undefined-behaviour noise and 644 was vpkpx. **Predicted a64 outcome once the device is free: roughly
+4,800-5,300**, and the per-instruction breakdown is the check - a total alone cannot separate a partial win
+from an offsetting regression.
+**== WHAT MADE THE WHOLE SESSION WORK, IN ONE LINE: DERIVE THE RULE FROM THE CAPTURE BEFORE WRITING OR PORTING
+ANYTHING.** It retired vsl/vsr as undefined-behaviour noise, validated the FMA walk order, KILLED a queued
+round-to-odd fix that would have bought zero, handed back the denormal rule in its place, caught an upstream
+patch whose hunks would have landed on the wrong functions, and produced vpkpx exact on the first attempt.
+**Every one of those cost a python script and no device time.**
