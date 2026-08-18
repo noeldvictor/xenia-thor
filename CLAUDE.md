@@ -10940,3 +10940,52 @@ about **4,600** more (930+928+416+415+1,013 and their twins are already counted)
 **=> AND THE GENERAL LESSON: A TODO COMMENT IS NOT A BACKLOG ITEM UNTIL SOMETHING SIZES IT.** This one sat in
 five places, correctly describing the bug, for as long as the corpus could not run on a64. The build-config
 fix that made the corpus runnable was worth more than any single lowering, and this is the first proof.
+
+
+## ** THE SCALAR FPU DEFAULT QNaN HAD THE VMX SIGN: 9,715 -> 7,907 (2026-08-18)
+**Second fix off the working a64 corpus, and this file had already written down the rule that was broken.**
+```
+BEFORE  Failed 9,715      AFTER  Failed 7,907      -1,808
+   session total so far: 24,991 -> 7,907  (-68.4%)
+```
+### THE BUG
+A failing case says it in one line:
+```
+Expected: f4 == 0x7FF8000000000000        <- POSITIVE
+  Actual: f4 == FFF8000000000000          <- we produced NEGATIVE
+```
+Four SCALAR FPU helpers canonicalised a GENERATED NaN to the **VMX** default:
+```
+EmitFpBinOpWithPpcNan_F32  0xFFC00000            -> 0x7FC00000
+EmitFpBinOpWithPpcNan_F64  0xFFF8000000000000    -> 0x7FF8000000000000
+EmitFmaWithPpcNan_F64      0xFFF8000000000000    -> 0x7FF8000000000000
+EmitFmaWithPpcNan_F32      0xFFC00000            -> 0x7FC00000
+```
+**This file already records the rule, from the FMA/CR1 port: "Use `0x7FF8000000000000` for the scalar FPU and
+`FFC00000` for VMX. Neither source was wrong; they were measuring different halves of the machine."** The a64
+scalar helpers used the VMX sign anyway. **The V128 paths were left alone - negative IS correct there.**
+### THE RESULT, PER INSTRUCTION - AGAIN THE SHAPE IS THE PROOF
+```
+                  before  after
+fmadds/fnmadds      928 ->  712   (-216 each)
+fmsubs/fnmsubs      930 ->  714
+fmadd /fnmadd       415 ->  199
+fmsub /fnmsub       416 ->  200
+fadds 71->67  fsubs 72->68  fmuls 79->63  fdivs 62->46
+vmaddfp 1,013 / vnmsubfp 1,012 / vpkpx 644 / vsr 454 / vsl 422 / vcmpbfp 284   ALL UNCHANGED
+```
+**Every VMX and non-FP instruction is untouched, and each scalar form dropped by the same ~216** - one common
+cause, removed once.
+### => THE THREE REMAINING CLASSES ARE NOW NAMED, AND THEY ARE DIFFERENT PROBLEMS
+1. **ROUND-TO-SINGLE, OFF BY ONE ULP** - `Expected 4013d70a / Actual 4013D70B`. The `-s` forms round a double
+   result to single and we land 1 ulp high. Edge `8b19ee756` "[CPU] Skip the rounding to single for a denormal
+   operand" is in this family. **~2,850 across fmadds/fmsubs/fnmadds/fnmsubs, ~800 across the d forms.**
+2. **CR1 IS NEVER SET** - `Expected cr == 0x08000000 / Actual 0`. That is the FPSCR exception summary reaching
+   CR1 on a record form. `UpdateFPSCR` and `CopyFPSCRToCR1` are SHARED HIR (`ppc_hir_builder.cc`), and this
+   file records the CR1 step as worth **-4,040 on x64** - so the shared half exists and something on the a64
+   path does not carry it through. **Check which HIR ops StoreFPSCRSummary emits and whether a64 lowers them
+   before assuming the shared code is at fault.**
+3. **vmaddfp / vnmsubfp, ~2,025, UNMOVED BY EITHER FIX** - consistent with this file's x64 note that the packed
+   residual is **denormal flush, not NaN** (`Expected [00000000,...] Actual [00010203,...]`), i.e. upstream
+   `36a7bb57f` opt-in accurate VMX denormal flush. **Do not attack it as a NaN bug.**
+Plus `vpkpx` 644 (`XEINSTRNOTIMPLEMENTED`), `vsr`/`vsl` 876 and `vcmpbfp` 284 as separate self-contained items.

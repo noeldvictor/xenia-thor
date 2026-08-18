@@ -1554,7 +1554,7 @@ static void EmitFpBinOpWithPpcNan_F32(A64Emitter& e, SReg dest, SReg s1,
   }
   e.fcmp(dest, dest);
   e.b(VC, done);
-  e.mov(e.w0, static_cast<uint64_t>(0xFFC00000u));
+  e.mov(e.w0, static_cast<uint64_t>(0x7FC00000u));
   e.fmov(dest, e.w0);
   e.b(done);
 
@@ -1604,7 +1604,7 @@ static void EmitFpBinOpWithPpcNan_F64(A64Emitter& e, DReg dest, DReg s1,
   }
   e.fcmp(dest, dest);
   e.b(VC, done);
-  e.mov(e.x0, static_cast<uint64_t>(0xFFF8000000000000ull));
+  e.mov(e.x0, static_cast<uint64_t>(0x7FF8000000000000ull));
   e.fmov(dest, e.x0);
   e.b(done);
 
@@ -1651,7 +1651,7 @@ static void EmitFmaWithPpcNan_F64(A64Emitter& e, DReg dest, DReg s1, DReg s2,
   // If result is NaN (0*inf or inf-inf), canonicalize to PPC default.
   e.fcmp(dest, dest);
   e.b(VC, done);
-  e.mov(e.x0, static_cast<uint64_t>(0xFFF8000000000000ull));
+  e.mov(e.x0, static_cast<uint64_t>(0x7FF8000000000000ull));
   e.fmov(dest, e.x0);
   e.b(done);
 
@@ -1700,7 +1700,7 @@ static void EmitFmaWithPpcNan_F32(A64Emitter& e, SReg dest, SReg s1, SReg s2,
     e.fmadd(dest, s1, s2, s3);
   e.fcmp(dest, dest);
   e.b(VC, done);
-  e.mov(e.w0, static_cast<uint64_t>(0xFFC00000u));
+  e.mov(e.w0, static_cast<uint64_t>(0x7FC00000u));
   e.fmov(dest, e.w0);
   e.b(done);
 
