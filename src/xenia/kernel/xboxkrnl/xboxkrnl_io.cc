@@ -865,11 +865,50 @@ dword_result_t NtQueryFullAttributesFile_entry(
 }
 DECLARE_XBOXKRNL_EXPORT1(NtQueryFullAttributesFile, kFileSystem, kImplemented);
 
+
+// UNSIGNALLED-EVENT TRIPWIRE. NtQueryDirectoryFile and NtDeviceIoControlFile
+// both ACCEPT an event handle (and an APC routine) and neither signals it -
+// verified statically: 0 LookupObject<XEvent>, 0 ->Set(), 0 EnqueueApc in
+// either body, against NtReadFile which does all three. A guest that issues
+// one of these asynchronously and then waits on the event it passed waits
+// forever, which is exactly the shape of the Gears Act-1 stall (five threads
+// parked on events nothing in a 6,003-line event trace ever touches).
+//
+// This does NOT assert those exports are the cause - attributing a runtime
+// stall to a static finding is an error this project has made before. It
+// makes the link CHECKABLE: if a handle printed here is also a handle in an
+// "XObject::Wait: host thread has waited" line, attribution is direct.
+//
+// Announce-on-first (c == 1 || ...), never a bare modulo throttle: a counter
+// that first prints at the 64th call cannot prove a negative, which cost this
+// project a wrong "the lever never ran" verdict once already. Budgeted so a
+// title that legitimately polls cannot flood logcat and evict the stall lines.
+static void LogUnsignalledCompletionEvent(const char* export_name,
+                                          uint32_t event_handle,
+                                          uint32_t apc_routine) {
+  if (!event_handle && !(apc_routine & ~1u)) {
+    return;  // fully synchronous use - nothing is owed
+  }
+  static std::atomic<uint32_t> count{0};
+  uint32_t c = ++count;
+  if (c == 1 || c <= 32) {
+    XELOGW(
+        "UNSIGNALLED-COMPLETION: {} called with event_handle={:08X} "
+        "apc_routine={:08X} - this export signals NEITHER. A guest waiting on "
+        "that event will wait forever. (#{})",
+        export_name, event_handle, apc_routine, c);
+  } else if (c == 33) {
+    XELOGW("UNSIGNALLED-COMPLETION: budget reached, further occurrences hidden");
+  }
+}
+
 dword_result_t NtQueryDirectoryFile_entry(
     dword_t file_handle, dword_t event_handle, function_t apc_routine,
     lpvoid_t apc_context, pointer_t<X_IO_STATUS_BLOCK> io_status_block,
     pointer_t<X_FILE_DIRECTORY_INFORMATION> file_info_ptr, dword_t length,
     pointer_t<X_ANSI_STRING> file_name, dword_t restart_scan) {
+  LogUnsignalledCompletionEvent("NtQueryDirectoryFile", event_handle,
+                                static_cast<uint32_t>(apc_routine));
   if (length < 72) {
     return X_STATUS_INFO_LENGTH_MISMATCH;
   }
@@ -1016,6 +1055,8 @@ dword_result_t NtDeviceIoControlFile_entry(
     dword_t apc_context, pointer_t<X_IO_STATUS_BLOCK> io_status_block,
     dword_t io_control_code, lpvoid_t input_buffer, dword_t input_buffer_len,
     lpvoid_t output_buffer, dword_t output_buffer_len) {
+  LogUnsignalledCompletionEvent("NtDeviceIoControlFile", event_handle,
+                                apc_routine);
   // Called by XMountUtilityDrive cache-mounting code
   // (checks if the returned values look valid, values below seem to pass the
   // checks)
