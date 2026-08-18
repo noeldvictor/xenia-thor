@@ -902,6 +902,56 @@ static void LogUnsignalledCompletionEvent(const char* export_name,
   }
 }
 
+
+DEFINE_bool(
+    xboxkrnl_signal_io_completion_events, false,
+    "NtQueryDirectoryFile and NtDeviceIoControlFile accept an event handle AND "
+    "an APC routine and signal NEITHER - verified per function body: 0 "
+    "LookupObject<XEvent>, 0 ->Set(), 0 EnqueueApc, against NtReadFile which "
+    "does all three. A guest that issues either asynchronously and then waits "
+    "on the event it passed waits forever, which is the shape of the Gears "
+    "Act-1 stall. This completes them the way NtReadFile does. DEFAULT OFF: "
+    "the failure mode of a wrong kernel completion is a hang, not a wrong "
+    "pixel, so device-validate per title before flipping. xenia-edge has the "
+    "identical gap, so this is not a port - it is a fix.",
+    "Kernel");
+
+namespace {
+// Complete a synchronously-executed I/O request: queue the APC (if any) and
+// signal the event the guest passed. Mirrors NtReadFile's tail.
+//
+// CALL IT ONLY AFTER PARAMETER VALIDATION, never at function entry. NT does
+// not signal the event for a request it rejected before starting any I/O
+// (bad length, unhandled IOCTL), and an RAII guard at the top would wrongly
+// complete those. Every call site below therefore sits on the post-validation
+// return path.
+//
+// The event is signalled regardless of status, because the request DID
+// complete - a guest waiting on a failed-but-finished operation must still be
+// woken. The APC is queued only on success, matching NtReadFile.
+void SignalIoCompletion(uint32_t event_handle, uint32_t apc_routine,
+                        uint32_t apc_context, uint32_t io_status_block,
+                        X_STATUS result) {
+  if (!cvars::xboxkrnl_signal_io_completion_events) {
+    return;
+  }
+  // APC first, then the event: a thread woken by the event may immediately
+  // read state the APC is meant to have published.
+  if ((apc_routine & ~1u) && apc_context && result == X_STATUS_SUCCESS) {
+    if (auto* thread = XThread::GetCurrentThread()) {
+      thread->EnqueueApc(apc_routine & ~1u, apc_context, io_status_block, 0);
+    }
+  }
+  if (event_handle) {
+    auto ev =
+        kernel_state()->object_table()->LookupObject<XEvent>(event_handle);
+    if (ev) {
+      ev->Set(0, false);
+    }
+  }
+}
+}  // namespace
+
 dword_result_t NtQueryDirectoryFile_entry(
     dword_t file_handle, dword_t event_handle, function_t apc_routine,
     lpvoid_t apc_context, pointer_t<X_IO_STATUS_BLOCK> io_status_block,
@@ -961,6 +1011,9 @@ dword_result_t NtQueryDirectoryFile_entry(
         uint32_t(result), info);
   }
 
+  SignalIoCompletion(event_handle, static_cast<uint32_t>(apc_routine),
+                     static_cast<uint32_t>(apc_context),
+                     static_cast<uint32_t>(io_status_block), result);
   return result;
 }
 DECLARE_XBOXKRNL_EXPORT1(NtQueryDirectoryFile, kFileSystem, kImplemented);
@@ -1083,6 +1136,9 @@ dword_result_t NtDeviceIoControlFile_entry(
     return X_STATUS_INVALID_PARAMETER;
   }
 
+  SignalIoCompletion(event_handle, apc_routine, apc_context,
+                     static_cast<uint32_t>(io_status_block),
+                     X_STATUS_SUCCESS);
   return X_STATUS_SUCCESS;
 }
 DECLARE_XBOXKRNL_EXPORT1(NtDeviceIoControlFile, kFileSystem, kStub);

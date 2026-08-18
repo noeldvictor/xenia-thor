@@ -627,6 +627,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyStringExtra(intent, launchArguments, "arm64_pc_operand_log_tids");
             copyIntExtra(intent, launchArguments, "arm64_pc_operand_log_budget");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_ntreadfile_force_complete");
+            copyBooleanExtra(intent, launchArguments, "xboxkrnl_signal_io_completion_events");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_interval_ms");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_top_functions");
             copyIntExtra(intent, launchArguments, "arm64_speed_profile_min_delta");
