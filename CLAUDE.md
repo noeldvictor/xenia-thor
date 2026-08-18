@@ -906,6 +906,41 @@ line - *"the ROV path is currently considered much slower compared to the RTV pa
 hardest on this title. **One cheap run beat several sessions of planning. Kill-first experiments earn their
 place at the top of the list.**
 
+## ###### THE GOAL, REVISED AFTER THE ANSWERS CAME IN (2026-08-17). BD's GPU IS CLOSED.
+**Brief: https://claude.ai/code/artifact/8d00e3a3-14f7-427d-84ca-3bdd1485ced3**
+**The three-question goal below did its job and is now SUPERSEDED. Two of the three answers were kills:**
+```
+Q1 buffer path faster on Adreno?   NO - 1.5x-3x SLOWER. Architecture closed for BD.
+Q2 7e3 vs fp16?                    MOOT - only mattered if the buffer path were viable.
+   "lossless stack -10.6%"         WITHDRAWN - flat on a matched pair (-0.4% to -2.4%).
+Q3 why does thinning corrupt?      STILL OPEN, PC-only, worth one frame-capture diagnosis.
+```
+### => GOAL 1 (SHIP, NOT ENGINEER): GIVE THE PLAYER THE CHOICE THE NUMBERS ALREADY SUPPORT
+**BD cannot go faster at unchanged quality on this architecture - measured, not argued.** What CAN ship today
+is a labelled quality trade: **VRS 2x1 on blended draws = +33% fps (15.3 -> 20.4)** for slightly coarser
+foliage, already exposed as a user toggle; 2x2 reaches 25.0 and reads blurry. **That is a product decision
+with the measurements in hand.** Stop looking for a free win on this title.
+### => GOAL 2 (THE REAL ONE): MAKE A SECOND TITLE MEASURABLE
+**EVERY performance conclusion in this file is Blue Dragon's.** Gears stalls in Act 1; Burnout sits at its
+60 fps cap with no headroom to show a win. **So nothing here has ever been verified to generalise - including
+the fragment-bound diagnosis the whole GPU story rests on.**
+**The Gears stall is a COMPAT bug, not a perf one**: five guest threads parked on an event our HLE never
+signals, same class as the Lost Odyssey stall, and this file already scoped the diagnostic (raise the log
+level, grep the five handles for their `typeid`, which names the owning subsystem). **Fixing it repairs a
+broken game AND buys the second benchmark title every future claim needs.** That is worth more than any
+remaining lever on BD.
+### => GOAL 3 (THEN): MAKE THE CPU WORK MEASURABLE
+CPU levers are capped at **6.8%** on BD because it is GPU-bound - which is exactly why every one of them has
+read flat. On a CPU-bound title they would be visible. **22 upstream FPSCR/NaN commits are waiting**,
+continuing the family that took the hardware corpus from 35,917 failures to 19,120.
+**⚠ AND THE STANDING METHOD RULES THAT SURVIVED THIS INVESTIGATION, ALL EARNED THE HARD WAY:**
+1. **Settle correctness on the PC trace loop (1.2 s/arm); spend device time only on a number nothing else can
+   give.** Every voided/heat-soaked/wrong-scene run was answering a PC question.
+2. **Matched pairs, never pooled runs.** Pooling across thermal starts made a flat result look like -10.6%.
+3. **A picture that looks right is not a measurement.** Three verdicts here were overturned by a pixel diff,
+   a log line, and a frame capture respectively.
+4. **Rank experiments by what they KILL.** One 150 s run closed an architecture several sessions were aimed at.
+
 ## >>> THE CURRENT GOAL (user, 2026-08-17): ANSWER THREE QUESTIONS, DO NOT GRIND LEVERS
 **Brief: https://claude.ai/code/artifact/8d00e3a3-14f7-427d-84ca-3bdd1485ced3**
 **BD is ~93% GPU-bound; the frame is 89.6% guest fragment shading / 10.4% EDRAM machinery. The lossless
