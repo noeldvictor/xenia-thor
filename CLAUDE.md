@@ -9953,3 +9953,37 @@ This file says a full gradle build recompiles `llvm_assembler.cc` and moves the 
 `objcache_v3_opt2_bB38C32D4`, **47,545 files, byte-identical directory name before and after installing a
 build that changed only kernel sources**. **So a kernel-only iteration costs NO 320s re-warm** - check the
 directory name instead of assuming, it is one adb command and it saves five minutes per iteration.
+
+### => WHAT THE MAIN THREAD IS POLLING: `KeDelayExecutionThread(0)` AND A SHARED EVENT THAT NEVER FIRES
+**Wait trace, `after_ms=25000` so it lands in the freeze, 70,694-line capture:**
+```
+4,537  KeDelayExecutionThread  thid=6  lr=82613800  Main XThread   timeout=0000000000000000
+  126  KeWaitForSingleObject   thid=6  lr=822158C4  Main XThread
+  125  KeWaitForSingleObject   thid=D  lr=822158C4  XThreadBD1D3CB0
+   34  NtWaitForSingleObjectEx thid=6  lr=82613DE0  Main XThread
+```
+**⇒ THE MAIN THREAD SPINS ON `KeDelayExecutionThread` WITH A **ZERO** TIMEOUT, 4,537 times from ONE call site.**
+That is a yield-spin: the guest polls, yields, polls again. It is why the thread burns 58% of a core while the
+frame stands still, and it is why NO stall log could ever have caught it - a zero-timeout delay is not a wait.
+**🔑 AND THE POLLED OBJECT IS NAMED. Both the main thread AND a worker poll ONE SHARED EVENT with timeout=0:**
+```
+268  thid=0000000D  handle=F8000044  type=event  timeout=0
+255  thid=00000006  handle=F8000044  type=event  timeout=0
+```
+**`timeout=0` is a TEST, not a block** - "is F8000044 signalled yet?" - asked 523 times between two threads and
+never true. **Meanwhile the three infinitely-blocked workers are on their OWN per-thread events
+(F800000C / F80000F8 / F8000100) at `lr=82613DE0`, which is a DIFFERENT call site from the pollers.**
+### => SO THE SHAPE IS A CASCADE, AND THE ROOT IS ONE UNSIGNALLED EVENT
+```
+workers        block forever on their own events, waiting to be given work
+main + thid D  poll shared event F8000044 forever, waiting for something to be ready
+main           yield-spins via KeDelayExecutionThread(0) between polls
+```
+**Nothing is deadlocked on a lock. Everything is waiting on a signal that never arrives**, and the highest
+object in that chain is **F8000044**.
+**⚠ WHO OWES F8000044 IS NOT YET ESTABLISHED.** Either (a) our HLE owes it (an async completion), or (b) a
+guest thread should set it and is itself parked. **Do not guess - the event trace answers it directly**, and
+note its budget DEFAULTS TO 160, which is the documented trap that made an earlier event trace look empty.
+**📌 AND THE LOST ODYSSEY ENTRY IN THIS FILE NOW READS AS THE SAME BUG:** *"main thread polls a guest flag in
+KeDelayExecutionThread wrapper lr 827CACFC; workers idle"*. Gears' wrapper is `lr 82613800`. **Two titles, one
+signature, and it is now instrumented rather than described.**
