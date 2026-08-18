@@ -11389,3 +11389,38 @@ x64 generated-NaN sign                      14,591      -80   per-instruction di
 **The first two are SHARED-LAYER and the a64 run inherits them; the third is x64-only (a64 already had it).**
 a64 baseline 7,907, of which 876 is undefined-behaviour noise and 644 was vpkpx. **Predicted a64: ~4,800-5,300,
 and the ARM64 binary is already built and waiting.**
+
+
+## ?? vcmpbfp CHARACTERISED: IT IS THE VMX DENORMAL FLUSH, AND THE BLOCKER IS A DEAD OPCODE (2026-08-18)
+**Modelled our implementation against all 1,300 captured cases. The rule is unambiguous:**
+```
+our logic as written        1192/1300
+same logic + flush denormal inputs to zero (sign kept)   1300/1300
+```
+Verbatim from `vcmpbfp_15_GEN`: `v2` lane 0 = `80081010`, a NEGATIVE DENORMAL. Flushed to -0.0 against
+`v1 = 0`, both bounds hold and hardware answers `00000000`. Unflushed it is a tiny negative, both bounds fail,
+and we answer `C0000000`. **`vcmpbfp_26_GEN` is the same story with the denormal in vA.**
+### !! THE OBVIOUS FIX IS BLOCKED: `OPCODE_VECTOR_DENORMFLUSH` IS A DEAD OPCODE
+```
+declared          hir/opcodes.h:311
+lowered           a64_seq_vector.cc, llvm_assembler.cc
+lowered on x64    NO
+builder method    NONE - nothing in the tree constructs it
+```
+**So it is the inert-lever class again: an opcode with two lowerings, no producer, and no x64 lowering at all.
+Emitting it from `vcmpbfp` would build fine and then fail on the DESKTOP backend** - i.e. on the only place
+this is currently validatable.
+**=> TWO ROUTES, AND BOTH ARE REAL WORK:** add an x64 lowering plus a builder method (then all three backends
+agree), or express the flush with existing ops - `keep = Not(VectorCompareEQ(And(v, 0x7F800000), 0))` then
+`Or(And(v, keep), And(And(v, 0x80000000), Not(keep)))`, about 6 ops per operand and 12 on the instruction.
+### ⚠ AND THE SIZING IS UNCERTAIN, WHICH IS WHY IT IS NOT TAKEN BLIND
+The flush explains **108 of 1,300** modelled mismatches, but x64 actually fails **366** and a64 **284**. **So
+my model of our own emitter does not fully reproduce it** - the residual is most likely the CR update on the
+`.` forms, which the model ignores. **Fixing the flush may therefore buy ~108, not ~366. Confirm what the
+other ~258 are before building either route.**
+### ⚠⚠ AND THERE IS A SEMANTIC TRADE HIDING HERE - DO NOT SHIP IT AS "JUST A FIX"
+The capture is hardware with the Xenon's default **VSCR.NJ = 1 (flush)**. An unconditional flush is therefore
+right for the default and WRONG for a title that clears NJ. **That is exactly the accuracy-versus-speed trade
+upstream made opt-in in `36a7bb57f` ("a large performance penalty, e.g. NBA 2K11"), and it is the same
+question as the vmaddfp/vnmsubfp residual (~2,025 on a64).** Decide the NJ policy ONCE, for the whole VMX
+float path, rather than instruction by instruction.
