@@ -9816,3 +9816,28 @@ pass counting only direct `->Set(` flagged them, because they delegate - `xeNtSe
 Re-checked by listing EVERY function each body calls: `NtQueryDirectoryFile` calls only path/logging helpers
 plus `QueryDirectory`, and `NtDeviceIoControlFile` calls only `XELOGD`. **Neither can signal by any route.**
 **⇒ SO THE POPULATION IS BOUNDED AT TWO, AND THE SWEEP DOES NOT NEED RE-RUNNING.**
+
+## 🌡️🚨 THE `GameProfiles` GAP HAS A **THERMAL** CONSEQUENCE, NOT ONLY A MEASUREMENT ONE (2026-08-17)
+**This file already records that a headless `am start` skips `XeniaOptimizations` AND `GameProfiles`. Today
+that cost a Gears run outright, and the mechanism is worth stating separately because it shortens EVERY route
+on a capped title.**
+```
+GameProfiles: Gears of War (4D5307D5) sets gpu_frame_limit_fps = 30   ("30fps-native UE3 title")
+tools/thor/*_route.sh: never passes it   ->  every headless Gears run renders UNCAPPED
+```
+**MEASURED, phase 2 of the stall diagnostic, warm cache, from a 39C start:**
+```
+ 10s 53C     20s 55C     30s 65C     40s 68C     50s 70C -> GUARD FIRED
+```
+**⇒ ~0.6 C/s. The 70C guard fires at t=50s, and the Act-1 route does not arrive until t=125-150s. The run
+cannot reach its own destination.**
+**🔑 AND A WARM CACHE MAKES THIS WORSE, WHICH IS COUNTER-INTUITIVE.** With a cold cache the first ~150s is AOT
+COMPILE - hot, but it heats at ~0.08 C/s (31C -> 57C over 320s). With a warm cache the emulator goes straight
+to uncapped rendering, which heats **8x faster**. **So warming the cache to make the route land also removes
+the thermal slack the route needed.** Any future route on a capped title must pass that title's frame cap.
+**📌 AND BUDGET THE WARM-CACHE STARTUP BURST: 13,619 `LLVMseq` + 13,566 `LLVMobjload` in ~10 SECONDS = ~6,000
+log lines/sec, ~60,000 lines before the title.** That is a logcat-eviction hazard on its own (`logcat -G 64M`
+is not optional here), and it means an absolute-timed button sequence must not start before ~12s.
+**⇒ PHASE-1 WARM COST, for planning: 320s and 30,976 functions to reach `Title name: Gears of War`.** Every
+APK install prunes the cache and buys that cost again - so DO NOT reinstall between arms of a Gears
+experiment unless the change is in the binary under test.

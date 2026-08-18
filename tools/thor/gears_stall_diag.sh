@@ -48,7 +48,8 @@ DEV="${DEV:-c3ca0370}"
 PKG=jp.xenia.emulator.github.debug
 GAME="/storage/2664-21DE/Roms/xbox360/Gears of War (World) (En,Fr,De,Es,It,Zh,Ko).iso"
 # Device-verified route into the Act 1 prison corridor at ~125-150s.
-SEQ="start@40000:1200;start@47000:1200;start@53000:1200;start@59000:1200;start@65000:1200;start@71000:1200;a@79000:1200;a@86000:1200;a@93000:1200;a@100000:1200;a@107000:1200;a@114000:1200"
+SEQ="${SEQ:-start@40000:1200;start@47000:1200;start@53000:1200;start@59000:1200;start@65000:1200;start@71000:1200;a@79000:1200;a@86000:1200;a@93000:1200;a@100000:1200;a@107000:1200;a@114000:1200}"
+EXTRA="${EXTRA:-}"        # extra launch cvars, e.g. a frame cap for thermal relief
 COOL="${COOL:-40000}"     # milli-C. Gears runs hot; start cold or it guards out early.
 GUARD="${GUARD:-70000}"   # hard force-stop limit, per the standing thermal rule
 OUT=scratchpad/gears
@@ -112,7 +113,7 @@ fi
 # ------------------------------------------------------------ phase 2: diagnose
 preflight; cooldown || exit 1
 say "PHASE 2: route into Act 1 with the stall diagnostic"
-launch "--es hid nop --es hid_nop_button_sequence '$SEQ'"
+launch "--es hid nop --es hid_nop_button_sequence '$SEQ' $EXTRA"
 for i in $(seq 1 42); do
   sleep 10; tt=$(temp)
   L=$("$ADB" -s "$DEV" logcat -d -s xenia:* 2>/dev/null)
@@ -126,7 +127,7 @@ for i in $(seq 1 42); do
     say "ABORT: cold cache (objload=0, no title by $((i*10))s) - the route cannot land"
     "$ADB" -s "$DEV" shell "am force-stop $PKG" >/dev/null; exit 1
   fi
-  if [ "$stalls" -gt 0 ] && [ "$i" -ge 18 ]; then say "  stall lines captured"; break; fi
+  if [ "$stalls" -gt 0 ] && [ "$i" -ge 6 ]; then say "  stall lines captured"; break; fi
   if [ "$tt" -ge "$GUARD" ]; then say "  70C guard at t=$((i*10))s"; break; fi
 done
 "$ADB" -s "$DEV" logcat -d -s xenia:* > "$OUT/gears_stall.log" 2>/dev/null
