@@ -10500,3 +10500,39 @@ rooted in a ring/fence wait) and is still unfixed. **The second title came from 
 instead - "which title on this device is uncapped, unbroken on record, and has never been tried?" - which took
 minutes and named MagnaCarta 2**, and from then on every blocker it hit was a real bug worth fixing anyway.
 **Ask which titles you have before deciding which bug to fix.**
+
+## 🔍 **GEARS FREEZE: BACKEND-INDEPENDENT, AND IT STARTS 2s AFTER THREE FAILED MOVIE OPENS (2026-08-18)**
+**Re-run on the a64 backend (which skips the LLVM AOT entirely, so no 320s warm-up and no LLVM codegen). The
+freeze is IDENTICAL:**
+```
+same five threads   tid 07/08/0B/11/12
+same handles        F800000C F8000014 F8000050 F80000F8 F8000100
+same call site      guest_lr=82613DE0  (the WaitForSingleObject wrapper)
+multi-object waits  EMPTY  (the tripwire added 2026-08-17 finds nothing hiding there)
+frames keep rising  ~35/s, but peak vertices stick at 13,719 -> it renders a loading screen forever
+```
+**⇒ SO IT IS NOT CODEGEN AND NOT BACKEND-SPECIFIC.** Both the LLVM and a64 paths reproduce it identically,
+which retires "some lowering is miscompiling Gears" as an explanation and puts it squarely in
+kernel/emulation behaviour.
+### 🎬 AND THE TIMELINE POINTS AT THE INTRO MOVIES
+```
+08:17:14.601  NtCreateFile failed: 'D:\WarGame\Movies\EpicLogo.xxx'  status=C0000034
+08:17:14.606  NtCreateFile failed: 'D:\WarGame\Movies\MGSLogo.xxx'   status=C0000034
+08:17:15.024  NtCreateFile failed: 'D:\WarGame\Movies\Startup.xxx'   status=C0000034
+08:17:16.8    the five worker threads park - and never wake again
+after that    every frame is rendered=1 total_vertices=6  (an empty screen)
+```
+**`C0000034` is STATUS_OBJECT_NAME_NOT_FOUND, `\WarGame\Movies` RESOLVES as a directory, and no `.xxx` file
+is EVER opened successfully in the whole run.** The game asks for its three intro movies, is told they do not
+exist, and ~2 seconds later its worker pool goes quiet permanently.
+**⚠ CORRELATION, NOT YET CAUSE.** A 2-second gap is suggestive, not proof, and a title probing for optional
+files that are legitimately absent is completely normal behaviour.
+**⇒ THE AMBIGUITY IS THE PROBLEM, AND IT IS NOW INSTRUMENTED (`578804012`): on OBJECT_NAME_NOT_FOUND the
+kernel logs WHAT THE PARENT DIRECTORY ACTUALLY CONTAINS.** That splits the only two readings that matter:
+| listing shows | meaning | work |
+|---|---|---|
+| the `.xxx` files ARE there | **our VFS cannot see them - an emulator bug** | fix the disc reader |
+| they are ABSENT | the rip lacks them; the guest is waiting on content that does not exist | different problem entirely, possibly not fixable in code |
+**Note `Entry::GetChild` already compares case-INSENSITIVELY (`xe::utf8::equal_case`), so a present file should
+be found - which makes "absent from this rip" the more likely of the two, and worth confirming rather than
+assuming.**
