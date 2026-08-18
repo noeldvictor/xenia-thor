@@ -1655,7 +1655,13 @@ static void EmitFmaWithPpcNan_F64(A64Emitter& e, DReg dest, DReg s1, DReg s2,
   e.fmov(dest, e.x0);
   e.b(done);
 
-  // Slow path: first NaN by position wins (quiet if SNaN).
+  // Slow path: the first NaN in PPC's A, B, C order wins, quieted.
+  //
+  // THE HIR OPERANDS ARE (A, C, B), NOT (A, B, C): MUL_ADD is src1*src2+src3
+  // and fmadd is frA*frC+frB, so src2 is C and src3 is B. The walk must
+  // therefore be s1, s3, s2. Checking s2 before s3 returns C's NaN where
+  // hardware returns B's, which was 798 corpus failures on the double forms
+  // that x64 - whose own comment spells the order out - passes cleanly.
   e.L(nan_path);
   auto& s1_not_nan = e.NewCachedLabel();
   e.fcmp(s1, s1);
@@ -1666,17 +1672,17 @@ static void EmitFmaWithPpcNan_F64(A64Emitter& e, DReg dest, DReg s1, DReg s2,
   e.b(done);
   e.L(s1_not_nan);
 
-  auto& s2_not_nan = e.NewCachedLabel();
-  e.fcmp(s2, s2);
-  e.b(VC, s2_not_nan);
-  e.fmov(e.x0, s2);
+  auto& s3_not_nan = e.NewCachedLabel();
+  e.fcmp(s3, s3);
+  e.b(VC, s3_not_nan);
+  e.fmov(e.x0, s3);
   e.orr(e.x0, e.x0, static_cast<uint64_t>(1ull << 51));
   e.fmov(dest, e.x0);
   e.b(done);
-  e.L(s2_not_nan);
+  e.L(s3_not_nan);
 
-  // Must be s3 (at least one NaN exists).
-  e.fmov(e.x0, s3);
+  // Must be s2 (at least one NaN exists).
+  e.fmov(e.x0, s2);
   e.orr(e.x0, e.x0, static_cast<uint64_t>(1ull << 51));
   e.fmov(dest, e.x0);
 
@@ -1714,16 +1720,18 @@ static void EmitFmaWithPpcNan_F32(A64Emitter& e, SReg dest, SReg s1, SReg s2,
   e.b(done);
   e.L(s1_not_nan);
 
-  auto& s2_not_nan = e.NewCachedLabel();
-  e.fcmp(s2, s2);
-  e.b(VC, s2_not_nan);
-  e.fmov(e.w0, s2);
+  // (A, C, B) in HIR: src2 is C and src3 is B, so B must be tested before C -
+  // see the F64 helper above.
+  auto& s3_not_nan = e.NewCachedLabel();
+  e.fcmp(s3, s3);
+  e.b(VC, s3_not_nan);
+  e.fmov(e.w0, s3);
   e.orr(e.w0, e.w0, static_cast<uint32_t>(1u << 22));
   e.fmov(dest, e.w0);
   e.b(done);
-  e.L(s2_not_nan);
+  e.L(s3_not_nan);
 
-  e.fmov(e.w0, s3);
+  e.fmov(e.w0, s2);
   e.orr(e.w0, e.w0, static_cast<uint32_t>(1u << 22));
   e.fmov(dest, e.w0);
 
