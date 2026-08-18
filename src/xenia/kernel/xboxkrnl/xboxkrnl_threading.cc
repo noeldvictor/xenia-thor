@@ -921,9 +921,20 @@ DEFINE_int32(xboxkrnl_spin_backtrace_every, 256,
              "Kernel");
 
 namespace {
-// Walk the PPC back chain: [r1] -> previous frame, and the saved LR sits at
-// frame+4 (32-bit PowerPC frame layout, which is what the guest prologs build:
-// `mflr r12; bl __savegprlr; stwu r1,-N(r1)`).
+// Walk the PPC back chain: [r1] -> the CALLER's stack pointer.
+//
+// WHERE THE SAVED LR ACTUALLY LIVES, verified against our own emitter rather
+// than assumed from convention (a64_emitter.cc, the inlined __savegprlr path):
+// the helper stores LR as a 4-byte word at `r1 - 8`, taken BEFORE the callee's
+// `stwu r1,-N(r1)`. So for a frame whose back chain is B, the return address
+// is at B-8, NOT at frame+4 as the classic 32-bit PowerPC layout would put it.
+// The observed guest prolog is exactly that shape:
+//     mflr r12 ; bl __savegprlr_N ; stwu r1,-0x80(r1)
+//
+// Not every prolog uses the helper, so rather than trust ONE offset this tries
+// the plausible slots and accepts the first that looks like guest code. A
+// backtrace that silently prints stack garbage is worse than none - it would
+// send the next reader disassembling an address that was never a return.
 //
 // EVERY HOP IS VALIDATED. A spinning thread is the worst place to fault: this
 // runs on a hot path in a title that is already misbehaving, so the walk
@@ -948,11 +959,27 @@ void LogGuestSpinBacktrace(cpu::ppc::PPCContext* ctx, uint64_t count) {
     if (next <= sp || next < 0x1000) {
       break;
     }
-    auto* lr_slot = ctx->TranslateVirtual<uint8_t*>(next + 4);
-    if (!lr_slot) {
-      break;
+    // -8 is what our emitter's __savegprlr path writes; +4 is the classic
+    // layout; +8 covers a 64-bit-style slot. Accept the first that lands in
+    // the guest code range.
+    static const int32_t kLrSlots[] = {-8, 4, 8};
+    uint32_t caller_lr = 0;
+    for (int32_t slot : kLrSlots) {
+      uint32_t addr = static_cast<uint32_t>(static_cast<int64_t>(next) + slot);
+      if (addr < 0x1000) {
+        continue;
+      }
+      auto* lr_slot = ctx->TranslateVirtual<uint8_t*>(addr);
+      if (!lr_slot) {
+        continue;
+      }
+      uint32_t candidate = xe::load_and_swap<uint32_t>(lr_slot);
+      // Guest code lives in the XEX image range; anything else is data.
+      if (candidate >= 0x82000000u && candidate < 0x84000000u) {
+        caller_lr = candidate;
+        break;
+      }
     }
-    uint32_t caller_lr = xe::load_and_swap<uint32_t>(lr_slot);
     if (!caller_lr) {
       break;
     }
