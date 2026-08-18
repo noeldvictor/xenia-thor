@@ -10536,3 +10536,25 @@ kernel logs WHAT THE PARENT DIRECTORY ACTUALLY CONTAINS.** That splits the only 
 **Note `Entry::GetChild` already compares case-INSENSITIVELY (`xe::utf8::equal_case`), so a present file should
 be found - which makes "absent from this rip" the more likely of the two, and worth confirming rather than
 assuming.**
+
+### ❌ THE MOVIE-OPEN FAILURES ARE A RED HERRING - GROUND TRUTH FROM THE RAW ISO
+**Read the disc directly instead of arguing about it (`tools/thor/iso_ls.py`, which parses XDVDFS over adb and
+reads a handful of 2 KB sectors, not the 7.8 GB image). Gears is a video-partition image, base `0xFD90000`.**
+```
+/WarGame/Movies -> 19 entries, ALL .bik:
+   EpicLogo.bik   5,600,388     MGSLogo.bik   7,191,684     Startup.bik   1,018,232
+   AttractMode.bik  Caves.bik  Ending.bik  HOSOutro.bik  ESRB*.bik  + .txt sidecars
+```
+**⇒ THE GAME ASKED FOR `EpicLogo.xxx` / `MGSLogo.xxx` / `Startup.xxx`; THE DISC HAS `.bik`.** And the log
+confirms the guest NEVER requests a `.bik` and NEVER calls `NtQueryDirectoryFile` at all.
+**⇒ SO THESE ARE UE3 *PACKAGE* PROBES, NOT MOVIE OPENS.** `.xxx` is UE3's cooked-package extension, and
+`Movies\` is simply one entry in the engine's package search path - which is why `\WarGame\CookedXenon`
+(where packages actually live) is resolved 50 times in the same run. **Failing to find a package in the movie
+folder is CORRECT behaviour and would fail identically on real hardware.**
+**⇒ CORRELATION KILLED. The 2-second gap between the failures and the parking is coincidence.** Do not spend
+more time on the movies.
+**📌 AND THE REUSABLE PART IS THE TOOL: `tools/thor/iso_ls.py` answers "is this file actually on the disc?"
+from the RAW IMAGE, independently of our VFS** - which is the only way to tell "our reader cannot see it" from
+"it is not there", and it took seconds. **Do not reason about disc contents from emulator logs again.**
+**⚠ Run it with the device IDLE.** Reading sectors over WiFi while the emulator is hammering the same image
+makes `dd` return nothing, which looks exactly like "not an XDVDFS image".
