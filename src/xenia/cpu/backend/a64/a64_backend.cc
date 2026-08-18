@@ -1764,6 +1764,28 @@ void* A64HelperEmitter::EmitGuestAndHostSynchronizeStackHelper() {
 // ==========================================================================
 // ResolveFunction — runtime function resolution.
 // ==========================================================================
+namespace {
+// Announce-on-first, then budgeted: a resolve failure is immediately fatal
+// (the thunk traps), so in practice this fires once - but an indirect-dispatch
+// storm could repeat it, and flooding logcat would evict the very line that
+// matters.
+void LogResolveFailure(const char* why, uint64_t target_address,
+                       ppc::PPCContext* ctx) {
+  static std::atomic<uint32_t> count{0};
+  uint32_t c = ++count;
+  if (c > 16) {
+    return;
+  }
+  XELOGE(
+      "RESOLVE FAILED ({}): guest target={:08X} caller_lr={:08X} r1={:08X} "
+      "- the resolve thunk will now brk(0xF000) and the process will SIGTRAP. "
+      "Disassemble the target and the caller.",
+      why, static_cast<uint32_t>(target_address),
+      ctx ? static_cast<uint32_t>(ctx->lr) : 0,
+      ctx ? static_cast<uint32_t>(ctx->r[1]) : 0);
+}
+}  // namespace
+
 uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
   auto guest_context = reinterpret_cast<ppc::PPCContext*>(raw_context);
   auto thread_state = guest_context->thread_state;
@@ -1787,7 +1809,17 @@ uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
       static_cast<uint32_t>(target_address));
   if (!fn) {
     backend->RecordResolveFunction(false);
-    // Unresolvable — return 0 which will fault.
+    // SAY WHICH ADDRESS FAILED. Returning 0 here makes the resolve thunk fall
+    // through to its `brk(0xF000)`, which surfaces as
+    //   Fatal signal 5 (SIGTRAP), code 1 (TRAP_BRKPT), pc <tiny> in
+    //   /dev/ashmem/xenia_code_cache
+    // and that tombstone names NOTHING - not the guest address, not even which
+    // of the two failure paths ran. This project has one such crash recorded
+    // for Gears (2026-08-07, fault addr 0x2a000025c) that stayed unattributed
+    // for months, and MagnaCarta 2 dies at the IDENTICAL address, so it is a
+    // shared stub and a shared bug class. One log line converts an anonymous
+    // SIGTRAP into an address you can disassemble.
+    LogResolveFailure("no function", target_address, guest_context);
     return 0;
   }
 
@@ -1795,6 +1827,10 @@ uint64_t ResolveFunction(void* raw_context, uint64_t target_address) {
   auto code = guest_fn->machine_code();
   if (!code) {
     backend->RecordResolveFunction(false);
+    // DIFFERENT CAUSE, SAME CRASH: the address IS a known function but it was
+    // never compiled. Distinguishing the two is the whole point - one is a
+    // discovery/jump-table problem, the other is a compilation problem.
+    LogResolveFailure("no machine code", target_address, guest_context);
     return 0;
   }
   backend->RecordResolveFunction(true);
