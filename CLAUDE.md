@@ -10102,3 +10102,35 @@ Cheaper than fixing a compat bug, and it does not depend on the Gears investigat
 **⚠ DO NOT DROP GEARS FOR IT.** Gears' freeze is now characterised in detail and is one instrument away from a
 cause; and a fix there plausibly also buys Lost Odyssey, since this session showed the two share a signature.
 **Run MagnaCarta 2 as the parallel, low-risk path to a second data point, not as a replacement.**
+
+## XXX SECOND CORRECTION ON THE SAME FIELD: `timeout=0` IN THE WAIT TRACE MEANS **INFINITE**, NOT "A TEST"
+**I read `timeout 0000000000000000` on the `KeWaitForSingleObject` lines as a NON-BLOCKING TEST and built a
+story on it ("polled 523 times and never true"). The trace helper says otherwise:**
+```
+LogThreadWaitTrace(..., timeout_ptr ? *timeout_ptr : 0u, ...)   <- NULL pointer logs as 0
+```
+**For `KeWaitForSingleObject` a NULL timeout pointer is an INFINITE wait.** So those 255 + 268 waits on
+`F8000044` are ordinary blocking acquires that **RETURN** (they repeat), i.e. **normal lock traffic, not a
+failed poll.** Combined with F8000044 being SET 67,993 times, that object is HEALTHY and is not the bug.
+**⚠ THE SAME FIELD IS NOT AMBIGUOUS FOR `KeDelayExecutionThread`, and the disassembly is why:** the guest
+passes a REAL pointer (`r5 = r30 = &interval`) whose value is 0, so `interval == 0` there genuinely is
+`Sleep(0)` - and it is independently corroborated by those calls returning `status 00000000` immediately and
+repeating 4,537 times. An infinite delay could not do that. **The Sleep(0) spin finding STANDS.**
+### => AND THE POLL SITE DISASSEMBLES TO A LOCK, NOT A WORK QUEUE
+`82215898-822158FC`, the function containing the `lr=822158C4` seen in every one of those waits:
+```
+822158AC  addi r11, r31, 0x8      ; r30 = r31 + 0xC  -> the lock object
+822158C0  bl   0x82AC6394         ; ACQUIRE  (this is the call that enters KeWaitForSingleObject)
+822158C4  lwz  r3, 0x4(r31)       ; <- the lr the trace reports
+822158D4  lwz  r11, 0x0(r3)       ; vtable
+822158D8  lwz  r11, 0x8(r11)      ; +8 slot
+822158E0  bcctrl                  ; VIRTUAL CALL under the lock
+822158EC  bl   0x82AC63A4         ; RELEASE
+```
+**⇒ It is `lock(obj+0xC); obj->vmethod(...); unlock(obj+0xC);` - a critical-section-protected virtual
+dispatch. `F8000044` is that lock's event.** Normal, busy, and working.
+**⇒ SO THE REMAINING ANOMALY IS UNCHANGED AND NARROWER: the five workers blocked forever on their OWN events,
+and a main thread that Sleep(0)-spins instead of making progress. F8000044 is exonerated.**
+**📌 THE LESSON, AND IT IS THE SECOND TIME TODAY ON THIS EXACT FIELD: A LOGGED ZERO CAN MEAN "NULL POINTER"
+RATHER THAN "ZERO VALUE".** Read the logging call before interpreting the number - `timeout_ptr ? *timeout_ptr
+: 0` collapses two very different states into the same printed value.
