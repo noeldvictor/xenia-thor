@@ -11199,3 +11199,56 @@ PYTHON**, so `math.fma(...) if hasattr(math,'fma') else a*c+b` silently modelled
 different operation from our HIR `MulAdd`. It reported 216 vs 206 and "exact-only 0", which reads like a real
 result. **A silent fallback in a model is as dangerous as a silent fallback in a lever** - assert the capability
 instead of degrading to something plausible.
+
+
+## *** SHIPPED AND VALIDATED: THE SINGLE-PRECISION DENORMAL QUIRK. x64 17,851 -> 15,315 (-2,536), ZERO REGRESSIONS (2026-08-18)
+**Derived from the corpus FIRST, then ported. Three independent numbers agree on 2,536.**
+```
+                             x64 corpus
+  before                       17,851
+  after                        15,315      -2,536
+predicted from the capture   28x3 + 296x4 = 1,268 non-cr, doubled by the _cr twins = 2,536
+upstream 28f38affe removes   2,536 tests from its skip list
+```
+### THE RULE, AND EVERY EXCLUSION IS CORPUS-CONFIRMED RATHER THAN INHERITED
+```
+                       denorm-operand cases   -> default QNaN
+fadds / fsubs / fmuls          28 each             28/28    QUIRK
+fmadds / fmsubs                296 each           296/296   QUIRK
+fnmadds / fnmsubs              296 each           296/296   QUIRK
+fdivs                            28                 0/28    EXCLUDED
+fsqrts                            2                  0/2    EXCLUDED
+fres                              2                  0/2    EXCLUDED
+fadd / fmul / fdiv (DOUBLE)   28-296 each            0       EXCLUDED
+```
+**A denormal operand makes a SINGLE-precision op answer with the POSITIVE default QNaN and raise nothing. The
+double forms compute normally. Divide and square root are excluded** - upstream's comment says so, and the
+capture proves it independently at 0/28 and 0/2.
+### THE PORT DECISION THAT MATTERED, AND IT IS A TRAP FOR THE NEXT EDGE PORT
+Edge merged the single and double emitters into ONE function gated on `if (single)`. **Our tree keeps them
+separate, so `git apply -3` landed edge's single-precision hunks on OUR DOUBLE-PRECISION `fmaddx`/`fmsubx`** -
+which the corpus had just shown must NOT have the quirk (0/296). **Taking "theirs" on those conflicts would
+have silently broken every double-precision FMA with a denormal operand.**
+**=> RESOLUTION: discard the conflicted emit file entirely, keep the two cleanly-applied helper files, and
+re-apply the quirk to exactly the seven single-precision emitters with a guard asserting the excluded ones
+stay untouched.** Cheaper and far safer than resolving seven conflicts by eye.
+### THE NO-REGRESSION EVIDENCE
+All four single FMA forms now fail **zero** cases. **Every one of the ten x64 per-instruction counts already
+recorded in this file is byte-identical afterwards** - vmaddfp 6215, vnmsubfp 5318, vpkpx 644, vsr 454,
+vsl 422, vminfp 414, vmaxfp 382, vaddfp 204, vsubfp 204, vcmpeqfp 196. **A recorded baseline finally paid for
+itself as a regression check.**
+### => AND THE RUN NAMED THE NEXT TARGET, EXACTLY: x64 STILL EMITS THE **NEGATIVE** SCALAR QNaN
+```
+failures whose ONLY difference is the QNaN sign (expected 7FF8..., got FFF8...): 89
+   fdiv 16 == fdivs 16      fmul 16 == fmuls 16
+   fadd  4 == fadds  4      fsub  4 == fsubs  4      fsqrt 3 == fsqrts 3    frsqrte 3
+```
+**The single and double forms fail in identical counts, which is one shared cause: the generated-NaN
+canonicalisation in the x64 emitter uses the VMX sign.** This file's rule - scalar FPU is POSITIVE
+(`0x7FF8000000000000`), VMX is NEGATIVE (`FFC00000`) - **is already applied on a64, where it was worth
+9,715 -> 7,907. x64 never got it.** 89 cases, one constant, and the corpus names every site.
+**== THE METHOD, NOW PROVEN END TO END: DERIVE THE RULE FROM THE CAPTURE, *THEN* READ THE UPSTREAM COMMIT.**
+Doing it in that order is what caught the merged-function trap, what let the exclusions be verified instead of
+trusted, and what made the delta predictable to the case before the build ran. **The commit title
+("Skip the rounding to single for a denormal operand") describes a DIFFERENT mechanism from what its own code
+does for this class - reading it first would have sent the port the wrong way.**
