@@ -10676,3 +10676,51 @@ past `b70d64374`; xenia-edge `origin/edge` is **~45 commits** past `12eb05f8a` a
 **FPSCR/NaN family** this file ranks as backlog #1 (`9804846f4`, `cf43c4c52`, `32920009d`, `378c95215`,
 `36a7bb57f`, plus branchless a64 fixups `9900f7ceb`/`b2d6a4140`). Also new and relevant to our Sleep(0) spin:
 edge `7ea10c4f2 [Kernel/XboxKrnl] Give arm64 a real spin hint`.
+
+
+## 🎯🎯🎯 GEARS: THE PUMP IS **NOT** STOPPED. THE RING IS SATURATED AND THE DISPATCH LEAKS THE COUNTER (2026-08-18)
+**The guest watch ran and it INVERTS the previous conclusion. `guest_watch_ptrs` followed `read_ptr` into the
+buffer, which is the correlation a one-shot dump structurally could not do.**
+```
+GUESTWATCH, 1 Hz, during the freeze (counter @82BFB3F0, cmdbuf @82C0CB24):
+  counter   = 00000002   CONSTANT for 35+ s
+  read_ptr  = 40187990 -> 40167048 -> 40197510 -> 40184C80 -> 40173428 -> 4019F858 -> ...
+  *read_ptr = 82112624   CONSTANT
+```
+**⇒ `read_ptr` LAPS THE WHOLE 256 KB RING ROUGHLY ONCE PER SECOND (~21,000 records/s at 12 bytes). THE
+CONSUMER IS RUNNING AT FULL SPEED.** The earlier reading - "the consumer stopped draining" - was inferred from
+a single dump whose `read != write` I mistook for a stalled queue. It was a snapshot of a ring in constant
+motion.
+### 🔑 AND THE VTABLE SLOTS WERE BACKWARDS, WHICH IS WHAT MADE THE DISPATCH LOOK CORRECT-BUT-UNRUN
+The pump calls `vt[+4]` FIRST and `vt[+0]` second. `vt[+4]` is the **execute**, and `vt[+0]` is a virtual
+destructor (`8257A7A0`, the standard `if (flags & 1) operator delete(this)` shape, called with flags=0).
+```
+82445360  = the dispatcher command's vt[+4]:
+    sync ; r11 = this->counter ; lwarx / addi -1 / stwcx.   <- DECREMENTS
+    return 8                                                 <- and returns the record SIZE
+```
+**So the decrement logic is CORRECT and the pump would run it.** The two records simply never get executed.
+### ⇒ THE MECHANISM, AND THE DISPATCHER NAMES IT ITSELF
+`82445278` increments the counter FIRST, then allocates a slot, and **its allocation-failure path returns
+WITHOUT decrementing**:
+```
+atomic_inc(*counter)
+if (!enabled) { atomic_dec; return; }
+slot = alloc(cmdbuf 0x82C0CB24, 8)
+if (slot.ptr == 0) return;          <-- LEAKS THE INCREMENT, PERMANENTLY
+```
+**A ring running at capacity is exactly the condition that makes an 8-byte alloc fail. counter == 2 ==
+TWO FAILED DISPATCHES**, and main waits for `counter <= 1` forever.
+**⇒ SO THE QUESTION IS NO LONGER "why did the consumer stop" - IT IS "why is the ring saturated".** The flood
+record is vtable `82112624` (12 bytes), whose execute `824A42A0` calls `82487510`, a walker that writes 8-byte
+packets into a SECOND ring at `[0x82BFCBA0]+0x335C/0x3360` - i.e. GPU/command submission. **A producer that
+retries because something never completes would look exactly like this**, which makes the flood a plausible
+SYMPTOM of the real defect rather than the defect.
+**⚠ AND NOTE WHAT IS STILL NOT PROVEN: that the alloc is failing.** It is the only path that leaks the counter,
+the ring is demonstrably at capacity, and the arithmetic matches (2 leaks = 2 failed dispatches) - but no
+counter records an alloc failure. **The next instrument is a watch on the ring's own fullness across a
+dispatch, or a guest breakpoint on 824452E8.** Do not write a fix against the leak until it is observed.
+**📌 AND THE INSTRUMENT EARNED ITS KEEP IMMEDIATELY.** One 60-second run overturned a conclusion that four
+device runs and two guest-memory dumps had built up, because it could sample a pointer AND its target in the
+same instant. **A snapshot of a moving ring is not a measurement of a stopped ring** - that is the general
+lesson, and it is the same shape as this file's "filter by scene, never by the metric under test".
