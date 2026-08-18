@@ -10623,3 +10623,56 @@ settle it cannot be taken together - the buffer HEADER is at 0x82C0CB24 and its 
 apart, and the dump is one contiguous range. **The next instrument is therefore a code change, not another
 dump: log the pump's read/write pointers and the executing command's vtable from inside the emulator**, so the
 header and the contents are observed in the same instant.
+
+
+## 🔬 GEARS: THE PUMP INSTRUMENT IS BUILT, AND FOUR MORE MECHANISMS DIE DEVICE-FREE (2026-08-18)
+**`guest_watch_ms` / `_addrs` / `_ptrs` / `_budget` shipped (`e681911f0`), built, and VERIFIED PRESENT in
+`lib/arm64-v8a/libxenia-app.so`. NOT YET RUN - the shared device was taken by the other session's rpcs3
+mid-turn, so every device step was aborted rather than run on top of them.**
+**Why a watch and not another dump: `dump_guest_mem` is ONE CONTIGUOUS RANGE.** Gears' queue HEADER is at
+0x82C0CB24 and its CONTENTS at 0x40160000 - **~1.07 GB apart** - so a header and the record it selects could
+only ever be sampled in two different runs, whose pointers cannot be correlated. `guest_watch_ptrs` follows one
+level (`addr -> *addr -> *(*addr)`), so `read_ptr` AND the command at `read_ptr` are read in the same instant.
+It samples on the **vblank path deliberately**: that path is proven to keep running during the freeze (frames
+still present at ~35/s), so the watch cannot go silent for the same reason its subject is stuck.
+**The run to make when the device is free:**
+```
+--ei guest_watch_ms 1000
+--es guest_watch_addrs 82BFB3F0,82BFA380,82C0CB24,82C0CB2C,82C0CB30,82C0CB38
+--es guest_watch_ptrs  82C0CB38          # read_ptr -> the vtable of the command at its head
+```
+`read_ptr` FROZEN at one value names the command the pump is stuck inside; `read_ptr` ADVANCING while the
+counter stays at 2 means the pump is skipping the dispatcher's records.
+### ✅ THE ONE NUMBER THAT NARROWS THE FIX: **ONLY ONE COMMAND NEEDS TO RUN**
+Main waits for `counter <= 1` (the threshold is `addi r4, r0, 0x1`), and the counter is **2**. So main is
+waiting for exactly ONE of the two queued commands to execute. **The fix does not need the queue drained - it
+needs one record dispatched.**
+### ❌ FOUR MORE MECHANISMS KILLED WITHOUT THE DEVICE
+| mechanism | why it is dead |
+|---|---|
+| **a lost wake** (XenDroid `b10104c95` "Close the lost-wake races", `a9cd34d17` repoll backstop) | their fix is inside the COOPERATIVE scheduler, which we ship OFF and which crashes Gears. And our event trace already shows `F80000F8` was **never Set once** - a repoll backstop re-tests a predicate that is still false, so it cannot rescue this |
+| **our own notify gate dropping a signal** | audited all 7 `NotifyWaiters()` call sites: **every one holds `mutex_`**, so `parked_waiters_` is exact when read. The gate is sound |
+| **a blocking socket** (XenDroid `7f6b17b71` quirks `network_enabled=false` for titles that "hang on a blocking recvfrom") | those are 0x494707D4 / 0x49470804, not Gears (4D5307D5) - and **our Gears run makes ZERO network calls** (no NetDll/XNet/WSA lines at all) |
+| **global-lock starvation by the Sleep(0) spin** | `xeProcessKernelApcs` early-returns on an empty APC list and `XThread::Delay` never takes the global critical region, so 650k Sleep(0)/sec contends nothing |
+### 🔑 AND A FACT WORTH KNOWING FOR ANY FUTURE GUEST-LOCK WORK: **`mtmsrd` IS OUR GLOBAL LOCK**
+`InstrEmit_mtmsrd` (L=1) maps **`mtmsrd r13` -> `enter_global_lock`** and **any other register ->
+`leave_global_lock`** - a real process-wide `std::recursive_mutex`. Gears' dispatcher wraps its `lwarx/stwcx`
+in exactly that pair.
+**⚠ THAT IS A HEURISTIC ON THE REGISTER NUMBER, AND ITS FAILURE MODE IS SEVERE:** guest code that disables
+interrupts with a register OTHER than r13 would call `leave_global_lock` on a lock never taken - decrementing
+the count below zero and unlocking an unowned recursive mutex (UB). **Audited every MSR instruction in the
+Gears dumps: 3x `mfmsr r10` / 3x `mtmsrd r13` / 3x `mtmsrd r10`, perfectly balanced.** Clean here; worth
+checking first in any future title that wedges globally.
+### 🌐 UPSTREAM SAYS GEARS WORKS, SO THE FREEZE IS OURS
+`xenia-project/game-compatibility` **#169, 4D5307D5 - Gears of War: `state-gameplay` ("Title has functional
+gameplay")**, and the only labelled defect is **`apu-garbage`** (garbled audio) - which independently matches
+this file's own 13,534 XMA `non-forward input read offset` finding. **So this is not an inherently broken
+title: desktop upstream reaches gameplay. Our freeze is a xenia-thor / Android regression**, which also means
+the Edge kernel port (the largest divergence in exactly the threading/event subsystem involved) is a fair
+suspect.
+### 🧲 SWEEP MARKS FOR NEXT TIME
+`reference/` lives at the WORKSPACE root, not inside the repo. XenDroid `origin/main` is **40 rfandango commits**
+past `b70d64374`; xenia-edge `origin/edge` is **~45 commits** past `12eb05f8a` and is now dominated by the
+**FPSCR/NaN family** this file ranks as backlog #1 (`9804846f4`, `cf43c4c52`, `32920009d`, `378c95215`,
+`36a7bb57f`, plus branchless a64 fixups `9900f7ceb`/`b2d6a4140`). Also new and relevant to our Sleep(0) spin:
+edge `7ea10c4f2 [Kernel/XboxKrnl] Give arm64 a real spin hint`.
