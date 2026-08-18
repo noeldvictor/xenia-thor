@@ -9737,3 +9737,66 @@ and an async message - async landing while sync stalls proves a barrier rather t
 **⇒ NOT FIXED YET. The fix direction is to keep the surface updating during long no-frame phases** so the
 barrier clears; `asyncMain()` already exists for overlay updates and is the right vehicle. **Do not "fix" it
 by suppressing the dialog - the dialog is a symptom of a real multi-second input stall.**
+
+
+## !!! THE SCOPED GEARS DIAGNOSTIC WAS BLIND, AND TWO I/O EXPORTS SWALLOW A COMPLETION EVENT (2026-08-17)
+**Goal 2 is "make a second title measurable", and the Gears Act-1 stall is the blocker. This file had the
+diagnostic scoped for months. IT CANNOT ANSWER THE QUESTION, and that was established device-free in minutes -
+before spending a >3 minute Gears AOT warm-up plus a route plus a cooldown on it.**
+### => WHY THE `Added handle:{} for {typeid}` PLAN IS BLIND
+```
+places that construct an XEvent:
+  xboxkrnl_threading.cc  NtCreateEvent
+  xam_net.cc             NetDll_WSACreateEvent
+  xevent.cc              XEvent::Restore
+  xobject.cc             GetNativeObject  <- lazily wraps a GUEST dispatcher header
+```
+**All four produce the SAME typeid.** The recorded plan was *"the `typeid` names the owning subsystem"* - it
+would have printed `XEvent` five times. **And `GetNativeObject` is the one that matters**: the XDK inlines
+`KeInitialize`, so an event can be waited on having never passed through any create export at all, which is
+exactly why the five handles never appear in a create trace.
+**⇒ AND RAISING THE LOG LEVEL IS ACTIVELY COUNTERPRODUCTIVE HERE.** Debug costs ~135 handle adds/sec of
+async-I/O churn on UE3 asset loads, and this file already records logcat EVICTING the lines a trace was raised
+to capture. **The instrument must be low-volume and fire ON THE BUG, not on the churn.**
+### ✅ WHAT REPLACED IT: THE STALL LOG NOW NAMES ITS OBJECT (`0e2e70466`)
+`XObject::Wait`'s >=30s tripwire reported only a type NUMBER, so a stall said *"5 threads are parked on a 2"*.
+It now prints **handle**, **guest_object** and **origin** (a static creation-site tag on XObject):
+| field | what it decides |
+|---|---|
+| `handle` | groups N stalled threads by WHAT they await instead of guessing |
+| `guest_object` | **nonzero => the header lives in GUEST memory** (XDK inlined KeInitialize, we wrapped it on first use) - we are failing to DELIVER a completion. **Zero => our own HLE made it and forgot to signal** |
+| `origin` | which of the four sites made it - the thing typeid cannot say |
+**~10 lines on a stall, nothing in normal play.**
+### 🎯 AND A STATIC FIND THAT IS A REAL DEFECT REGARDLESS OF GEARS (`3fcbc56ac`)
+Counted per function body, with NtReadFile as the control:
+```
+export                  uses event_handle  LookupObject<XEvent>  ->Set()  EnqueueApc
+NtReadFile                     5                   1                1         1     OK
+NtQueryDirectoryFile           3                   0                0         0     <-- !!
+NtDeviceIoControlFile          1                   0                0         0     <-- !!
+```
+**BOTH ACCEPT AN EVENT HANDLE *AND* AN APC ROUTINE AND SIGNAL NEITHER.** NtQueryDirectoryFile mentions the
+handle only in log lines. **A guest that issues either asynchronously and waits on the event it passed waits
+forever** - the shape of the stall exactly.
+**⚠ THE EARLIER OVERLAPPED AUDIT STRUCTURALLY COULD NOT SEE THESE.** It searched for functions mentioning an
+`XOVERLAPPED`; these use a **direct `event_handle` parameter**. Two different completion mechanisms, and only
+one was ever swept. **Sweep the direct-event mechanism too.**
+**📌 AND xenia-edge HAS THE IDENTICAL GAP** (checked via the `edge` remote, no clone needed:
+`git show edge/edge:src/xenia/kernel/xboxkrnl/xboxkrnl_io.cc`). Same zeros on both exports, same 1/1/1 on
+NtReadFile. **So this is an upstream-wide defect, not a xenia-thor regression** - which also means it cannot
+be fixed by porting from the compat reference.
+**⚠ NOT ATTRIBUTED. A tripwire prints the event handle at each call site so the link is CHECKABLE: if a handle
+there also appears in a stall line, attribution is direct.** Attributing a runtime stall to a static finding
+is an error this file already records twice - do not skip the correlation.
+### 🪤 AND THE EXISTING GEARS ROUTE SCRIPT CARRIES THREE TRAPS, ALL RE-VERIFIED LIVE TODAY
+`tools/thor/gears_gameplay_route.sh`, against the device this afternoon:
+| trap | live evidence |
+|---|---|
+| `DRV=mesa-turnip-...-r7-...` hardcoded | device has **-r11**. A stale driver path does NOT error - it silently falls back to the QUALCOMM BLOB |
+| `adb shell cat /sys/...` UNQUOTED | device really replies `cat: C:/Program: No such file`. The temperature parsed EMPTY, so **the 70C guard never evaluated** |
+| `nativeLibraryDir` cached | Android reinstalls under a fresh random dir; a stale path yields "driver loaded" then "No Vulkan physical devices available" - a black screen that reads like a GPU bug |
+**⇒ REPLACED BY `tools/thor/gears_stall_diag.sh`** - reads the driver off the device, quotes every remote
+command, fails the thermal guard CLOSED, derives the native path after install, and **warms the object cache
+in a separate phase** (hid_nop timings are absolute from launch, and an APK rebuild prunes the cache, so a
+~28.5k-function title is still compiling when every button press fires). Phase 2 ABORTS on a cold cache rather
+than reporting a route that never ran.
