@@ -39,6 +39,17 @@ project("xenia-cpu-ppc-tests")
     links({
       "xenia-cpu-backend-x64",
     })
+  -- Without this the ARM64 test app linked NO a64 backend (and pulled the x64
+  -- one), so on device it crashed on the very first test with a garbage guest
+  -- context register - and every a64 codegen change was therefore unvalidatable
+  -- against the 169,117-case hardware corpus. Mirrors src/xenia/app/premake5.lua.
+  filter("architecture:ARM64")
+    links({
+      "xenia-cpu-backend-arm64",
+      -- The a64 backend references the LLVM backend's guest-entry census
+      -- symbols, so both must be linked - same pairing as src/xenia/app.
+      "xenia-cpu-backend-llvm",
+    })
   filter("platforms:Windows")
     debugdir(project_root)
     debugargs({

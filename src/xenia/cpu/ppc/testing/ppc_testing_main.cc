@@ -23,6 +23,8 @@
 
 #if XE_ARCH_AMD64
 #include "xenia/cpu/backend/x64/x64_backend.h"
+#elif XE_ARCH_ARM64
+#include "xenia/cpu/backend/arm64/arm64_backend.h"
 #endif  // XE_ARCH
 
 #if XE_COMPILER_MSVC
@@ -211,11 +213,20 @@ class TestRunner {
       if (cvars::cpu == "x64") {
         backend.reset(new xe::cpu::backend::x64::X64Backend());
       }
+#elif XE_ARCH_ARM64
+      // Without this the ARM64 build left `backend` NULL and Setup(nullptr)
+      // crashed on the first test (`ldr x8,[x0]` with x0 == 0), so the a64
+      // backend was never exercised by the 169,117-case hardware corpus at all.
+      if (cvars::cpu == "arm64") {
+        backend.reset(new xe::cpu::backend::arm64::Arm64Backend());
+      }
 #endif  // XE_ARCH
       if (cvars::cpu == "any") {
         if (!backend) {
 #if XE_ARCH_AMD64
           backend.reset(new xe::cpu::backend::x64::X64Backend());
+#elif XE_ARCH_ARM64
+          backend.reset(new xe::cpu::backend::arm64::Arm64Backend());
 #endif  // XE_ARCH
         }
       }

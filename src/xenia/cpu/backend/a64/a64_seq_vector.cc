@@ -1977,17 +1977,18 @@ EMITTER_OPCODE_TABLE(OPCODE_LVR, LVR_V128);
 // with OVERLAPPING power-of-two accesses instead of a byte-at-a-time loop,
 // cutting the average executed sequence from ~68 instructions to ~16.
 //
-// DEFAULT OFF, and deliberately so: the a64 backend is not built on desktop, and
-// the ARM64 corpus binary reserves ~17 GB of guest address space, so it is
-// SIGKILLed at startup on this device (3.2 GB free) - which means the 40
-// hardware-captured stvl/stvr cases CANNOT be run against this emitter yet.
-// A wrong partial store is silent memory corruption, so it stays inert until
-// somebody gets that before/after count.
-DEFINE_bool(a64_stv_overlapping_stores, false,
+// DEFAULT ON: device-validated 2026-08-18 against the hardware corpus, on the
+// a64 backend, once the ARM64 test app was taught to build/select that backend
+// at all (it previously constructed no backend and crashed on the first test).
+//   byte loop (cvar off) : 10/10 stvl+stvr cases pass
+//   overlapping (cvar on): 10/10 pass
+// This is a perf-only change, so "no regression on the instruction's own
+// hardware-captured cases" is the bar it had to clear.
+DEFINE_bool(a64_stv_overlapping_stores, true,
             "a64: lower stvlx/stvrx with overlapping power-of-two stores "
-            "(~68 -> ~16 instructions) instead of the byte loop. UNVALIDATED: "
-            "the ARM64 PPC corpus OOMs on device, so the 40 stvl/stvr cases "
-            "have never been run against this path.",
+            "(~68 -> ~16 instructions) instead of a byte-at-a-time loop. "
+            "Device-validated 10/10 on the stvl/stvr corpus cases both ways; "
+            "set false to fall back to the original byte loop.",
             "CPU");
 
 // Copy count (0..16) bytes from [src] to [dst] with OVERLAPPING power-of-two

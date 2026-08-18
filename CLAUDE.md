@@ -10726,40 +10726,49 @@ same instant. **A snapshot of a moving ring is not a measurement of a stopped ri
 lesson, and it is the same shape as this file's "filter by scene, never by the metric under test".
 
 
-## 🧱 THE ARM64 PPC CORPUS CANNOT RUN ON THIS DEVICE TODAY - SO a64 CPU CHANGES HAVE NO VALIDATOR (2026-08-18)
-**This file's standing rule is "never ship a CPU change without a before/after corpus count". For the a64
-backend that rule is currently UNSATISFIABLE, and it is worth stating plainly rather than quietly skipping.**
+## 🚨🚨🚨 **THE PPC CORPUS NEVER TESTED THE a64 BACKEND - AT ALL. FIXED 2026-08-18, AND IT UNBLOCKS EVERY ARM64 CPU CHANGE**
+**This file has said for weeks that the ARM64 corpus run "OOMs" (17 GB VIRT, SIGKILLed). ❌ THAT IS WRONG AND
+IS RETRACTED. The binary was never OOM-killed. It was CRASHING, because the ARM64 test app CONSTRUCTS NO CPU
+BACKEND.**
 ```
-built:  ndk-build ... xenia-cpu-ppc-tests  -> obj/local/arm64-v8a/xenia-cpu-ppc-tests (25.6 MB, exit 0)
-pushed: a 2-test SUBSET (instr_stvl + instr_stvr, .s + .bin + .map)
-ran:    no output, no EXIT= echoed -> the SHELL ITSELF died = SIGKILL at startup
-device: 3.2 GB free of 15.2 GB, no rpcs3, no emulator running
+ppc_testing_main.cc:      #if XE_ARCH_AMD64 ... X64Backend ... #endif     <- and NOTHING for ARM64
+  => on ARM64 `backend` stays NULL, Setup(nullptr), and the first test faults:
+     sig=11 addr=0 insn=0xF9400008 (ldr x8,[x0]) x0=0   <- a null backend deref
+src/xenia/cpu/ppc/testing/premake5.lua:
+     filter("architecture:x86_64") links xenia-cpu-backend-x64     <- and NO ARM64 filter
+  => the target never linked xenia-cpu-backend-arm64, so a64_*.cc was not even COMPILED into it
 ```
-**The binary reserves ~17 GB of guest address space at startup, so it is killed BEFORE running a single test -
-and reducing the test count does not help, because the reservation is not per-test.** A subset run was the
-obvious workaround and it does not work.
-**⚠ AND THE FAILURE IS SILENT IN THE WORST WAY: an empty capture with exit 0.** The first attempt printed
-`EXIT=0` with no results (the runner needs the `.map` files, not just `.bin`); the second, with maps, printed
-NOTHING AT ALL - not even the `echo EXIT=` after it. **A missing `EXIT=` is the tell that the shell was killed,
-not that the tests passed quietly.**
-**⇒ CONSEQUENCE FOR ANY a64 CODEGEN WORK: desktop cannot help either** (the a64 backend is not built on
-Windows), and the qemu harness models ISA semantics rather than our emitter. **So an a64 sequence change has
-NO validator right now.** Options, in order: free real memory on the device and retry; or build the tests with
-a smaller guest reservation; or gate the change default-off until one of those happens.
-### ⇒ WHICH IS WHY `a64_stv_overlapping_stores` SHIPS DEFAULT-OFF
-Ported from xenia-edge `e9582aca7`: stvlx/stvrx lowered with OVERLAPPING power-of-two stores instead of the
-byte-at-a-time loop, **~68 -> ~16 instructions**. Syntax-checked for aarch64 and verified by construction for
-every count 0..16, including the two cases that matter (`offset == 0` stores nothing, because memcpy tails use
-stvrx on an address that can sit one past a valid page; and `src = stash + 16 - offset` reaches `stash+16` only
-when count is 0, so the one-past pointer is never dereferenced).
-**But 40 hardware-captured cases exist and NONE of them have been run against it, so it is inert until they
-are.** A wrong partial store is silent memory corruption, which is the one failure class this file says never
-to ship on reasoning alone.
-**🔑 AND THE OFF PATH IS THE ORIGINAL CODE, UNTOUCHED - NOT RETYPED.** The lever is an early `return` above the
-existing byte loop, so the default path is byte-identical to what shipped. That is the direct lesson of
-`a64_three_operand_shifts`, whose off-branch was RETYPED and dropped a constant-operand arm, killing Gears in
-under a second - and of `a64_vmx_fp_no_operand_copy`, whose ON path was the untested one. **Whichever direction
-nobody runs is the unvalidated one.**
-**📌 ALSO: upstream uses stack-allocated `Xbyak_aarch64::Label`s in this helper. We must not** - xbyak's
-LabelManager registers by address and outlives the frame, which is why `NewCachedLabel()` exists here. Ported
-with our mechanism, not their patch.
+**⇒ SO EVERY "the a64 backend has no validator" STATEMENT IN THIS FILE WAS TRUE FOR THE WRONG REASON, AND THE
+169,117-CASE HARDWARE CORPUS HAS NEVER ONCE EXERCISED THE BACKEND WE SHIP ON THE THOR.**
+### ✅ THE FIX IS THREE LINES OF BUILD CONFIG PLUS AN ARCH BRANCH
+1. `premake5.lua`: add `filter("architecture:ARM64")` linking **`xenia-cpu-backend-arm64`** AND
+   **`xenia-cpu-backend-llvm`** (the a64 backend references the LLVM guest-entry census symbols - link both, the
+   same pairing `src/xenia/app/premake5.lua` already uses).
+2. `ppc_testing_main.cc`: include `arm64/arm64_backend.h` and construct
+   `xe::cpu::backend::arm64::Arm64Backend()` for `cpu=arm64` and for `cpu=any` on ARM64.
+3. **Regenerate**: `./tools/build/bin/premake5.exe --file=premake5.lua --os=android androidndk`. The `.mk` files
+   are GENERATED - editing premake alone changes nothing.
+### ✅ AND IT RUNS. FIRST a64 CORPUS RESULT EVER:
+```
+adb push the binary AND libLLVM.so, then:
+  cd /data/local/tmp/ppcsub && LD_LIBRARY_PATH=. ./ppctests --cpu=arm64       --test_path=testing/ --test_bin_path=testing/bin/ --break_on_unimplemented_instructions=false
+    byte loop           Total tests: 10  Passed: 10  Failed: 0
+    overlapping stores  Total tests: 10  Passed: 10  Failed: 0
+```
+**⚠ THE RESULTS GO TO LOGCAT, NOT STDOUT.** `out.txt` comes back 0 bytes and `EXIT=0`, which reads exactly like
+"ran and printed nothing". **Read `adb logcat | grep "Total tests"`.** That silence is what made the earlier
+runs look like a kill.
+**⚠ AND IT NOW NEEDS `libLLVM.so` PUSHED ALONGSIDE** (`LD_LIBRARY_PATH`), because linking the LLVM backend makes
+it a shared dependency: `CANNOT LINK EXECUTABLE: library "libLLVM.so" not found`.
+### 🪤 TWO BUILD TRAPS THAT COST THE MOST TIME HERE
+1. **`ndk-build` said `Nothing to be done` and the binary linked anyway - with a MONTH-OLD object.** The edited
+   file was not in the target's source list at all, so nothing rebuilt and the "fresh" binary carried none of
+   the change. **Check the .o timestamp AND grep the binary for a marker string; a fresh link is not a fresh
+   build.**
+2. **I diagnosed OOM from silence.** No output plus no `EXIT=` echo looked like a killed shell, and free RAM was
+   genuinely low (1.6 GB), which made the story fit. **One logcat read showed a `xenia-fault` backtrace instead.**
+   Same lesson as the Gears pump: instrument the failure before theorising about it.
+### ⇒ WHAT THIS UNBLOCKS
+**Every a64 codegen change can now be validated against hardware-captured expectations**, which is the standing
+rule this file could not previously satisfy on ARM. The full 169,117-case a64 baseline has NOT been taken yet -
+that is the obvious next run, and it is now merely long rather than impossible.
