@@ -10175,3 +10175,40 @@ throughout and is the only reason the device could be recovered without touching
 calls/sec it emitted 441,768 log lines, which visibly EVICTED logcat mid-run (the `objload` count fell
 28,775 -> 12,177) and added its own load. **Default raised 256 -> 100,000.** A diagnostic that destroys the log
 it writes into, and heats the device it is measuring, is worse than none.
+
+### 🎯 AND THE SPIN LOOP ITSELF, DECODED: `while (*counter > threshold) Sleep(0);`
+`824453A0-824453F0` is a whole function, and it is tiny:
+```
+824453B4  r31 = r3          ; arg0 = &counter (guest memory)
+824453B8  r30 = r4          ; arg1 = threshold
+824453BC  lwz  r11,0(r31)   ; load counter
+824453C0  cmpl r11, r30     ; UNSIGNED compare
+824453C4  ble  824453DC     ; drained -> return
+824453C8  li   r3, 0
+824453CC  bl   826128B8     ; Sleep(0)
+824453D0  lwz  r11,0(r31)   ; RELOAD          <-- the lr every wait-trace line reported
+824453D4  cmpl r11, r30
+824453D8  bgt  824453C8     ; still above -> sleep again
+```
+**⇒ THE MAIN THREAD IS BLOCKED ON A PENDING-WORK COUNTER THAT NEVER DRAINS.** It is a drain-barrier: "wait
+until outstanding items <= N". Nothing the kernel owes it - it is waiting for its OWN WORKERS to decrement a
+counter, and they are all asleep.
+### => THE FULL CHAIN NOW CLOSES, AND IT IS CIRCULAR STARVATION
+```
+main (tid 6)   spins  while (*counter > N) Sleep(0)   - waits for workers to drain the queue
+workers 7/8/11/12  BLOCKED on their own events         - would drain it, but nobody wakes them
+thid B         BLOCKED                                  - was the one waking 7/8 (775 + 639 signals)
+thid D         SPINS at 82445000 <- 82445038 <- 8243AE00 <- 827A94AC   - was the one waking B
+```
+**Every participant is waiting on the one in front of it, and the head of the chain is `thid D`'s spin.**
+**⇒ SO THE NEXT AND POSSIBLY LAST ADDRESS TO DECODE IS `82445000` (thid D's spin site).** It sits 0x3A0 below
+the main thread's loop, so it is almost certainly a SIBLING of the same wait-helper family - a second drain or
+handshake barrier. Whatever D is waiting for is what the emulator is failing to deliver.
+**⚠ AND NOTE WHAT THIS RULES OUT: THERE IS NO MISSING KERNEL SIGNAL AT THE MAIN THREAD'S SITE.** It never calls
+a wait API at all - it reads guest memory in a loop. **No amount of event/APC/overlapped fixing touches it.**
+That retires the entire "our HLE forgot to signal an event" framing for the MAIN thread, which is where this
+investigation started.
+**📌 DISASSEMBLY IS CHEAP AND NOBODY WAS USING IT: the dump lands at LOAD (625 lines by t=8s), so a
+disassembly run needs ~15 SECONDS, not a route and not a thermal budget.** `--es disassemble_function_filter`
+takes a comma list and matches any address INSIDE a function. **This should have been the second instrument of
+the session, not the eighth.**
