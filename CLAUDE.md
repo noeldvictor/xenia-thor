@@ -10364,3 +10364,34 @@ within ~10s, so a pass/fail comes back in one short run.**
 PATH SAID NOTHING.** Two `return 0`s with no log, feeding a `brk` in hand-written assembly, produced a
 tombstone with no guest address and no cause - and it stayed unattributed for ten days across two titles. **One
 log line at the point of failure was worth more than every register-decoding session spent on the tombstone.**
+
+## XXX **RETRACTED WITHIN THE HOUR: THE "RESOLVE RACE" ROOT CAUSE IS WRONG (2026-08-17)**
+**The entry directly above claims the SIGTRAP is a race against the AOT precompile thread and says the fix is
+shipped. BOTH HALVES ARE WRONG. Our own code refutes it, and I should have read it BEFORE writing the claim.**
+```
+Module::DefineSymbol:
+    } else if (symbol->status() == Symbol::Status::kDefining) {
+      // Still defining, so spin.
+      do { ...sleep 100us... } while (symbol->status() == kDefining);
+      status = symbol->status();          <- WAITS for the generator. No race.
+
+Processor::DemandFunction:
+    if (symbol_status == Symbol::Status::kFailed) { return false; }   <- failures DO propagate
+```
+**⇒ A concurrent generator is WAITED FOR, not raced past, and a failed compile returns false (which surfaces
+as the "no function" path, not "no machine code"). So the observed state - resolved SUCCESSFULLY, machine_code
+NULL - is neither a race nor a failed compile. THE CAUSE IS STILL OPEN.**
+**⇒ THE RETRY STAYS, RELABELLED AS A PROBE, NOT A FIX.** If a bounded yield-loop ever recovers, the state was
+transient after all and both arguments above are incomplete; if it never recovers - which is now the
+expectation - the log says so distinctly (`no machine code after retry`).
+### => AND THE NEXT DISCRIMINATOR IS ALREADY BUILT: THE FAILURE NOW REPORTS **WHAT THE FUNCTION IS**
+`status`, `behavior`, `is_guest` and the address range. **`behavior` is the one I care about:**
+**a `kProlog` / `kEpilogReturn` saverest helper (`__savegprlr_*` / `__restgprlr_*`) legitimately has NO
+standalone machine code on a64, because the emitter INLINES them** (`a64_emitter.cc`, `ParseGprLrHelper`).
+**An indirect call landing on one would then be unresolvable BY DESIGN rather than by accident** - and that
+would be a real, bounded bug with an obvious fix (emit a standalone copy, or resolve helpers specially).
+**📌 THE PROCESS FAILURE, STATED PLAINLY: I WROTE A ROOT-CAUSE COMMIT MESSAGE FROM A PLAUSIBLE MECHANISM
+INSTEAD OF FROM THE CODE.** The refuting lines were ~20 lines away in `module.cc` and took one minute to read.
+**This file already carries the rule - "a citation in a comment is not evidence, read the cited source" - and
+the same applies to a mechanism you infer from a comment: `DefineFunction`'s "will block and return DECLARED"
+comment is what I built the theory on, and the implementation does something safer than the comment implies.**
