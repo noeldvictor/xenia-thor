@@ -854,6 +854,34 @@ arms. Do NOT flip the defaults on title-screen evidence.
 
 **STATUS: NOT STUDIED IN DEPTH. Not cloned, not read.** Do that before making any claim about their codegen.
 
+## XXX Q1 ANSWERED - THE EDRAM BUFFER PATH IS 1.5x-3x SLOWER ON ADRENO. ARCHITECTURE CLOSED FOR BD (2026-08-17)
+**One device run, 150 s, and it closes a line of attack that looked like the only route past the ~10% ceiling.
+The candidate was given the ADVANTAGE: 35C cold start (the coldest of the session) against a baseline that
+started at 43C. It still lost, badly, at large n.**
+```
+band            n     buffer path vs fbo
+ 50-120k       69          +46.5% SLOWER
+120-180k      165          +69.6%
+180-230k      324         +196.6%
+230-300k      479         +117.6%
+on-screen fps settled at 8.4-9.0 against the baseline's 24-32
+```
+**=> AND THE PENALTY SCALES WITH SCENE COMPLEXITY - worst in the heavy bands, which is exactly where BD needs
+help.** That is the predicted signature: the path removes the ownership transfers and all 16 render targets,
+and moves the ENTIRE ROP (blending, depth, stencil) into the fragment shader as software. **BD is 89.6%
+fragment-bound, so more fragments means more software ROP means worse.**
+**⇒ WHAT THIS RETIRES, ALL AT ONCE:**
+- the atomic ROP work - **do NOT build the visibility-buffer colour resolve**, there is nothing to win
+- **Q2 (7e3 vs fp16) is moot** - it only mattered if the buffer path were viable
+- the whole "eliminate the 16 render targets / 45 ownership transfers" line
+- and by extension every tile-memory lever that needed the buffer model to become legal
+**📌 THE PROCESS POINT, AND IT IS THE REASON THE GOAL WAS REFRAMED: I SPENT MOST OF A SESSION TREATING THIS
+PATH AS THE ROUTE THAT REMOVES THE CEILING.** I counted what it REMOVES (transfers, dumps, the `SAMPLED`
+constraint) and never counted what it ADDS (a software ROP per fragment). Upstream had the answer in one
+line - *"the ROV path is currently considered much slower compared to the RTV path"* - and it holds on Adreno,
+hardest on this title. **One cheap run beat several sessions of planning. Kill-first experiments earn their
+place at the top of the list.**
+
 ## >>> THE CURRENT GOAL (user, 2026-08-17): ANSWER THREE QUESTIONS, DO NOT GRIND LEVERS
 **Brief: https://claude.ai/code/artifact/8d00e3a3-14f7-427d-84ca-3bdd1485ced3**
 **BD is ~93% GPU-bound; the frame is 89.6% guest fragment shading / 10.4% EDRAM machinery. The lossless
