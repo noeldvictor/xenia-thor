@@ -10466,3 +10466,37 @@ SIGTRAP, not its freeze.
 exports, an AOT race, saverest helpers) AND THE ANSWER CAME FROM MAKING A SILENT `return 0` PRINT FOUR
 FIELDS.** The bug had been an anonymous tombstone for ten days across two titles. **Instrument the failure
 path before theorising about it.**
+
+## 🏆🏆🏆 **THE PROJECT HAS A SECOND MEASURABLE TITLE: MAGNACARTA 2 (2026-08-17)**
+**Every performance conclusion in this file has been Blue Dragon's. That is no longer true.**
+```
+MagnaCarta 2, a64 backend, tools/thor/mc2_gameplay_route.sh, 150s run, 40C -> 67C, no crash:
+  frames sampled                    4,297
+  peak vertices                     2,343,400        (Blue Dragon's field is ~263,000)
+  gameplay  (>100k verts)  n=2,463  median gpu_frame_us = 10,130   => 98.7 fps GPU-side
+  menu/load (<50k  verts)  n=1,831  median gpu_frame_us =  1,749
+```
+**⇒ IT IS NOT A SECOND COPY OF BLUE DRAGON - IT IS THE STRUCTURAL OPPOSITE, WHICH IS THE WHOLE POINT:**
+| | Blue Dragon field | MagnaCarta 2 gameplay |
+|---|---|---|
+| GPU frame | **~63,000 us** | **~10,130 us** |
+| bound by | 89.6% in-pass fragment shading | **the GPU is nowhere near the limiter** |
+| frame cap in `GameProfiles` | none | **none** |
+| vertices | ~263k | **up to 2.34M** |
+**⇒ SO EVERY "BD IS FRAGMENT-BOUND" CONCLUSION CAN FINALLY BE TESTED AGAINST A TITLE THAT IS NOT.** And a
+~10 ms GPU frame on an UNCAPPED title is exactly the vehicle Goal 3 needs: **CPU levers that read flat on BD
+(capped at 6.8% because BD is GPU-bound) have room to show here.**
+### ⚠ THREE CONSTRAINTS, STATED SO NOBODY MIS-QUOTES THIS
+1. **`gpu_frame_us` IS GPU FRAME TIME, NOT WALL-CLOCK FPS.** "98.7 fps" is the GPU-side budget, not an
+   on-screen framerate - this file already records that `gpu_frame_us` is a timestamp SPAN. **Do not publish it
+   as an fps figure for the title.** What it establishes is that the GPU is NOT the limiter.
+2. **IT REQUIRES `--ez cpu_backend_llvm false`.** On the LLVM backend it still dies in AOT at ~33,280/47,353
+   with the Scudo map failure - it is the largest title on the device. That OOM is unfixed.
+3. **IT ONLY BOOTS AT ALL BECAUSE OF TODAY'S `DefineSymbol` FIX.** Before that it reached `Title name` and
+   died within ~10s with the anonymous SIGTRAP. **A regression there re-breaks this benchmark.**
+### 📌 HOW THIS WAS REACHED, BECAUSE THE ORDER WAS NOT THE PLANNED ONE
+The plan was to fix Gears. Gears' freeze is now fully characterised (a `Sleep(0)` spin cascade, ~650k calls/sec,
+rooted in a ring/fence wait) and is still unfixed. **The second title came from asking the cheap question
+instead - "which title on this device is uncapped, unbroken on record, and has never been tried?" - which took
+minutes and named MagnaCarta 2**, and from then on every blocker it hit was a real bug worth fixing anyway.
+**Ask which titles you have before deciding which bug to fix.**
