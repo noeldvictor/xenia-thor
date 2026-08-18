@@ -10800,3 +10800,38 @@ instruction is hot". Census before building.
 `if (cvars::cpu_llvm_batch_lane_calls)` branch above it is what actually runs. **This file's own rule is to
 check the compiled default, the persisted device config AND the allowlist before believing a lever's shape -
 I checked none of the three before quoting the number.**
+
+
+## XXX REFUTED SAME DAY: THE GEARS "COUNTER LEAK ON A FAILED ALLOC" IS IMPOSSIBLE - THE ALLOCATOR SPINS (2026-08-18)
+**Earlier today I wrote that `82445278` increments the counter, fails to allocate a ring slot, and returns
+without decrementing - "counter == 2 == two failed dispatches". THE RING ALLOCATOR HAS NO FAILURE PATH.**
+`8221CBA8(out, buffer, size)` decoded (the buffer address 0x82C0CB24 is hardcoded into it):
+```
+loop:
+  read = [buf+0x14] ; write = [buf+0x8]
+  if (read > write && write + size >= read)  goto loop      <- SPIN: no room ahead of the reader
+  if (write + size <= [buf+0x4])             goto commit    <- fits before the end
+  if (read == [buf+0x0])                     goto loop      <- SPIN: cannot wrap, reader sits at base
+  [buf+0xC] = write ; [buf+0x8] = [buf+0x0] ; goto loop     <- wrap: publish limit, reset write to base
+commit:
+  [out+0x4] = write                                          <- out.ptr written ONLY here
+  return
+```
+**=> It BLOCKS until space exists; it never returns empty-handed. `out.ptr` is written only on the success
+path, so on return it is always non-null, and `82445278`'s `if (slot.ptr == 0) return;` branch is DEAD CODE.
+The counter cannot leak that way.**
+**=> AND IT ALSO MEANS A FULL RING WOULD PARK THE PRODUCER INSIDE `8221CBA8`, NOT IN THE DRAIN BARRIER.** Main
+was measured spinning at `824453D0`, which is past the dispatch - so main's command WAS queued successfully.
+**=> SO THE STANDING QUESTION IS NARROWER AND STRANGER THAN BEFORE: the command is queued, the pump is running
+and laps the ring ~1x/sec, the command's execute (`82445360`) provably decrements - and the counter still sits
+at 2 for 35+ seconds.** Remaining candidates, none tested:
+1. **The wrap is racy as WE execute it.** The producer publishes `limit = write` and then `write = base` as two
+   plain stores with NO barrier between them (8221CC0C-8221CC1C), and the consumer reads `write`, `limit` and
+   `read` unsynchronised. A consumer that sees the new `write` with the stale `limit` (or vice versa) can step
+   over records. PPC permits store-store reordering without a barrier, so this is guest-legal but timing
+   -sensitive, and our timing is not the console's.
+2. **The decrement does not stick.** It is `lwarx/stwcx.` wrapped in `mtmsrd r13` / `mtmsrd r9`, which in this
+   emulator is ENTER/LEAVE GLOBAL LOCK, not interrupt masking - see the mtmsrd entry. A stwcx. that always
+   fails would spin, not leak, but our reservation is a plain value CAS with no address check.
+**IN SHORT: THREE HYPOTHESES FOR THIS FREEZE HAVE NOW DIED (unsignalled events, a stopped consumer, a leaked
+counter). Each died to a MEASUREMENT, and each measurement was cheaper than the theorising that preceded it.**
