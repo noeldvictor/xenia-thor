@@ -10989,3 +10989,35 @@ cause, removed once.
    residual is **denormal flush, not NaN** (`Expected [00000000,...] Actual [00010203,...]`), i.e. upstream
    `36a7bb57f` opt-in accurate VMX denormal flush. **Do not attack it as a NaN bug.**
 Plus `vpkpx` 644 (`XEINSTRNOTIMPLEMENTED`), `vsr`/`vsl` 876 and `vcmpbfp` 284 as separate self-contained items.
+
+
+## XXX FAILED AND REVERTED: COMPUTING THE `-s` FMA IN SINGLE PRECISION IS **WORSE**, 7,907 -> 13,696 (2026-08-18)
+**A clean negative, measured on the full corpus, and worth recording because the reasoning was plausible.**
+### THE HYPOTHESIS
+The four `-s` FMA emitters do `MulAdd` in FLOAT64 and then round to single:
+```cpp
+Value* v = f.MulAdd(fma_a, fma_c, fma_b);
+v = f.Convert(f.Convert(v, FLOAT32_TYPE), FLOAT64_TYPE);
+```
+That is a DOUBLE ROUNDING, and the corpus shows exactly the 1-ulp signature it produces
+(`Expected 4013d70a / Actual 4013d70b`). Hardware rounds the FUSED product-sum ONCE. So: narrow the operands to
+FLOAT32 and let a single-precision FMA round exactly once - `fmadds` operands are single-representable by
+definition, so the narrowing should be exact.
+### THE RESULT
+```
+before  Failed  7,907
+after   Failed 13,696      +5,789 WORSE
+```
+**REVERTED.**
+### WHY IT IS WRONG, AND THE ARITHMETIC IS THE LESSON
+PPC single-precision arithmetic does NOT compute in single. The operands are single-representable, but **the
+PRODUCT of two single values needs up to 48 mantissa bits, and the product-sum needs more** - hardware forms
+that intermediate at full width and rounds once at the END. Doing the multiply itself in FLOAT32 rounds the
+PRODUCT to 24 bits first, which is a rounding hardware never performs. That is a bigger error than the double
+rounding it was meant to remove, and it hits every case rather than just the tie cases.
+**=> SO THE EXISTING `double MulAdd -> round to single` IS THE CLOSER MODEL, and the residual 1-ulp cases are
+the genuine double-rounding tail.** Fixing those properly needs the fused intermediate kept wider than double
+(or a round-to-odd trick), NOT a narrower FMA. **Do not retry the FLOAT32 form.**
+**AND NOTE WHICH HALF OF THE FAILURES THIS WAS: the `-s` FMA forms are ~2,850 of the 7,907, and the 1-ulp
+class is only part of that** - the rest of those tests fail on CR1 (see below), so even a correct rounding fix
+is worth less than the raw instruction counts suggest.
