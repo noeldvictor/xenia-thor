@@ -9911,3 +9911,45 @@ here is what the main thread is doing".
 **⇒ SO THE FIVE MAY BE VICTIMS, NOT THE CAUSE.** The next run carries both the multi-wait tripwire and
 `guest_lr`; if the main thread appears in a multi-wait, that is the actual blocker and the five are just
 workers correctly waiting for work that never comes.
+
+## THE GEARS FREEZE, ROOT SHAPE FOUND: THE MAIN THREAD IS **SPINNING**, THE FIVE ARE VICTIMS (2026-08-17)
+**Three instruments in one evening, and the third one answered it. `tools/thor/gears_thread_states.sh`
+samples every thread twice during the freeze and diffs CPU ticks against voluntary context switches.**
+```
+thread                d_ticks   d_vctx   over 15s (t=45s -> t=60s)
+Main XThread (F...)       871    17048   <-- 8.7 CPU-SECONDS. 20-35x every other guest thread
+XThreadC2AD8CB0            47    16619
+XThreadCBB77CB0            35    27512
+XThreadCDC80CB0            34    37374
+... 9 more XThreads        24-35  ~38000
+Kernel Dispatch             0        0
+```
+**⇒ THE MAIN GUEST THREAD IS NOT BLOCKED. IT IS BURNING ~58% OF A CORE AND GETTING NOWHERE**, at ~1,136
+voluntary switches per second - i.e. **wait-briefly / wake / re-check**, a POLL LOOP on a condition that never
+becomes true. The other guest threads are idle at a twentieth of the CPU.
+**⇒ SO THE FIVE STALLED EVENTS ARE VICTIMS, NOT THE CAUSE.** They are worker threads parked on their own
+per-thread event (all at one guest call site, `guest_lr=82613DE0`, each event at offset 0x20 of a per-thread
+block) waiting for work the spinning main thread never hands them.
+**🔑 AND THIS IS THE LOST ODYSSEY SIGNATURE, WHICH THIS FILE ALREADY RECORDS: *"main thread polls a guest flag
+in KeDelayExecutionThread wrapper lr 827CACFC; workers idle"*.** Two titles, same shape. **That makes it a
+class, not a Gears quirk** - and it means a fix plausibly buys BOTH titles.
+### => WHY EVERY PREVIOUS INVESTIGATION MISSED THIS
+| instrument | what it could see |
+|---|---|
+| `XObject::Wait` stall log | INFINITE waits only -> saw the five idle workers, never the main thread |
+| `XObject::WaitMultiple` | had NO tripwire at all until today -> checked now, and it is **EMPTY**, so the main thread is not there either |
+| event trace | the five handles are never Set -> true, but they are the WRONG OBJECTS |
+| **CPU ticks vs vctx** | **the only one that can see a spinning thread**, because a spin logs nothing |
+**⇒ A THREAD THAT IS SPINNING PRODUCES NO LOG LINE OF ANY KIND. Sample /proc, do not grep logcat.** The tick
+counter is also what once inverted a wrong "the CP thread never ran" verdict here; it keeps earning its place.
+### ⚠ WHAT IS STILL OPEN
+**WHAT the main thread is polling.** A poll loop with a finite timeout emits no stall log by construction. The
+next instrument is the one this repo already built for Lost Odyssey and never pointed at Gears:
+`--ez xboxkrnl_thread_wait_trace true --ei xboxkrnl_thread_wait_trace_budget N
+ --ei xboxkrnl_thread_wait_trace_after_ms 25000` (all allowlisted, NO rebuild needed), read for what the main
+thread waits on repeatedly.
+**📌 AND A CORRECTION WORTH REAL TIME: AN INCREMENTAL APK INSTALL DID **NOT** PRUNE THE OBJECT CACHE.**
+This file says a full gradle build recompiles `llvm_assembler.cc` and moves the stamp. Measured today:
+`objcache_v3_opt2_bB38C32D4`, **47,545 files, byte-identical directory name before and after installing a
+build that changed only kernel sources**. **So a kernel-only iteration costs NO 320s re-warm** - check the
+directory name instead of assuming, it is one adb command and it saves five minutes per iteration.
