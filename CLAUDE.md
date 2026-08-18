@@ -11252,3 +11252,33 @@ Doing it in that order is what caught the merged-function trap, what let the exc
 trusted, and what made the delta predictable to the case before the build ran. **The commit title
 ("Skip the rounding to single for a denormal operand") describes a DIFFERENT mechanism from what its own code
 does for this class - reading it first would have sent the port the wrong way.**
+
+### !! AND IT IS A SHARED-LAYER FIX, SO **a64 GETS IT TOO** - THE QUEUED DEVICE RUN SHOULD SEE A BIG DROP
+`ppc_emit_fpu.cc` and `ppc_hir_builder.cc` are shared PPC code, not backend code. **The a64 residual of 7,907
+includes fmadds 712 / fmsubs 714 / fnmadds 712 / fnmsubs 714 plus fadds 67 / fsubs 68 / fmuls 63 - and the
+denormal cases are up to 592 per FMA form (296 doubled by the `_cr` twins).**
+**=> PREDICTION FOR THE a64 RUN, stated before it happens so it can be wrong: 7,907 should fall by roughly
+2,000-2,500, to somewhere near 5,400-5,900.** It cannot fall by the full x64 2,536, because a64's per-form
+counts are already lower than the denormal population (712 < 592+other), so some of those cases were failing
+for a second reason too and will still fail.
+**=> SO THREE FIXES ARE NOW QUEUED BEHIND ONE DEVICE RUN, not two: the FPSCR host-status port, the FMA
+walk-order fix, and this. Baseline to beat: 7,907.** Take the per-instruction breakdown, not just the total -
+this entry's prediction is checkable per form, and a total alone cannot tell a partial win from an offsetting
+regression.
+
+## $$$ THE x64-ONLY QNaN SIGN RESIDUAL, SCOPED BUT NOT TAKEN (2026-08-18)
+**89 x64 failures differ ONLY in the QNaN sign, and the single/double symmetry names one shared cause.**
+```
+fdiv 16 == fdivs 16    fmul 16 == fmuls 16    fadd 4 == fadds 4
+fsub  4 == fsubs  4    fsqrt 3 == fsqrts 3    frsqrte 3
+```
+**The x64 CONSTANTS ARE ALREADY CORRECT** (`XMMQNaN = 0x7FC00000`, and MUL_ADD_F64 explicitly loads
+`0x7FF8000000000000` for a generated NaN). **The gap is that the plain binary scalar ops - ADD/SUB/MUL/DIV/SQRT
+- never canonicalise at all, so x86's own NEGATIVE default QNaN (`FFF8000000000000`) passes straight through
+where PPC's scalar default is POSITIVE.** MUL_ADD does it and the others do not, which is exactly why the FMA
+forms pass and these fail.
+**=> DELIBERATELY NOT TAKEN, AND THE REASON IS PRIORITY NOT DIFFICULTY: this is x64-only, and a64 - the backend
+that ships on the Thor - ALREADY HAS THIS FIX** (it was worth 9,715 -> 7,907 there). It is 89 cases on the
+desktop reference, against touching five separate codegen sequences. **Worth doing when someone is already in
+`x64_sequences.cc`; not worth a dedicated risk budget.** The fix shape is already written in that file - copy
+MUL_ADD_F64's "no NaN operand, so any NaN result is generated -> load PPC's default" tail.
