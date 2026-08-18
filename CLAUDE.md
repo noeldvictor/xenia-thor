@@ -9987,3 +9987,54 @@ note its budget DEFAULTS TO 160, which is the documented trap that made an earli
 **📌 AND THE LOST ODYSSEY ENTRY IN THIS FILE NOW READS AS THE SAME BUG:** *"main thread polls a guest flag in
 KeDelayExecutionThread wrapper lr 827CACFC; workers idle"*. Gears' wrapper is `lr 82613800`. **Two titles, one
 signature, and it is now instrumented rather than described.**
+
+## XXX CORRECTION, SAME EVENING: F8000044 IS SET **67,993 TIMES**. "IT NEVER FIRES" WAS WRONG (2026-08-17)
+**The entry above inferred from `timeout=0` polls that the shared event never fires. The event trace says the
+opposite, and the corrected picture is more useful.**
+```
+event trace, 107,111 lines, budget 120,000 (NOT exhausted, so this is complete coverage):
+  KeSetEvent 92,636   NtSetEvent 6,535   NtClearEvent 5,672   KeResetEvent 2,268
+
+handle     sets   first        last          <- run launched ~21:45:00
+F8000044  67993   21:45:05.860 21:45:58.421  <- STILL FIRING at the end, ~2,000/sec
+F800000C    780   21:45:06.064 21:45:20.709  <- STOPS
+F8000014    654   21:45:05.860 21:45:20.553  <- STOPS
+F8000050    555   21:45:05.996 21:45:20.650  <- STOPS
+F8000100      2   21:45:12.238 21:45:19.207  <- STOPS
+F80000F8      0   never        never         <- NEVER SET AT ALL
+first "has waited" line: 21:45:49  => the 30s waits BEGAN at 21:45:19
+```
+**⇒ THE WORKER WAKE-UPS STOP AT 21:45:19-20, WHICH IS EXACTLY WHEN THE WAITS BEGIN. The emulator is NOT
+deadlocked - it is very much alive, setting one event ~2,000 times a second - but it stops waking its worker
+pool and never resumes.**
+### => AND THE CASCADE HAS A HEAD: **thid 0000000B**
+```
+who SET the worker events, before they stopped:
+  F800000C  <- NtSetEvent thid=0000000B  x775
+  F8000014  <- NtSetEvent thid=0000000B  x639
+  F8000050  <- NtSetEvent thid=0000000D  x513
+who SETS F8000044 (still, to the end):
+  KeSetEvent thid=00000006 x34,974   and   thid=0000000D x30,962
+```
+**`thid 0000000B` IS ITSELF ONE OF THE STALLED THREADS.** It is the thread that wakes the others, and when it
+blocks, everything it used to wake starves. **So the stalled set is a chain, not five peers**, and the two
+threads still running (main=6 and D) are spinning on an event THEY THEMSELVES keep setting - a hot handshake
+that makes no forward progress.
+**⇒ REVISED SHAPE:**
+```
+main(6) + thid D   set AND test F8000044 thousands of times a second - alive, no progress
+thid B             blocked; was the waker for F800000C / F8000014
+workers 7/8/11/12  blocked, because B stopped waking them
+F80000F8           never set once in the entire run
+```
+### ⚠ WHAT IS ESTABLISHED, AND WHAT IS NOT
+**ESTABLISHED, reproducibly, three runs:** the freeze begins at t≈20s; the main thread yield-spins on
+`KeDelayExecutionThread(0)` at `lr=82613800` burning ~58% of a core; workers block at `lr=82613DE0`; worker
+wake-ups cease at the instant the waits begin; one blocked worker's event is never signalled at all.
+**NOT ESTABLISHED: WHY.** Whether an HLE gap stops thid B, or the guest is waiting on state we never produce,
+needs the guest code at `lr=82613800` / `822158C4` / `82613DE0` - i.e. a disassembly
+(`--es disassemble_function_filter`) or Ghidra, NOT another trace. **Do not guess a kernel fix from here.**
+**📌 AND THE METHOD POINT, WHICH THIS FILE KEEPS PAYING FOR: I INFERRED "NEVER SIGNALLED" FROM A POLL PATTERN
+AND THE TRACE SAID 67,993.** `timeout=0` proves the caller is TESTING, not that the test always fails. **A
+count is not a behaviour - go get the count.** The event trace's default budget of 160 is what made an earlier
+attempt look empty; at 120,000 it answered in one run.
