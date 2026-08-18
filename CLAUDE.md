@@ -10724,3 +10724,42 @@ dispatch, or a guest breakpoint on 824452E8.** Do not write a fix against the le
 device runs and two guest-memory dumps had built up, because it could sample a pointer AND its target in the
 same instant. **A snapshot of a moving ring is not a measurement of a stopped ring** - that is the general
 lesson, and it is the same shape as this file's "filter by scene, never by the metric under test".
+
+
+## 🧱 THE ARM64 PPC CORPUS CANNOT RUN ON THIS DEVICE TODAY - SO a64 CPU CHANGES HAVE NO VALIDATOR (2026-08-18)
+**This file's standing rule is "never ship a CPU change without a before/after corpus count". For the a64
+backend that rule is currently UNSATISFIABLE, and it is worth stating plainly rather than quietly skipping.**
+```
+built:  ndk-build ... xenia-cpu-ppc-tests  -> obj/local/arm64-v8a/xenia-cpu-ppc-tests (25.6 MB, exit 0)
+pushed: a 2-test SUBSET (instr_stvl + instr_stvr, .s + .bin + .map)
+ran:    no output, no EXIT= echoed -> the SHELL ITSELF died = SIGKILL at startup
+device: 3.2 GB free of 15.2 GB, no rpcs3, no emulator running
+```
+**The binary reserves ~17 GB of guest address space at startup, so it is killed BEFORE running a single test -
+and reducing the test count does not help, because the reservation is not per-test.** A subset run was the
+obvious workaround and it does not work.
+**⚠ AND THE FAILURE IS SILENT IN THE WORST WAY: an empty capture with exit 0.** The first attempt printed
+`EXIT=0` with no results (the runner needs the `.map` files, not just `.bin`); the second, with maps, printed
+NOTHING AT ALL - not even the `echo EXIT=` after it. **A missing `EXIT=` is the tell that the shell was killed,
+not that the tests passed quietly.**
+**⇒ CONSEQUENCE FOR ANY a64 CODEGEN WORK: desktop cannot help either** (the a64 backend is not built on
+Windows), and the qemu harness models ISA semantics rather than our emitter. **So an a64 sequence change has
+NO validator right now.** Options, in order: free real memory on the device and retry; or build the tests with
+a smaller guest reservation; or gate the change default-off until one of those happens.
+### ⇒ WHICH IS WHY `a64_stv_overlapping_stores` SHIPS DEFAULT-OFF
+Ported from xenia-edge `e9582aca7`: stvlx/stvrx lowered with OVERLAPPING power-of-two stores instead of the
+byte-at-a-time loop, **~68 -> ~16 instructions**. Syntax-checked for aarch64 and verified by construction for
+every count 0..16, including the two cases that matter (`offset == 0` stores nothing, because memcpy tails use
+stvrx on an address that can sit one past a valid page; and `src = stash + 16 - offset` reaches `stash+16` only
+when count is 0, so the one-past pointer is never dereferenced).
+**But 40 hardware-captured cases exist and NONE of them have been run against it, so it is inert until they
+are.** A wrong partial store is silent memory corruption, which is the one failure class this file says never
+to ship on reasoning alone.
+**🔑 AND THE OFF PATH IS THE ORIGINAL CODE, UNTOUCHED - NOT RETYPED.** The lever is an early `return` above the
+existing byte loop, so the default path is byte-identical to what shipped. That is the direct lesson of
+`a64_three_operand_shifts`, whose off-branch was RETYPED and dropped a constant-operand arm, killing Gears in
+under a second - and of `a64_vmx_fp_no_operand_copy`, whose ON path was the untested one. **Whichever direction
+nobody runs is the unvalidated one.**
+**📌 ALSO: upstream uses stack-allocated `Xbyak_aarch64::Label`s in this helper. We must not** - xbyak's
+LabelManager registers by address and outlives the frame, which is why `NewCachedLabel()` exists here. Ported
+with our mechanism, not their patch.

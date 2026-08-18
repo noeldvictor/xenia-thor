@@ -324,6 +324,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyIntExtra(intent, launchArguments, "dump_guest_mem_base");
             copyIntExtra(intent, launchArguments, "dump_guest_mem_size_mb");
             copyStringExtra(intent, launchArguments, "dump_guest_mem_path");
+            copyBooleanExtra(intent, launchArguments, "a64_stv_overlapping_stores");
             copyIntExtra(intent, launchArguments, "guest_watch_ms");
             copyStringExtra(intent, launchArguments, "guest_watch_addrs");
             copyStringExtra(intent, launchArguments, "guest_watch_ptrs");
