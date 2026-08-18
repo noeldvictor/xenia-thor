@@ -10888,3 +10888,55 @@ the run died at `vmaddfp_4249_GEN` when it had actually finished normally minute
 **=> FILTER ON THE DEVICE: `adb shell "logcat -d | grep ... | tail"`, and aggregate with an on-device awk.**
 The per-instruction table above came from
 `awk '/  - [a-z]/{n=$NF} /TEST FAILED/{print n}' | sed -E 's/_[0-9]+.*//' | sort | uniq -c | sort -rn`.
+
+
+## *** FIXED: ONE STRAY `fneg` WAS 61% OF ALL a64 CORPUS FAILURES. 24,991 -> 9,715 (2026-08-18)
+**The first thing the newly-working a64 corpus was pointed at, and it paid immediately.**
+```
+BEFORE  Total 169,117   Passed 144,126   Failed 24,991
+AFTER   Total 169,117   Passed 159,402   Failed  9,715      -15,276  (-61.1%)
+   for scale: this file's x64 figure is 19,120, so a64 is now BETTER than x64
+```
+### THE BUG: THE NEGATE RAN *AFTER* THE NaN FIXUP AND FLIPPED ITS SIGN
+All five multiply-add sequences ended with:
+```cpp
+if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) { e.fneg(i.dest, i.dest); }
+```
+The PPC NaN fixup carefully selects the right NaN (operand precedence A>B>C, quieted) and writes it to the
+result - **and then `fneg` flips its sign. PPC leaves a NaN result's sign alone.** So every
+`fnmadd`/`fnmadds`/`fnmsub`/`fnmsubs`/`vnmsubfp` case whose result is a NaN failed.
+**AND THE CODE SAID SO.** Each site carried: *"NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone
+and fneg flips it ... that is the next step."* It had been a known-unfinished TODO; what was missing was any
+way to SIZE it. The corpus sized it at 22,679 of 24,991.
+### THE FIX - BRANCHLESS, AND THE SAME SHAPE x64 ALREADY USED
+x64 builds its PPC NaN first and blends it in AFTER the negate. a64 now keeps the UNNEGATED value wherever the
+result is unordered:
+```
+scalar:  fneg scratch, dest ; fcmp dest, dest ; fcsel dest, dest, scratch, VS
+packed:  fcmeq v0, d, d     (all-ones for ORDERED lanes, zero for NaN lanes)
+         fneg  v1, d
+         bsl   v0, v1, d    (mask ? negated : original)   ; per lane - each may differ
+```
+v0/v1 are scratch (the allocator hands out v4-v31), so no guest value is at risk.
+### THE PER-INSTRUCTION RESULT IS THE PROOF, NOT THE TOTAL
+```
+                 before   after
+vnmsubfp         11,520   1,012     -10,508
+fnmsubs           2,122     930      -1,192
+fnmadds           2,120     928      -1,192
+fnmsub            1,608     416      -1,192
+fnmadd            1,607     415      -1,192
+fmadd/fmsub/fmadds/fmsubs/vmaddfp/vpkpx/vsr/vsl/vcmpbfp   ALL UNCHANGED
+```
+**Two things make this trustworthy.** (1) Every instruction WITHOUT `ARITHMETIC_NEGATE_RESULT` is byte-identical
+- the change cannot touch them, and did not. (2) **Each negate form now equals its non-negate twin exactly**
+(`fnmsubs 930 == fmsubs 930`, `fnmadds 928 == fmadds 928`, `fnmsub 416 == fmsub 416`, `vnmsubfp 1,012 ~
+vmaddfp 1,013`). The negate-specific defect is GONE, and what remains is the SHARED multiply-add NaN gap that
+hits both forms equally.
+### => THE NEXT TARGET IS NAMED BY THAT SYMMETRY: THE BASE FMA NaN SEMANTICS
+`fmadd`/`fmsub`/`fmadds`/`fmsubs`/`vmaddfp` fail identically to their negate twins, so one shared fix is worth
+about **4,600** more (930+928+416+415+1,013 and their twins are already counted). After that: `vpkpx` 644 is
+`XEINSTRNOTIMPLEMENTED`, and `vsr`/`vsl` 876 and `vcmpbfp` 284 are separate, self-contained items.
+**=> AND THE GENERAL LESSON: A TODO COMMENT IS NOT A BACKLOG ITEM UNTIL SOMETHING SIZES IT.** This one sat in
+five places, correctly describing the bug, for as long as the corpus could not run on a64. The build-config
+fix that made the corpus runnable was worth more than any single lowering, and this is the first proof.

@@ -5527,16 +5527,19 @@ struct MUL_ADD_F32
       e.fmov(e.s2, e.w0);
     }
     EmitFmaWithPpcNan_F32(e, i.dest, s1, s2, s3, /*is_sub=*/false);
-    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
-    // exact NEG the PPC emitters used to append after the FMA, so moving the
-    // negation into the opcode is BEHAVIOUR-PRESERVING here.
-    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
-    // fneg flips it. The correct form threads negate_result INTO
-    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
-    // that is the next step. Doing it here would be a second, conflicting
-    // NaN rule bolted onto a helper that already has one.
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp).
+    // PPC does NOT negate a NaN result - hardware leaves its sign alone, and a
+    // bare fneg flips it. That one fneg was 22,679 of the 24,991 a64 hardware
+    // -corpus failures (vnmsubfp alone: 11,520), because it ran AFTER the NaN
+    // fixup and so corrupted the very value the fixup had just chosen.
+    // Fixed branchlessly by keeping the UNNEGATED value wherever the result is
+    // unordered (NaN), which is what the x64 side already does by blending its
+    // built PPC NaN in after the negate.
     if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
-      e.fneg(i.dest, i.dest);
+      e.fneg(e.s0, i.dest);
+      e.fcmp(i.dest, i.dest);
+      // VS = unordered = the result is a NaN -> keep it unnegated.
+      e.fcsel(i.dest, i.dest, e.s0, Xbyak_aarch64::VS);
     }
   }
 };
@@ -5574,16 +5577,19 @@ struct MUL_ADD_F64
       e.fmov(e.d2, e.x0);
     }
     EmitFmaWithPpcNan_F64(e, i.dest, s1, s2, s3, /*is_sub=*/false);
-    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
-    // exact NEG the PPC emitters used to append after the FMA, so moving the
-    // negation into the opcode is BEHAVIOUR-PRESERVING here.
-    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
-    // fneg flips it. The correct form threads negate_result INTO
-    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
-    // that is the next step. Doing it here would be a second, conflicting
-    // NaN rule bolted onto a helper that already has one.
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp).
+    // PPC does NOT negate a NaN result - hardware leaves its sign alone, and a
+    // bare fneg flips it. That one fneg was 22,679 of the 24,991 a64 hardware
+    // -corpus failures (vnmsubfp alone: 11,520), because it ran AFTER the NaN
+    // fixup and so corrupted the very value the fixup had just chosen.
+    // Fixed branchlessly by keeping the UNNEGATED value wherever the result is
+    // unordered (NaN), which is what the x64 side already does by blending its
+    // built PPC NaN in after the negate.
     if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
-      e.fneg(i.dest, i.dest);
+      e.fneg(e.d0, i.dest);
+      e.fcmp(i.dest, i.dest);
+      // VS = unordered = the result is a NaN -> keep it unnegated.
+      e.fcsel(i.dest, i.dest, e.d0, Xbyak_aarch64::VS);
     }
   }
 };
@@ -5765,18 +5771,25 @@ struct MUL_ADD_V128
       e.EmitAtomicIncrement64(dest_copy_counter);
       e.mov(VReg(d).b16, VReg(2).b16);
     }
-    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
-    // exact NEG the PPC emitters used to append after the FMA, so moving the
-    // negation into the opcode is BEHAVIOUR-PRESERVING here.
-    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
-    // fneg flips it. The correct form threads negate_result INTO
-    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
-    // that is the next step. Doing it here would be a second, conflicting
-    // NaN rule bolted onto a helper that already has one.
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp).
+    // PPC does NOT negate a NaN result - hardware leaves its sign alone, and a
+    // bare fneg flips it. That one fneg was 22,679 of the 24,991 a64 hardware
+    // -corpus failures (vnmsubfp alone: 11,520), because it ran AFTER the NaN
+    // fixup and so corrupted the very value the fixup had just chosen.
+    // Fixed branchlessly by keeping the UNNEGATED value wherever the result is
+    // unordered (NaN), which is what the x64 side already does by blending its
+    // built PPC NaN in after the negate.
     if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
       EmitWithVmxFpcr(e, [&] {
-        e.fneg(VReg(i.dest.reg().getIdx()).s4,
-               VReg(i.dest.reg().getIdx()).s4);
+        const int nd = i.dest.reg().getIdx();
+        // Per lane, because each may differ: fcmeq(x,x) is all-ones for an
+        // ORDERED lane and zero for a NaN lane, and bsl(mask, a, b) picks a
+        // where the mask is set. v0/v1 are scratch (the allocator hands out
+        // v4-v31), so no guest value is at risk.
+        e.fcmeq(VReg(0).s4, VReg(nd).s4, VReg(nd).s4);
+        e.fneg(VReg(1).s4, VReg(nd).s4);
+        e.bsl(VReg(0).b16, VReg(1).b16, VReg(nd).b16);
+        e.mov(VReg(nd).b16, VReg(0).b16);
       });
     }
   }
@@ -5822,16 +5835,19 @@ struct MUL_SUB_F64
       e.fmov(e.d2, e.x0);
     }
     EmitFmaWithPpcNan_F64(e, i.dest, s1, s2, s3, /*is_sub=*/true);
-    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
-    // exact NEG the PPC emitters used to append after the FMA, so moving the
-    // negation into the opcode is BEHAVIOUR-PRESERVING here.
-    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
-    // fneg flips it. The correct form threads negate_result INTO
-    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
-    // that is the next step. Doing it here would be a second, conflicting
-    // NaN rule bolted onto a helper that already has one.
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp).
+    // PPC does NOT negate a NaN result - hardware leaves its sign alone, and a
+    // bare fneg flips it. That one fneg was 22,679 of the 24,991 a64 hardware
+    // -corpus failures (vnmsubfp alone: 11,520), because it ran AFTER the NaN
+    // fixup and so corrupted the very value the fixup had just chosen.
+    // Fixed branchlessly by keeping the UNNEGATED value wherever the result is
+    // unordered (NaN), which is what the x64 side already does by blending its
+    // built PPC NaN in after the negate.
     if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
-      e.fneg(i.dest, i.dest);
+      e.fneg(e.d0, i.dest);
+      e.fcmp(i.dest, i.dest);
+      // VS = unordered = the result is a NaN -> keep it unnegated.
+      e.fcsel(i.dest, i.dest, e.d0, Xbyak_aarch64::VS);
     }
   }
 };
@@ -5886,18 +5902,25 @@ struct MUL_SUB_V128
       }
       e.mov(VReg(d).b16, VReg(2).b16);
     });
-    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp). This reproduces the
-    // exact NEG the PPC emitters used to append after the FMA, so moving the
-    // negation into the opcode is BEHAVIOUR-PRESERVING here.
-    // ⚠ NOT YET PPC-CORRECT: hardware leaves a NaN result's sign alone and
-    // fneg flips it. The correct form threads negate_result INTO
-    // EmitFmaWithPpcNan_* so the fixup can skip it (upstream 9804846f4);
-    // that is the next step. Doing it here would be a second, conflicting
-    // NaN rule bolted onto a helper that already has one.
+    // ARITHMETIC_NEGATE_RESULT (fnmadd/fnmsub/vnmsubfp).
+    // PPC does NOT negate a NaN result - hardware leaves its sign alone, and a
+    // bare fneg flips it. That one fneg was 22,679 of the 24,991 a64 hardware
+    // -corpus failures (vnmsubfp alone: 11,520), because it ran AFTER the NaN
+    // fixup and so corrupted the very value the fixup had just chosen.
+    // Fixed branchlessly by keeping the UNNEGATED value wherever the result is
+    // unordered (NaN), which is what the x64 side already does by blending its
+    // built PPC NaN in after the negate.
     if (i.instr->flags & ARITHMETIC_NEGATE_RESULT) {
       EmitWithVmxFpcr(e, [&] {
-        e.fneg(VReg(i.dest.reg().getIdx()).s4,
-               VReg(i.dest.reg().getIdx()).s4);
+        const int nd = i.dest.reg().getIdx();
+        // Per lane, because each may differ: fcmeq(x,x) is all-ones for an
+        // ORDERED lane and zero for a NaN lane, and bsl(mask, a, b) picks a
+        // where the mask is set. v0/v1 are scratch (the allocator hands out
+        // v4-v31), so no guest value is at risk.
+        e.fcmeq(VReg(0).s4, VReg(nd).s4, VReg(nd).s4);
+        e.fneg(VReg(1).s4, VReg(nd).s4);
+        e.bsl(VReg(0).b16, VReg(1).b16, VReg(nd).b16);
+        e.mov(VReg(nd).b16, VReg(0).b16);
       });
     }
   }
