@@ -9882,3 +9882,32 @@ re-warm) plus ~40s of runtime.
 guarded out at t=50s having reached nothing, because a headless launch renders UNCAPPED; passing the title's
 own `gpu_frame_limit_fps 30` bought 60s. **The route compression and the cap turned out to be unnecessary -
 the stall appears at 26s.**
+
+### => AND THE TIMELINE SAYS IT IS A REAL FREEZE, NOT AN IDLE THREAD POOL
+Non-LLVM log lines per second, same run (launch at 21:26:05):
+```
+21:26:16   654      <- t=11s, loading hard
+21:26:17   633
+21:26:18    14
+21:26:21     2
+21:26:31     9      <- t=26s, the five waits BEGIN here
+21:26:32    31
+21:27:01     2      <- the 30s stall logs, and essentially nothing else
+21:27:08     2
+21:27:24     1
+21:27:31    13      <- force-stop
+```
+**⇒ AFTER t=27s THE WHOLE EMULATOR GOES SILENT FOR ~55 SECONDS. 4 swaps in the entire run.** An idle worker
+pool does not stop the MAIN thread from loading - and the main thread stops too. **That is the discriminator
+the "maybe it is just a healthy thread pool" caveat needed, and it points at a genuine wedge.**
+**⚠ Silence in a LOG is not proof of no execution** - the main thread could be spinning in guest code that
+logs nothing. But it does no further file I/O and presents no frames, so it is making no observable progress.
+### 🔎 AND THE MAIN THREAD IS NOT AMONG THE FIVE - WHICH IS THE `WaitMultiple` BLIND SPOT
+The five stalled tids are 07/08/0B/11/12; the main guest thread is handle F8000008 and **logs no stall at
+all**. Until today `XObject::WaitMultiple` had NO tripwire (see that entry), so a main thread parked in a
+multi-object wait was **structurally invisible to every previous investigation** - which is a complete
+explanation for why this bug has only ever been described as "five threads on an event" and never as "and
+here is what the main thread is doing".
+**⇒ SO THE FIVE MAY BE VICTIMS, NOT THE CAUSE.** The next run carries both the multi-wait tripwire and
+`guest_lr`; if the main thread appears in a multi-wait, that is the actual blocker and the five are just
+workers correctly waiting for work that never comes.

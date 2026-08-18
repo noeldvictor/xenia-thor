@@ -140,6 +140,12 @@ echo
 echo "================ STALLED WAITS ================"
 grep "has waited" "$OUT/gears_stall.log" | sed "s/^.*XObject::Wait/XObject::Wait/" | sort -u
 echo
+echo "================ MULTI-OBJECT WAITS (previously INVISIBLE) ============="
+grep "WaitMultiple: host thread has waited" "$OUT/gears_stall.log" | sed "s/^.*XObject:://" | sort -u | head -20
+echo
+echo "================ GUEST CALL SITES (guest_lr) ============="
+grep -oE "tid=[0-9A-F]+ .*guest_lr=[0-9A-F]+" "$OUT/gears_stall.log" | grep -oE "tid=[0-9A-F]+|guest_lr=[0-9A-F]+" | paste - - 2>/dev/null | sort -u
+echo
 echo "================ DISTINCT OBJECTS ============="
 grep -oE "handle=[0-9A-F]+ guest_object=[0-9A-F]+ origin=[^ ]+" "$OUT/gears_stall.log" | sort | uniq -c | sort -rn
 echo
