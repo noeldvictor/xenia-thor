@@ -600,6 +600,37 @@ X_STATUS XObject::SignalAndWait(XObject* signal_object, XObject* wait_object,
   }
 }
 
+namespace {
+// A MULTI-OBJECT WAIT HAD NO STALL TRIPWIRE AT ALL. An infinite WaitAny/WaitAll
+// went straight into the host wait, and if nothing ever signalled it logged
+// NOTHING, FOREVER. Single-object waits have sliced-and-logged since the Gears
+// investigation; this path did not - so a thread parked here was invisible,
+// and the recorded "five stalled threads" in Gears Act 1 is plausibly an
+// UNDERCOUNT of the real set. Name every object in the set, not just a count:
+// with a multi-wait, WHICH member never arrives is the entire question.
+void LogMultiWaitStall(int waited_s, uint32_t count, XObject** objects,
+                       bool wait_all) {
+  std::string members;
+  for (uint32_t i = 0; i < count; ++i) {
+    if (!objects[i]) {
+      continue;
+    }
+    auto h = objects[i]->handles();
+    members += fmt::format(
+        "{}[type={} handle={:08X} guest_object={:08X} origin={}]",
+        members.empty() ? "" : " ", static_cast<uint32_t>(objects[i]->type()),
+        h.empty() ? 0 : h[0], objects[i]->guest_object(),
+        objects[i]->creation_origin());
+  }
+  XELOGW(
+      "XObject::WaitMultiple: host thread has waited {}s on {} of {} objects "
+      "(tid={:08X}) {}",
+      waited_s, wait_all ? "ALL" : "ANY", count,
+      XThread::IsInThread() ? XThread::GetCurrentThread()->thread_id() : 0,
+      members);
+}
+}  // namespace
+
 X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects,
                                uint32_t wait_type, uint32_t wait_reason,
                                uint32_t processor_mode, uint32_t alertable,
@@ -706,8 +737,22 @@ X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects,
   X_STATUS status;
   uint32_t boost_increment = 0;
   if (wait_type) {
-    auto result = xe::threading::WaitAny(wait_handles, count,
-                                         alertable ? true : false, timeout_ms);
+    std::pair<xe::threading::WaitResult, size_t> result;
+    if (timeout_ms == std::chrono::milliseconds::max()) {
+      // Infinite: slice so a deadlock names itself instead of hanging silently.
+      // kTimeout from a slice means "keep waiting", NOT a guest timeout.
+      int waited_s = 0;
+      while ((result = xe::threading::WaitAny(wait_handles, count,
+                                              alertable ? true : false,
+                                              std::chrono::seconds(30)))
+                 .first == xe::threading::WaitResult::kTimeout) {
+        waited_s += 30;
+        LogMultiWaitStall(waited_s, count, objects, false);
+      }
+    } else {
+      result = xe::threading::WaitAny(wait_handles, count,
+                                      alertable ? true : false, timeout_ms);
+    }
     switch (result.first) {
       case xe::threading::WaitResult::kSuccess:
         objects[result.second]->WaitCallback();
@@ -732,8 +777,20 @@ X_STATUS XObject::WaitMultiple(uint32_t count, XObject** objects,
         break;
     }
   } else {
-    auto result = xe::threading::WaitAll(wait_handles, count,
-                                         alertable ? true : false, timeout_ms);
+    xe::threading::WaitResult result;
+    if (timeout_ms == std::chrono::milliseconds::max()) {
+      int waited_s = 0;
+      while ((result = xe::threading::WaitAll(
+                  wait_handles, count, alertable ? true : false,
+                  std::chrono::seconds(30))) ==
+             xe::threading::WaitResult::kTimeout) {
+        waited_s += 30;
+        LogMultiWaitStall(waited_s, count, objects, true);
+      }
+    } else {
+      result = xe::threading::WaitAll(wait_handles, count,
+                                      alertable ? true : false, timeout_ms);
+    }
     switch (result) {
       case xe::threading::WaitResult::kSuccess:
         status = X_STATUS_SUCCESS;
