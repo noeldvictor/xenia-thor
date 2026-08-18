@@ -9800,3 +9800,19 @@ command, fails the thermal guard CLOSED, derives the native path after install, 
 in a separate phase** (hid_nop timings are absolute from launch, and an APK rebuild prunes the cache, so a
 ~28.5k-function title is still compiling when every button press fires). Phase 2 ABORTS on a cold cache rather
 than reporting a route that never ran.
+
+### ✅ AND THE DIRECT-EVENT SWEEP IS NOW DONE - 10 EXPORTS, 2 GENUINE DEFECTS
+Every `*_entry` in `kernel/xboxkrnl` + `kernel/xam` whose signature takes an `event_handle`:
+```
+NtReadFile / NtReadFileScatter / NtWriteFile        lookup+set+apc      OK
+NetDll_XNetDnsLookup / XNetQosServiceLookup         lookup+set          OK
+NetDll_WSASetEvent / WSAResetEvent / WSACloseEvent  DELEGATE            OK (false positives)
+NtQueryDirectoryFile                                NOTHING             DEFECT
+NtDeviceIoControlFile                               NOTHING             DEFECT
+```
+**⚠ THE THREE WSA ONES ARE FALSE POSITIVES AND THE REASON IS THE RULE THIS FILE KEEPS RE-LEARNING:** a first
+pass counting only direct `->Set(` flagged them, because they delegate - `xeNtSetEvent`, `xeNtClearEvent`,
+`ReleaseHandle`. **A missing construct is not a missing behaviour; resolve the calls before counting.**
+Re-checked by listing EVERY function each body calls: `NtQueryDirectoryFile` calls only path/logging helpers
+plus `QueryDirectory`, and `NtDeviceIoControlFile` calls only `XELOGD`. **Neither can signal by any route.**
+**⇒ SO THE POPULATION IS BOUNDED AT TWO, AND THE SWEEP DOES NOT NEED RE-RUNNING.**
