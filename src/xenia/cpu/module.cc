@@ -119,21 +119,54 @@ Symbol::Status Module::DeclareVariable(uint32_t address, Symbol** out_symbol) {
 Symbol::Status Module::DefineSymbol(Symbol* symbol) {
   auto global_lock = global_critical_region_.Acquire();
   Symbol::Status status;
-  if (symbol->status() == Symbol::Status::kDeclared) {
-    // Declared but undefined, so request caller define it.
-    symbol->set_status(Symbol::Status::kDefining);
-    status = Symbol::Status::kNew;
-  } else if (symbol->status() == Symbol::Status::kDefining) {
-    // Still defining, so spin.
-    do {
-      global_lock.unlock();
-      // TODO(benvanik): sleep for less time?
-      xe::threading::Sleep(std::chrono::microseconds(100));
-      global_lock.lock();
-    } while (symbol->status() == Symbol::Status::kDefining);
-    status = symbol->status();
-  } else {
-    status = symbol->status();
+  // RE-EVALUATE AFTER THE SPIN INSTEAD OF RETURNING WHATEVER IT LANDED ON.
+  //
+  // THE BUG THIS FIXES (device-diagnosed 2026-08-17, MagnaCarta 2 and Gears):
+  // a Symbol is CONSTRUCTED with status_ = kDefining (symbol.h), and the
+  // declaring thread only sets kDeclared once it has finished declaring. So a
+  // second thread arriving in that window took the kDefining branch, span, and
+  // the spin exited the moment the declarer stored kDeclared - at which point
+  // the old code returned kDeclared.
+  //
+  // Processor::DemandFunction treats anything that is neither kNew nor kFailed
+  // as SUCCESS, so it returned true for a function that had never been
+  // compiled. Processor::ResolveFunction then marked the entry STATUS_READY
+  // with machine_code() == null, and the a64 resolve thunk fell through to
+  // brk(0xF000) - surfacing as an anonymous
+  //     Fatal signal 5 (SIGTRAP), fault addr 0x2a000025c
+  // that this project carried unexplained since 2026-08-07, in BOTH Gears and
+  // MagnaCarta 2, at the identical address.
+  //
+  // The observed victim state matched exactly: status=kDeclared, behavior=
+  // kDefault, is_guest=true, and range=<addr>-00000000 (no extent, because it
+  // was never defined). Looping means kDeclared is handled by the branch that
+  // actually requests compilation, which is what the caller expects.
+  //
+  // It only bites BIG titles because the AOT precompile thread has to still be
+  // declaring when a guest thread makes an indirect call: MagnaCarta 2 is
+  // ~47.4k functions, Gears ~28.5k, Blue Dragon ~19.6k and never hits it.
+  for (;;) {
+    if (symbol->status() == Symbol::Status::kDeclared) {
+      // Declared but undefined, so request caller define it.
+      symbol->set_status(Symbol::Status::kDefining);
+      status = Symbol::Status::kNew;
+      break;
+    } else if (symbol->status() == Symbol::Status::kDefining) {
+      // Still defining, so spin.
+      do {
+        global_lock.unlock();
+        // TODO(benvanik): sleep for less time?
+        xe::threading::Sleep(std::chrono::microseconds(100));
+        global_lock.lock();
+      } while (symbol->status() == Symbol::Status::kDefining);
+      // The spin can exit into kDeclared (the other thread was only DECLARING,
+      // or this was the symbol's initial state) - go round again so that case
+      // is handled as "needs defining" rather than reported as done.
+      continue;
+    } else {
+      status = symbol->status();
+      break;
+    }
   }
   global_lock.unlock();
   return status;
