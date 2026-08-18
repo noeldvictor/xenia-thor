@@ -11324,3 +11324,28 @@ ANYTHING.** It retired vsl/vsr as undefined-behaviour noise, validated the FMA w
 round-to-odd fix that would have bought zero, handed back the denormal rule in its place, caught an upstream
 patch whose hunks would have landed on the wrong functions, and produced vpkpx exact on the first attempt.
 **Every one of those cost a python script and no device time.**
+
+
+## >> THE a64 CORPUS RUN IS PREPPED AND WAITING - PUSH AND GO (2026-08-18)
+**The device is blocked (battery 9%, rpcs3 running), so the blocked path was shortened instead. Everything
+that can be done without the device IS done.**
+```
+ARM64 binary  ./obj/local/arm64-v8a/xenia-cpu-ppc-tests   30,345,904 bytes, Aug 18 19:08
+   built with: ndk-build NDK_PROJECT_PATH=. NDK_APPLICATION_MK=build/xenia.Application.mk                  PREMAKE_ANDROIDNDK_PLATFORMS:=Android-ARM64                  PREMAKE_ANDROIDNDK_CONFIGURATIONS:=Release xenia-cpu-ppc-tests -j8
+   objects verified fresh: ppc_emit_fpu / ppc_emit_altivec / ppc_hir_builder 19:06, a64_sequences 19:04
+   aarch64 syntax check also clean on all four
+```
+**Carries FOUR queued changes: the FPSCR host-status port, the FMA walk-order fix, the single-precision
+denormal quirk, and vpkpx. Baseline to beat: 7,907. Predicted 4,800-5,300.**
+**=> TAKE THE PER-INSTRUCTION BREAKDOWN, NOT THE TOTAL.** The prediction is checkable per form (vpkpx must go
+to 0; fmadds/fmsubs/fnmadds/fnmsubs should each drop by up to 592), and a total alone cannot separate a partial
+win from an offsetting regression. Aggregate ON DEVICE - a `logcat -d` over WiFi truncates client-side.
+### !! A NEW VARIANT OF THE STALE-OBJECT TRAP, AND IT NEARLY PRODUCED A FALSE ALARM
+This file already says to check the .o timestamp because ndk-build once linked a month-old object. Doing that
+today reported the objects as a DAY OLD while the binary was minutes old - which looks exactly like that bug.
+**It was the CHECK that was wrong: `find . -name ppc_emit_fpu.o | head -1` returns the GRADLE tree
+(`android/android_studio_project/app/build/intermediates/cxx/...`), not ndk-build's `./obj/local/...`.** There
+are FIVE copies of every object in this repo across two build systems and two ABIs.
+**=> SCOPE THE SEARCH TO THE TREE THAT PRODUCED THE BINARY (`find ./obj -name ...`), and never `head -1` a
+find whose whole purpose is to locate the right one of several.** Same shape as the grep-truncation trap this
+file already records - both times a `head` turned a complete answer into a confidently wrong one.
