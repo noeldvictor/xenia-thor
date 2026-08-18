@@ -10212,3 +10212,41 @@ investigation started.
 disassembly run needs ~15 SECONDS, not a route and not a thermal budget.** `--es disassemble_function_filter`
 takes a comma list and matches any address INSIDE a function. **This should have been the second instrument of
 the session, not the eighth.**
+
+### 🔚 THE HEAD OF THE CHAIN: thid D SPINS IN A **RING/QUEUE DRAIN WAIT**
+`82444EF0-82445024`, reached as `82445000 <- 82445038 <- 8243AE00 <- 827A94AC`:
+```
+82444F20  lwz  r10, 0x8(r31)    ; head
+82444F24  lwz  r11, 0xC(r31)    ; tail
+82444F28  cmpl r10, r11         ; head > tail ?   -> 82444F4C
+82444F30  lwz  r9,  0x14(r31)   ; completed
+82444F34  cmpl r9,  r11         ; completed != tail ? -> 82444F4C
+...
+82444FC8  bl   827A7B08         ; fetch value A
+82444FD8  lwz  r10,0(r11) / lwz r11,0x14(r10) / bcctrl   ; virtual call -> value B
+82444FE8  cmpl r30, r3          ; A == B ? -> exit at 82445018
+82444FF4  bl   826128B8         ; Sleep(r25)
+82444FFC  bl   826128B8         ; Sleep(0)      <-- returns to 82445000, the backtrace entry
+82445004  lwz  r11, -0x5C80(r26)
+8244500C  bne  82444F20         ; loop
+```
+**⇒ THREE FIELDS OF ONE STRUCTURE - `+0x8` head, `+0xC` tail, `+0x14` completed - PLUS A VIRTUAL
+"get completed value" CALL, COMPARED IN A `Sleep(0)` LOOP. That is a ring drain / fence wait.**
+**🔥 AND THAT IS THE FIRST POINT IN THE WHOLE CHAIN WHERE THE EMULATOR COULD PLAUSIBLY BE AT FAULT.** The main
+thread's loop reads a counter its own workers decrement (nothing for us to do); this one waits for a
+COMPLETED/fence value to catch up to a submitted one. **If that ring is a GPU or async-submission ring whose
+completion value WE advance, then failing to advance it starves the entire chain** - and everything else in
+this investigation is downstream of it.
+**⚠ NOT ESTABLISHED: WHOSE ring it is.** `827A7B08` and the `vtable+0x14` callee are unidentified, and
+`log_import_thunks` (default off) is the documented way to tell whether a `bl` target is a kernel import
+rather than guest code. **That is the next 15-second run, not a guess.**
+### ⇒ THE COMPLETE, MEASURED CHAIN (all of it from this session)
+```
+main (tid 6)  while (*counter > N) Sleep(0)        <- waits for workers to drain; ~650k calls/sec
+workers       WaitForSingleObject(own event, INF)  <- blocked; nobody signals them
+thid B        blocked                              <- was signalling 7/8 (775 + 639 times)
+thid D        ring drain / fence wait, Sleep(0)    <- was signalling B; HEAD OF THE CHAIN
+```
+**⇒ GEARS IS NOT "FIVE THREADS ON AN UNSIGNALLED EVENT". It is one stalled ring/fence wait, cascading through
+a wake chain into a thread pool, with the main thread burning a core on a drain barrier that can never be
+satisfied.** The original description in this file was the SYMPTOM at the far end of that chain.
