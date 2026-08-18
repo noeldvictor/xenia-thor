@@ -72,9 +72,16 @@ class PPCHIRBuilder : public hir::HIRBuilder {
   // Derives the summary from what the host raised, plus the invalid a
   // signalling NaN operand always means. Rc=0 clears the exception bits as
   // ClearFPSCRExceptions does.
-  void UpdateFPSCR(std::initializer_list<Value*> operands, bool update_cr1);
+  // `suppress`, when given, is a condition that clears everything raised.
+  void UpdateFPSCR(std::initializer_list<Value*> operands, bool update_cr1,
+                   Value* suppress = nullptr);
   // As UpdateFPSCR, plus the 0 x inf the host is allowed to leave unsignalled.
-  void UpdateFPSCRForMultiplyAdd(Value* a, Value* c, Value* b, bool update_cr1);
+  void UpdateFPSCRForMultiplyAdd(Value* a, Value* c, Value* b, bool update_cr1,
+                                 Value* suppress = nullptr);
+  // The single-precision quirk: a denormalized operand answers with the
+  // default QNaN and raises nothing. Feed the condition to both of the above.
+  Value* SingleDenormalOperand(std::initializer_list<Value*> operands);
+  Value* ApplySingleDenormalOperand(Value* quirk, Value* result);
   // For the estimates, whose host stand-ins raise nothing of their own.
   void UpdateFPSCRForEstimate(Value* b, bool is_sqrt_estimate, bool update_cr1);
   void CopyFPSCRToCR1();
