@@ -11021,3 +11021,43 @@ the genuine double-rounding tail.** Fixing those properly needs the fused interm
 **AND NOTE WHICH HALF OF THE FAILURES THIS WAS: the `-s` FMA forms are ~2,850 of the 7,907, and the 1-ulp
 class is only part of that** - the rest of those tests fail on CR1 (see below), so even a correct rounding fix
 is worth less than the raw instruction counts suggest.
+
+
+## ** FPSCR-FROM-HOST-STATUS PORTED (edge 32920009d): x64 18,936 -> 17,851, MEASURED SAME-TREE (2026-08-18)
+**Derives FPSCR/CR1 from what the host FPU actually raised, instead of inferring only VX from the result and
+operands. Two new HIR opcodes bracket the arithmetic - `OPCODE_CLEAR_FP_EXCEPTIONS` before,
+`OPCODE_LOAD_FP_EXCEPTIONS` after - so the status read belongs to that one instruction.**
+```
+x64, SAME TREE, port inverted vs applied:
+  BEFORE  Failed 18,936
+  AFTER   Failed 17,851      -1,085
+```
+**The before was measured by reverting the two commits in the working tree and rebuilding, NOT by trusting this
+file's recorded 19,120** - which turned out to be 18,936 on the current tree. **A recorded baseline from an
+older tree is not a control.**
+### WHY IT IS THE RIGHT FIX FOR THE CR1 FAILURES
+The corpus expects `cr == 0x08000000` - **FX set, VX clear** - i.e. an INEXACT result. The old code derived
+only VX and wrote FX = VX, so it could never produce FX without VX. Now FX summarizes every raised exception
+and OX is derived too.
+### a64 LOWERING IS TRIVIAL; x64 NEEDED A REWRITE
+```
+a64   msr/mrs FPSR - ARM's IOC DZC OFC UFC IXC already sit in FpExceptionFlags order
+x64   upstream uses ChangeMxcsrMode / GetBackendCtxPtr / X64BackendContext, NONE of which our x64
+      emitter has, so the desktop build failed to compile. Rewritten with public API only:
+        CLEAR  stmxcsr -> clear the six sticky bits in place -> ldmxcsr
+        LOAD   stmxcsr, then dest = ((raw >> 1) & 0x1E) | (raw & 1)   (drops the denormal bit)
+```
+### PORTED MINIMALLY, ON PURPOSE
+Edge's commit ALSO refactors the emitters onto a `ToSingle` opcode and renames locals. **That is a separate
+change with its own risk, and a plausible-looking rounding change had just cost 5,789 failures the same day**,
+so this keeps our `ppc_emit_fpu.cc` and only rewires the calls: `BeginFPSCRUpdate` before the arithmetic,
+`UpdateFPSCR({operands}, Rc)` after, `UpdateFPSCRForMultiplyAdd` for the eight FMA forms, and the 15 sites on
+the old bare overload keep today's behaviour via `ClearFPSCRExceptions`.
+**Merge shape, for the next port from edge:** 5 of 9 files applied cleanly with `git apply -3`, 4 conflicted.
+`opcodes.h` took both sides; the two `ppc_hir_builder` files took theirs wholesale (nothing outside them calls
+that API - checked first). Two leftovers of our old API then had to go by hand: a duplicate public
+`StoreFPSCRSummary` declaration and the stale 2-arg `UpdateFPSCR` definition. **Both were caught by the
+compiler, not by review.**
+**⚠ THE a64 NUMBER IS STILL OWED.** The device was held by the other session's rpcs3 for this entire step.
+**Baseline to beat there: 7,907.** The x64 result is strong evidence the shared half is right, but the a64
+lowering (msr/mrs FPSR) has never executed.
