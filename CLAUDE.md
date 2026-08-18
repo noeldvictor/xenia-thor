@@ -854,6 +854,35 @@ arms. Do NOT flip the defaults on title-screen evidence.
 
 **STATUS: NOT STUDIED IN DEPTH. Not cloned, not read.** Do that before making any claim about their codegen.
 
+## >>> THE CURRENT GOAL (user, 2026-08-17): ANSWER THREE QUESTIONS, DO NOT GRIND LEVERS
+**Brief: https://claude.ai/code/artifact/8d00e3a3-14f7-427d-84ca-3bdd1485ced3**
+**BD is ~93% GPU-bound; the frame is 89.6% guest fragment shading / 10.4% EDRAM machinery. The lossless
+budget on the CURRENT render-target path is ~10% and is now essentially spent. So the goal is no longer "try
+another lever" - it is to answer the three questions that decide which ARCHITECTURE we are optimising, each
+of which is cheap and each of which redirects everything downstream.**
+| # | question | cost | what KILLS it |
+|---|---|---|---|
+| 1 | **Is the EDRAM buffer path faster or slower on Adreno?** | **1 device run** | slower than fbo -> the architecture is closed for BD, permanently |
+| 2 | **Is 7e3 blending correct, or fp16?** | PC + a reference | decides if the buffer path's ~4% delta is a REGRESSION or an ACCURACY FIX |
+| 3 | **Why does draw thinning corrupt?** | PC only | population not separable -> thinning is dead |
+**⚠⚠ AND THE CORRECTION THAT REORDERED THIS LIST - DO NOT LOSE IT.** I spent most of a session treating the
+buffer path (0 render targets, no transfers, no dumps) as the route that removes the ceiling. **Upstream's own
+assessment: *"the ROV path is currently considered much slower compared to the RTV path"*.** The buffer path
+eliminates transfer cost and **MOVES ALL BLENDING AND DEPTH/STENCIL INTO THE FRAGMENT SHADER AS SOFTWARE** -
+and BD is **89.6% fragment-bound**. I was counting what it removes and ignoring what it adds. **On this title
+it is plausibly a NET LOSS**, which is exactly why question 1 is ranked first and framed as a KILL.
+### ALSO OWED, ALL PC-ONLY, ALL INDEPENDENT OF THE ABOVE
+- **Port the upstream FSI sample-mask fixes** (`7c999ca76` demote-to-helper dominance, `3df64c029` 2x-as-4x
+  reading host sample 2 instead of 3). **BD's heavy pass is 2xMSAA**, so a 2x-as-4x sample-mask bug is exactly
+  the class that could be part of the measured ~4% buffer-path delta.
+- **Port the 22 upstream CPU/FPSCR/NaN commits.** Same family that took the corpus 35,917 -> 19,120.
+- **Confirm the lossless stack** (`inpass+hoist+midframe+rtubwc+fetchskip+dhr`): measured **-10.6% at n=85 in
+  mid-complexity scenes, pixel-identical**, but FLAT (+1.8%, n=39) in the heaviest. Needs a matched baseline
+  before it ships in BD's profile.
+**⇒ THE STANDING RULE FOR THIS GOAL: settle CORRECTNESS on the PC trace loop (1.2 s/arm), spend DEVICE time
+only on a number that cannot be obtained any other way.** Every voided, heat-soaked or wrong-scene device run
+in the session that produced this brief was answering a question the PC loop answers for free.
+
 ## Goal
 Xbox 360 games fast + playable on the AYN Thor (Snapdragon 8 Gen 2 / Adreno 740). **Blue Dragon → 30fps @ 720p
 full foliage; Burnout/Gears/Lost Odyssey/Banjo → 30-60.** Ship every win as a cvar-gated, per-game
