@@ -10426,3 +10426,43 @@ KILLED ALL THREE** - the unsignalled-I/O-export theory (tripwire fired zero time
 `DefineSymbol`'s spin loop), and the saverest helper (`behavior=0`). **What actually moved this forward was
 never a theory; it was making the silent failure print four fields.** The bug had been an anonymous SIGTRAP in
 this file since 2026-08-07.
+
+## ✅✅✅ **FIXED AND DEVICE-VALIDATED: THE `DefineSymbol` DEFECT THAT KILLED BIG TITLES (2026-08-17)**
+**The anonymous SIGTRAP this file has carried since 2026-08-07 is FIXED, and the fix is two structural lines.**
+### THE DEFECT
+`Symbol` is CONSTRUCTED with `status_ = kDefining` (`symbol.h`), and the declaring thread only stores
+`kDeclared` once it has finished declaring. So a second thread calling `DefineSymbol` in that window took the
+`kDefining` branch, span, and **the spin exited the moment the declarer stored `kDeclared` - at which point the
+old code RETURNED `kDeclared`.**
+```
+DemandFunction:  anything that is neither kNew nor kFailed  ->  return TRUE
+ResolveFunction: marks the entry STATUS_READY with machine_code() == null
+a64 resolve thunk: cbz x9,8 / br x9 / brk(0xF000)        ->  Fatal signal 5 (SIGTRAP)
+```
+**⇒ A FUNCTION THAT WAS NEVER COMPILED WAS REPORTED AS SUCCESSFULLY RESOLVED.**
+**The measured victim state matched exactly:** `status=kDeclared behavior=kDefault is_guest=true
+range=823AA318-00000000` - **no extent, because it was never defined.**
+### THE FIX (`7494360b3`): loop instead of returning whatever the spin landed on
+So `kDeclared` is handled by the branch that actually requests compilation. Terminates by construction: every
+branch either breaks or advances the state, and only one thread can claim `kDefining` under the lock.
+### ✅ DEVICE-VALIDATED, BOTH HALVES (the fix is in `module.cc`, which EVERY title shares)
+```
+                     BEFORE                      AFTER
+MagnaCarta 2 (a64)   died at 10s, SIGTRAP        4,756 frames over 120s, ALIVE, RESOLVE FAILED = 0
+Blue Dragon (LLVM)   (the only measurable title) 3,186 frames, title reached, RESOLVE FAILED = 0
+```
+**⇒ MAGNACARTA 2 RUNS WHERE IT PREVIOUSLY CRASHED IN TEN SECONDS, AND THE TITLE THIS PROJECT DEPENDS ON IS
+UNAFFECTED.**
+### ⚠ WHAT IS **NOT** YET SHOWN - do not call MagnaCarta 2 a benchmark yet
+**Peak vertices: MC2 588, BD 912.** Both runs sit on a title/menu screen because neither passed a route - this
+was a CRASH test, not a gameplay test. **A second MEASURABLE title still needs MC2 driven into real gameplay
+(>50k verts) and an fps figure.** That is now a routing problem rather than a compat one, which is a much
+cheaper class of problem.
+**⚠ AND IT DOES NOT TOUCH THE OTHER TWO KNOWN BLOCKERS:** MagnaCarta 2 on the **LLVM** backend still dies in
+AOT with the Scudo map failure (~33,280/47,353), so a64 is required for it today; and the **Gears loading
+freeze** (the `Sleep(0)` spin cascade) is a completely separate bug in the same title - this fixes Gears'
+SIGTRAP, not its freeze.
+**📌 THE LESSON, AND IT IS THE SESSION IN ONE SENTENCE: THREE ROOT-CAUSE THEORIES DIED (unsignalled I/O
+exports, an AOT race, saverest helpers) AND THE ANSWER CAME FROM MAKING A SILENT `return 0` PRINT FOUR
+FIELDS.** The bug had been an anonymous tombstone for ten days across two titles. **Instrument the failure
+path before theorising about it.**
