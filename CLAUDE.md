@@ -10250,3 +10250,35 @@ thid D        ring drain / fence wait, Sleep(0)    <- was signalling B; HEAD OF 
 **⇒ GEARS IS NOT "FIVE THREADS ON AN UNSIGNALLED EVENT". It is one stalled ring/fence wait, cascading through
 a wake chain into a thread pool, with the main thread burning a core on a drain barrier that can never be
 satisfied.** The original description in this file was the SYMPTOM at the far end of that chain.
+
+## 💥💥 **MAGNACARTA 2 IS A CHEAP, DETERMINISTIC REPRO OF THE SCUDO AOT OOM (2026-08-17)**
+**Probed the one title on the device that is uncapped, unbroken-on-record and never tried. It does not boot -
+and HOW it fails is worth more than a boot would have been.**
+```
+MagnaCarta 2 (4E4D080B), LLVM backend, cold cache:
+  AOT precompile progress ... 33,280 / ~47,353 functions   <- LARGEST TITLE MEASURED
+  LLVM "Failed to materialize symbols" ... 1,470
+  then: Fatal signal 6 (SIGABRT) in tid PrecompileJIT
+        #01 scudo::die()
+        #02 scudo::dieOnMapUnmapError(unsigned long)
+        #03 scudo::map(...)
+        #04 scudo::MapAllocator<AndroidConfig>::alloc
+        #06 scudo_malloc
+```
+**⇒ IT IS THE SAME SCUDO MAP FAILURE THIS FILE RECORDS FOR GEARS, AND IT IS NOW SIZE-ORDERED ACROSS THREE
+TITLES:**
+| title | functions | AOT outcome |
+|---|---|---|
+| Blue Dragon | ~19.6k | fits |
+| Gears of War | ~28.5k | OOMs with the float lowerings ON, survives with them OFF |
+| **MagnaCarta 2** | **~47.4k** | **OOMs at 33,280 even on the shipping config** |
+**⇒ AND THAT MAKES IT THE BEST VEHICLE FOR FIXING THE OOM, BETTER THAN GEARS EVER WAS.** Gears needed a warm
+cache, a route and a thermal budget to reach its crash. **MagnaCarta 2 dies deterministically during AOT in
+~150 seconds, from a cold start, with no route and no gameplay** - and it stays under 51C the whole time.
+**⇒ SO THE DECISIVE TEST THIS FILE HAS OWED FOR WEEKS IS NOW CHEAP: dump `/proc/<pid>/maps` at ~30,000
+functions and compare the LARGEST FREE GAP against the 362 GB control already recorded.** Below ~1 MB confirms
+FRAGMENTATION and the fix is an arena/slab for JIT allocations; still tens of GB kills fragmentation and the
+cause is elsewhere. **That is one run on a title that cooperates.**
+**📌 AND NOTE WHAT IT SAYS ABOUT THE PROJECT'S BENCHMARK PROBLEM: of 8 profiled titles, the only untried
+uncapped one turns out to be the LARGEST, and it dies in the compiler rather than in the game.** The second
+benchmark title is not blocked by a GPU or a kernel bug - it is blocked by AOT memory.
