@@ -610,6 +610,17 @@ namespace {
 // with a multi-wait, WHICH member never arrives is the entire question.
 void LogMultiWaitStall(int waited_s, uint32_t count, XObject** objects,
                        bool wait_all) {
+  // BACK OFF, do not log every 30s. Plenty of threads park FOREVER on a
+  // legitimate multi-wait (a worker idling on "work available OR shutdown"),
+  // and at one line per thread per 30s that is a steady drip which would
+  // eventually evict the stall lines it exists to capture - the exact
+  // self-inflicted failure that has cost this project runs before. Log at
+  // 30s, 60s, 120s, 240s, ... so a real deadlock is still named promptly and
+  // an idle wait costs a handful of lines an hour.
+  int slice = waited_s / 30;
+  if (slice & (slice - 1)) {
+    return;  // not a power of two
+  }
   std::string members;
   for (uint32_t i = 0; i < count; ++i) {
     if (!objects[i]) {
