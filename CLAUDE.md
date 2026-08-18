@@ -8647,7 +8647,7 @@ like `POW2`/`LOG2`/`DOT_PRODUCT` already do.
 | rank | work | size | why |
 |---|---|---|---|
 | 1 | **the FP NaN/FPSCR family** (8 edge commits above) | large | closes ~24,000 of the 35,917 corpus failures. `9900f7ceb`+`b2d6a4140` are also branchless-on-hot-path |
-| 2 | **inline `vexptefp`/`vlogefp`** (edge `fb225d975`) | ~280 lines | **the LLVM backend emits FOUR libm calls per instruction** (`llvm_assembler.cc:3220/3227`, `EmitVecLaneCall`). a64 calls a C helper. Edge replaced both with a branchless polynomial + a 2^-11 grid snap, which is CLOSER to the hardware estimator than libm is |
+| 2 | **inline `vexptefp`/`vlogefp`** (edge `fb225d975`) | ~280 lines | **STALE - CORRECTED 2026-08-18.** `cpu_llvm_batch_lane_calls` is **DEFAULT TRUE**, so `EmitVecLaneCall` already makes ONE whole-vector call, and a64's `PpcVrsqrtefpVector` batches the same way. **Both backends pay 1 host call per instruction, not 4.** What is left is removing that LAST call. Edge replaced both with a branchless polynomial + a 2^-11 grid snap, which is CLOSER to the hardware estimator than libm is |
 | 3 | `e9582aca7` `stvlx`/`stvrx` as overlapping stores | ~110 a64 lines | replaces byte loops |
 | 4 | XenDroid `e0137c9a7` ADPF hint session for the audio pump | 105 lines | we already have ADPF plumbing, but **only in `gpu/command_processor.cc`**. Theirs holds clocks up for the APU |
 | 5 | XenDroid Vulkan descriptor/layout set (`68e78ca92`, `036fedb3e`, `8e48dd4af`, `162c86ed1`) | small each | needs a device to judge |
@@ -10772,3 +10772,31 @@ it a shared dependency: `CANNOT LINK EXECUTABLE: library "libLLVM.so" not found`
 **Every a64 codegen change can now be validated against hardware-captured expectations**, which is the standing
 rule this file could not previously satisfy on ARM. The full 169,117-case a64 baseline has NOT been taken yet -
 that is the obvious next run, and it is now merely long rather than impossible.
+
+
+## XXX CORRECTION 2026-08-18: THE "PER-LANE HOST CALL" CLASS IS **ALREADY FIXED ON BOTH BACKENDS**
+**I re-derived this class from a fresh census (`EmitVecLaneCall` has 3 call sites; a64 defines
+`PpcVrsqrtefpLane` / `PpcFrsqrte` / `EmulatePow2` / `EmulateLog2`) and reported it as "4 host calls per vector
+instruction on the shipping backend". THAT IS WRONG.**
+```
+llvm_assembler.cc:186   DEFINE_bool(cpu_llvm_batch_lane_calls, TRUE)   <- default ON, and it is letter 'b'
+                        in the objcache key table, so it genuinely applies
+llvm_backend.cc:550     xe_llvm_vrsqrte_vec / _log2_vec / _exp2_vec    <- the whole-vector helpers EXIST
+a64_sequences.cc        PpcVrsqrtefpVector(uint32_t* lanes)            <- a64 batches the same way
+```
+**=> BOTH BACKENDS ALREADY PAY ONE HOST CALL PER `vrsqrtefp`/`vlogefp`/`vexptefp`, NOT FOUR.** Earlier sessions
+fixed the a64 side and the LLVM side, and the LLVM lever was defaulted ON. The 4-call shape survives only in
+the cvar-OFF branch and in the comments describing what it used to do.
+**=> SO THE REMAINING OPPORTUNITY IS SMALLER THAN CLAIMED: 1 host call -> 0.** That is what edge `fb225d975`
+(inline polynomial + a 2^-11 grid snap) and `a3a4cd468` (emit the vrsqrte table inline) actually buy.
+`fb225d975` is still worth taking, because it is ALSO an accuracy fix - its own message says the polynomial is
+closer to the hardware estimator than libm - and that half is now MEASURABLE, since the corpus finally runs
+against a64.
+**AND RULE 4 STILL GATES IT: nobody has ever counted `vexptefp`/`vlogefp` frequency at runtime.** The 192+
+figure in this file is `vrsqrtefp` EMISSION SITES (static), which this file already flags as "not proof the
+instruction is hot". Census before building.
+**THE PROCESS POINT, AND IT IS THE SAME ONE AS THE OOM: I READ THE CALL SITES AND NOT THE DEFAULT.**
+`EmitVecLaneCall`'s per-lane loop sits right there in the source and looks damning; the
+`if (cvars::cpu_llvm_batch_lane_calls)` branch above it is what actually runs. **This file's own rule is to
+check the compiled default, the persisted device config AND the allowlist before believing a lever's shape -
+I checked none of the three before quoting the number.**
