@@ -11118,3 +11118,35 @@ real, but a raw failure count silently mixes real defects with undefined-behavio
 FACT.** The corpus had 650. **Fitting candidate models against the WHOLE dataset cost one script and inverted
 the conclusion twice** - first killing my rule, then showing there was nothing to fix at all. When the data is
 already captured, never generalise from the cases you happened to print.
+
+
+## ** THE FMA WALK-ORDER FIX IS RULE-VALIDATED AGAINST HARDWARE, DEVICE-FREE (2026-08-18)
+**The a64-only 798 failures were attributed to the FMA NaN walk using HIR order instead of PPC order. That was
+read off x64's comment. The corpus proves it directly, and it needs no device.**
+**FIRST, THE OPERAND MAPPING, WHICH IS THE EASY THING TO GET BACKWARDS.** The captured tests read
+`fmadd f4, f1, f2, f3`, and the PPC assembly order is `frD, frA, frC, frB` - so **A=f1, C=f2, B=f3**. PPC
+returns the first NaN in **A, B, C** order, i.e. **f1, then f3, then f2**. In HIR terms (`MUL_ADD` is
+`src1*src2+src3`, so src2=C and src3=B) that is **s1, s3, s2**.
+```
+                              fmadd   fmsub
+cases with >=2 NaN operands     128     128
+   result == A (f1)              88      88
+   result == B (f3)              40      40
+   result == C (f2)               0       0
+   unexplained                    0       0
+DECISIVE subset - B and C BOTH NaN, A is not:
+   B wins                        40      40
+   C wins                         0       0
+```
+**=> C NEVER WINS WHEN ANOTHER OPERAND IS NaN, AND THE RULE EXPLAINS ALL 256 MULTI-NaN CASES WITH ZERO
+RESIDUAL.** Our old walk (s1, s2, s3) returns C's NaN in exactly the 40-per-form decisive cases, which is the
+bug. The fix is confirmed correct against hardware rather than against another backend's comment.
+**!! SIZE IT HONESTLY: THIS VALIDATES THE RULE, NOT THE WHOLE 798.** The decisive cases are ~40 per form (~80
+counting the `_cr_GEN` twins) against 199-200 failures per form, so the walk order is PART of each form's
+failures - the rest is the round-to-single and CR1 classes already named. **Do not predict a 798-case drop from
+this entry; predict the multi-NaN subset and let the run report the rest.**
+**== AND THE TECHNIQUE GENERALISES, WHICH IS WORTH MORE THAN THE FIX: A SEMANTICS RULE CAN BE VALIDATED
+AGAINST THE CORPUS WITHOUT RUNNING ANYTHING.** Filter the captured cases to the ones that DISCRIMINATE between
+the candidate rules, then count. It costs one script, needs no device and no build, and it is the same method
+that retired vsl/vsr an hour earlier. **Use it before queueing any future CPU semantics change** - it turns
+"upstream says so" into "hardware says so".
