@@ -10324,3 +10324,43 @@ MagnaCarta 2, a64  backend : compiles ~47,104 functions in ~10s, REACHES THE TIT
 **a64 compiles the whole title in seconds and gets to the title screen; LLVM cannot even finish compiling it.**
 `--ez cpu_backend_llvm false` is therefore the right first move on ANY large title that dies during load, and
 it splits "our compiler cannot cope" from "our emulation cannot cope" in one run.
+
+## 🐛🐛🐛 **ROOT CAUSE: A RESOLVE RACE AGAINST THE AOT PRECOMPILE THREAD (2026-08-17)**
+**The anonymous SIGTRAP that has sat in this file since 2026-08-07 has a cause, and it is a RACE, not a
+missing function. Found by making the failure talk (`87ed26141`), which took one run:**
+```
+RESOLVE FAILED (no machine code): guest target=829FF638 caller_lr=82A00CF0 r1=7018DFA0
+```
+### => THE MECHANISM, FROM OUR OWN CODE
+```
+Processor::DemandFunction:
+    auto symbol_status = module->DefineFunction(function);
+    //  ^ "Lock function for generation. If it's already being generated
+    //     by another thread this will block and return DECLARED."
+    if (symbol_status == Symbol::Status::kNew) {   <- ONLY compiles on kNew
+        frontend_->DefineFunction(...)
+    }
+    return true;                                   <- reports SUCCESS regardless
+```
+**⇒ IF THE `PrecompileJIT` THREAD IS MID-GENERATION OF EXACTLY THIS FUNCTION, WE TAKE THE NOT-kNew PATH,
+REPORT SUCCESS, AND RETURN A `Function` WHOSE `machine_code()` IS STILL NULL.** The a64 resolve thunk then
+does `cbz x9, 8; br x9; brk(0xF000)` and the process dies with a tombstone that names nothing.
+### => AND IT EXPLAINS EVERY OBSERVED PROPERTY
+| observation | explained |
+|---|---|
+| only big titles | the AOT pass must still be RUNNING when the guest starts indirect-calling. MagnaCarta 2 is ~47.4k functions and the guest launches with ~249 outstanding |
+| Gears and MagnaCarta 2 trap at the IDENTICAL `fault addr 0x2a000025c` | one shared thunk, one bug |
+| no "Unimplemented instruction", no assert, no translation failure in the log | nothing was broken - the code simply was not published YET |
+| `x20`/`x21` valid in the tombstone | not the LLVM-writes-x20 bug, which this file previously suspected for Gears |
+| intermittent | it is a race; whether it fires depends on WHEN the guest reaches that indirect call |
+### ✅ FIX SHIPPED (`5d48e5748`): bounded retry with a yield, so the generating thread can publish
+**Deliberately BOUNDED (64 attempts).** A genuinely uncompilable function must still fail LOUDLY rather than
+hang a guest thread forever, and the log now distinguishes the two: `no machine code after retry` is a real
+compilation/discovery problem, while the un-retried case was only ever a timing artefact.
+**⚠ NOT YET DEVICE-VALIDATED.** Syntax-checked for aarch64 only (the a64 backend does not build on Windows).
+**The test is MagnaCarta 2 on `--ez cpu_backend_llvm false`: it currently reaches `Title name` and then traps
+within ~10s, so a pass/fail comes back in one short run.**
+**📌 AND THE METHOD POINT, WHICH IS THE WHOLE SESSION IN ONE LINE: THE BUG WAS UNFINDABLE BECAUSE THE FAILURE
+PATH SAID NOTHING.** Two `return 0`s with no log, feeding a `brk` in hand-written assembly, produced a
+tombstone with no guest address and no cause - and it stayed unattributed for ten days across two titles. **One
+log line at the point of failure was worth more than every register-decoding session spent on the tombstone.**
