@@ -11150,3 +11150,52 @@ AGAINST THE CORPUS WITHOUT RUNNING ANYTHING.** Filter the captured cases to the 
 the candidate rules, then count. It costs one script, needs no device and no build, and it is the same method
 that retired vsl/vsr an hour earlier. **Use it before queueing any future CPU semantics change** - it turns
 "upstream says so" into "hardware says so".
+
+
+## *** THE `-s` RESIDUAL IS **NOT** DOUBLE ROUNDING - IT IS A XENON DENORMAL QUIRK, AND THE RULE IS EXACT (2026-08-18)
+**This file recorded the `-s` FMA residual as "the genuine double-rounding tail" and named round-to-odd as the
+fix. THAT IS REFUTED. Modelled both candidate roundings exactly (python Fractions, proper subnormal and
+half-even handling) against every captured case:**
+```
+fmadds, 512 all-finite cases:
+  OURS  fused product-sum -> double -> single  (DOUBLE ROUNDING)  matches 206
+  HW    fused product-sum -> single, ONE rounding                 matches 206
+  cases HW explains that ours does not: 0        cases neither explains: 306
+```
+**=> THE TWO MODELS AGREE ON EVERY SINGLE CASE. Double rounding costs us NOTHING here, so round-to-odd, a
+two-sum, or any wider intermediate would buy ZERO. Do not build it.**
+### => AND THE 306 ARE ONE RULE, WITH ZERO EXCEPTIONS
+Bucketing the unexplained cases by operand class shows every one of them has a DENORMAL operand and expects a
+NaN. Tested directly:
+```
+                    denormal-operand cases   -> default QNaN   other
+fmadds  (single)            296                    296            0
+fmsubs  (single)            296                    296            0
+fmadd   (DOUBLE)            296                      0          296   <- computes normally
+```
+**=> RULE: A DENORMAL OPERAND IN A *SINGLE-PRECISION* FP OPERATION YIELDS THE DEFAULT QNaN
+`0x7FF8000000000000`. The DOUBLE forms are unaffected and handle denormals normally.**
+Verbatim from the capture - `fmadds f4, f1, f2, f3` with `f3 = 0x0000000000000001` (a double denormal, far
+below single's range) expects `7FF8000000000000`, while the identical `fmadd` returns `0000000000000001`.
+**Note the SIGN: positive**, consistent with this file's scalar-FPU rule (VMX is negative, the scalar FPU is
+positive) and with the fix that took a64 9,715 -> 7,907.
+### => SIZE, AND IT IS THE LARGEST REMAINING REAL CLASS
+296 non-`_cr` cases per form, doubled by the `_cr_GEN` twins, across **fmadds / fmsubs / fnmadds / fnmsubs**
+= **~2,368 cases**, against an a64 residual of 7,907 of which 876 is already known to be undefined-behaviour
+noise. **That is roughly a third of everything genuinely left.**
+**AND IT IS SHARED-LAYER (`ppc_emit_fpu.cc`), SO IT IS VALIDATABLE ON DESKTOP x64 WITH NO DEVICE** - the same
+property that made vsl/vsr attractive before definedness retired them.
+**== THIS IS PROBABLY EDGE `8b19ee756` "[CPU] Skip the rounding to single for a denormal operand", AND THE
+NAME DESCRIBES A DIFFERENT MECHANISM FROM WHAT THE DATA SHOWS.** Read that commit before implementing: our
+capture says "produce default QNaN", not "skip a rounding step". **Take the behaviour from the corpus, not
+from the commit title** - this file already records three claims that did not survive reading the thing they
+cited.
+### == THE METHOD POINT, AND IT HAS NOW PAID THREE TIMES IN ONE SESSION
+Model the candidate rules, run them against the WHOLE capture, and count. It retired vsl/vsr, validated the FMA
+walk order, and here it **killed a fix I was about to build and handed back a better one.** Cost: three
+scripts, no device, no build.
+**!! AND ONE MODELLING TRAP THAT PRODUCED A CONFIDENT WRONG ANSWER FIRST: `math.fma` DOES NOT EXIST IN THIS
+PYTHON**, so `math.fma(...) if hasattr(math,'fma') else a*c+b` silently modelled an UNFUSED multiply-add - a
+different operation from our HIR `MulAdd`. It reported 216 vs 206 and "exact-only 0", which reads like a real
+result. **A silent fallback in a model is as dangerous as a silent fallback in a lever** - assert the capability
+instead of degrading to something plausible.
