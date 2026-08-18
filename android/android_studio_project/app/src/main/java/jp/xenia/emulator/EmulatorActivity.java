@@ -917,6 +917,8 @@ public class EmulatorActivity extends WindowedAppActivity {
             copyBooleanExtra(intent, launchArguments, "xam_suppress_dirty_disc_error");
             copyBooleanExtra(intent, launchArguments, "xam_redirect_xui_font_cache");
             copyBooleanExtra(intent, launchArguments, "xam_auto_dismiss_message_boxes");
+            copyBooleanExtra(intent, launchArguments, "xboxkrnl_spin_backtrace");
+            copyIntExtra(intent, launchArguments, "xboxkrnl_spin_backtrace_every");
             copyBooleanExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace");
             copyIntExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace_budget");
             copyIntExtra(intent, launchArguments, "xboxkrnl_thread_wait_trace_after_ms");

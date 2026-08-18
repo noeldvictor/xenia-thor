@@ -902,6 +902,69 @@ dword_result_t KeQueryPerformanceFrequency_entry() {
 DECLARE_XBOXKRNL_EXPORT2(KeQueryPerformanceFrequency, kThreading, kImplemented,
                          kHighFrequency);
 
+
+DEFINE_bool(
+    xboxkrnl_spin_backtrace, false,
+    "Log a GUEST BACKTRACE when a thread calls KeDelayExecutionThread with a "
+    "ZERO interval, i.e. the guest's own Sleep(0) yield-spin. "
+    "WHY: the wait trace records `lr`, but for a spin the lr is the return "
+    "address inside the SHARED Sleep wrapper, so it names the wrapper and not "
+    "the spinner - every caller looks identical. Walking the PPC back chain "
+    "names the CALLER, which is the only thing that identifies what the guest "
+    "is actually polling. Built for the Gears freeze, where the main thread "
+    "issues thousands of Sleep(0) calls from one wrapper while its worker pool "
+    "starves. Throttled; default off.",
+    "Kernel");
+DEFINE_int32(xboxkrnl_spin_backtrace_every, 256,
+             "Log one guest backtrace per N zero-interval delays, per thread. "
+             "Announce-on-first regardless, so a negative is unambiguous.",
+             "Kernel");
+
+namespace {
+// Walk the PPC back chain: [r1] -> previous frame, and the saved LR sits at
+// frame+4 (32-bit PowerPC frame layout, which is what the guest prologs build:
+// `mflr r12; bl __savegprlr; stwu r1,-N(r1)`).
+//
+// EVERY HOP IS VALIDATED. A spinning thread is the worst place to fault: this
+// runs on a hot path in a title that is already misbehaving, so the walk
+// refuses a back chain that does not ASCEND, a null/tiny pointer, or a
+// translation that fails, and it stops after a fixed depth.
+void LogGuestSpinBacktrace(cpu::ppc::PPCContext* ctx, uint64_t count) {
+  if (!ctx) {
+    return;
+  }
+  std::string chain = fmt::format("lr={:08X}", static_cast<uint32_t>(ctx->lr));
+  uint32_t sp = static_cast<uint32_t>(ctx->r[1]);
+  for (int depth = 0; depth < 12; ++depth) {
+    if (sp < 0x1000) {
+      break;
+    }
+    auto* frame = ctx->TranslateVirtual<uint8_t*>(sp);
+    if (!frame) {
+      break;
+    }
+    uint32_t next = xe::load_and_swap<uint32_t>(frame);
+    // The back chain must ascend; anything else is a corrupt or foreign frame.
+    if (next <= sp || next < 0x1000) {
+      break;
+    }
+    auto* lr_slot = ctx->TranslateVirtual<uint8_t*>(next + 4);
+    if (!lr_slot) {
+      break;
+    }
+    uint32_t caller_lr = xe::load_and_swap<uint32_t>(lr_slot);
+    if (!caller_lr) {
+      break;
+    }
+    chain += fmt::format(" <- {:08X}", caller_lr);
+    sp = next;
+  }
+  XELOGW("SPIN backtrace: Sleep(0) #{} tid={:08X} {}", count,
+         XThread::IsInThread() ? XThread::GetCurrentThread()->thread_id() : 0,
+         chain);
+}
+}  // namespace
+
 uint32_t KeDelayExecutionThread(uint32_t processor_mode, uint32_t alertable,
                                 uint64_t* interval_ptr,
                                 cpu::ppc::PPCContext* ctx) {
@@ -915,6 +978,19 @@ uint32_t KeDelayExecutionThread(uint32_t processor_mode, uint32_t alertable,
     }
   }
   uint64_t interval = interval_ptr ? static_cast<uint64_t>(*interval_ptr) : 0u;
+  // A zero interval is Sleep(0) - a yield-spin, not a wait. It is invisible to
+  // every stall diagnostic by construction, so this is the only hook that can
+  // attribute one.
+  if (cvars::xboxkrnl_spin_backtrace && interval == 0) {
+    static std::atomic<uint64_t> spin_count{0};
+    uint64_t c = ++spin_count;
+    int every = cvars::xboxkrnl_spin_backtrace_every > 0
+                    ? cvars::xboxkrnl_spin_backtrace_every
+                    : 256;
+    if (c == 1 || (c % static_cast<uint64_t>(every)) == 0) {
+      LogGuestSpinBacktrace(ctx, c);
+    }
+  }
   LogThreadWaitTrace("KeDelayExecutionThread", "begin", thread, nullptr, 0, 0,
                      processor_mode, alertable, interval, 0);
   X_STATUS result = thread->Delay(processor_mode, alertable, interval);
