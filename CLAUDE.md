@@ -11061,3 +11061,46 @@ compiler, not by review.**
 **⚠ THE a64 NUMBER IS STILL OWED.** The device was held by the other session's rpcs3 for this entire step.
 **Baseline to beat there: 7,907.** The x64 result is strong evidence the shared half is right, but the a64
 lowering (msr/mrs FPSR) has never executed.
+
+
+## >> a64 vs x64 CORPUS DIFF: THE TECHNIQUE THAT SEPARATES "OUR BUG" FROM "SHARED GAP" (2026-08-18)
+**With the corpus running on BOTH backends, the per-instruction diff tells you which failures are yours.
+This is now the cheapest triage in the tree and it needs no device beyond the one a64 run.**
+```
+instr        a64     x64    reading
+vmaddfp     1013    6215    a64 already FAR better (our VMX denormal work)
+vnmsubfp    1012    5318    same
+vminfp         0     414    x64-only
+vmaxfp         0     382    x64-only
+vaddfp/vsubfp  0     204    x64-only
+vcmpeqfp       0     196    x64-only
+fmadd/fnmadd 199/199   0    <- a64-ONLY: 798 cases x64 passes CLEANLY
+fmsub/fnmsub 200/200   0    <- same
+vpkpx        644     644    shared (XEINSTRNOTIMPLEMENTED)
+vsr/vsl      454/422 454/422 shared, and IDENTICAL - a shared-layer bug
+```
+### ** THE a64-ONLY 798: THE FMA NaN WALK USED HIR ORDER, NOT PPC ORDER (FIXED)
+`MUL_ADD` is `src1*src2+src3`; `fmadd` is `frA*frC+frB`. **So src2 is C and src3 is B.** PPC returns the first
+NaN in **A, B, C** order = **s1, s3, s2**. Both a64 helpers walked **s1, s2, s3**, returning C's NaN where
+hardware returns B's whenever both B and C are NaN. **x64's own comment spells the order out** ("the walk is
+src1, src3, src2"); a64's comment described the operands correctly and then walked them wrong.
+Fixed in `EmitFmaWithPpcNan_F64` and `_F32`. **UNMEASURED - a64-only, and the device is at 14% battery.**
+### ?? vsl AND vsr ARE **DIFFERENT** INSTRUCTIONS ON REAL HARDWARE - DO NOT "FIX" THEM TOGETHER
+Both are architecturally UNDEFINED when the low 3 bits of vB's bytes disagree, so the corpus is the only
+authority. Decoded from the captured vectors:
+```
+vsl_28  v1=[1,1,1,1]  v2=[00010203, 04050607, 08090A0B, 0C0D0E0F]  ->  [08, 80, 08, 80]
+        0x01<<3 and 0x01<<7, and (word & 7) is 3,7,3,7 - so vsl shifts EACH WORD BY ITS OWN LOW 3 BITS
+vsl_27  v2=[0000FFFF, FFFF0000, 00000000, FFFF0000]                ->  [80, 01, 01, 01]
+        (word & 7) = 7,0,0,0 - CONFIRMS the same rule
+vsr_28  SAME INPUTS                                                ->  [0, 10000000, 0, 10000000]
+        per-word 0x01>>7 would be ZERO. A nonzero here can only come from bits CARRYING ACROSS
+        word boundaries, i.e. a genuine 128-bit shift - NOT the per-word rule vsl follows.
+```
+**=> vsl looks per-word; vsr does not. Our emitters implement BOTH as a single whole-vector shift using byte
+15's low 3 bits, which is why both fail identically (454/422).** A shared fix would be wrong for at least one
+of them.
+**=> AND THE FIX IS SHARED-LAYER (`ppc_emit_altivec.cc`), SO IT IS VALIDATABLE ON DESKTOP x64 WITH NO DEVICE.**
+That makes vsl/vsr the best remaining device-free target - but it needs the vsr rule derived properly at bit
+level first. **Do not ship a per-word vsl change until vsr is understood; 876 failures are not worth guessing
+a shift semantic.**
