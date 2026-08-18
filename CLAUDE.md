@@ -9841,3 +9841,44 @@ is not optional here), and it means an absolute-timed button sequence must not s
 **⇒ PHASE-1 WARM COST, for planning: 320s and 30,976 functions to reach `Title name: Gears of War`.** Every
 APK install prunes the cache and buys that cost again - so DO NOT reinstall between arms of a Gears
 experiment unless the change is in the binary under test.
+
+## THE GEARS STALL IS ATTRIBUTED AT LAST - AND IT IS NOT WHERE THIS FILE SAID TO LOOK (2026-08-17)
+**Five threads, named. Reproduced with the enhanced stall log in a 60-SECOND run.**
+```
+tid=00000007 handle=F800000C guest_object=00039020 origin=NtCreateEvent
+tid=00000008 handle=F8000014 guest_object=0003F020 origin=NtCreateEvent
+tid=0000000B handle=F8000050 guest_object=00056020 origin=NtCreateEvent
+tid=00000011 handle=F80000F8 guest_object=00078020 origin=NtCreateEvent
+tid=00000012 handle=F8000100 guest_object=0007E020 origin=NtCreateEvent
+   (two re-reported at 60s; force-stopped at the 70C guard)
+```
+### => FOUR THINGS THIS SETTLES, TWO OF THEM AGAINST MY OWN HYPOTHESES
+1. **`origin=NtCreateEvent` - these are NOT lazily-wrapped guest dispatcher headers.** The guest asked our
+   kernel for them explicitly, and `guest_object != 0` because NtCreateEvent allocates the guest object.
+   **So the "XDK inlined KeInitialize, GetNativeObject wrapped it on first use" explanation this file floated
+   for why the handles never appear in a create trace is WRONG for these five.**
+2. **THE TWO UNSIGNALLED I/O EXPORTS ARE NOT INVOLVED: `UNSIGNALLED-COMPLETION` fired ZERO times.**
+   NtQueryDirectoryFile and NtDeviceIoControlFile are never called with an event handle here. **The defect in
+   them is real and stays behind its cvar as a CORRECTNESS fix, but it is NOT the Gears stall, and
+   `xboxkrnl_signal_io_completion_events` must not be sold as one.** The tripwire earned its keep by killing
+   my own candidate in a single run instead of after a build-and-hope.
+3. **THE STALL IS NOT AN "ACT 1 GAMEPLAY" BUG - IT FIRES DURING LOADING, ~26 SECONDS IN.** The waits begin at
+   t=26s and are still outstanding at t=60s while the main thread is still resolving `\WarGame\CookedXenon`
+   and `\WarGame\Movies`, with **4 swaps total**. **So it is reachable in ~40s with NO ROUTE AT ALL** - the
+   125-150s Act-1 route this file treats as a prerequisite is not needed to study it.
+4. **It reproduces across builds.** Historical handles `F8000010 F8000018 F800004C F80000FC F8000104`;
+   today `F800000C F8000014 F8000050 F80000F8 F8000100` - the same five slots shifted by one allocation.
+### !! WHAT IS **NOT** ESTABLISHED, AND IT IS THE NEXT QUESTION
+**Whether these five waits are PATHOLOGICAL or a normal idle thread pool.** UE3 parks worker threads on a
+work-available event, and "five threads asleep during a load" is also what a HEALTHY engine looks like. The
+historical report is stronger (Act 1, 0-2 fps), but this run never reached Act 1.
+**=> DO NOT write down "the stall is five threads on NtCreateEvent events" as the diagnosis yet.** What is
+proven: the waits are attributable and reproducible, and two candidate causes are dead.
+**=> THE DISCRIMINATOR IS BUILT AND UNRUN: `guest_lr` was added to the stall log AFTER this run.** It names
+the GUEST CALL SITE of each wait, which separates a thread-pool idle loop from a blocked asset load, and feeds
+straight into `--es disassemble_function_filter`. Costs one install (which prunes the object cache = 320s
+re-warm) plus ~40s of runtime.
+**AND THE CHEAPEST FORM OF THIS EXPERIMENT IS NOW KNOWN: launch, wait 40s, read the log.** The run before it
+guarded out at t=50s having reached nothing, because a headless launch renders UNCAPPED; passing the title's
+own `gpu_frame_limit_fps 30` bought 60s. **The route compression and the cap turned out to be unnecessary -
+the stall appears at 26s.**

@@ -472,13 +472,23 @@ X_STATUS XObject::Wait(uint32_t wait_reason, uint32_t processor_mode,
       // which floods (~135 handle adds/sec on UE3 asset loads) and evicts the
       // very lines it was raised to capture.
       auto stall_handles = handles();
+      // guest_lr names the GUEST CALL SITE that is blocked. Without it the log
+      // says a thread is stuck but not what it was doing, and for a
+      // guest-owned event (origin=guest-native) that is the whole remaining
+      // question - the address feeds straight into a disassembly
+      // (--es disassemble_function_filter) or Ghidra.
+      auto* stall_thread =
+          XThread::IsInThread() ? XThread::GetCurrentThread() : nullptr;
       XELOGW(
           "XObject::Wait: host thread has waited {}s on a {} "
-          "(tid={:08X} handle={:08X} guest_object={:08X} origin={} name='{}')",
+          "(tid={:08X} handle={:08X} guest_object={:08X} origin={} name='{}' "
+          "guest_lr={:08X})",
           waited_s, static_cast<uint32_t>(type()),
-          XThread::IsInThread() ? XThread::GetCurrentThread()->thread_id() : 0,
+          stall_thread ? stall_thread->thread_id() : 0,
           stall_handles.empty() ? 0 : stall_handles[0], guest_object(),
-          creation_origin(), name());
+          creation_origin(), name(),
+          stall_thread ? uint32_t(stall_thread->thread_state()->context()->lr)
+                       : 0);
     }
   } else {
     result =

@@ -65,7 +65,9 @@ preflight(){
   busy=$("$ADB" -s "$DEV" shell "ps -A -o NAME | grep -icE rpcs" 2>/dev/null | tr -d "\r")
   [ "$busy" = "0" ] || { say "ABORT: rpcs3 is running - shared device"; exit 1; }
   B=$("$ADB" -s "$DEV" shell "dumpsys battery | grep level" | tr -d "\r" | grep -oE "[0-9]+" | head -1)
-  CH=$("$ADB" -s "$DEV" shell "dumpsys battery | grep powered" | tr -d "\r" | grep -oE "true|false" | head -1)
+  # grep "powered" alone matches "AC powered: false" FIRST and reports a
+  # CHARGING device as discharging, which would abort a perfectly safe run.
+  CH=$("$ADB" -s "$DEV" shell "dumpsys battery" | grep -E "USB powered|AC powered" | grep -q "true" && echo true || echo false)
   T=$(temp)
   say "pre-flight: temp=$((T/1000))C battery=${B}% charging=${CH}"
   if [ "${B:-0}" -lt 30 ] && [ "$CH" != "true" ]; then
