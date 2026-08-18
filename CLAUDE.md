@@ -854,6 +854,30 @@ arms. Do NOT flip the defaults on title-screen evidence.
 
 **STATUS: NOT STUDIED IN DEPTH. Not cloned, not read.** Do that before making any claim about their codegen.
 
+## XXX WITHDRAWN: THE "LOSSLESS STACK -10.6%" IS FLAT ON A MATCHED PAIR (2026-08-17)
+**A properly matched pair replaces the pooled comparison, and the win disappears.**
+```
+band            n base/stack    matched pair      (earlier pooled claim)
+ 50-120k          84 / 84          -0.4%
+120-180k        150 / 149          -2.4%               -10.6%   <- WITHDRAWN
+180-230k         91 / 299          -0.6%
+230-300k        250 / 241          -1.8%
+both arms started at 38-39C; drift on this device is ~2.8%
+```
+**=> EVERY BAND IS INSIDE DRIFT. `inpass + hoist + midframe + rtubwc + fetchskip + dhr` IS FLAT ON BD.**
+**🔑 WHY THE FIRST NUMBER WAS WRONG, AND IT IS A METHOD ERROR NOT A MEASUREMENT ERROR:** it compared ONE
+baseline run against THREE POOLED stack runs. The pooled arms had different start temperatures and, because
+faster arms hit the 70C guard sooner, they sampled different parts of the route - so the bands contained
+different CONTENT even though the vertex counts matched. The matched pair has balanced n (84-299 per band vs
+121-vs-13) and identical starts.
+**⇒ RULE: POOLING RUNS ACROSS DIFFERENT THERMAL STARTS IS NOT A SUBSTITUTE FOR A MATCHED PAIR.** Vertex-band
+bucketing controls for scene COMPLEXITY, not for WHICH content, and the two diverge as soon as the arms end at
+different route depths.
+**⇒ AND IT COMPLETES THE PICTURE FOR BD: THE LOSSLESS BUDGET ON THE HOST-RT PATH IS SPENT.** Clamp removal
+(~9%, a regression fix) and `vulkan_direct_host_resolve` (~1.3%) are shipping; everything else quality-neutral
+measures flat, and the one architecture that would remove the ceiling is **1.5x-3x slower** (see the entry
+below). **Further BD speed costs image quality - that is now a measured conclusion, not an opinion.**
+
 ## XXX Q1 ANSWERED - THE EDRAM BUFFER PATH IS 1.5x-3x SLOWER ON ADRENO. ARCHITECTURE CLOSED FOR BD (2026-08-17)
 **One device run, 150 s, and it closes a line of attack that looked like the only route past the ~10% ceiling.
 The candidate was given the ADVANTAGE: 35C cold start (the coldest of the session) against a baseline that
