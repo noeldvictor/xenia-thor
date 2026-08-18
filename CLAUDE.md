@@ -10835,3 +10835,56 @@ at 2 for 35+ seconds.** Remaining candidates, none tested:
    fails would spin, not leak, but our reservation is a plain value CAS with no address check.
 **IN SHORT: THREE HYPOTHESES FOR THIS FREEZE HAVE NOW DIED (unsignalled events, a stopped consumer, a leaked
 counter). Each died to a MEASUREMENT, and each measurement was cheaper than the theorising that preceded it.**
+
+
+## *** THE FIRST a64 CORPUS BASELINE EVER TAKEN (2026-08-18): 24,991 / 169,117 FAIL, AND 91% ARE ONE FAMILY
+**The corpus has existed in-tree since 2026-08-16 and had NEVER run against the backend we ship on the Thor -
+see the build-config entry above for why. It runs now.**
+```
+Total tests: 169,117     Passed: 144,126     Failed: 24,991  (14.8%)
+   for comparison, this file's x64 figure after the FMA/FPSCR port: 19,120
+   => a64 is 5,871 WORSE than x64
+```
+### THE DISTRIBUTION IS NOT FLAT - IT IS ONE BUG FAMILY
+```
+vnmsubfp          11,520   <- 46% of ALL a64 failures, on its own
+fnmsubs / fnmadds  2,122 + 2,120
+fnmsub  / fnmadd   1,608 + 1,607
+fmsubs  / fmadds     930 +   928
+vmaddfp            1,013
+fmsub   / fmadd      416 +   415
+vpkpx                644   (XEINSTRNOTIMPLEMENTED - expected)
+vsr     / vsl        454 +   422
+vcmpbfp              284
+everything else     <100 each (fmuls 79, fsubs 72, fadds 71, fdivs 62, ...)
+```
+**=> THE MULTIPLY-ADD FAMILY IS 22,679 OF 24,991 = 91% OF EVERY a64 FAILURE.**
+### AND THE CAUSE IS KNOWN, BECAUSE THE x64 SIDE WAS ALREADY FIXED AND a64 WAS NOT
+This file records `THE PPC FMA NaN/CR1 PORT: 35,917 -> 19,120 (-46.8%)`, step by step: scalar multiply-add NaN
+semantics (-4,716), **packed vnmsubfp NaN semantics (-7,490)**, vcmpbfp NaN bounds (-551), FPSCR
+invalid-operation summary for CR1 (-4,040). **That work landed on the x64 emitter and the shared CPU layer.
+The a64 emitter never got it** - which is exactly what a 46%-vnmsubfp / 91%-multiply-add profile looks like.
+**=> SO THE HIGHEST-VALUE CPU CORRECTNESS WORK IN THE TREE IS NOW NAMED, SIZED AND MEASURABLE: port the
+multiply-add NaN semantics to a64.** Upstream already has the a64-side commits - xenia-edge `9900f7ceb`
+"[A64] Make the FMA NaN fixup branchless", `b2d6a4140` "[A64] Make the two-operand VMX NaN fixup branchless",
+`6cc7c1835` "[A64] Select vmaxfp/vminfp NaN lanes by operand position" - plus the shared `9804846f4` /
+`cf43c4c52` / `32920009d` / `378c95215` / `de4d24493`.
+**AND NOTE THE SECOND PRIZE: those two a64 commits are BRANCHLESS rewrites of the NaN fixup, i.e. the same
+change is a correctness fix AND removes branches from the hot FMA path.** This file already prices our fixup
+at ~6 ASIMD uOPs plus staging copies on a 2-wide V pipe.
+### THE RECIPE, because every step of it cost something to find
+```
+1. build:  ndk-build ... xenia-cpu-ppc-tests      (needs the premake ARM64 filter - see the entry above)
+2. push:   the binary, libLLVM.so (it is a shared dep now), and testing/ with *.s + bin/*.bin + bin/*.map
+           - the .map files are REQUIRED; without them the runner discovers 0 tests and exits 0 silently
+           - skip bin/*.dis: 18 MB of listings the runner never reads (73 MB pushed instead of 99 MB)
+3. run:    cd <dir> && LD_LIBRARY_PATH=<dir> ./ppctests --cpu=arm64              --test_path=testing/ --test_bin_path=testing/bin/ --break_on_unimplemented_instructions=false
+4. read:   RESULTS GO TO LOGCAT, NOT STDOUT. Raise the buffer first (logcat -G 128M).
+```
+**Runtime: about 8 minutes for all 169,117 cases. Not the ">10 minutes, and it OOMs" this file used to claim.**
+**!! AND THE TRAP THAT MADE IT LOOK LIKE A CRASH: `adb logcat -d` OVER WIFI ON A 128 MB BUFFER GETS CUT OFF BY
+THE CLIENT TIMEOUT.** A `logcat -d | tail` then shows the tail of the TRANSFER, not of the log - it looked like
+the run died at `vmaddfp_4249_GEN` when it had actually finished normally minutes later.
+**=> FILTER ON THE DEVICE: `adb shell "logcat -d | grep ... | tail"`, and aggregate with an on-device awk.**
+The per-instruction table above came from
+`awk '/  - [a-z]/{n=$NF} /TEST FAILED/{print n}' | sed -E 's/_[0-9]+.*//' | sort | uniq -c | sort -rn`.
