@@ -1246,11 +1246,59 @@ struct ADD_I64 : Sequence<ADD_I64, I<OPCODE_ADD, I64Op, I64Op, I64Op>> {
     EmitAddXX<ADD_I64, Reg64>(e, i);
   }
 };
+// PPC answers an invalid operation with its OWN default QNaN, which is
+// POSITIVE (0x7FF8000000000000 / 0x7FC00000). x86 supplies its negative "real
+// indefinite" instead, so a generated NaN comes back with the wrong sign - 89
+// corpus cases, and the single and double forms fail in identical counts
+// because it is one cause.
+//
+// A NaN OPERAND is different: PPC propagates it with its sign and payload
+// intact, and x86 already does that. So only the GENERATED case is rewritten.
+// The operand test is taken BEFORE the op, while both sources are still live -
+// dest commonly aliases a source, so afterwards the operand is gone. That is
+// the same constraint EmitBuildPpcFmaNan_F64 documents.
+template <bool kIsF64, typename OP>
+static void EmitScalarFpWithPpcDefaultNan(X64Emitter& e, Xmm dest, Xmm src1,
+                                          Xmm src2, const OP& op) {
+  // xmm0/xmm1 are scratch: the register allocator only hands out xmm4-xmm15.
+  if (kIsF64) {
+    e.vcmpordsd(e.xmm0, src1, src1);
+    e.vcmpordsd(e.xmm1, src2, src2);
+    e.vandpd(e.xmm0, e.xmm0, e.xmm1);
+  } else {
+    e.vcmpordss(e.xmm0, src1, src1);
+    e.vcmpordss(e.xmm1, src2, src2);
+    e.vandps(e.xmm0, e.xmm0, e.xmm1);
+  }
+  op(e, dest, src1, src2);
+  Xbyak::Label done;
+  if (kIsF64) {
+    e.vucomisd(dest, dest);
+  } else {
+    e.vucomiss(dest, dest);
+  }
+  e.jnp(done);  // result is not NaN - nothing to canonicalize
+  e.vmovq(e.rax, e.xmm0);
+  e.test(e.rax, e.rax);
+  e.jz(done);  // an operand was NaN, so this NaN was propagated - leave it
+  if (kIsF64) {
+    e.mov(e.rax, 0x7FF8000000000000ull);
+    e.vmovq(dest, e.rax);
+  } else {
+    e.mov(e.eax, 0x7FC00000u);
+    e.vmovd(dest, e.eax);
+  }
+  e.L(done);
+}
+
 struct ADD_F32 : Sequence<ADD_F32, I<OPCODE_ADD, F32Op, F32Op, F32Op>> {
   static void Emit(X64Emitter& e, const EmitArgType& i) {
     EmitCommutativeBinaryXmmOp(e, i,
                                [](X64Emitter& e, Xmm dest, Xmm src1, Xmm src2) {
-                                 e.vaddss(dest, src1, src2);
+                                 EmitScalarFpWithPpcDefaultNan<false>(
+                                     e, dest, src1, src2,
+                                     [](X64Emitter& e, Xmm d, Xmm a,
+                                        Xmm b) { e.vaddss(d, a, b); });
                                });
   }
 };
@@ -1258,7 +1306,10 @@ struct ADD_F64 : Sequence<ADD_F64, I<OPCODE_ADD, F64Op, F64Op, F64Op>> {
   static void Emit(X64Emitter& e, const EmitArgType& i) {
     EmitCommutativeBinaryXmmOp(e, i,
                                [](X64Emitter& e, Xmm dest, Xmm src1, Xmm src2) {
-                                 e.vaddsd(dest, src1, src2);
+                                 EmitScalarFpWithPpcDefaultNan<true>(
+                                     e, dest, src1, src2,
+                                     [](X64Emitter& e, Xmm d, Xmm a,
+                                        Xmm b) { e.vaddsd(d, a, b); });
                                });
   }
 };
@@ -1373,7 +1424,10 @@ struct SUB_F32 : Sequence<SUB_F32, I<OPCODE_SUB, F32Op, F32Op, F32Op>> {
     assert_true(!i.instr->flags);
     EmitAssociativeBinaryXmmOp(e, i,
                                [](X64Emitter& e, Xmm dest, Xmm src1, Xmm src2) {
-                                 e.vsubss(dest, src1, src2);
+                                 EmitScalarFpWithPpcDefaultNan<false>(
+                                     e, dest, src1, src2,
+                                     [](X64Emitter& e, Xmm d, Xmm a,
+                                        Xmm b) { e.vsubss(d, a, b); });
                                });
   }
 };
@@ -1382,7 +1436,10 @@ struct SUB_F64 : Sequence<SUB_F64, I<OPCODE_SUB, F64Op, F64Op, F64Op>> {
     assert_true(!i.instr->flags);
     EmitAssociativeBinaryXmmOp(e, i,
                                [](X64Emitter& e, Xmm dest, Xmm src1, Xmm src2) {
-                                 e.vsubsd(dest, src1, src2);
+                                 EmitScalarFpWithPpcDefaultNan<true>(
+                                     e, dest, src1, src2,
+                                     [](X64Emitter& e, Xmm d, Xmm a,
+                                        Xmm b) { e.vsubsd(d, a, b); });
                                });
   }
 };
@@ -1573,7 +1630,10 @@ struct MUL_F32 : Sequence<MUL_F32, I<OPCODE_MUL, F32Op, F32Op, F32Op>> {
     assert_true(!i.instr->flags);
     EmitCommutativeBinaryXmmOp(e, i,
                                [](X64Emitter& e, Xmm dest, Xmm src1, Xmm src2) {
-                                 e.vmulss(dest, src1, src2);
+                                 EmitScalarFpWithPpcDefaultNan<false>(
+                                     e, dest, src1, src2,
+                                     [](X64Emitter& e, Xmm d, Xmm a,
+                                        Xmm b) { e.vmulss(d, a, b); });
                                });
   }
 };
@@ -1582,7 +1642,10 @@ struct MUL_F64 : Sequence<MUL_F64, I<OPCODE_MUL, F64Op, F64Op, F64Op>> {
     assert_true(!i.instr->flags);
     EmitCommutativeBinaryXmmOp(e, i,
                                [](X64Emitter& e, Xmm dest, Xmm src1, Xmm src2) {
-                                 e.vmulsd(dest, src1, src2);
+                                 EmitScalarFpWithPpcDefaultNan<true>(
+                                     e, dest, src1, src2,
+                                     [](X64Emitter& e, Xmm d, Xmm a,
+                                        Xmm b) { e.vmulsd(d, a, b); });
                                });
   }
 };
@@ -1983,6 +2046,11 @@ struct DIV_F32 : Sequence<DIV_F32, I<OPCODE_DIV, F32Op, F32Op, F32Op>> {
     assert_true(!i.instr->flags);
     EmitAssociativeBinaryXmmOp(e, i,
                                [](X64Emitter& e, Xmm dest, Xmm src1, Xmm src2) {
+                                 // NOT routed through the PPC default-NaN helper:
+                                 // fres lowers to Div(1.0f, x), and an ESTIMATE has
+                                 // its own NaN expectations - canonicalizing here
+                                 // regressed fres by 10 corpus cases. fdiv/fdivs are
+                                 // FLOAT64 and keep the fixup via DIV_F64.
                                  e.vdivss(dest, src1, src2);
                                });
   }
@@ -1992,7 +2060,10 @@ struct DIV_F64 : Sequence<DIV_F64, I<OPCODE_DIV, F64Op, F64Op, F64Op>> {
     assert_true(!i.instr->flags);
     EmitAssociativeBinaryXmmOp(e, i,
                                [](X64Emitter& e, Xmm dest, Xmm src1, Xmm src2) {
-                                 e.vdivsd(dest, src1, src2);
+                                 EmitScalarFpWithPpcDefaultNan<true>(
+                                     e, dest, src1, src2,
+                                     [](X64Emitter& e, Xmm d, Xmm a,
+                                        Xmm b) { e.vdivsd(d, a, b); });
                                });
   }
 };
