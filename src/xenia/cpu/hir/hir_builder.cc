@@ -1317,6 +1317,18 @@ Value* HIRBuilder::LoadClock() {
   return i->dest;
 }
 
+void HIRBuilder::ClearFpExceptions() {
+  Instr* i = AppendInstr(OPCODE_CLEAR_FP_EXCEPTIONS_info, 0);
+  i->src1.value = i->src2.value = i->src3.value = NULL;
+}
+
+Value* HIRBuilder::LoadFpExceptions() {
+  Instr* i =
+      AppendInstr(OPCODE_LOAD_FP_EXCEPTIONS_info, 0, AllocValue(INT32_TYPE));
+  i->src1.value = i->src2.value = i->src3.value = NULL;
+  return i->dest;
+}
+
 Value* HIRBuilder::AllocLocal(TypeName type) {
   Value* slot = AllocValue(type);
   locals_.push_back(slot);

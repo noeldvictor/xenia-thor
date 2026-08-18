@@ -437,6 +437,42 @@ struct ROUND_V128 : Sequence<ROUND_V128, I<OPCODE_ROUND, V128Op, V128Op>> {
 EMITTER_OPCODE_TABLE(OPCODE_ROUND, ROUND_F32, ROUND_F64, ROUND_V128);
 
 // ============================================================================
+// OPCODE_CLEAR_FP_EXCEPTIONS
+// ============================================================================
+struct CLEAR_FP_EXCEPTIONS
+    : Sequence<CLEAR_FP_EXCEPTIONS, I<OPCODE_CLEAR_FP_EXCEPTIONS, VoidOp>> {
+  static void Emit(X64Emitter& e, const EmitArgType& i) {
+    // The stored mxcsr always has the sticky flags clear, so reloading it is
+    // both the mode we want and the clear.
+    e.ChangeMxcsrMode(MXCSRMode::Fpu);
+    e.vldmxcsr(e.GetBackendCtxPtr(offsetof(X64BackendContext, mxcsr_fpu)));
+  }
+};
+EMITTER_OPCODE_TABLE(OPCODE_CLEAR_FP_EXCEPTIONS, CLEAR_FP_EXCEPTIONS);
+
+// ============================================================================
+// OPCODE_LOAD_FP_EXCEPTIONS
+// ============================================================================
+struct LOAD_FP_EXCEPTIONS
+    : Sequence<LOAD_FP_EXCEPTIONS, I<OPCODE_LOAD_FP_EXCEPTIONS, I32Op>> {
+  static void Emit(X64Emitter& e, const EmitArgType& i) {
+    e.ChangeMxcsrMode(MXCSRMode::Fpu);
+    auto scratch =
+        e.GetBackendCtxPtr(offsetof(X64BackendContext, helper_scratch_u64s[0]));
+    e.vstmxcsr(scratch);
+    e.mov(i.dest, scratch);
+    // IE DE ZE OE UE PE -> invalid, div by zero, overflow, underflow, inexact.
+    // Dropping DE closes the gap, so everything above it shifts down one.
+    e.mov(e.eax, i.dest);
+    e.shr(i.dest, 1);
+    e.and_(i.dest, 0x1E);
+    e.and_(e.eax, FP_EXCEPTION_INVALID);
+    e.or_(i.dest, e.eax);
+  }
+};
+EMITTER_OPCODE_TABLE(OPCODE_LOAD_FP_EXCEPTIONS, LOAD_FP_EXCEPTIONS);
+
+// ============================================================================
 // OPCODE_LOAD_CLOCK
 // ============================================================================
 struct LOAD_CLOCK : Sequence<LOAD_CLOCK, I<OPCODE_LOAD_CLOCK, I64Op>> {

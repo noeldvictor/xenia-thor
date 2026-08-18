@@ -554,63 +554,140 @@ void PPCHIRBuilder::StoreFPSCR(Value* value) {
   trace_reg.value = value;
 }
 
-void PPCHIRBuilder::StoreFPSCRSummary(Value* vx, bool update_cr1) {
-  // TODO(benvanik): detect overflow and the inexact cases; the latter needs a
-  // status register read after every operation.
+// Writes FX, FEX, VX and OX, the four bits CR1 mirrors. FEX needs the exception
+// enable bits, which nothing sets, so it stays zero.
+void PPCHIRBuilder::StoreFPSCRSummary(Value* raised, bool update_cr1) {
+  /*
+    chrispy: i stubbed this out at one point because all it does is waste
+     memory and CPU time, however, this introduced issues with raiden
+    (substitute w/ titleid later) which probably means they stash stuff in the
+    fpscr?
+
+  */
+  // FX summarizes every exception, not just the invalid ones.
+  Value* fx = IsTrue(raised);
+  Value* vx = IsTrue(And(raised, LoadConstantUint32(FP_EXCEPTION_INVALID)));
+  Value* ox = IsTrue(And(raised, LoadConstantUint32(FP_EXCEPTION_OVERFLOW)));
+
   if (update_cr1) {
-    // Store into the CR1 field directly rather than calling CopyFPSCRToCR1, so
-    // we do not have to read the bits back and shift them.
-    StoreContext(offsetof(PPCContext, cr1.cr1_fx), vx);
+    // Store into the CR1 field.
+    // We do this instead of just calling CopyFPSCRToCR1 so that we don't
+    // have to read back the bits and do shifting work.
+    StoreContext(offsetof(PPCContext, cr1.cr1_fx), fx);
     StoreContext(offsetof(PPCContext, cr1.cr1_fex), LoadConstantInt8(0));
     StoreContext(offsetof(PPCContext, cr1.cr1_vx), vx);
-    StoreContext(offsetof(PPCContext, cr1.cr1_ox), LoadConstantInt8(0));
+    StoreContext(offsetof(PPCContext, cr1.cr1_ox), ox);
   }
-  // FX summarizes VX, so both carry the same value here.
-  Value* vx32 = ZeroExtend(vx, INT32_TYPE);
-  Value* new_bits = Or(Shl(vx32, 31), Shl(vx32, 29));
-  // Hardware ACCUMULATES these until software clears them, but VX is only
-  // derived for the recording forms, so an accumulated summary would report a
-  // stale answer rather than a missing one. Each instruction keeps its own.
+
+  Value* new_bits = Or(Shl(ZeroExtend(fx, INT32_TYPE), 31),
+                       Or(Shl(ZeroExtend(vx, INT32_TYPE), 29),
+                          Shl(ZeroExtend(ox, INT32_TYPE), 28)));
+
+  // Hardware accumulates these until software clears them, but the host status
+  // is read per instruction, so each instruction keeps its own value.
   Value* bits = LoadFPSCR();
-  bits = Or(And(bits, LoadConstantUint32(0x1FFFFFFF)), new_bits);
+  bits = Or(And(bits, LoadConstantUint32(0x0FFFFFFF)), new_bits);
   StoreFPSCR(bits);
 }
 
 void PPCHIRBuilder::ClearFPSCRExceptions(bool update_cr1) {
-  StoreFPSCRSummary(LoadConstantInt8(0), update_cr1);
+  StoreFPSCRSummary(LoadConstantUint32(0), update_cr1);
 }
 
-void PPCHIRBuilder::UpdateFPSCR(Value* result,
-                                std::initializer_list<Value*> operands,
+void PPCHIRBuilder::BeginFPSCRUpdate(bool update_cr1) {
+  if (update_cr1) {
+    ClearFpExceptions();
+  }
+}
+
+// Magnitude of a double, for classifying it without a compare against a NaN.
+static Value* FpMagnitude(PPCHIRBuilder& f, Value* value) {
+  return f.And(f.Cast(value, INT64_TYPE),
+               f.LoadConstantUint64(0x7FFFFFFFFFFFFFFFull));
+}
+
+// Widens a 0/1 flag into one of the FpExceptionFlags bits.
+static Value* FpExceptionBit(PPCHIRBuilder& f, Value* flag, uint32_t bit) {
+  return f.Mul(f.ZeroExtend(flag, INT32_TYPE), f.LoadConstantUint32(bit));
+}
+
+static Value* FpIsSignalingNan(PPCHIRBuilder& f, Value* value) {
+  return f.And(f.IsNan(value),
+               f.IsFalse(f.And(f.Cast(value, INT64_TYPE),
+                               f.LoadConstantUint64(0x0008000000000000ull))));
+}
+
+// VXSNAN is unconditional on PPC, and the host cannot be relied on for it: the
+// a64 sequences branch around the arithmetic when an operand is a NaN, so a
+// signalling operand may never reach an instruction that would signal.
+Value* PPCHIRBuilder::FpInvalidFromOperands(
+    std::initializer_list<Value*> operands) {
+  Value* any_snan = nullptr;
+  for (Value* operand : operands) {
+    Value* is_snan = FpIsSignalingNan(*this, operand);
+    any_snan = any_snan ? Or(any_snan, is_snan) : is_snan;
+  }
+  return any_snan;
+}
+
+void PPCHIRBuilder::UpdateFPSCR(std::initializer_list<Value*> operands,
                                 bool update_cr1) {
   if (!update_cr1) {
-    // Rc=0 pays nothing: it clears as before.
     ClearFPSCRExceptions(false);
     return;
   }
-  // An invalid operation is the only way a NaN can appear that did not come
-  // from an operand, and an SNaN operand is invalid however it propagates.
-  Value* any_nan = nullptr;
-  Value* any_snan = nullptr;
-  for (Value* operand : operands) {
-    Value* is_nan = IsNan(operand);
-    Value* quiet_bit = And(Cast(operand, INT64_TYPE),
-                           LoadConstantUint64(0x0008000000000000ull));
-    Value* is_snan = And(is_nan, IsFalse(quiet_bit));
-    any_nan = any_nan ? Or(any_nan, is_nan) : is_nan;
-    any_snan = any_snan ? Or(any_snan, is_snan) : is_snan;
-  }
-  Value* vx;
-  if (any_nan) {
-    vx = And(IsNan(result), Or(any_snan, IsFalse(any_nan)));
-  } else {
-    vx = LoadConstantInt8(0);
-  }
-  StoreFPSCRSummary(vx, true);
+  Value* raised = Or(LoadFpExceptions(),
+                     FpExceptionBit(*this, FpInvalidFromOperands(operands),
+                                    FP_EXCEPTION_INVALID));
+  StoreFPSCRSummary(raised, true);
 }
 
-void PPCHIRBuilder::UpdateFPSCR(Value* result, bool update_cr1) {
-  ClearFPSCRExceptions(update_cr1);
+void PPCHIRBuilder::UpdateFPSCRForMultiplyAdd(Value* a, Value* c, Value* b,
+                                              bool update_cr1) {
+  if (!update_cr1) {
+    ClearFPSCRExceptions(false);
+    return;
+  }
+  // IEEE lets an implementation skip the invalid signal for 0 x inf when the
+  // addend is a quiet NaN, and x86 skips it where the Xenon signals it, so
+  // recover that one case from the multiplicands.
+  Value* inf = LoadConstantUint64(0x7FF0000000000000ull);
+  Value* a_zero = IsFalse(FpMagnitude(*this, a));
+  Value* c_zero = IsFalse(FpMagnitude(*this, c));
+  Value* a_inf = CompareEQ(FpMagnitude(*this, a), inf);
+  Value* c_inf = CompareEQ(FpMagnitude(*this, c), inf);
+  Value* invalid = Or(FpInvalidFromOperands({a, c, b}),
+                      Or(And(a_zero, c_inf), And(a_inf, c_zero)));
+
+  Value* raised = Or(LoadFpExceptions(),
+                     FpExceptionBit(*this, invalid, FP_EXCEPTION_INVALID));
+  StoreFPSCRSummary(raised, true);
+}
+
+void PPCHIRBuilder::UpdateFPSCRForEstimate(Value* b, bool is_sqrt_estimate,
+                                           bool update_cr1) {
+  if (!update_cr1) {
+    ClearFPSCRExceptions(false);
+    return;
+  }
+  // The estimates never signal inexact, and the host approximations standing in
+  // for them signal nothing at all, so the operand is the only source.
+  Value* magnitude = FpMagnitude(*this, b);
+  Value* is_zero = IsFalse(magnitude);
+  Value* is_nan = IsNan(b);
+  Value* invalid = FpIsSignalingNan(*this, b);
+  if (is_sqrt_estimate) {
+    // A negative operand has no square root. Negative zero does, and a NaN
+    // propagates rather than signalling.
+    Value* is_negative =
+        IsTrue(And(Cast(b, INT64_TYPE), LoadConstantUint64(1ull << 63)));
+    invalid = Or(invalid, And(is_negative, IsFalse(Or(is_zero, is_nan))));
+  }
+  // A zero operand divides by zero, in the reciprocal and its square root
+  // alike.
+  Value* raised = Or(FpExceptionBit(*this, invalid, FP_EXCEPTION_INVALID),
+                     FpExceptionBit(*this, is_zero, FP_EXCEPTION_DIV_BY_ZERO));
+  StoreFPSCRSummary(raised, true);
 }
 
 void PPCHIRBuilder::CopyFPSCRToCR1() {

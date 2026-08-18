@@ -157,6 +157,11 @@ class HIRBuilder {
 
   Value* LoadClock();
 
+  // Host FP exception status, as FpExceptionFlags. Clear before an operation
+  // and load after it to get the set that operation raised.
+  void ClearFpExceptions();
+  Value* LoadFpExceptions();
+
   Value* AllocLocal(TypeName type);
   Value* LoadLocal(Value* slot);
   void StoreLocal(Value* slot, Value* value);

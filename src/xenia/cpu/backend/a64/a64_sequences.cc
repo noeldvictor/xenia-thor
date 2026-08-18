@@ -5121,6 +5121,32 @@ struct ROUND_V128 : Sequence<ROUND_V128, I<OPCODE_ROUND, V128Op, V128Op>> {
 EMITTER_OPCODE_TABLE(OPCODE_ROUND, ROUND_F32, ROUND_F64, ROUND_V128);
 
 // ============================================================================
+// OPCODE_CLEAR_FP_EXCEPTIONS
+// ============================================================================
+struct CLEAR_FP_EXCEPTIONS
+    : Sequence<CLEAR_FP_EXCEPTIONS, I<OPCODE_CLEAR_FP_EXCEPTIONS, VoidOp>> {
+  static void Emit(A64Emitter& e, const EmitArgType& i) {
+    e.ChangeFpcrMode(FPCRMode::Fpu);
+    e.msr(3, 3, 4, 4, 1, e.xzr);  // msr FPSR, xzr
+  }
+};
+EMITTER_OPCODE_TABLE(OPCODE_CLEAR_FP_EXCEPTIONS, CLEAR_FP_EXCEPTIONS);
+
+// ============================================================================
+// OPCODE_LOAD_FP_EXCEPTIONS
+// ============================================================================
+struct LOAD_FP_EXCEPTIONS
+    : Sequence<LOAD_FP_EXCEPTIONS, I<OPCODE_LOAD_FP_EXCEPTIONS, I32Op>> {
+  static void Emit(A64Emitter& e, const EmitArgType& i) {
+    e.ChangeFpcrMode(FPCRMode::Fpu);
+    e.mrs(e.x0, 3, 3, 4, 4, 1);  // mrs x0, FPSR
+    // IOC DZC OFC UFC IXC already sit in the order FpExceptionFlags wants.
+    e.and_(i.dest, e.w0, FP_EXCEPTION_ALL);
+  }
+};
+EMITTER_OPCODE_TABLE(OPCODE_LOAD_FP_EXCEPTIONS, LOAD_FP_EXCEPTIONS);
+
+// ============================================================================
 // OPCODE_SQRT
 // ============================================================================
 struct SQRT_F32 : Sequence<SQRT_F32, I<OPCODE_SQRT, F32Op, F32Op>> {

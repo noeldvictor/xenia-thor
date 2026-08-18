@@ -65,20 +65,18 @@ class PPCHIRBuilder : public hir::HIRBuilder {
   void UpdateCR6(Value* src_value);
   Value* LoadFPSCR();
   void StoreFPSCR(Value* value);
-  // Writes FX, FEX, VX and OX - the four bits CR1 mirrors. FEX and OX are not
-  // derived, so both are always zero; FX summarizes VX and carries its value.
-  void StoreFPSCRSummary(Value* vx, bool update_cr1);
   void ClearFPSCRExceptions(bool update_cr1);
-  // Derives VX (invalid operation) from the RESULT and OPERANDS, with no host
-  // status register read: a NaN result has only two origins, propagation from a
-  // NaN operand or generation, and only an invalid operation generates one - so
-  // VX = result is NaN AND (some operand is an SNaN OR no operand is a NaN).
-  void UpdateFPSCR(Value* result, std::initializer_list<Value*> operands,
-                   bool update_cr1);
-  // Legacy form: clears the exception bits, which is what this did before VX
-  // was derivable. Call sites not yet migrated keep exactly today's behaviour
-  // (CR1 = 0) rather than silently getting a half-derived answer.
-  void UpdateFPSCR(Value* result, bool update_cr1);
+  // Call before the arithmetic so the status the host reports afterwards
+  // belongs to that operation alone. Only the recording forms pay for it.
+  void BeginFPSCRUpdate(bool update_cr1);
+  // Derives the summary from what the host raised, plus the invalid a
+  // signalling NaN operand always means. Rc=0 clears the exception bits as
+  // ClearFPSCRExceptions does.
+  void UpdateFPSCR(std::initializer_list<Value*> operands, bool update_cr1);
+  // As UpdateFPSCR, plus the 0 x inf the host is allowed to leave unsignalled.
+  void UpdateFPSCRForMultiplyAdd(Value* a, Value* c, Value* b, bool update_cr1);
+  // For the estimates, whose host stand-ins raise nothing of their own.
+  void UpdateFPSCRForEstimate(Value* b, bool is_sqrt_estimate, bool update_cr1);
   void CopyFPSCRToCR1();
   Value* LoadXER();
   void StoreXER(Value* value);
@@ -103,6 +101,8 @@ class PPCHIRBuilder : public hir::HIRBuilder {
  private:
   void MaybeBreakOnInstruction(uint32_t address);
   void AnnotateLabel(uint32_t address, Label* label);
+  void StoreFPSCRSummary(Value* raised, bool update_cr1);
+  Value* FpInvalidFromOperands(std::initializer_list<Value*> operands);
 
   PPCFrontend* frontend_;
 

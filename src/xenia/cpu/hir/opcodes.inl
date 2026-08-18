@@ -692,6 +692,18 @@ DEFINE_OPCODE(
     0)
 
 DEFINE_OPCODE(
+    OPCODE_CLEAR_FP_EXCEPTIONS,
+    "clear_fp_exceptions",
+    OPCODE_SIG_X,
+    OPCODE_FLAG_VOLATILE)
+
+DEFINE_OPCODE(
+    OPCODE_LOAD_FP_EXCEPTIONS,
+    "load_fp_exceptions",
+    OPCODE_SIG_V,
+    OPCODE_FLAG_VOLATILE)
+
+DEFINE_OPCODE(
     OPCODE_VECTOR_DENORMFLUSH,
     "vector_denormflush",
     OPCODE_SIG_V_V,
