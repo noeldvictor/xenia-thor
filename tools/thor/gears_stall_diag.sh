@@ -140,6 +140,12 @@ echo
 echo "================ STALLED WAITS ================"
 grep "has waited" "$OUT/gears_stall.log" | sed "s/^.*XObject::Wait/XObject::Wait/" | sort -u
 echo
+echo "================ SPIN BACKTRACES (who calls Sleep(0)) ============="
+# The chain is lr <- caller <- caller... The FIRST entry is the shared Sleep
+# wrapper and is the same for every spinner, so the interesting part is the
+# SECOND entry onward - that is the code actually polling.
+grep -oE "SPIN backtrace: .*" "$OUT/gears_stall.log" | sed -E "s/Sleep\(0\) #[0-9]+ //" | sort | uniq -c | sort -rn | head -12
+echo
 echo "================ MULTI-OBJECT WAITS (previously INVISIBLE) ============="
 grep "WaitMultiple: host thread has waited" "$OUT/gears_stall.log" | sed "s/^.*XObject:://" | sort -u | head -20
 echo

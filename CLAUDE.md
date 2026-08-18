@@ -10076,3 +10076,29 @@ thread and `thid D` stay alive spinning `Sleep(0)` while setting `F8000044` ~2,0
 the Sleep wrapper is polling, and why `thid B` stopped.** Getting it needs the CALLER of `826137A0`, which the
 wait trace cannot give (it logs `lr`, and `lr` is inside the wrapper). That means a guest stack walk from the
 recorded `r1`, or Ghidra on the XEX. **Do not attempt another trace for this - the instruments are exhausted.**
+
+## 🧭 GOAL 2 HAS A CHEAPER PATH THAN GEARS, AND NOBODY HAS TRIED IT: **MAGNACARTA 2** (2026-08-17)
+**The goal is "make a SECOND TITLE measurable". Gears is the named route, not the only one - and Gears is the
+route with a compat bug in front of it. Surveyed what is actually on the device against `GameProfiles`:**
+```
+title                        profile frame cap   status in this file
+Blue Dragon                       none           the current (only) benchmark
+Burnout Revenge                    60            HITS its cap - no headroom to show a win
+Gears of War                       30            Act-1/loading freeze (this session)
+Lost Odyssey                       30            KNOWN BOOT BLOCKER
+Banjo-Kazooie: Nuts & Bolts        30            capped
+Back to the Future                 30            capped
+Infinite Undiscovery              none           records a CRASH (longjmp/stackpoint)
+MagnaCarta 2                      NONE           <-- no cap, no recorded breakage, NEVER TESTED
+```
+**⇒ `MagnaCarta 2` (4E4D080B) IS THE ONLY TITLE ON THE DEVICE THAT IS UNCAPPED, UNBROKEN AND UNTRIED.** An
+uncapped title is exactly what a second benchmark needs: this file already records that **fps is useless as a
+CPU metric on a capped title**, which is why Burnout cannot carry a measurement even though it runs perfectly.
+And it is a JRPG, so it is the same broad workload class as Blue Dragon - which is a WEAKNESS for
+generalisation (a racing game would test the fragment-bound claim harder) but a STRENGTH for getting a second
+number quickly.
+**⇒ COST: one cold AOT warm (unknown size; BD is ~19.6k functions/150s, Gears ~28.5k/320s) plus a route.
+Cheaper than fixing a compat bug, and it does not depend on the Gears investigation landing.**
+**⚠ DO NOT DROP GEARS FOR IT.** Gears' freeze is now characterised in detail and is one instrument away from a
+cause; and a fix there plausibly also buys Lost Odyssey, since this session showed the two share a signature.
+**Run MagnaCarta 2 as the parallel, low-risk path to a second data point, not as a replacement.**
