@@ -11085,22 +11085,36 @@ NaN in **A, B, C** order = **s1, s3, s2**. Both a64 helpers walked **s1, s2, s3*
 hardware returns B's whenever both B and C are NaN. **x64's own comment spells the order out** ("the walk is
 src1, src3, src2"); a64's comment described the operands correctly and then walked them wrong.
 Fixed in `EmitFmaWithPpcNan_F64` and `_F32`. **UNMEASURED - a64-only, and the device is at 14% battery.**
-### ?? vsl AND vsr ARE **DIFFERENT** INSTRUCTIONS ON REAL HARDWARE - DO NOT "FIX" THEM TOGETHER
-Both are architecturally UNDEFINED when the low 3 bits of vB's bytes disagree, so the corpus is the only
-authority. Decoded from the captured vectors:
+### XXX RETRACTED SAME DAY, AND THE ANSWER IS THE OPPOSITE: **vsl/vsr ARE 100% CORRECT ON EVERY DEFINED CASE**
+**I decoded a rule from three eyeballed test vectors ("vsl shifts each word by its own low 3 bits") and
+committed it. Fitting every candidate model against ALL 650 captured cases says that rule explains 18.9%.**
 ```
-vsl_28  v1=[1,1,1,1]  v2=[00010203, 04050607, 08090A0B, 0C0D0E0F]  ->  [08, 80, 08, 80]
-        0x01<<3 and 0x01<<7, and (word & 7) is 3,7,3,7 - so vsl shifts EACH WORD BY ITS OWN LOW 3 BITS
-vsl_27  v2=[0000FFFF, FFFF0000, 00000000, FFFF0000]                ->  [80, 01, 01, 01]
-        (word & 7) = 7,0,0,0 - CONFIRMS the same rule
-vsr_28  SAME INPUTS                                                ->  [0, 10000000, 0, 10000000]
-        per-word 0x01>>7 would be ZERO. A nonzero here can only come from bits CARRYING ACROSS
-        word boundaries, i.e. a genuine 128-bit shift - NOT the per-word rule vsl follows.
+model                        vsl        vsr
+per-word (word & 7)       123/650     88/650      <- the rule I published. WRONG.
+128-bit (byte15 & 7)      228/650    196/650      <- what we already implement
+per-dword (low word & 7)  133/650    116/650
+per-dword (first byte&7)  114/650    125/650
 ```
-**=> vsl looks per-word; vsr does not. Our emitters implement BOTH as a single whole-vector shift using byte
-15's low 3 bits, which is why both fail identically (454/422).** A shared fix would be wrong for at least one
-of them.
-**=> AND THE FIX IS SHARED-LAYER (`ppc_emit_altivec.cc`), SO IT IS VALIDATABLE ON DESKTOP x64 WITH NO DEVICE.**
-That makes vsl/vsr the best remaining device-free target - but it needs the vsr rule derived properly at bit
-level first. **Do not ship a per-word vsl change until vsr is understood; 876 failures are not worth guessing
-a shift semantic.**
+**And 650-422 = 228, 650-454 = 196 - the 128-bit column EXACTLY equals our passing count, confirming our
+emitters are that model. No candidate beats what ships.**
+### => THEN SPLIT THE CASES THE WAY THE ARCHITECTURE DOES, AND IT IS SETTLED
+`vsl`/`vsr` are **architecturally UNDEFINED** unless the low 3 bits of ALL SIXTEEN vB bytes agree:
+```
+                   DEFINED (all byte low-3 equal)   UNDEFINED
+vsl   650 cases          175                          475
+   our model            175/175  = 100%              53/475
+vsr   650 cases          175                          475
+   our model            175/175  = 100%              21/475
+```
+**=> WE ARE PERFECT ON EVERY CASE THE ARCHITECTURE DEFINES. ALL 876 "FAILURES" ARE UNDEFINED-BEHAVIOUR
+INPUTS**, where the corpus records what one Xenon happened to do and the ISA guarantees nothing.
+**=> SO vsl/vsr ARE NOT A BUG AND NOT A TARGET. Chasing them means reverse-engineering an undocumented quirk
+that no correct guest can depend on, for 11% of the a64 failure count and 0% of real behaviour.** They are the
+largest remaining SHARED class, and they are now retired rather than open.
+**!! AND IT CHANGES WHAT THE 7,907 NUMBER MEANS: 876 of it is not fixable and should not be.** Any future
+corpus target must be checked for definedness BEFORE it is costed - `vpkpx` 644 is genuinely unimplemented and
+real, but a raw failure count silently mixes real defects with undefined-behaviour noise.
+**== THE PROCESS POINT, AND IT IS THE THIRD TIME TODAY: I DECODED A RULE FROM THREE CASES AND WROTE IT DOWN AS
+FACT.** The corpus had 650. **Fitting candidate models against the WHOLE dataset cost one script and inverted
+the conclusion twice** - first killing my rule, then showing there was nothing to fix at all. When the data is
+already captured, never generalise from the cases you happened to print.
