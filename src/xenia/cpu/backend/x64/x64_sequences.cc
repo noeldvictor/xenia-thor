@@ -442,10 +442,14 @@ EMITTER_OPCODE_TABLE(OPCODE_ROUND, ROUND_F32, ROUND_F64, ROUND_V128);
 struct CLEAR_FP_EXCEPTIONS
     : Sequence<CLEAR_FP_EXCEPTIONS, I<OPCODE_CLEAR_FP_EXCEPTIONS, VoidOp>> {
   static void Emit(X64Emitter& e, const EmitArgType& i) {
-    // The stored mxcsr always has the sticky flags clear, so reloading it is
-    // both the mode we want and the clear.
-    e.ChangeMxcsrMode(MXCSRMode::Fpu);
-    e.vldmxcsr(e.GetBackendCtxPtr(offsetof(X64BackendContext, mxcsr_fpu)));
+    // Upstream reloads a stored clean MXCSR, which needs the MXCSR-mode
+    // tracking and backend-context scratch their emitter has and ours does
+    // not. Clearing the six sticky exception bits in place is equivalent for
+    // this purpose and touches nothing else in MXCSR (rounding, FTZ, masks).
+    auto scratch = e.StashXmm(0, e.xmm0);
+    e.vstmxcsr(scratch);
+    e.and_(e.dword[scratch.getRegExp()], ~0x3F);
+    e.vldmxcsr(scratch);
   }
 };
 EMITTER_OPCODE_TABLE(OPCODE_CLEAR_FP_EXCEPTIONS, CLEAR_FP_EXCEPTIONS);
@@ -456,11 +460,9 @@ EMITTER_OPCODE_TABLE(OPCODE_CLEAR_FP_EXCEPTIONS, CLEAR_FP_EXCEPTIONS);
 struct LOAD_FP_EXCEPTIONS
     : Sequence<LOAD_FP_EXCEPTIONS, I<OPCODE_LOAD_FP_EXCEPTIONS, I32Op>> {
   static void Emit(X64Emitter& e, const EmitArgType& i) {
-    e.ChangeMxcsrMode(MXCSRMode::Fpu);
-    auto scratch =
-        e.GetBackendCtxPtr(offsetof(X64BackendContext, helper_scratch_u64s[0]));
+    auto scratch = e.StashXmm(0, e.xmm0);
     e.vstmxcsr(scratch);
-    e.mov(i.dest, scratch);
+    e.mov(i.dest, e.dword[scratch.getRegExp()]);
     // IE DE ZE OE UE PE -> invalid, div by zero, overflow, underflow, inexact.
     // Dropping DE closes the gap, so everything above it shifts down one.
     e.mov(e.eax, i.dest);
