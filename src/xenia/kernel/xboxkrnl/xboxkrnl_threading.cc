@@ -915,9 +915,15 @@ DEFINE_bool(
     "issues thousands of Sleep(0) calls from one wrapper while its worker pool "
     "starves. Throttled; default off.",
     "Kernel");
-DEFINE_int32(xboxkrnl_spin_backtrace_every, 256,
-             "Log one guest backtrace per N zero-interval delays, per thread. "
-             "Announce-on-first regardless, so a negative is unambiguous.",
+DEFINE_int32(xboxkrnl_spin_backtrace_every, 100000,
+             "Log one guest backtrace per N zero-interval delays. "
+             "Announce-on-first regardless, so a negative is unambiguous. "
+             "DEFAULT RAISED 256 -> 100000 AFTER MEASURING THE REAL RATE: Gears "
+             "issues roughly 650,000 Sleep(0) calls PER SECOND, so 1-in-512 "
+             "produced 441,768 log lines in one run - enough to evict the rest "
+             "of logcat (objload counts visibly dropped mid-run) and to add "
+             "heat to a title that is already thermally tight. A diagnostic "
+             "that destroys the log it writes into is worse than none.",
              "Kernel");
 
 namespace {

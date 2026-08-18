@@ -55,6 +55,20 @@ GUARD="${GUARD:-70000}"   # hard force-stop limit, per the standing thermal rule
 OUT=scratchpad/gears
 mkdir -p "$OUT"
 
+# 🚨 EVERY adb CALL IS WRAPPED IN `timeout`. LEARNED THE HARD WAY 2026-08-17:
+# the USB endpoint dropped mid-run, an unwrapped `adb shell` BLOCKED FOREVER,
+# and because the loop never came back round, THE 70C GUARD NEVER EVALUATED.
+# The emulator ran unguarded for ~5 minutes and reached 78.1C. temp() already
+# failed CLOSED (999999 on a bad read) - that was not enough, because the loop
+# never got as far as reading the temperature. A guard cannot fire if its
+# TRANSPORT can hang: bound every call.
+#
+# The device also stayed reachable over WiFi (192.168.1.33:5555) the whole
+# time, which is how it was recovered - keep that endpoint connected as a
+# fallback when driving over USB.
+ADBT="${ADBT:-25}"        # seconds; any adb call that exceeds this is a dead link
+adb_() { timeout "$ADBT" "$ADB" -s "$DEV" "$@"; }
+
 say(){ echo "[$(date +%H:%M:%S)] $*"; }
 
 # QUOTED, and returns a sentinel that fails the guard CLOSED on a bad read.
@@ -103,7 +117,7 @@ if [ "${SKIP_WARM:-0}" != "1" ]; then
   for i in $(seq 1 60); do
     sleep 10; tt=$(temp)
     if [ "$tt" -ge "$GUARD" ]; then say "  70C guard at t=$((i*10))s"; break; fi
-    L=$("$ADB" -s "$DEV" logcat -d -s xenia:* 2>/dev/null)
+    L=$(adb_ logcat -d -s xenia:* 2>/dev/null)
     title=$(echo "$L" | grep -c "Title name:")
     prog=$(echo "$L" | grep -oE "AOT precompile progress: [0-9]+" | tail -1 | grep -oE "[0-9]+$")
     say "  $((i*10))s $((tt/1000))C title=$title aot=${prog:-0}"
@@ -118,7 +132,7 @@ say "PHASE 2: route into Act 1 with the stall diagnostic"
 launch "--es hid nop --es hid_nop_button_sequence '$SEQ' $EXTRA"
 for i in $(seq 1 42); do
   sleep 10; tt=$(temp)
-  L=$("$ADB" -s "$DEV" logcat -d -s xenia:* 2>/dev/null)
+  L=$(adb_ logcat -d -s xenia:* 2>/dev/null)
   ol=$(echo "$L" | grep -c "LLVMobjload")
   title=$(echo "$L" | grep -c "Title name:")
   stalls=$(echo "$L" | grep -c "has waited")

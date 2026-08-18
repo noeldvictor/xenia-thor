@@ -10134,3 +10134,44 @@ and a main thread that Sleep(0)-spins instead of making progress. F8000044 is ex
 **📌 THE LESSON, AND IT IS THE SECOND TIME TODAY ON THIS EXACT FIELD: A LOGGED ZERO CAN MEAN "NULL POINTER"
 RATHER THAN "ZERO VALUE".** Read the logging call before interpreting the number - `timeout_ptr ? *timeout_ptr
 : 0` collapses two very different states into the same printed value.
+
+## 🎯🎯🎯 **THE GEARS SPINNER IS NAMED, AND THE RATE IS ~650,000 `Sleep(0)` CALLS PER SECOND (2026-08-17)**
+**The guest backtrace fired and the answer is one call chain. 441,768 backtraces, 97.6% identical:**
+```
+tid=00000006 (MAIN)  lr=82613800 <- 824453D0 <- 82218334 <- 82218F7C <- 822191CC <- 82612D88   x431,349
+tid=0000000D         lr=82613800 <- 82445000 <- 82445038 <- 8243AE00 <- 827A94AC               x  8,497
+tid=0000000B         lr=82613800 <- 8242B590 <- 8242BE18 <- 8243AE00 <- 827A94AC               x  1,695
+```
+**⇒ THE MAIN THREAD SPINS AT ONE SITE: `824453D0`, reached via `82218334 <- 82218F7C <- 822191CC <- 82612D88`.
+That is the address to disassemble, and it is the first time this bug has had one.**
+**⇒ AND THE RATE IS THE HEADLINE: sampling 1-in-512 produced 441,768 lines over ~350s = ~226 MILLION Sleep(0)
+calls, ~650,000 PER SECOND.** Every one is a guest->kernel transition. **That is where the 58%-of-a-core goes**,
+and it dwarfs anything else in the frame.
+**🔑 AND THIS TREE ALREADY BUILT THE MITIGATION AND NEVER AIMED IT: `arm64_guest_spin_throttle_functions`**
+(with `_stride` / `_sleep_us`), which deschedules a spinning guest function so the threads it is starving can
+run. It ships with an EMPTY address list, i.e. inert. **`824453D0` is exactly the kind of address it wants** -
+though note the lever throttles a FUNCTION, and 824453D0 is the Sleep-wrapper's caller, so aim it there and
+not at the shared wrapper (throttling the wrapper would slow every Sleep in the title).
+**⚠ IT IS A MITIGATION, NOT A FIX.** The guest is spinning because something it waits for never happens; making
+it spin more politely may unblock the cascade or may just make the freeze cheaper. **Do not ship it as a fix
+without checking the game actually progresses.**
+### 🚨🚨 AND A REAL HYGIENE FAILURE IN THIS RUN, RECORDED IN FULL: THE DEVICE HIT **78.1C**
+**The USB endpoint dropped mid-run. An unwrapped `adb shell` then BLOCKED FOREVER, so the polling loop never
+came back round and THE 70C GUARD NEVER EVALUATED.** The emulator ran unguarded for ~5 minutes.
+```
+last guarded reading   22:06:27  67C
+discovered (over WiFi) 22:11:30  78.1C, emulator still running
+force-stopped                    -> 59.0C within seconds, then 47.1C
+device uptime 10 days -> it did NOT reboot or crash; USB transport only
+```
+**⇒ `temp()` ALREADY FAILED CLOSED (999999 on a bad read) AND THAT WAS NOT ENOUGH, because the loop never got
+as far as reading the temperature.** This file's standing rule is "a guard must EXIT, not print"; the new rule
+is stronger:
+**⇒ A GUARD CANNOT FIRE IF ITS TRANSPORT CAN HANG. BOUND EVERY `adb` CALL (`timeout 25`), not just the ones
+whose VALUE you check.** `tools/thor/gears_stall_diag.sh` now routes every polling call through `adb_()`.
+**⇒ AND KEEP THE WiFi ENDPOINT CONNECTED WHEN DRIVING OVER USB.** `192.168.1.33:5555` stayed healthy
+throughout and is the only reason the device could be recovered without touching it.
+**📌 THE SECOND SELF-INFLICTED PART: THE DIAGNOSTIC HELPED COOK THE DEVICE.** At 1-in-512 against 650k
+calls/sec it emitted 441,768 log lines, which visibly EVICTED logcat mid-run (the `objload` count fell
+28,775 -> 12,177) and added its own load. **Default raised 256 -> 100,000.** A diagnostic that destroys the log
+it writes into, and heats the device it is measuring, is worse than none.
