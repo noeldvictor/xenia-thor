@@ -81,7 +81,12 @@ run_arm(){ # $1 label  $2 extra cvars
 # differs from the baseline in TWO ways, and the logging alone can stall the
 # emulator. Engagement was proven separately (350 instrumented loops); the
 # measurement arm must differ ONLY in the levers.
-[ "${ARM:-both}" = "base" ] || run_arm spin "--ez park_memory_poll_loops true --ez collapse_ctr_spin_loops true --ez a64_park_spin_backoff true"
+if [ -n "${CUSTOM:-}" ]; then
+  [ "${PAIR:-0}" = "1" ] && run_arm base ""
+  run_arm "${LABEL:-custom}" "$CUSTOM"
+else
+  [ "${ARM:-both}" = "base" ] || run_arm spin "--ez park_memory_poll_loops true --ez collapse_ctr_spin_loops true --ez a64_park_spin_backoff true"
+fi
 echo; echo "=== ENGAGEMENT (a flat result from a lever that never fired is VOID) ==="
 grep -ciE "MemoryPollPark|SPIN_BACKOFF" "$OUT/spin.log" 2>/dev/null || echo 0
 echo "  instrumented loops: $(grep -c "instrumented poll loop" "$OUT/spin.log" 2>/dev/null || echo 0)"

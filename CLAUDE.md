@@ -11706,3 +11706,39 @@ held to before adding them, or the hint is noise.**
 **⚠⚠ AND IT CANNOT BE MEASURED THE OBVIOUS WAY ON THIS DEVICE: `current_now` reads 0 while discharging**, so
 the only power proxies are temperature rise at matched thermal starts and battery-level delta over a long run.
 XenDroid's `e0137c9a7` does the equivalent for their audio pump and is the reference implementation.
+
+
+## ***** THE SPIN LEVERS, ISOLATED: THE PARK IS HARMLESS AND **FLAT**, THE *SLEEP* IS WHAT BREAKS THE TITLE (2026-08-19)
+**Ran the three switches separately on a CLEARED device (rpcs3 force-stopped on a 20 s cycle for the whole
+window, per user directive). This overturns yesterday's blanket "the lever breaks MC2".**
+```
+config                                          frames   verdict
+base (all off)                                   3,740 / 4,030   valid
+park_memory_poll_loops ALONE                     3,915 / 3,670   VALID - renders fine
+park + a64_park_spin_backoff                         0           BREAKS
+all three                                            0           BREAKS
+```
+**=> `a64_park_spin_backoff` IS THE BREAKAGE, NOT THE PARKING.** Injecting the bounded SPIN_BACKOFF into guest
+poll loops is safe; **escalating it to an actual SLEEP stalls the guest**, which is exactly the zero-frames /
+flat-temperature signature. A loop whose exit depends on THIS thread making progress must never sleep.
+### AND THE PARK ITSELF DOES NOT WIN - MEASURED ON THE PROJECT'S OWN PROTOCOL
+```
+matched pair, same session, gpu_frame_us bucketed by scene complexity:
+  band 400-900k verts   base n=2160 med=10,306us | park n=1807 med=10,334us   +0.3%
+  frames in 110 s       base 4,030               | park 3,670                  -8.9%
+  thermal rise          base 39->70C (+30)       | park 42->68C (+26)
+```
+**+0.3% on frame time is FLAT against this device's documented ~2.8% drift.** Across both park runs the frame
+counts (3,915 / 3,670) OVERLAP the base range (3,740 / 4,030) without separating.
+**=> NOT SHIPPED. `park_memory_poll_loops` STAYS DEFAULT-OFF.** The lower thermal rise is the only positive
+signal and it is confounded twice over - the park arm started 3C HOTTER and rendered ~9% FEWER frames, so it
+may simply have done less work.
+### => WHY IT PROBABLY CANNOT WIN ON THIS TITLE, AND WHAT WOULD TEST IT PROPERLY
+**MC2's GPU frame is ~10.3 ms = ~97 fps GPU-side, so the GPU is nowhere near the limiter and the frame time is
+insensitive to CPU-side parking.** And rule 4 was never satisfied: the pass instruments **350 loops** and
+**nobody has shown any of them is HOT**. A poll loop that executes rarely costs nothing whether it spins or
+parks.
+**⇒ THE MISSING MEASUREMENT IS A COUNTER ON THE INSTRUMENTED LOOPS - how many times each SPIN_BACKOFF actually
+executes per second.** Gears' main thread was measured at ~650,000 `Sleep(0)`/sec, so guest spin floods are
+real in this project; what is unproven is that MC2 has one. **Measure the execution rate before tuning the
+predicate further - instrumenting 350 cold loops is worth exactly nothing.**
