@@ -36,7 +36,7 @@ run_arm(){ # $1 label  $2 extra cvars
   [ "$busy" = "0" ] || { say "ABORT: rpcs3 running - shared device"; exit 1; }
   local lvl; lvl=$(adb_ shell "dumpsys battery | grep level" | grep -oE '[0-9]+' | tr -d '\r')
   [ "${lvl:-0}" -ge 30 ] || { say "ABORT: battery ${lvl}% below the 30% floor"; exit 1; }
-  for i in $(seq 1 40); do T=$(temp); [ "$T" -le "$COOL" ] && break; sleep 10; done
+  for i in $(seq 1 120); do T=$(temp); [ "$T" -le "$COOL" ] && break; sleep 10; done   # 20 min: back-to-back runs heat-soak the chassis and 400s was not enough
   [ "$T" -le "$COOL" ] || { say "ABORT: no cooldown to $((COOL/1000))C"; exit 1; }
   say "=== $label === cold=$((T/1000))C batt=${lvl}%"
   adb_ shell "am force-stop $PKG" >/dev/null; sleep 2
@@ -51,6 +51,12 @@ run_arm(){ # $1 label  $2 extra cvars
   for i in $(seq 1 $n); do
     sleep 10; tt=$(temp); alive=$(adb_ shell "pidof $PKG" | tr -d '\r')
     [ -z "$alive" ] && { say "  DIED at $((i*10))s"; break; }
+    # MID-RUN contention check. A start-of-arm pre-flight is point-in-time: rpcs3
+    # can appear later, take the foreground, and our activity then loses its
+    # SurfaceView - the presenter drops every frame, the chassis stays cool, and
+    # the arm reads like a huge power win. That exact thing voided a run here.
+    mid=$(adb_ shell "ps -A -o NAME | grep -icE rpcs" 2>/dev/null | tr -d '')
+    [ "${mid:-0}" = "0" ] || { say "  VOID: rpcs3 appeared mid-run at $((i*10))s"; VOID=1; break; }
     [ "$tt" -ge "$GUARD" ] && { say "  70C guard at $((i*10))s"; break; }
     if [ $i -ge 5 ]; then w=$(uw); pw=$((pw+w)); pn=$((pn+1)); fi   # skip load window
     say "  $((i*10))s $((tt/1000))C ${w:-?}mW"
@@ -58,7 +64,13 @@ run_arm(){ # $1 label  $2 extra cvars
   END=$(temp)
   adb_ logcat -d -s xenia:* > "$OUT/${label}.log" 2>/dev/null
   adb_ shell "am force-stop $PKG" >/dev/null
-  say "  end=$((END/1000))C  mean_power=$([ $pn -gt 0 ] && echo $((pw/pn)) || echo n/a)mW  rise=$(((END-T)/1000))C"
+  local fr pv
+  fr=$(grep -c "GPU draw outcomes" "$OUT/${label}.log" 2>/dev/null)
+  pv=$(grep -oE "total_vertices=[0-9]+" "$OUT/${label}.log" 2>/dev/null | grep -oE "[0-9]+" | sort -n | tail -1)
+  say "  end=$((END/1000))C  rise=$(((END-T)/1000))C  frames=$fr  peak_verts=${pv:-0}"
+  if [ "${VOID:-0}" = "1" ] || [ "${fr:-0}" -lt 200 ] || [ "${pv:-0}" -lt 100000 ]; then
+    say "  *** ARM VOID (contention or never reached gameplay) - do NOT report this as a result ***"
+  fi
   echo "$label $((T/1000)) $((END/1000)) $([ $pn -gt 0 ] && echo $((pw/pn)) || echo 0)" >> "$OUT/power.txt"
 }
 
