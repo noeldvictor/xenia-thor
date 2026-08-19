@@ -2125,9 +2125,29 @@ void CommandProcessor::AdpfBeginSwap() {
   if (adpf_hint_session_ && adpf_last_frame_end_ns_) {
     int64_t actual_ns = AdpfNowNs() - int64_t(adpf_last_frame_end_ns_);
     if (actual_ns > 0) {
-      uint32_t fps =
-          cvars::gpu_frame_limit_fps ? cvars::gpu_frame_limit_fps : 60u;
-      api.update_target(adpf_hint_session_, int64_t(1000000000ull / fps));
+      const uint32_t cap = cvars::gpu_frame_limit_fps;
+      int64_t target_ns;
+      if (cap) {
+        // A capped title has a REAL deadline - hint it, unchanged.
+        target_ns = int64_t(1000000000ull / cap);
+      } else if (cvars::gpu_adpf_target_from_actual) {
+        // Uncapped: follow what we actually achieve. A flat 60fps target on a
+        // title that renders at 15 reports a deadline miss on every frame, and
+        // ADPF answers a miss by raising clocks and moving to bigger cores -
+        // which cannot help a GPU-bound title and only costs watts.
+        adpf_actual_ema_ns_ =
+            adpf_actual_ema_ns_
+                ? (adpf_actual_ema_ns_ * 15u + uint64_t(actual_ns)) / 16u
+                : uint64_t(actual_ns);
+        // Clamp: never hint slower than 10fps (a loading spike must not park
+        // the clocks) nor faster than 60 (no point asking for more than vsync).
+        target_ns = int64_t(std::min<uint64_t>(
+            std::max<uint64_t>(adpf_actual_ema_ns_, 1000000000ull / 60u),
+            1000000000ull / 10u));
+      } else {
+        target_ns = int64_t(1000000000ull / 60u);
+      }
+      api.update_target(adpf_hint_session_, target_ns);
       api.report_actual(adpf_hint_session_, actual_ns);
     }
   }

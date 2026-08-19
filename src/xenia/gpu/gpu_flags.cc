@@ -62,6 +62,24 @@ DEFINE_bool(
     "No-op off Android or on ROMs without the API. Default off.",
     "GPU");
 
+// When a title has no frame cap, the ADPF target was a flat 60 fps. ADPF boosts
+// clocks and migrates to bigger cores whenever the reported ACTUAL exceeds the
+// TARGET (Android's own docs), so on an uncapped title that renders below 60 -
+// Blue Dragon sits near 15 - we were telling the governor we miss the deadline
+// on EVERY frame, forever. It then boosts the CPU permanently, which cannot
+// raise fps on a GPU-bound title and simply costs watts and heat.
+//
+// With this on, an uncapped title's target follows a slow average of the frames
+// we actually achieve, so ADPF holds a steady state instead of chasing a number
+// we can never reach. A title WITH a frame cap keeps using the cap: that is a
+// real deadline and the old behaviour is correct there.
+DEFINE_bool(
+    gpu_adpf_target_from_actual, false,
+    "Derive the ADPF target duration from achieved frame times when the title "
+    "has no frame cap, instead of assuming 60fps. Stops the permanent "
+    "deadline-miss signal that pins CPU clocks high on GPU-bound titles.",
+    "GPU");
+
 DEFINE_bool(
     gpu_vulkan_edram_roaa, false,
     "!! NOT IMPLEMENTED - THIS CVAR DOES NOTHING (verified 2026-08-17). It sets "

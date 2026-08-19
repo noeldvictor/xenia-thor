@@ -21,6 +21,7 @@ DECLARE_bool(vsync_on_swap);
 DECLARE_uint32(gpu_frame_limit_fps);
 DECLARE_bool(gpu_adpf_performance_hints);
 DECLARE_bool(gpu_adpf_thermal_throttle);
+DECLARE_bool(gpu_adpf_target_from_actual);
 DECLARE_bool(gpu_vulkan_edram_roaa);
 DECLARE_bool(gpu_vulkan_edram_atomic);
 DECLARE_bool(gpu_vulkan_shader_stats);

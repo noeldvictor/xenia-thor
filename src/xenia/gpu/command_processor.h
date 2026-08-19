@@ -336,6 +336,8 @@ class CommandProcessor {
   uint64_t adpf_last_frame_end_ns_ = 0;
   uint32_t adpf_thermal_poll_counter_ = 0;
   float adpf_thermal_headroom_ = 0.0f;
+  // Slow EMA of achieved frame durations, for the uncapped ADPF target.
+  uint64_t adpf_actual_ema_ns_ = 0;
 #endif  // XE_PLATFORM_ANDROID
 
   uint32_t primary_buffer_ptr_ = 0;
