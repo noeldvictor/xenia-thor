@@ -11642,3 +11642,38 @@ as often as it is the signature of a win.**
 `status: 3 (Discharging)`; `voltage_now` reads correctly. **So the documented watts protocol cannot be
 completed here - do not quote mW.** The usable proxies are temperature RISE at matched thermal starts and
 battery-level delta over a long run.
+
+
+## XXX AND THE FIXED LEVER **BREAKS** THE TITLE: MC2 RENDERS ZERO FRAMES WITH SPIN-PARK ON (2026-08-19)
+**The pass fix works mechanically - 0 -> 350-362 instrumented loops - and turning the levers on stops
+MagnaCarta 2 rendering. Reproduced twice at full length, once with the pass logging on and once without it.**
+```
+arm                                   cold  end  rise  frames  peak_verts
+base (levers off)                      42C  66C  +27C   3,863   2,343,394   VALID
+spin (park+collapse+a64_park, logged)  42C  40C   -2C       0           0   ZERO FRAMES
+spin (levers only, NO logging)         40C  45C   +5C       0           0   ZERO FRAMES
+```
+**The second run is the clean one: 100 seconds with rpcs3 ABSENT, temps flat at 40-42C, no faults, no stalls,
+title reached - and not one frame.** Contention appeared only at the 110 s sample, long after it was already
+frameless. **The emulator is not slow, it is not doing anything.**
+**=> SO THE THREE LEVERS STAY DEFAULT-OFF, AND THE `LOAD_OFFSET` FIX IS NOT A SHIPPING WIN ON ITS OWN.** What
+it bought is that the mechanism can now be EVALUATED at all; the evaluation says the accept predicate is still
+wrong, just in the other direction.
+**=> THE FIX IS SAFE ON MASTER REGARDLESS: `TryInstrumentLoop` is behind `if (!cvars::park_memory_poll_loops)
+return true;`, so with the default off the pass early-outs and the change is inert.**
+### => WHAT THE NEXT ATTEMPT MUST FIX, AND IT IS THE PREDICATE, NOT THE PLUMBING
+Accepting `LOAD_OFFSET` took the pass from "matches nothing" to "matches 350 loops", and **evidently some of
+those 350 are not waits at all** - a loop whose exit depends on THIS thread making progress must not be
+parked, and neither must a short computational loop that merely happens to reload a field. The surviving
+reject reasons (`set_return_address` 4,779, `branch_true` 3,860, `store` 3,607) show the filter is still
+coarse.
+**Candidate discriminators, none implemented:** require the loaded address to be loop-INVARIANT (a real poll
+re-reads the SAME location; a computation walks a pointer), require the loop body to be small, and require the
+exit condition to depend ONLY on the loaded value. **Instrument first: log the accepted loops' guest addresses
+and disassemble a few** (`--es disassemble_function_filter`) before widening or narrowing anything again.
+### 📌 AND A CONFOUND I SHIPPED INTO MY OWN FIRST A/B
+The treatment arm also carried `log_memory_poll_park true`, which logs EVERY accept and reject - ~18,000 lines
+through logcat during AOT - while the baseline carried none. **The arms differed in two ways, and this file
+already records heavy logging starving the app and evicting logcat.** The re-run with logging removed is what
+makes the zero-frames result attributable to the levers. **An engagement diagnostic belongs in a SEPARATE run
+from the measurement, never in the treatment arm.**
