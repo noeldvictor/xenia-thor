@@ -11424,3 +11424,27 @@ right for the default and WRONG for a title that clears NJ. **That is exactly th
 upstream made opt-in in `36a7bb57f` ("a large performance penalty, e.g. NBA 2K11"), and it is the same
 question as the vmaddfp/vnmsubfp residual (~2,025 on a64).** Decide the NJ policy ONCE, for the whole VMX
 float path, rather than instruction by instruction.
+
+
+## >> vcmpbfp SPLITS INTO TWO INDEPENDENT BUGS, AND THE CR HALF IS THE BIGGER ONE (2026-08-18)
+**The previous entry left "what are the other ~258?" open. Answered from the captured x64 output, no new run:**
+```
+vcmpbfp TEST FAILED: 366        failing asserts:  cr 270    v3 (the result) 108
+                                by form:  _cr 312    plain 54
+```
+**=> 108 RESULT failures - exactly the denormal-flush count the model predicted - and 270 CR failures.**
+Arithmetic on the two forms: 54 plain-form tests fail on the result, 54 `_cr` forms fail the same way, and
+**~258 `_cr` forms fail with a CORRECT RESULT VECTOR and a WRONG CR6.**
+**=> SO THE CR6 DERIVATION IS INDEPENDENTLY BROKEN IN ~258 CASES AND IS THE LARGER HALF.** The denormal flush
+cannot fix those - the vector they are derived from is already right.
+**⚠ THE TWO ARE NOT FULLY SEPARABLE, THOUGH: CR6 IS DERIVED FROM THE RESULT, so fixing the flush also fixes CR
+on the 54 tests whose result is wrong.** Expect the flush to be worth ~108 asserts across ~108 tests, and the
+CR6 fix ~258 - not 366 and 270.
+**=> RANKED, THEN: the CR6 derivation is the better target of the two.** It is bigger, it is independent of
+the VSCR.NJ policy question that gates the flush, and it needs no dead opcode revived - `vcmpbfp`'s Rc path is
+ordinary HIR in `ppc_emit_altivec.cc` (the `CR0:5 = VT == 0` block right after the StoreVR).
+**== AND THE METHOD NOTE, BECAUSE THE FIRST ATTEMPT AT THIS ANALYSIS WAS WRONG: a per-test parser must RESET
+ITS CURRENT-TEST STATE ON EVERY TEST NAME, not only on the ones it cares about.** Filtering to `vcmpbfp` while
+only resetting on `vcmpbfp` lines let the state persist across every intervening instruction and reported
+11,533 asserts for a 366-failure instruction. **A count wildly larger than the known total is the tell - check
+it against a number you already trust before reading anything into the breakdown.**
