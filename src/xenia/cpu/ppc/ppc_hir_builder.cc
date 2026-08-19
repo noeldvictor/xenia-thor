@@ -538,6 +538,17 @@ void PPCHIRBuilder::UpdateCR6(Value* src_value) {
   // TOOD(benvanik): trace CR.
 }
 
+// vcmpbfp defines ONLY CR6[2] ("every element in bounds"). Hardware never sets
+// CR6[0] here - the corpus has exactly two expected values, 0x20 and 0 - so it
+// cannot go through UpdateCR6, which also derives all_equal and would report
+// CR6[0] whenever every lane happened to be out of bounds.
+void PPCHIRBuilder::UpdateCR6BoundsOnly(Value* result) {
+  StoreContext(offsetof(PPCContext, cr6.cr6_1), LoadZeroInt8());
+  StoreContext(offsetof(PPCContext, cr6.cr6_3), LoadZeroInt8());
+  StoreContext(offsetof(PPCContext, cr6.cr6_all_equal), LoadZeroInt8());
+  StoreContext(offsetof(PPCContext, cr6.cr6_none_equal), IsFalse(result));
+}
+
 Value* PPCHIRBuilder::LoadFPSCR() {
   return LoadContext(offsetof(PPCContext, fpscr), INT32_TYPE);
 }

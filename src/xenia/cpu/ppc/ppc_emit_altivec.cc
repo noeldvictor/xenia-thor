@@ -638,10 +638,12 @@ int InstrEmit_vcmpbfp_(PPCHIRBuilder& f, const InstrData& i, uint32_t vd,
                                                      0x40000000, 0x40000000))));
   f.StoreVR(vd, v);
   if (rc) {
-    // CR0:4 = 0; CR0:5 = VT == 0; CR0:6 = CR0:7 = 0;
-    // If all of the elements are within bounds, CR6[2] is set
-    // FIXME: Does not affect CR6[0], but the following function does.
-    f.UpdateCR6(f.Or(gt, lt));
+    // CR6[2] = every element in bounds; CR6[0] is NEVER set by vcmpbfp (the
+    // captured cases hold exactly two values, 0x20 and 0). Derive it from the
+    // RESULT, not from Or(gt, lt): a lane that is out of bounds only because an
+    // operand is NaN sets bits in the result but appears in neither gt nor lt,
+    // so the old form reported such a vector as fully in bounds.
+    f.UpdateCR6BoundsOnly(v);
   }
   return 0;
 }
