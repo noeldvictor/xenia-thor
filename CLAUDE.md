@@ -11742,3 +11742,49 @@ parks.
 executes per second.** Gears' main thread was measured at ~650,000 `Sleep(0)`/sec, so guest spin floods are
 real in this project; what is unproven is that MC2 has one. **Measure the execution rate before tuning the
 predicate further - instrumenting 350 cold loops is worth exactly nothing.**
+
+
+## ***** ADPF IS **DISABLED** ON THIS DEVICE - AND THE TARGET WE FEED IT IS A KNOWN-FALSE HINT (2026-08-19)
+**Two separate findings, and the first one moots the second in practice.**
+### 1. THE PERSISTED CONFIG TURNS ADPF OFF, OVERRIDING A COMPILED DEFAULT OF TRUE
+```
+files/xenia.config.toml:   gpu_adpf_performance_hints = false      (compiled default: TRUE)
+                           gpu_frame_limit_fps        = 0          (uncapped)
+```
+**So the Thor gets NO scheduling hints at all today** - the session is never created, and every ADPF entry in
+this file describes a path that does not run. **This is the "CHECK THE PERSISTED DEVICE CONFIG" trap, on a
+power feature, and it cost 2.88% the last time it happened to `rlwinm`.** Any ADPF work must force
+`--ez gpu_adpf_performance_hints true` or it measures nothing twice.
+### 2. THE UNCAPPED TARGET IS A DELIBERATE LIE TO THE GOVERNOR
+`target = 1 / gpu_frame_limit_fps`, **defaulting to 60 when a title has no cap.** Android's own documentation:
+*"when your reported actual work duration exceeds the target, the system responds by increasing CPU clock
+speeds and potentially moving workloads to larger cores."*
+**Blue Dragon renders at ~15 fps, so every frame reported a ~65 ms actual against a 16.7 ms target - a
+PERMANENT deadline-miss signal, on a title this file measures as ~93% GPU-BOUND.** The governor answers by
+pinning clocks high and migrating to big cores, boost that cannot add one frame and only costs watts.
+**Fixed behind `gpu_adpf_target_from_actual` (default off, allowlisted): an uncapped title targets a slow EMA
+of achieved frame times, clamped 10-60 fps. A CAPPED title keeps using its cap - that is a real deadline.**
+### => MEASURED, TWO MATCHED PAIRS ON BD, BOTH ARMS FORCING ADPF ON, ENGAGEMENT PROVEN
+```
+arm         n     p25     median     p75      p90    frames   rise
+run1 base  1058  14344   14,577    38,131   63,869   1,218    +28C
+run1 adpf  1125  14341   14,534    15,040   63,309   1,309    +28C
+run2 base  1342  14384   14,641    63,134   64,742   1,729    +30C
+run2 adpf  1216  14391   14,593    46,997   64,619   1,390    +29C
+   engagement: "ADPF init: perf-hints on (session created)" in ALL FOUR arms
+```
+**=> NOT SHIPPED. Median frame time is FLAT (-0.3% both pairs) and thermals are IDENTICAL.** The p75 tail is
+better with the fix in BOTH pairs, **but base's own p75 swung 38k -> 63k between runs, so the within-arm
+variance is as large as the between-arm difference**, and the frame counts CONTRADICT (adpf ahead in run1,
+behind in run2). **Directional, not evidence.**
+**=> THE FIX STAYS IN AS A CORRECTNESS FIX ANYWAY: we were knowingly telling the OS we miss a deadline we
+cannot meet.** It is default-off, so it changes nothing until someone enables it.
+**⚠ AND NOTE WHAT WOULD MAKE THIS MEASURABLE: both arms hit the 70C GUARD at +28-30C, so both ran to the same
+thermal wall and the run LENGTHS differed instead.** Temperature rise cannot discriminate when the guard is
+what ends the run. **A power comparison needs either a fixed-work route that finishes before the guard, or
+battery-level delta over a much longer run** - `current_now` reads 0 here, so mW is unavailable.
+### 🪤 AND A TRAP THAT PRODUCED IMPOSSIBLE NUMBERS FIRST
+Pairing `total_vertices` and `gpu_frame_us` from the SAME log line reported 29 us frames (34,000 fps).
+**This file already records that logcat WRAPS the per-frame trace line, so those two fields land on DIFFERENT
+physical lines** - pairing them per-line matches values from unrelated frames. **Extract each field
+independently and compare distributions; do not zip them.**
