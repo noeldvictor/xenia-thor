@@ -11593,3 +11593,52 @@ FOUR `Extract`s + THREE `Or`s per V128 truth test (`OrLanes32`), i.e. 4 cross-do
 EIGHT per record-form compare.** We never had that - we lower `IS_TRUE_V128` as a dedicated a64 sequence with
 2 `umov`s. **Their fix takes them from 8 to ~2; we are already at 4 and the manual says going lower costs
 latency. Port judged N/A on the microarchitecture, not on the idea.**
+
+
+## ***** THE POWER LEVER WAS STRUCTURALLY DEAD: `MemoryPollPark` ACCEPTED 0 OF 20,261 LOOPS (2026-08-18)
+**User goal: faster AND lower wattage, using the RPCS3-arm64 lessons. RPCS3 got +60% perf and +25%
+perf-per-watt on arm64, and **25% of that gain was unoptimized WAIT handling**. Our equivalent mechanism is the
+memory-poll park pass. It has never worked.**
+```
+MagnaCarta 2, park_memory_poll_loops=true, log on:
+  self-loops examined      20,261
+  INSTRUMENTED                  0        <- the pass has never fired, on any title, ever
+  rejected: load_offset    11,675  (58%)  <- the single largest reason
+  rejected: store           2,786
+  rejected: branch_true     2,453
+```
+### THE CAUSE IS ONE LINE, AND IT MAKES THE PASS UNABLE TO MATCH A REAL POLL
+```cpp
+if (op == OPCODE_LOAD) { saw_load = true; continue; }   // <- ONLY the bare form
+```
+**A guest poll almost always reads a FIELD - `lwz r3, 0x10(r4)` - which lowers to `OPCODE_LOAD_OFFSET`, hits
+the default `reject(name)`, and is thrown away.** The pass's own comment says *"Guest MEMORY loads are what
+makes this a poll"*, and `LOAD_OFFSET` is exactly that. **Accepting it takes the pass from 0 to 362
+instrumented loops on MC2, and `load_offset` disappears from the reject histogram entirely.**
+**=> A CVAR WHOSE OWN TEXT SAYS IT IS "AIMED SQUARELY AT THE POWER GAP" HAS BEEN DEFAULT-OFF *AND* INCAPABLE
+OF FIRING.** Turning it on before this fix could only ever have measured nothing - which is presumably why it
+was left off.
+### 🪤 AND MY ENGAGEMENT CHECK LIED IN THE MOST DANGEROUS DIRECTION
+`grep -cE "memory.poll|SPIN_BACKOFF|park"` returned **0** while the pass was logging **20,261 decisions**.
+**`park` never matches `MemoryPollPark` - the grep was case-sensitive.** So the first A/B read as "flat result,
+lever never fired", which is the conclusion that stops all further work. **An engagement check that can report
+a false zero is worse than none: it converts a live finding into a dead end.** Use `-i`, and prefer counting a
+POSITIVE marker the code emits ("instrumented poll loop") over a keyword guess.
+### 🪤🪤 AND A VOID ARM THAT LOOKED EXACTLY LIKE A HUGE POWER WIN
+The treatment arm ran 110 s at **42C with a 0C rise** against the baseline's **68C and +28C**. That reads as a
+spectacular watts result. **It rendered ZERO frames**: the log ends with
+```
+AndroidWindowedAppContext: window surface changed - incoming=NULL, previous=set
+AndroidWindow: no ANativeWindow available yet
+```
+**rpcs3 took the FOREGROUND mid-run, our activity lost its SurfaceView, and the presenter silently dropped
+every frame.** No fault, no stall, title reached - only the frame count gives it away.
+**=> THE START-OF-ARM rpcs3 PRE-FLIGHT CANNOT CATCH THIS. It is point-in-time and the run is 110 s long.** The
+harness now re-checks every 10 s and voids the arm, and additionally refuses to report any arm with <200
+frames or <100k peak vertices. **On a SHARED device, "cool and quiet" is the signature of a dead run at least
+as often as it is the signature of a win.**
+### 📌 AND WATTS ARE NOT DIRECTLY MEASURABLE ON THIS DEVICE
+`/sys/class/power_supply/battery/current_now` reads **0** even while `USB powered: false` and
+`status: 3 (Discharging)`; `voltage_now` reads correctly. **So the documented watts protocol cannot be
+completed here - do not quote mW.** The usable proxies are temperature RISE at matched thermal starts and
+battery-level delta over a long run.
