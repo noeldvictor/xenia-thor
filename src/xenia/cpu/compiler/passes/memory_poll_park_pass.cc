@@ -180,7 +180,14 @@ bool MemoryPollParkPass::TryInstrumentLoop(HIRBuilder* builder, Block* block) {
       continue;
     }
     const Opcode op = instr->GetOpcodeNum();
-    if (op == OPCODE_LOAD) {
+    if (op == OPCODE_LOAD || op == OPCODE_LOAD_OFFSET) {
+      // LOAD_OFFSET is the SAME THING for this pass's purposes - a guest memory
+      // read - and it is the shape real guest polls actually take, because a
+      // poll almost always reads a FIELD: `lwz r3, 0x10(r4)`. Accepting only
+      // the bare form made this pass reject 11,675 of 20,261 candidates on
+      // MagnaCarta 2 (58%, the single largest reason) and instrument ZERO
+      // loops, which is why a lever whose own text says it is "aimed squarely
+      // at the power gap" had never once fired.
       saw_load = true;
       continue;
     }
