@@ -11499,3 +11499,34 @@ bugs was correct.** Two defects in one line - `UpdateCR6(Or(gt, lt))`:
 sitting there long enough to read as scenery - the same way `vpkpx`'s `XEINSTRNOTIMPLEMENTED` did. **Two of
 today's four wins were things the source already confessed to. Grep the FP/VMX emitters for FIXME and
 XEINSTRNOTIMPLEMENTED before hunting for new bugs.**
+
+
+## ***** RECONCILED BY MEASUREMENT: THE vminfp/vmaxfp "REGRESSION" NEVER HAPPENED (2026-08-18)
+**The previous entry flagged `vminfp`/`vmaxfp` at 6 each against a recorded 0 and said it was unresolved.
+Resolved now, on the device, and the answer is that the OLD NUMBER WAS WRONG.**
+```
+step 1  current binary, ONLY vminfp+vmaxfp staged   -> 12 failures (6+6)
+        => reproduces in ISOLATION, so it is not an aggregation or parsing artifact
+step 2  git checkout 0308dfc6c  (the exact tree that measured 7,907)
+        rebuild ARM64, push as xenia-cpu-ppc-tests-BASE, same two instructions
+        -> 12 failures (6+6)   IDENTICAL
+```
+**=> NO REGRESSION. The 6+6 predate every change made today.** `git checkout master` restored, tree clean.
+### AND THE MECHANISM WAS RULED OUT BEFORE THE BUILD, WHICH IS WHY THIS WAS CHEAP
+The FPSCR port ADDS two opcodes, so the first suspicion was an enum shift renumbering everything after them -
+this file already records `cpu_backend_llvm_skip_opcodes=77` as a NUMERIC opcode reference, so a shift is a
+real hazard. **Checked: the new opcodes sit at lines 309-310 and `OPCODE_VECTOR_MAX`/`_MIN` at 239/241, so
+their values do not move.** One grep, and it turned a rebuild-and-hope into a targeted confirmation.
+### => THE CORRECTION TO THIS FILE: THE a64 COLUMN OF THE "a64 vs x64 CORPUS DIFF" TABLE IS UNRELIABLE
+That table lists a64 `vminfp 0`, `vmaxfp 0`, `vaddfp 0`, `vsubfp 0`, `vcmpeqfp 0` - **five small-count VMX ops
+reading exactly zero at once, which should have looked suspicious at the time.** It was aggregated from a
+CLIENT-SIDE `adb logcat -d` over WiFi, and this file documents in two places that this TRUNCATES.
+**=> RE-BASELINE FROM THE 3,322 RUN, which was aggregated ON DEVICE. Do not trust the old a64 column for any
+instruction with a small count** - the x64 column came from a desktop file and is fine.
+**== THE LESSON, AND IT IS THE THIRD TRUNCATION BURN IN THIS FILE: A ZERO PRODUCED BY A PIPELINE THAT CAN
+TRUNCATE IS NOT A MEASUREMENT.** The tell was available for free - five different instructions reading exactly
+0 in the same column. **When several independent quantities all read zero together, suspect the instrument,
+not the subject.**
+**== AND THE CHEAP CONFIRMATION PATTERN IS WORTH REUSING: stage ONLY the instructions in question into their
+own directory and point `--test_path` at it.** No filter flag needed, the run takes SECONDS instead of eight
+minutes, and it isolates the question completely. That is how both halves of this were settled.
