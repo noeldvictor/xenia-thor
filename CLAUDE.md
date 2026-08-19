@@ -11530,3 +11530,36 @@ not the subject.**
 **== AND THE CHEAP CONFIRMATION PATTERN IS WORTH REUSING: stage ONLY the instructions in question into their
 own directory and point `--test_path` at it.** No filter flag needed, the run takes SECONDS instead of eight
 minutes, and it isolates the question completely. That is how both halves of this were settled.
+
+
+## ***** FINAL a64 NUMBER: 7,907 -> 3,038 (-61.6%), AND ONE CLASS IS NOW 94% OF WHAT IS LEFT (2026-08-18)
+**Full corpus, all five fixes, aggregated ON DEVICE. Predicted 3,038 (= 3,322 - vcmpbfp's 284); actual 3,038.**
+```
+a64  24,991 -> 9,715 -> 7,907 -> 3,322 -> 3,038          x64  17,851 -> 14,333
+```
+### THE WHOLE REMAINING LIST
+```
+vmaddfp  1013    vsr 454    vlogefp 22   fres  11   fctiw(z) 8+8   fsqrt 6    fctid(z) 6+6
+vnmsubfp 1012    vsl 422    fdivs   19   fsqrts 9   vminfp/vmaxfp 6+6   frsqrte 6   frsp 4   vexptefp 2
+                 ^^^^^^^ 876 = UNDEFINED-BEHAVIOUR, not fixable
+```
+**=> REAL remaining failures: 2,162. `vmaddfp` + `vnmsubfp` = 2,025 = 94% OF THEM.** Everything else on the
+shipping backend is now a two-digit tail.
+**=> SO THE CPU CORRECTNESS TRACK IS DOWN TO A SINGLE DECISION, NOT A BACKLOG: the VMX denormal flush and its
+VSCR.NJ policy** (upstream `36a7bb57f`, opt-in, "large performance penalty e.g. NBA 2K11"). That is a
+product/accuracy trade to be taken deliberately, not another bug to find.
+### AND vcmpbfp WENT TO **ZERO** ON a64 WHERE x64 KEPT 108
+```
+a64  284 -> 0     (all 1,300 pass)
+x64  366 -> 108   (the 108 are the denormal-flush cases)
+```
+**a64 already flushes VMX denormals correctly, so once the CR6 bug was gone there was nothing left.** That is
+independent confirmation that the a64 VMX float path is AHEAD of x64's - the same asymmetry the diff table
+showed for vmaddfp (1013 vs 6215) and vminfp/vmaxfp.
+**=> AND IT PREDICTS WHERE THE x64 108 GOES: fixing the flush on x64 is the same work as the vmaddfp class,
+not a separate item.**
+### 📌 A ONE-CASE WOBBLE, RECORDED SO NOBODY CHASES IT
+`fdivs` reads 19 here and 20 in the previous run, and my awk also emitted a junk `PPU.` bucket holding exactly
+1. **The totals reconcile either way (the list sums to 3,038), so it is the AGGREGATOR mis-binning one line,
+not a behaviour change** - the CR6 fix touches only `vcmpbfp` and cannot reach `fdivs`. **Sum the breakdown
+against the reported total every time; that check is what makes a stray bucket obviously harmless.**
