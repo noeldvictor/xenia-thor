@@ -11448,3 +11448,54 @@ ITS CURRENT-TEST STATE ON EVERY TEST NAME, not only on the ones it cares about.*
 only resetting on `vcmpbfp` lines let the state persist across every intervening instruction and reported
 11,533 asserts for a 366-failure instruction. **A count wildly larger than the known total is the tell - check
 it against a number you already trust before reading anything into the breakdown.**
+
+
+## ***** THE a64 RUN LANDED: 7,907 -> 3,322 (-58%), AND IT BEAT THE PREDICTION (2026-08-18)
+**Device freed up (battery 9% -> 80%, rpcs3 gone, 34C cold start). The four queued fixes validated in one run.
+Predicted 4,800-5,300; actual 3,322.**
+```
+a64 arc:  24,991 -> 9,715 -> 7,907 -> 3,322          x64 arc: 17,851 -> 14,333
+```
+### WHAT WENT TO ZERO
+```
+fmadds  714 -> 0     fnmadds 712 -> 0     vpkpx 644 -> 0
+fmsubs  714 -> 0     fnmsubs 714 -> 0     fadds/fsubs/fmuls 67/68/63 -> 0
+fmadd/fmsub/fnmadd/fnmsub  199-200 each -> 0
+```
+**The whole multiply-add family - 91% of a64's failures when the corpus first ran on it - is GONE.**
+### WHAT IS LEFT, AND IT IS ONE CLASS
+```
+vmaddfp   1013        vsr  454        vcmpbfp 284        everything else <= 22
+vnmsubfp  1012        vsl  422
+                      ^^^^^^^^ 876 = UNDEFINED-BEHAVIOUR NOISE, not fixable
+```
+**=> REAL remaining a64 failures: 2,446, of which vmaddfp+vnmsubfp is 2,025 = 83%.** That is the VMX denormal
+flush, and it is now the ONLY significant class left on the shipping backend. It is also the one gated behind
+the VSCR.NJ policy question (upstream `36a7bb57f`, opt-in, "large performance penalty e.g. NBA 2K11").
+**=> SO GOAL 3's CPU CORRECTNESS TRACK IS ESSENTIALLY DONE EXCEPT FOR ONE DELIBERATE TRADE-OFF.**
+### ⚠ ONE UNRECONCILED NUMBER - FLAGGED, NOT DISMISSED
+`vminfp` and `vmaxfp` read **6 each** here, and this file's own a64-vs-x64 diff table records them as **0** on
+a64. **I cannot reconcile it**, and the honest position is that it is unresolved:
+- **No mechanism**: today's four changes touch `ppc_emit_fpu.cc` (scalar only), the a64 FMA helpers, and
+  `vpkpx`. **None of them can reach VMX min/max**, which lives in `ppc_emit_altivec.cc` and never calls the
+  FPSCR helpers.
+- **A likely explanation**: the earlier table was aggregated from a **client-side `adb logcat -d` over WiFi**,
+  which this file documents as TRUNCATING - and it reported suspicious zeros for several small-count VMX ops
+  at once (vminfp, vmaxfp, vaddfp, vsubfp, vcmpeqfp all exactly 0). **This run aggregated ON DEVICE.**
+**=> TREAT THE OLD a64 COLUMN OF THAT TABLE AS UNRELIABLE FOR SMALL COUNTS, and re-baseline from this run.**
+
+## *** vcmpbfp CR6: -258 ON x64, AND THE FIXME WAS RIGHT ALL ALONG (2026-08-18)
+```
+x64 14,591 -> 14,333      vcmpbfp 366 -> 108      regressions 0
+```
+**The 108 left are exactly the denormal-flush cases the model predicted, so the split into two independent
+bugs was correct.** Two defects in one line - `UpdateCR6(Or(gt, lt))`:
+1. `UpdateCR6` also derives **all_equal**, so it set **CR6[0]** whenever every lane was out of bounds.
+   **Hardware never sets it: the captured cases hold exactly TWO values, `0x20` and `0`.**
+2. It passed `Or(gt, lt)`, which **omits the NaN term the RESULT vector carries** - so a vector out of bounds
+   only because an operand is NaN looked fully in bounds to the CR.
+`UpdateCR6BoundsOnly(v)` derives CR6[2] from the result and zeroes the rest.
+**== AND THE CODE SAID SO: `// FIXME: Does not affect CR6[0], but the following function does.`** It had been
+sitting there long enough to read as scenery - the same way `vpkpx`'s `XEINSTRNOTIMPLEMENTED` did. **Two of
+today's four wins were things the source already confessed to. Grep the FP/VMX emitters for FIXME and
+XEINSTRNOTIMPLEMENTED before hunting for new bugs.**
