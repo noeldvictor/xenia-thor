@@ -1902,6 +1902,9 @@ EMITTER_OPCODE_TABLE(OPCODE_UNPACK, UNPACK);
 // ============================================================================
 // OPCODE_LVL (Load Vector Left)
 // ============================================================================
+static constexpr vec128_t kLvBaseControl =
+    vec128i(0x00010203u, 0x04050607u, 0x08090A0Bu, 0x0C0D0E0Fu);
+
 struct LVL_V128 : Sequence<LVL_V128, I<OPCODE_LVL, V128Op, I64Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     // Inline LVL using TBL.  The bswap-within-lanes base pattern plus the
@@ -1918,14 +1921,8 @@ struct LVL_V128 : Sequence<LVL_V128, I<OPCODE_LVL, V128Op, I64Op>> {
     e.and_(e.x0, e.x0, ~0xFull);
     e.ldr(QReg(0), ptr(e.x0));
 
-    // Build bswap-within-lanes base pattern in v1:
-    //   {3,2,1,0, 7,6,5,4, 11,10,9,8, 15,14,13,12}
-    e.mov(e.x0, 0x0405060700010203ull);
-    e.fmov(DReg(1), e.x0);
-    e.mov(e.x0, 0x0C0D0E0F08090A0Bull);
-    e.ins(VReg(1).d2[1], e.x0);
-
     // ctrl = base + offset; TBL gives 0 for ctrl >= 16.
+    LoadV128Const(e, 1, kLvBaseControl);
     e.dup(VReg(2).b16, e.w17);
     e.add(VReg(1).b16, VReg(1).b16, VReg(2).b16);
 
@@ -1944,31 +1941,31 @@ struct LVR_V128 : Sequence<LVR_V128, I<OPCODE_LVR, V128Op, I64Op>> {
     // Indices 0-15 read zeros (from v0), 16-31 read mem (from v1).
     // base + offset produces indices > 15 exactly where LVR should output
     // the memory bytes, and <= 15 where it should output zero.
-    // When offset == 0, all indices are 0-15 → all zeros, which is correct.
     auto addr = ComputeMemoryAddress(e, i.src1);
     int d = i.dest.reg().getIdx();
+    // Unqualified Label here is hir::Label.
+    Xbyak_aarch64::Label endpoint;
 
     // x0 = host address
     e.add(e.x0, e.GetMembaseReg(), addr);
     // w17 = offset
     e.and_(e.w17, e.w0, 0xF);
+    // An aligned address reads nothing, and it can sit one past a valid page.
+    e.movi(VReg(d).d2, 0);
+    e.cbz(e.w17, endpoint);
     // Align and load.  v0=zeros (table reg 0), v1=mem (table reg 1).
     e.movi(VReg(0).d2, 0);
     e.and_(e.x0, e.x0, ~0xFull);
     e.ldr(QReg(1), ptr(e.x0));
 
-    // Build base pattern in v2.
-    e.mov(e.x0, 0x0405060700010203ull);
-    e.fmov(DReg(2), e.x0);
-    e.mov(e.x0, 0x0C0D0E0F08090A0Bull);
-    e.ins(VReg(2).d2[1], e.x0);
-
     // ctrl = base + offset.
+    LoadV128Const(e, 2, kLvBaseControl);
     e.dup(VReg(3).b16, e.w17);
     e.add(VReg(2).b16, VReg(2).b16, VReg(3).b16);
 
     // 2-register TBL over {v0, v1}.
     e.tbl(VReg(d).b16, VReg(0).b16, 2, VReg(2).b16);
+    e.L(endpoint);
   }
 };
 EMITTER_OPCODE_TABLE(OPCODE_LVR, LVR_V128);
