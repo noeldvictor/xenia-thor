@@ -11563,3 +11563,33 @@ not a separate item.**
 1. **The totals reconcile either way (the list sums to 3,038), so it is the AGGREGATOR mis-binning one line,
 not a behaviour change** - the CR6 fix touches only `vcmpbfp` and cannot reach `fdivs`. **Sum the breakdown
 against the reported total every time; that check is what makes a stray bucket obviously harmless.**
+
+
+## XXX THE MANUAL KILLS THIS FILE'S OWN CR6 SUGGESTION: `umaxp + fmov` IS SLOWER THAN 2x `umov` (2026-08-18)
+**This file recommends replacing `EmitIsTrueV128`'s two `umov`s with "`umaxp v,v.4s,v.4s` + one `fmov`", to
+halve the cross-domain transfers. Priced it in the A710 SWOG before writing it. IT IS A PESSIMISATION.**
+```
+A710 Table 3-x:
+  UMOV, SMOV  (ASIMD transfer, element to gen)      2 / 1 / V      <- what we emit today, TWICE
+  FMOV        (FP transfer, vec to gen)             2 / 1 / V
+  UMAXP       (ASIMD max/min, basic and pair-wise)  3(1) / 2 / V
+  UMAXV/UMINV (ASIMD max/min, reduce 4H/4S)         2 / 2 / V1     <- V1 ONLY
+  ADDV/UADDLV (ASIMD arith, reduce 4H/4S)           2 / 1 / V1     <- V1 ONLY
+```
+**=> OUR TWO `umov`s ARE INDEPENDENT, so on a 2-wide V machine they ISSUE TOGETHER: ~2 cycles, then one
+integer `orr` on a 4-6 wide integer cluster.** The proposed form is a SERIAL DEPENDENCY CHAIN -
+`umaxp` (3) -> `fmov` (2) -> `cmp` - so **~5 cycles against ~3, to save ONE uOP.**
+**=> AND THE REDUCE FORMS ARE V1-PIPE ONLY**, i.e. they cannot dual-issue with anything else that needs V1,
+which this file already warns about for `ADDV`/`SQRDMULH`.
+**== THIS IS THE `ORR`+`STP` MISTAKE AGAIN, AND THIS FILE ALREADY RECORDS IT AS RULE 2: "optimise the
+dependency graph and the port mix, NOT the line count."** That entry measured a change from 18 instructions to
+13 as SLOWER, because it serialised independent work. **The CR6 suggestion was written in uOP-count terms and
+never priced; the tables say the current sequence is already the right shape.**
+**=> ACTION: DELETE THE SUGGESTION, DO NOT IMPLEMENT IT.** If CR6 is ever worth attacking, the target is
+NOT-MATERIALISING it (this file's `AuditCr6UpdateShape` census, still never run), not re-shaping a 5-uOP
+sequence that is already latency-optimal.
+**== AND NOTE WHAT UPSTREAM'S `fb1c3dec3` ACTUALLY FIXES, because it is NOT our problem: their pre-fix HIR did
+FOUR `Extract`s + THREE `Or`s per V128 truth test (`OrLanes32`), i.e. 4 cross-domain transfers per test and
+EIGHT per record-form compare.** We never had that - we lower `IS_TRUE_V128` as a dedicated a64 sequence with
+2 `umov`s. **Their fix takes them from 8 to ~2; we are already at 4 and the manual says going lower costs
+latency. Port judged N/A on the microarchitecture, not on the idea.**
