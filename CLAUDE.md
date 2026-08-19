@@ -11677,3 +11677,32 @@ through logcat during AOT - while the baseline carried none. **The arms differed
 already records heavy logging starving the app and evicting logcat.** The re-run with logging removed is what
 makes the zero-frames result attributable to the levers. **An engagement diagnostic belongs in a SEPARATE run
 from the measurement, never in the treatment arm.**
+
+
+## >> THE WATTS LEVER THAT IS STILL UNTAKEN: OUR ADPF SESSION CONTAINS **ONE** THREAD (2026-08-19)
+**ADPF is Android's own perf/power mechanism - you tell the governor a target duration and report the actual,
+and it picks clocks. Ours is wired, default ON, and its own comment states the power intent: *"letting ADPF
+drop CPU power (and heat) when there is genuine slack"*. But:**
+```
+int32_t tid = syscall(__NR_gettid);                       // the CP worker, and ONLY it
+adpf_hint_session_ = api.create_session(mgr, &tid, 1, target_ns);
+                                              ^^^^^^^^^
+```
+**=> THE GUEST CPU THREADS - WHICH DO THE EMULATION AND BURN MOST OF THE POWER - ARE IN NO HINT SESSION AT
+ALL.** The governor is being told about the one thread that is largely waiting on the GPU, and nothing about
+the threads that are actually hot. On a big.LITTLE part that is exactly how you get both over-boost (watts)
+and under-boost (stutter) at the same time.
+**=> AND IT IS A SMALL CHANGE, NOT A REDESIGN: `create_session` ALREADY TAKES AN ARRAY** -
+`create_session(manager, const int32_t* thread_ids, size_t size, int64_t target_ns)`. We pass `&tid, 1`.
+Passing the guest threads too is a matter of collecting their TIDs at session-creation time, which is at the
+first swap - by which point the guest is demonstrably running, since it produced the swap.
+**⚠ `APerformanceHint_setThreads` (which would let the list be updated later) is API 34 and is NOT in our
+dlsym table; the app targets 33.** So do it at creation, or re-create the session when the thread set changes.
+Do not assume setThreads is available.
+**⚠ AND SIZE THE TARGET HONESTLY BEFORE BUILDING: the session's target duration is currently derived from
+`gpu_frame_limit_fps`, i.e. a FRAME deadline.** That is the right model for a frame-critical thread group and
+the wrong one for a guest thread that runs continuously. **Decide what deadline the guest threads are being
+held to before adding them, or the hint is noise.**
+**⚠⚠ AND IT CANNOT BE MEASURED THE OBVIOUS WAY ON THIS DEVICE: `current_now` reads 0 while discharging**, so
+the only power proxies are temperature rise at matched thermal starts and battery-level delta over a long run.
+XenDroid's `e0137c9a7` does the equivalent for their audio pump and is the reference implementation.
