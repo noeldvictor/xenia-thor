@@ -89,7 +89,7 @@ bool ResolveSinglePackagePayload(const std::filesystem::path& package_dir,
     if (entry.type == xe::filesystem::FileInfo::Type::kDirectory) {
       return false;
     }
-    if (entry.name == "__thumbnail.png") {
+    if (entry.name == kPackageThumbnailFileName) {
       continue;
     }
     if (payload) {
@@ -131,6 +131,12 @@ uint64_t StfsSingleFileContainerSize(uint64_t payload_size) {
 void HostPathDevice::PopulateEntry(HostPathEntry* parent_entry) {
   auto child_infos = xe::filesystem::ListFiles(parent_entry->host_path());
   for (auto& child_info : child_infos) {
+    // Xenia bookkeeping, never part of the package the console hands out.
+    if (child_info.type == xe::filesystem::FileInfo::Type::kFile &&
+        child_info.name == kPackageThumbnailFileName) {
+      continue;
+    }
+
     // On the content partition, present a single-file package (a directory
     // under a content-type folder holding one payload file) as that file, the
     // way the console stores it. A game that stats the raw content path then

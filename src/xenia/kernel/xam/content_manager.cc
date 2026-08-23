@@ -29,7 +29,6 @@ namespace xe {
 namespace kernel {
 namespace xam {
 
-static const char* kThumbnailFileName = "__thumbnail.png";
 static const char* kGameContentHeaderDirName = "Headers";
 static const char* kSpaFilename = "spa.bin";
 
@@ -528,7 +527,7 @@ X_RESULT ContentManager::GetContentThumbnail(
   auto global_lock = global_critical_region_.Acquire();
 
   auto package_path = ResolvePackagePath(xuid, data);
-  auto thumb_path = package_path / kThumbnailFileName;
+  auto thumb_path = package_path / vfs::kPackageThumbnailFileName;
   if (std::filesystem::exists(thumb_path)) {
     auto file = xe::filesystem::OpenFile(thumb_path, "rb");
     size_t file_len = std::filesystem::file_size(thumb_path);
@@ -548,7 +547,7 @@ X_RESULT ContentManager::SetContentThumbnail(
   auto package_path = ResolvePackagePath(xuid, data);
   std::filesystem::create_directories(package_path);
   if (std::filesystem::exists(package_path)) {
-    auto thumb_path = package_path / kThumbnailFileName;
+    auto thumb_path = package_path / vfs::kPackageThumbnailFileName;
     auto file = xe::filesystem::OpenFile(thumb_path, "wb");
     fwrite(buffer.data(), 1, buffer.size(), file);
     fclose(file);

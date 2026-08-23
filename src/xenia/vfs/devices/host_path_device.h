@@ -17,6 +17,10 @@
 namespace xe {
 namespace vfs {
 
+// Xenia keeps a package thumbnail as a file inside the package directory.
+// The console holds it in the STFS header, so the guest never sees it.
+inline constexpr char kPackageThumbnailFileName[] = "__thumbnail.png";
+
 class HostPathEntry;
 
 class HostPathDevice : public Device {
