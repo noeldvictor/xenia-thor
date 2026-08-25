@@ -87,6 +87,10 @@ class AudioMediaPlayer {
   XmpClient GetXMPClient() const { return xmp_client_; }
 
   bool IsTitleInPlaybackControl() const {
+    if (IsXMPOverrideEnabled()) {
+      return false;
+    }
+
     const bool game_control = xmp_client_ == XmpClient::kGame &&
                               playback_controller_ == PlaybackController::kGame;
 
