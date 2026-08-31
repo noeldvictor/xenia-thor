@@ -134,6 +134,19 @@ std::filesystem::path ContentManager::ResolvePackageRoot(
   return root_path_ / xuid_str / title_id_str / content_type_str;
 }
 
+// FATX is case-insensitive, so on a case-sensitive host filesystem (Linux)
+// fall back to a package directory that differs only in case.
+static std::filesystem::path ResolveNameInsensitive(
+    const std::filesystem::path& parent, const std::string_view name) {
+  std::error_code ec;
+  for (const auto& child : std::filesystem::directory_iterator(parent, ec)) {
+    if (xe::utf8::equal_case(xe::path_to_utf8(child.path().filename()), name)) {
+      return child.path();
+    }
+  }
+  return {};
+}
+
 std::filesystem::path ContentManager::ResolvePackagePath(
     const uint64_t xuid, const XCONTENT_AGGREGATE_DATA& data,
     const uint32_t disc_number) {
@@ -153,6 +166,13 @@ std::filesystem::path ContentManager::ResolvePackagePath(
         ResolvePackageRoot(used_xuid, title_id, data.content_type);
     std::string final_name = xe::string_util::trim(data.file_name());
     std::filesystem::path package_path = package_root / xe::to_path(final_name);
+
+    if (!std::filesystem::exists(package_path)) {
+      auto existing = ResolveNameInsensitive(package_root, final_name);
+      if (!existing.empty()) {
+        package_path = existing;
+      }
+    }
 
     if (disc_number != -1) {
       package_path /= fmt::format("disc{:03}", disc_number);
