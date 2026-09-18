@@ -52,9 +52,27 @@ XContentContainerDevice::CreateContentDevice(
   }
 
   switch (header->content_metadata.volume_type) {
-    case XContentVolumeType::kStfs:
+    case XContentVolumeType::kStfs: {
+      // The metadata records how much data the package should hold, so an
+      // incomplete download can be named as such instead of reading off the
+      // end of the mapping later. Some packages leave the field at zero. An
+      // SVOD keeps its data in separate fragment files, so this check applies
+      // to the single-file STFS layout only.
+      const uint64_t package_data_offset = xe::round_up(
+          static_cast<uint64_t>(header->content_header.header_size),
+          static_cast<uint64_t>(kBlockSize));
+      const uint64_t expected_size = header->content_metadata.content_size;
+      if (expected_size && package_size >= package_data_offset &&
+          expected_size > package_size - package_data_offset) {
+        XELOGE(
+            "XContent: {} holds {} bytes of data where its metadata describes "
+            "{}. The package is incomplete and will not be mounted.",
+            xe::path_to_utf8(host_path), package_size - package_data_offset,
+            expected_size);
+        return nullptr;
+      }
       return std::make_unique<StfsContainerDevice>(mount_path, host_path);
-      break;
+    }
     case XContentVolumeType::kSvod:
       return std::make_unique<SvodContainerDevice>(mount_path, host_path);
       break;
