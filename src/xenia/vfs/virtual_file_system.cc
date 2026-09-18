@@ -96,6 +96,7 @@ bool VirtualFileSystem::UnregisterSymbolicLink(const std::string_view path) {
 }
 
 bool VirtualFileSystem::IsSymbolicLinkRegistered(const std::string_view path) {
+  auto global_lock = global_critical_region_.Acquire();
   auto it = std::find_if(
       symlinks_.cbegin(), symlinks_.cend(),
       [&](const auto& s) { return xe::utf8::equal_case(path, s.first); });
@@ -105,6 +106,7 @@ bool VirtualFileSystem::IsSymbolicLinkRegistered(const std::string_view path) {
 
 bool VirtualFileSystem::FindSymbolicLink(const std::string_view path,
                                          std::string& target) {
+  auto global_lock = global_critical_region_.Acquire();
   auto it = std::find_if(
       symlinks_.cbegin(), symlinks_.cend(),
       [&](const auto& s) { return xe::utf8::starts_with_case(path, s.first); });
