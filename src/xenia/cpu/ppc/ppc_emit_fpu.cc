@@ -450,8 +450,29 @@ int InstrEmit_fcmpu(PPCHIRBuilder& f, const InstrData& i) {
 // Floating-point status and control register (A
 
 int InstrEmit_mcrfs(PPCHIRBuilder& f, const InstrData& i) {
-  XEINSTRNOTIMPLEMENTED();
-  return 1;
+  // mcrfs CRFD, CRFS
+  // CR[4*CRFD:4*CRFD+3] <- FPSCR[4*CRFS:4*CRFS+3]
+  // FPSCR[4*CRFS:4*CRFS+3] <- 0 (exception bits cleared)
+
+  uint32_t crfd = i.X.RT >> 2;  // Destination CR field
+  uint32_t crfs = i.X.RA >> 2;  // Source FPSCR field
+
+  Value* fpscr = f.LoadFPSCR();
+
+  // Extract 4-bit field from FPSCR
+  // FPSCR fields are numbered from left to right (0-7), with field 0 being bits
+  // 0-3
+  uint32_t shift = 4 * (7 - crfs);
+  Value* fpscr_field = f.And(f.Shr(fpscr, shift), f.LoadConstantUint32(0xF));
+
+  // Store to CR field (need to shift to proper position in 64-bit CR)
+  f.StoreCR(crfd, f.Shl(f.ZeroExtend(fpscr_field, INT64_TYPE), 4 * (7 - crfd)));
+
+  // Clear the FPSCR field (set to 0)
+  uint32_t mask = ~(0xFu << shift);
+  f.StoreFPSCR(f.And(fpscr, f.LoadConstantUint32(mask)));
+
+  return 0;
 }
 
 int InstrEmit_mffsx(PPCHIRBuilder& f, const InstrData& i) {
