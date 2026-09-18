@@ -16,6 +16,7 @@
 #include "xenia/kernel/kernel_flags.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
+#include "xenia/kernel/xboxkrnl/xboxkrnl_ob.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/kernel/xevent.h"
 #include "xenia/kernel/xfile.h"
@@ -1083,7 +1084,8 @@ dword_result_t NtOpenSymbolicLinkObject_entry(
   auto object_name =
       kernel_memory()->TranslateVirtual<X_ANSI_STRING*>(object_attrs->name_ptr);
 
-  auto target_path = util::TranslateAnsiPath(kernel_memory(), object_name);
+  auto target_path = xeObSymbolicLinkName(
+      util::TranslateAnsiPath(kernel_memory(), object_name));
 
   // Enforce that the path is ASCII.
   if (!IsValidPath(target_path, false)) {
@@ -1092,10 +1094,6 @@ dword_result_t NtOpenSymbolicLinkObject_entry(
 
   if (object_attrs->root_directory != 0) {
     assert_always();
-  }
-
-  if (utf8::starts_with(target_path, "\\??\\")) {
-    target_path = target_path.substr(4);  // Strip the full qualifier
   }
 
   std::string link_path;

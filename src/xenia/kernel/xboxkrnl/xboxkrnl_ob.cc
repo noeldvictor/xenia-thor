@@ -362,20 +362,24 @@ void ObReferenceObject_entry(dword_t native_ptr) {
 }
 DECLARE_XBOXKRNL_EXPORT1(ObReferenceObject, kNone, kImplemented);
 
+std::string xeObSymbolicLinkName(const std::string_view name) {
+  auto path = xe::utf8::canonicalize_guest_path(name);
+  if (xe::utf8::starts_with_case(path, "\\??\\")) {
+    path.erase(0, 4);
+  }
+
+  if (xe::utf8::starts_with_case(path, "\\System??\\")) {
+    path.erase(0, 10);
+  }
+  return path;
+}
+
 dword_result_t ObCreateSymbolicLink_entry(pointer_t<X_ANSI_STRING> path_ptr,
                                           pointer_t<X_ANSI_STRING> target_ptr) {
-  auto path = xe::utf8::canonicalize_guest_path(
-      util::TranslateAnsiPath(kernel_memory(), path_ptr));
+  auto path =
+      xeObSymbolicLinkName(util::TranslateAnsiPath(kernel_memory(), path_ptr));
   auto target = xe::utf8::canonicalize_guest_path(
       util::TranslateAnsiPath(kernel_memory(), target_ptr));
-
-  if (xe::utf8::starts_with(path, "\\??\\")) {
-    path = path.substr(4);  // Strip the full qualifier
-  }
-
-  if (xe::utf8::starts_with(path, "\\System??\\")) {
-    path = path.substr(10);  // Strip the full qualifier
-  }
 
   // 4D5307DC expects success.
   if (kernel_state()->file_system()->FindSymbolicLink(path, target)) {
@@ -391,7 +395,8 @@ dword_result_t ObCreateSymbolicLink_entry(pointer_t<X_ANSI_STRING> path_ptr,
 DECLARE_XBOXKRNL_EXPORT1(ObCreateSymbolicLink, kNone, kImplemented);
 
 dword_result_t ObDeleteSymbolicLink_entry(pointer_t<X_ANSI_STRING> path_ptr) {
-  auto path = util::TranslateAnsiPath(kernel_memory(), path_ptr);
+  auto path =
+      xeObSymbolicLinkName(util::TranslateAnsiPath(kernel_memory(), path_ptr));
   if (!kernel_state()->file_system()->UnregisterSymbolicLink(path)) {
     return X_STATUS_UNSUCCESSFUL;
   }
