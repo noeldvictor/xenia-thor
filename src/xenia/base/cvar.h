@@ -10,8 +10,10 @@
 #ifndef XENIA_CVAR_H_
 #define XENIA_CVAR_H_
 
+#include <exception>
 #include <filesystem>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,6 +33,37 @@ namespace cvar {
 
 namespace toml {
 std::string EscapeString(const std::string_view str);
+}
+
+// Logs a config key whose TOML value could not be read as the cvar's type.
+// The cvar keeps its default. Defined in cvar.cc so this header stays free of
+// the logging headers.
+void ReportConfigTypeMismatch(const std::string& name, const char* reason);
+
+// Reads a TOML value as T. Returns an empty option, and reports the key, when
+// the value has another type or when an integer is out of range for T. The
+// old code dereferenced the option without a check: cpptoml then returns a
+// default-constructed T, so a wrong-typed key set the cvar to 0, false or ""
+// with no message, and an out-of-range integer threw std::overflow_error or
+// std::underflow_error out of config loading and aborted at startup.
+// Ported from canary 93adb2bb95 (toml++ there, cpptoml here).
+template <class T>
+cpptoml::option<T> GetConfigValueChecked(
+    const std::shared_ptr<cpptoml::base>& result, const std::string& name) {
+  if (!result) {
+    ReportConfigTypeMismatch(name, "no value");
+    return {};
+  }
+  try {
+    auto value = cpptoml::get_impl<T>(result);
+    if (!value) {
+      ReportConfigTypeMismatch(name, "wrong type");
+    }
+    return value;
+  } catch (const std::exception& e) {
+    ReportConfigTypeMismatch(name, e.what());
+    return {};
+  }
 }
 
 class ICommandVar {
@@ -151,23 +184,29 @@ inline void CommandVar<std::filesystem::path>::LoadFromLaunchOptions(
 }
 template <class T>
 void ConfigVar<T>::LoadConfigValue(std::shared_ptr<cpptoml::base> result) {
-  SetConfigValue(*cpptoml::get_impl<T>(result));
+  if (auto value = GetConfigValueChecked<T>(result, this->name_)) {
+    SetConfigValue(*value);
+  }
 }
 template <>
 inline void ConfigVar<std::filesystem::path>::LoadConfigValue(
     std::shared_ptr<cpptoml::base> result) {
-  SetConfigValue(
-      xe::utf8::fix_path_separators(*cpptoml::get_impl<std::string>(result)));
+  if (auto value = GetConfigValueChecked<std::string>(result, this->name_)) {
+    SetConfigValue(xe::utf8::fix_path_separators(*value));
+  }
 }
 template <class T>
 void ConfigVar<T>::LoadGameConfigValue(std::shared_ptr<cpptoml::base> result) {
-  SetGameConfigValue(*cpptoml::get_impl<T>(result));
+  if (auto value = GetConfigValueChecked<T>(result, this->name_)) {
+    SetGameConfigValue(*value);
+  }
 }
 template <>
 inline void ConfigVar<std::filesystem::path>::LoadGameConfigValue(
     std::shared_ptr<cpptoml::base> result) {
-  SetGameConfigValue(
-      xe::utf8::fix_path_separators(*cpptoml::get_impl<std::string>(result)));
+  if (auto value = GetConfigValueChecked<std::string>(result, this->name_)) {
+    SetGameConfigValue(xe::utf8::fix_path_separators(*value));
+  }
 }
 template <class T>
 CommandVar<T>::CommandVar(const char* name, T* default_value,

@@ -28,6 +28,10 @@ std::map<std::string, ICommandVar*>* CmdVars;
 std::map<std::string, IConfigVar*>* ConfigVars;
 std::multimap<uint32_t, const IConfigVarUpdate*>* IConfigVarUpdate::updates_;
 
+void ReportConfigTypeMismatch(const std::string& name, const char* reason) {
+  XELOGW("Config value '{}' ignored ({}). The default is kept.", name, reason);
+}
+
 void PrintHelpAndExit() {
   std::cout << options.help({""}) << std::endl;
   std::cout << "For the full list of command line arguments, see xenia.cfg."
