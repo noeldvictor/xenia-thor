@@ -13,6 +13,7 @@
 #include "xenia/base/chrono_steady_cast.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/exception_handler.h"
+#include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
 #include "xenia/base/threading_timer_queue.h"
 
@@ -253,6 +254,13 @@ class PosixConditionBase {
     }
     if (executed) {
       post_execution();
+      // The thread handle joins in post_execution_unlocked. A join under
+      // mutex_ blocks every other object in the process (mutex_ is shared),
+      // and deadlocks when the joined thread still has to take mutex_ in its
+      // exit tail (Terminate publishes signaled_ before the thread exits).
+      // Ported from edge 73388a080f.
+      lock.unlock();
+      post_execution_unlocked();
       return WaitResult::kSuccess;
     } else {
       return WaitResult::kTimeout;
@@ -277,30 +285,34 @@ class PosixConditionBase {
       };
     }
 
-    // TODO(bwrsandman, Triang3l) This is controversial, see issue #1677
-    // This will probably cause a deadlock on the next thread doing any waiting
-    // if the thread is suspended between locking and waiting
-    std::unique_lock<std::mutex> lock(PosixConditionBase::mutex_);
+    auto first_signaled = std::numeric_limits<size_t>::max();
+    {
+      // TODO(bwrsandman, Triang3l) This is controversial, see issue #1677
+      // This will probably cause a deadlock on the next thread doing any
+      // waiting if the thread is suspended between locking and waiting
+      std::unique_lock<std::mutex> lock(PosixConditionBase::mutex_);
 
-    // Declared AFTER the lock, so it is destroyed BEFORE the lock is released.
-    // Registering under mutex_ is what makes the gate race-free: a signaler
-    // holds the same mutex when it reads the count, so either it sees us
-    // registered (and pokes the shared condvar), or it has not yet changed the
-    // state we re-test below before parking. Either way no wakeup is lost.
-    MultiWaitRegistration multi_wait_registration;
+      // Declared AFTER the lock, so it is destroyed BEFORE the lock is
+      // released. Registering under mutex_ is what makes the gate race-free: a
+      // signaler holds the same mutex when it reads the count, so either it
+      // sees us registered (and pokes the shared condvar), or it has not yet
+      // changed the state we re-test below before parking. Either way no
+      // wakeup is lost.
+      MultiWaitRegistration multi_wait_registration;
 
-    bool wait_success = true;
-    // If the timeout is infinite, wait without timeout.
-    // The predicate will be checked before beginning the wait
-    if (timeout == std::chrono::milliseconds::max()) {
-      PosixConditionBase::cond_.wait(lock, predicate);
-    } else {
-      // Wait with timeout.
-      wait_success =
-          PosixConditionBase::cond_.wait_for(lock, timeout, predicate);
-    }
-    if (wait_success) {
-      auto first_signaled = std::numeric_limits<size_t>::max();
+      bool wait_success = true;
+      // If the timeout is infinite, wait without timeout.
+      // The predicate will be checked before beginning the wait
+      if (timeout == std::chrono::milliseconds::max()) {
+        PosixConditionBase::cond_.wait(lock, predicate);
+      } else {
+        // Wait with timeout.
+        wait_success =
+            PosixConditionBase::cond_.wait_for(lock, timeout, predicate);
+      }
+      if (!wait_success) {
+        return std::make_pair<WaitResult, size_t>(WaitResult::kTimeout, 0);
+      }
       for (auto i = 0u; i < handles.size(); ++i) {
         if (handles[i]->signaled()) {
           if (first_signaled > i) {
@@ -311,10 +323,18 @@ class PosixConditionBase {
         }
       }
       assert_true(std::numeric_limits<size_t>::max() != first_signaled);
-      return std::make_pair(WaitResult::kSuccess, first_signaled);
-    } else {
-      return std::make_pair<WaitResult, size_t>(WaitResult::kTimeout, 0);
     }
+    // mutex_ is released. Run the unlocked hook for the same handles that
+    // ran post_execution above: all of them for wait_all, else the first.
+    // See Wait() for why the thread join must not run under mutex_.
+    if (wait_all) {
+      for (auto* handle : handles) {
+        handle->post_execution_unlocked();
+      }
+    } else {
+      handles[first_signaled]->post_execution_unlocked();
+    }
+    return std::make_pair(WaitResult::kSuccess, first_signaled);
   }
 
   virtual void* native_handle() const { return cond_.native_handle(); }
@@ -367,6 +387,8 @@ class PosixConditionBase {
  protected:
   inline virtual bool signaled() const = 0;
   inline virtual void post_execution() = 0;
+  // Runs after mutex_ is released, for work that may block (the thread join).
+  inline virtual void post_execution_unlocked() {}
 
   // Threads actually parked inside a cond_ wait on THIS object. Guarded by
   // mutex_ - every wait site holds it on both sides of the park, so the count
@@ -759,8 +781,11 @@ class PosixCondition<Thread> : public PosixConditionBase {
     uint64_t result = 0;
     auto cpu_count = std::min(CPU_SETSIZE, 64);
     for (auto i = 0u; i < cpu_count; i++) {
-      auto set = CPU_ISSET(i, &cpu_set);
-      result |= set << i;
+      // CPU_ISSET returns int, so `set << i` was an int shift: undefined from
+      // bit 31 and wrapping above it.
+      if (CPU_ISSET(i, &cpu_set)) {
+        result |= uint64_t(1) << i;
+      }
     }
     return result;
   }
@@ -770,7 +795,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
     cpu_set_t cpu_set;
     CPU_ZERO(&cpu_set);
     for (auto i = 0u; i < 64; i++) {
-      if (mask & (1 << i)) {
+      if (mask & (uint64_t(1) << i)) {
         CPU_SET(i, &cpu_set);
       }
     }
@@ -842,17 +867,16 @@ class PosixCondition<Thread> : public PosixConditionBase {
     if (out_previous_suspend_count) {
       *out_previous_suspend_count = suspend_count_;
     }
-    // NOTE(kernel-port 2026-08): ++/-- on a volatile is deprecated in C++20
-    // (-Wdeprecated-volatile). Explicit read-modify-write is equivalent.
     // Clamped at 0: an unbalanced Resume used to wrap the unsigned count to
     // ~4 billion, after which no amount of resuming could ever reach 0 again.
-    if (suspend_count_ > 0) {
-      suspend_count_ = suspend_count_ - 1;
+    if (suspend_count_.load(std::memory_order_acquire) > 0) {
+      suspend_count_.fetch_sub(1, std::memory_order_acq_rel);
     }
     // When fully resumed, transition to running and wake the suspended thread's
     // WaitSuspended via the async-signal-safe semaphore (ported edge 6f18c9850;
     // moved here from WaitSuspended, which can no longer touch state_ safely).
-    if (suspend_count_ == 0 && state_ == State::kSuspended) {
+    if (suspend_count_.load(std::memory_order_acquire) == 0 &&
+        state_ == State::kSuspended) {
       state_ = State::kRunning;
       sem_post(&suspend_sem_);
     }
@@ -865,16 +889,19 @@ class PosixCondition<Thread> : public PosixConditionBase {
       *out_previous_suspend_count = 0;
     }
     WaitStarted();
+    if (state_ == State::kFinished) {
+      // Do not mark an exited thread suspended and signal a dead pthread_t.
+      // (edge 73388a080f)
+      return false;
+    }
     uint32_t prev_suspend_count;
     {
-      prev_suspend_count = suspend_count_;
-      if (out_previous_suspend_count) {
-        *out_previous_suspend_count = suspend_count_;
-      }
       state_ = State::kSuspended;
-      // NOTE(kernel-port 2026-08): ++/-- on a volatile is deprecated in C++20
-      // (-Wdeprecated-volatile). Explicit read-modify-write is equivalent.
-      suspend_count_ = suspend_count_ + 1;
+      prev_suspend_count =
+          suspend_count_.fetch_add(1, std::memory_order_acq_rel);
+      if (out_previous_suspend_count) {
+        *out_previous_suspend_count = prev_suspend_count;
+      }
     }
     if (prev_suspend_count != 0) {
       // Already suspended: the thread is parked in the SIGRTMIN handler's
@@ -924,12 +951,13 @@ class PosixCondition<Thread> : public PosixConditionBase {
       std::unique_lock<std::mutex> lock(state_mutex_);
       if (state_ == State::kFinished) {
         if (is_current_thread) {
-          // This is really bad. Some thread must have called Terminate() on us
-          // just before we decided to terminate ourselves
-          assert_always();
-          for (;;) {
-            // Wait for pthread_cancel() to actually happen.
-          }
+          // Another thread's Terminate() raced ours and already marked us
+          // finished. Its terminate signal is not guaranteed to arrive, and
+          // the old `for (;;)` here held a core until it did. Exit now.
+          // (edge 73388a080f)
+          XELOGW("PosixThread::Terminate: thread was already finished");
+          lock.unlock();
+          pthread_exit(nullptr);
         }
         return;
       }
@@ -976,10 +1004,21 @@ class PosixCondition<Thread> : public PosixConditionBase {
     // WaitForSuspendAcknowledged() can observe the freeze. sem_post is
     // async-signal-safe; this runs in the SIGRTMIN handler.
     sem_post(&suspend_ack_sem_);
-    int ret;
-    do {
-      ret = sem_wait(&suspend_sem_);
-    } while (ret == -1 && errno == EINTR);
+    // Loop on suspend_count_, not on one semaphore token. Resume() posts the
+    // semaphore whether or not anything is parked on it: a thread created
+    // suspended parks on state_signal_ in ThreadStartRoutine, so the Resume
+    // that starts it leaves a token behind, and one sem_wait would let the
+    // thread's first real Suspend fall through at once. (edge 73388a080f)
+    while (suspend_count_.load(std::memory_order_acquire) > 0) {
+      int ret;
+      do {
+        ret = sem_wait(&suspend_sem_);
+      } while (ret == -1 && errno == EINTR);
+      if (ret == -1) {
+        // The semaphore is gone. Do not spin.
+        break;
+      }
+    }
   }
 
   void* native_handle() const override {
@@ -989,12 +1028,15 @@ class PosixCondition<Thread> : public PosixConditionBase {
  private:
   static void* ThreadStartRoutine(void* parameter);
   inline bool signaled() const override { return signaled_; }
-  inline void post_execution() override {
-    if (thread_) {
-      auto thread_to_join = thread_;
-      thread_ = pthread_t();
-      if (pthread_join(thread_to_join, nullptr) != 0) {
-        thread_ = thread_to_join;
+  inline void post_execution() override {}
+  inline void post_execution_unlocked() override {
+    // Runs on every wait this handle satisfies, so a handle waited on twice
+    // joined the same thread twice: undefined once the id can be reused.
+    // joined_ makes the join run once. It runs with mutex_ released, see
+    // PosixConditionBase::Wait. (edge 73388a080f)
+    bool expected = false;
+    if (thread_ && joined_.compare_exchange_strong(expected, true)) {
+      if (pthread_join(thread_, nullptr) != 0) {
         assert_always();
       }
     }
@@ -1003,7 +1045,10 @@ class PosixCondition<Thread> : public PosixConditionBase {
   bool signaled_;
   int exit_code_;
   volatile State state_;
-  volatile uint32_t suspend_count_;
+  // Atomic: the suspend signal handler reads it in WaitSuspended.
+  std::atomic<uint32_t> suspend_count_;
+  // Set by the first join. A second Wait on this handle must not join again.
+  std::atomic<bool> joined_{false};
   // Async-signal-safe suspend/resume wakeup. WaitSuspended runs in the SIGRTMIN
   // suspend signal handler, where pthread_mutex_lock/condvar are NOT
   // async-signal-safe (deadlock/heap corruption). Ported from edge 6f18c9850.
