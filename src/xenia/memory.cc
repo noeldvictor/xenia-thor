@@ -749,7 +749,8 @@ void BaseHeap::Dispose() {
        ++page_number) {
     auto& page_entry = page_table_[page_number];
     if (page_entry.state) {
-      xe::memory::DeallocFixed(TranslateRelative(page_number * page_size_), 0,
+      xe::memory::DeallocFixed(TranslateRelative(page_number * page_size_),
+                               page_entry.region_page_count * page_size_,
                                xe::memory::DeallocationType::kRelease);
       page_number += page_entry.region_page_count;
     }
