@@ -1232,6 +1232,9 @@ X_STATUS Emulator::LaunchXexFile(const std::filesystem::path& path) {
   // Get just the filename (foo.xex).
   auto file_name = path.filename();
 
+  // A loose XEX runs as a title installed to the HDD.
+  kernel_state_->deployment_type_ = XDeploymentType::kInstalledToHDD;
+
   // Launch the game.
   auto fs_path = "game:\\" + xe::path_to_utf8(file_name);
   return CompleteLaunch(path, fs_path);
@@ -1255,6 +1258,8 @@ X_STATUS Emulator::LaunchDiscImage(const std::filesystem::path& path) {
   file_system_->RegisterSymbolicLink("game:", mount_path);
   file_system_->RegisterSymbolicLink("d:", mount_path);
 
+  kernel_state_->deployment_type_ = XDeploymentType::kOpticalDisc;
+
   // Launch the game.
   auto module_path(FindLaunchModule());
   return CompleteLaunch(path, module_path);
@@ -1275,6 +1280,8 @@ X_STATUS Emulator::LaunchStfsContainer(const std::filesystem::path& path) {
         "Unable to mount STFS container; file not found or corrupt.");
     return X_STATUS_NO_SUCH_FILE;
   }
+  // Read the content type before the device moves into the file system.
+  const uint32_t content_type = device->content_type();
   if (!file_system_->RegisterDevice(std::move(device))) {
     xe::FatalError("Unable to register STFS container.");
     return X_STATUS_NO_SUCH_FILE;
@@ -1282,6 +1289,16 @@ X_STATUS Emulator::LaunchStfsContainer(const std::filesystem::path& path) {
 
   file_system_->RegisterSymbolicLink("game:", mount_path);
   file_system_->RegisterSymbolicLink("d:", mount_path);
+
+  // A disc rip installed to the HDD (GOD or SVOD) still runs as a disc
+  // title, so it reports optical media. A real download stays a download.
+  const bool is_disc_content =
+      content_type == static_cast<uint32_t>(XContentType::kInstalledGame);
+  kernel_state_->deployment_type_ = is_disc_content
+                                        ? XDeploymentType::kOpticalDisc
+                                        : XDeploymentType::kDownload;
+  XELOGI("LaunchStfsContainer: content type {:08X}, running as {}",
+         content_type, is_disc_content ? "optical disc" : "download");
 
   // Launch the game.
   auto module_path(FindLaunchModule());
