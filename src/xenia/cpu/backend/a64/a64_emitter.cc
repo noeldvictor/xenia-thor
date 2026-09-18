@@ -4244,6 +4244,11 @@ bool A64Emitter::Emit(hir::HIRBuilder* builder, EmitFunctionInfo& func_info) {
   // EPILOG
   // ========================================================================
   L(*epilog_label_);
+  // A call as the last instruction leaves the check unconsumed.
+  if (synchronize_stack_on_next_instruction_) {
+    synchronize_stack_on_next_instruction_ = false;
+    EnsureSynchronizedGuestAndHostStack();
+  }
   // Return-value trace hook (single shared exit). GATED at EMIT by the _returns
   // cvar (not just A64CallTraceRequested) so it is ONLY present when explicitly
   // requested -- a CallNativeSafe here, before PopStackpoint/LR-restore, was
