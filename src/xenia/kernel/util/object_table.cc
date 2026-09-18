@@ -16,7 +16,7 @@
 #include "xenia/kernel/xthread.h"
 
 DEFINE_bool(
-    kernel_object_handle_cache, false,
+    kernel_object_handle_cache, XE_ANDROID_DEFAULT(true, false),
     "Lock-free per-thread cache for kernel object-handle lookups "
     "(ObjectTable::LookupObject). Skips the global critical-region lock on "
     "repeated lookups of the same handle, reducing the lock contention that "

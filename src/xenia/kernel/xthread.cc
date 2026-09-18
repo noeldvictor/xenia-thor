@@ -42,7 +42,7 @@ UPDATE_from_bool(ignore_thread_priorities, 2026, 4, 9, 12, true);
 DEFINE_bool(ignore_thread_affinities, true,
             "Ignores game-specified thread affinities.", "Kernel");
 DEFINE_int32(
-    thor_guest_thread_affinity_mask, 0,
+    thor_guest_thread_affinity_mask, XE_ANDROID_DEFAULT(-1, 0),
     "AYN Thor multi-CPU (roadmap): if non-zero, pin ALL guest (emulated) threads "
     "to this host CPU-core bitmask instead of letting the scheduler float them "
     "(possibly onto the little A510 cluster). On the Thor the big cores are "

@@ -35,7 +35,7 @@
 #include "xenia/xbox.h"
 
 DEFINE_bool(
-    kernel_native_object_fast_path, false,
+    kernel_native_object_fast_path, XE_ANDROID_DEFAULT(true, false),
     "Lock-free fast path for XObject::GetNativeObject - the kernel call that "
     "resolves a guest dispatch struct (event/mutant/timer/semaphore) to its "
     "host object on every KeSetEvent / KeWaitForSingleObject / KePulseEvent. "

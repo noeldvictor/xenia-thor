@@ -69,7 +69,7 @@ static std::string LlvmLoweringStampTag() {
 }
 #endif  // XE_LLVM_BACKEND_ENABLED
 
-DEFINE_bool(cpu_backend_llvm, false,
+DEFINE_bool(cpu_backend_llvm, XE_ANDROID_DEFAULT(true, false),
             "Use the LLVM-JIT CPU backend (whole-function recompile at module "
             "load for register residency) for guest functions it can lower, "
             "falling back to the a64 per-block JIT otherwise. Requires a "
@@ -117,7 +117,7 @@ DEFINE_bool(cpu_backend_llvm_dump_asm, false,
             "Use with _range_lo/_hi to dump ONE function's machine code.",
             "CPU");
 
-DEFINE_bool(cpu_backend_llvm_context_residency, false,
+DEFINE_bool(cpu_backend_llvm_context_residency, XE_ANDROID_DEFAULT(true, false),
             "LLVM backend: promote guest registers (LOAD/STORE_CONTEXT) to "
             "entry-block ALLOCAS that mem2reg lifts into host registers, instead "
             "of the direct ctx+offset memory accesses the backend emits today. "
@@ -130,7 +130,7 @@ DEFINE_bool(cpu_backend_llvm_context_residency, false,
             "CPU");
 
 DEFINE_bool(
-    cpu_backend_llvm_residency_writeback, false,
+    cpu_backend_llvm_residency_writeback, XE_ANDROID_DEFAULT(true, false),
     "LLVM backend (requires cpu_backend_llvm_context_residency): the RPCS3-class "
     "residency - STORE_CONTEXT writes ONLY the entry alloca (mem2reg -> host "
     "register), NOT the context memory, so the ~372 per-store context writes the "
@@ -211,7 +211,7 @@ DEFINE_bool(cpu_llvm_no_runtime_compiles, true,
             "AOT precompiler's ~97%+ coverage the perf cost of a64-compiled "
             "runtime misses is negligible. Set false to restore always-LLVM.",
             "CPU");
-DEFINE_bool(cpu_llvm_object_cache, false,
+DEFINE_bool(cpu_llvm_object_cache, XE_ANDROID_DEFAULT(true, false),
             "AOT object cache: persist each LLVM-compiled guest function's "
             "machine code (.o) to disk and reuse it on the next launch / on "
             "re-entry, skipping the LLVM codegen (AsmPrinter/MCAssembler) that is "
@@ -230,7 +230,7 @@ DEFINE_string(cpu_llvm_object_cache_path, "",
               "in the key disambiguates titles even if shared. Empty disables the "
               "object cache regardless of cpu_llvm_object_cache.",
               "CPU");
-DEFINE_bool(cpu_llvm_object_cache_skip_lowering, false,
+DEFINE_bool(cpu_llvm_object_cache_skip_lowering, XE_ANDROID_DEFAULT(true, false),
             "AOT object cache INCREMENT 2 (the full ReXGlue/RPCS3 precompile model). "
             "Requires cpu_llvm_object_cache. On a warm cache HIT, skip the LLVM "
             "IR-build AND the O2 optimization pipeline AND codegen ENTIRELY by "

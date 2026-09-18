@@ -99,7 +99,7 @@ DEFINE_bool(arm64_jit_inline_leaf, false,
             "the SAFE alternative to cross-barrier elision (see the cross-barrier "
             "elision wall verdict). Default off.",
             "CPU");
-DEFINE_bool(arm64_jit_inline_extern_thunk, false,
+DEFINE_bool(arm64_jit_inline_extern_thunk, XE_ANDROID_DEFAULT(true, false),
             "Thor JIT inlining: at a direct unconditional guest bl whose target "
             "is a kExtern import thunk (xenia's `sc 2; blr` redirect to a kernel "
             "export), emit the extern call AT THE CALL SITE instead of CALLing "
@@ -157,7 +157,7 @@ DEFINE_int32(cpu_precompile_budget_ms, 1500,
              "(pre-warm the entire reachable set - can add seconds to load on a "
              "large title).",
              "CPU");
-DEFINE_bool(cpu_aot_maximize, false,
+DEFINE_bool(cpu_aot_maximize, XE_ANDROID_DEFAULT(true, false),
             "AOT-primary master switch: enable the full validated max-static-"
             "coverage precompile stack in one flag - equivalent to "
             "cpu_precompile_guest_functions + cpu_precompile_drain_frontier + "

@@ -22,7 +22,7 @@
 #include "xenia/base/threading_timer_queue.h"
 
 DEFINE_bool(
-    timer_queue_sleep_idle, false,
+    timer_queue_sleep_idle, XE_ANDROID_DEFAULT(true, false),
     "Thor CPU: make the timer-dispatch thread SLEEP until the next timer "
     "deadline instead of busy-spinning. The disruptor spin_wait_strategy polls "
     "the clock continuously between timer events (device-profiled as the top "

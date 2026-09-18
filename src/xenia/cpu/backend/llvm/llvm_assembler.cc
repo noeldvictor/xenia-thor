@@ -472,7 +472,7 @@ DECLARE_bool(cpu_backend_llvm_parallel_lowering);
 
 
 DEFINE_bool(
-    cpu_llvm_target_features_native, false,
+    cpu_llvm_target_features_native, XE_ANDROID_DEFAULT(true, false),
     "Tell LLVM which ARM features this CPU actually HAS, instead of only which "
     "ones to avoid. Our target-features string is otherwise entirely negative "
     "(reserve-x20/x21 plus the SVE disables), and with no positive features and "

@@ -247,15 +247,14 @@ public class EmulatorActivity extends WindowedAppActivity {
             // private files dir; an explicit intent extra still overrides. Safe: the
             // baked-host-pointer fns are nocache_, and the key = guest addr + a hash
             // of the guest code bytes (title/version/SMC-safe); a miss just compiles.
-            if (!intent.hasExtra("cpu_llvm_object_cache")) {
+            // The object cache is on by default in the native code (directive
+            // 17); only its directory is a launch parameter the app owns.
+            if (!intent.hasExtra("cpu_llvm_object_cache_path")) {
                 final java.io.File objcache =
                         new java.io.File(getFilesDir(), "objcache");
                 objcache.mkdirs();
-                launchArguments.putBoolean("cpu_llvm_object_cache", true);
                 launchArguments.putString(
                         "cpu_llvm_object_cache_path", objcache.getAbsolutePath());
-                launchArguments.putBoolean(
-                        "cpu_llvm_object_cache_skip_lowering", true);
             }
             copyBooleanExtra(intent, launchArguments, "hir_algebraic_identities");
             copyBooleanExtra(intent, launchArguments, "hir_fold_and_not");

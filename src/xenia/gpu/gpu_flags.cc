@@ -724,7 +724,7 @@ DEFINE_bool(
     "Default off.",
     "GPU");
 DEFINE_int32(
-    thor_gpu_thread_affinity_cpu, -1,
+    thor_gpu_thread_affinity_cpu, XE_ANDROID_DEFAULT(7, -1),
     "AYN Thor perf (roadmap R1): pin the 'GPU Commands' command-processor worker "
     "thread to this CPU core index (-1 = off / let the scheduler float it). The "
     "~197ms/frame critical path is single-thread-bound; the Thor's prime Cortex-X3 "
@@ -755,7 +755,7 @@ DEFINE_int32(
     "/proc scans; 700ms smooths transient compile/IO spikes. Android-only.",
     "GPU");
 DEFINE_int32(
-    gpu_cp_worker_nice, 0,
+    gpu_cp_worker_nice, XE_ANDROID_DEFAULT(-15, 0),
     "AYN Thor perf: lower the 'GPU Commands' command-processor worker thread's "
     "nice value (Android setpriority) so the OS does not deschedule it under "
     "guest-thread CPU contention - the GPU then stays fed instead of idling on "
@@ -1502,7 +1502,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
-    vulkan_cache_sampler_parameters, false,
+    vulkan_cache_sampler_parameters, XE_ANDROID_DEFAULT(true, false),
     "Reuse sampler parameters and VkSampler handles across draws, re-deriving "
     "them only for fetch constants written since the previous draw (or on "
     "shader sampler-layout change, new submission, or sampler destruction). "
@@ -1532,7 +1532,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
-    vulkan_fast_register_ranges, false,
+    vulkan_fast_register_ranges, XE_ANDROID_DEFAULT(true, false),
     "Process PM4 register range writes (Type0 runs, SET_CONSTANT/"
     "SET_CONSTANT2/LOAD_ALU_CONSTANT/SET_SHADER_CONSTANTS) with bulk "
     "byte-swapped copies and range-level constant dirty tracking (port of "
@@ -1545,7 +1545,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
-    vulkan_skip_redundant_fetch_constant_writes, false,
+    vulkan_skip_redundant_fetch_constant_writes, XE_ANDROID_DEFAULT(true, false),
     "Skip dirtying texture bindings and the fetch/bool-loop constant buffers "
     "on register writes whose value is identical to the current one (games "
     "commonly re-emit unchanged constants every draw). Ported from XenDroid. "
@@ -1553,7 +1553,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_int32(
-    vulkan_mid_frame_submission_draws, 0,
+    vulkan_mid_frame_submission_draws, XE_ANDROID_DEFAULT(1300, 0),
     "If greater than 0, end and submit the current command buffer after this "
     "many draws instead of only at the swap, so the GPU overlaps the frame's "
     "rendering with the building of the rest of its command stream (attacks "

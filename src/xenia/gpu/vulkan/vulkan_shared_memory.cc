@@ -46,7 +46,7 @@ DEFINE_bool(vulkan_hoist_shmem_uploads, false,
             "render pass (expensive on tile-based GPUs).",
             "Vulkan");
 DEFINE_bool(
-    gpu_uma_direct_shared_memory, false,
+    gpu_uma_direct_shared_memory, XE_ANDROID_DEFAULT(true, false),
     "Unified-memory optimization for integrated GPUs (e.g. mobile Adreno on "
     "AYN Thor). When the device exposes a HOST_VISIBLE | DEVICE_LOCAL memory "
     "type, back the shared-memory buffer with it and write guest pages "

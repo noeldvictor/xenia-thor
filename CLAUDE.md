@@ -84,10 +84,11 @@ Each directive has a date. The archive holds the full text and the evidence.
    structure from the ARM64 port. No x86 code runs in the APK. The targets are decisions that only made
    sense for a 16-register, 2-operand, TSO host. The largest open item is the register budget: 7
    allocatable GPRs and 28 vectors, with the rest spilled to the `PPCContext` block.
-2. **AOT plus LLVM is the default (2026-07-31).** Every game from the GUI gets a full AOT precompile
-   before start, and the LLVM backend as the standard CPU backend. `cpu_llvm_no_runtime_compiles` is
-   default true. Functions found during gameplay compile on the a64 backend. `opt_aot_precompile`,
-   `opt_llvm_backend`, and `opt_xendroid_parity` are all default enabled in `XeniaOptimizations`.
+2. **AOT plus LLVM is the default (2026-07-31).** Every game gets a full AOT precompile before start,
+   and the LLVM backend as the standard CPU backend. `cpu_llvm_no_runtime_compiles` is default true.
+   Functions found during gameplay compile on the a64 backend. Since 2026-09-18 these are code
+   defaults on Android (`XE_ANDROID_DEFAULT` in cvar.h), not app toggles. The app keeps four user
+   choices: VRS balanced, VRS performance, VRS heavy scenes, and frame generation.
 3. **XenDroid and xenia-edge are the compatibility reference (2026-07-31, 2026-08-06).** XenDroid is the
    best stable Android Xbox 360 emulator. It runs on the same device. When a title misbehaves here and
    works there, diff the edge kernel and port the divergence. Do not debug from scratch. If a title looks
@@ -245,6 +246,8 @@ Port rules:
   (`7c999ca76`, `3df64c029`). Check the git log before you start one. Some landed on 2026-08-18.
 - Largest unclaimed CPU item: LLVM functions are not in the a64 indirection table. Every a64 to LLVM
   call pays a full `ResolveFunction`. See `llvm_backend.cc:251`.
+- Cvar rework of 2026-09-18: 22 levers became Android code defaults, 43 app toggles removed, 4 user
+  choices kept. Details in the worklog. Not verified on device yet.
 - Upstream port pass of 2026-09-18: 90 commits landed (Tier 1 to 4). Windows and NDK builds pass.
   x64 corpus 14,333 failures, unchanged. Device tests are owed; the list is in
   `docs/research/20260918-upstream-triage.md`, section "Port status".

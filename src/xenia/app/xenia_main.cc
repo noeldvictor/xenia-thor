@@ -109,7 +109,7 @@ DEFINE_path(
     "Storage");
 
 DEFINE_bool(mount_scratch, false, "Enable scratch mount", "Storage");
-DEFINE_bool(mount_cache, false, "Enable cache mount", "Storage");
+DEFINE_bool(mount_cache, XE_ANDROID_DEFAULT(true, false), "Enable cache mount", "Storage");
 
 // Headless/Android save-state hooks for DETERMINISTIC SCENE-REACH (A/B testing):
 // the engine has Emulator::Save/RestoreFromFile but they're only wired to the

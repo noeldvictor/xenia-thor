@@ -18,7 +18,7 @@
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
 
 DEFINE_bool(
-    cpu_drop_redundant_atomic_release_barrier, false,
+    cpu_drop_redundant_atomic_release_barrier, XE_ANDROID_DEFAULT(true, false),
     "Drop the full memory barrier emitted AFTER stwcx/stdcx (PowerPC store-"
     "conditional). The store-conditional already lowers to an acquire+release "
     "atomic (ARM64 LSE 'casal' / x86 'lock cmpxchg'), which orders the store "

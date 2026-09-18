@@ -29,6 +29,15 @@
 #include <jni.h>
 #endif  // XE_PLATFORM_ANDROID
 
+// Picks a cvar default per platform. The Thor build ships validated levers on
+// by default (CLAUDE.md directive 17: no cvar gates for shipped behavior);
+// other platforms keep the upstream default.
+#if XE_PLATFORM_ANDROID
+#define XE_ANDROID_DEFAULT(android_value, other_value) (android_value)
+#else
+#define XE_ANDROID_DEFAULT(android_value, other_value) (other_value)
+#endif
+
 namespace cvar {
 
 namespace toml {

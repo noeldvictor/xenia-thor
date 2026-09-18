@@ -35,7 +35,7 @@ DECLARE_bool(gpu_native_render_targets);
 DECLARE_bool(gpu_bd_perfmode_hdr_2x);
 
 DEFINE_bool(
-    rt_cache_ownership_claim_memo, false,
+    rt_cache_ownership_claim_memo, XE_ANDROID_DEFAULT(true, false),
     "Skip EDRAM ownership-map walks for render target claims that provably "
     "change nothing (the same render target re-claiming an extent it already "
     "fully owns, with no ownership mutation since). Cuts per-draw CP-thread "

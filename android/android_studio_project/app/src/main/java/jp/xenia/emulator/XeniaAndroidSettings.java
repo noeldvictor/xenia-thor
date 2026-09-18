@@ -246,7 +246,6 @@ public final class XeniaAndroidSettings {
         if (gamertag != null && !gamertag.trim().isEmpty()) {
             launchArguments.putString("user_gamertag", gamertag.trim());
         }
-        launchArguments.putBoolean("discord", false);
         if (preferences.getBoolean(KEY_MUTE_AUDIO, false)) {
             launchArguments.putBoolean("mute", true);
         }
@@ -254,7 +253,6 @@ public final class XeniaAndroidSettings {
                 "android_hide_osd", preferences.getBoolean(KEY_HIDE_OSD, true));
         launchArguments.putBoolean(
                 "android_show_fps", preferences.getBoolean(KEY_SHOW_FPS, true));
-        launchArguments.putBoolean("android_xam_keyboard_ime", true);
         if (preferences.getBoolean(KEY_VULKAN_PERF_COUNTERS, false)) {
             launchArguments.putBoolean("vulkan_trace_perf_counters", true);
             launchArguments.putInt(
@@ -308,7 +306,6 @@ public final class XeniaAndroidSettings {
         // device xenia.config.toml OVERRIDES compiled defaults - only an intent
         // extra beats it - so pass it on every launch. Device-validated: IU
         // reaches its menu at 262144 (vs crash at 65536).
-        launchArguments.putInt("a64_max_stackpoints", 262144);
         // Mount the Xbox 360 cache partition (cache0:/cache1:/cache:). The
         // engine default is false and the persisted device xenia.config.toml
         // also pins it false, so the in-app launch left the cache devices
@@ -318,7 +315,6 @@ public final class XeniaAndroidSettings {
         // try accessing cache:\ too") therefore got device-not-found and stalled
         // EARLIER via the play button than in tests. Match the proven-good test
         // config so the app reaches as far as the captures do.
-        launchArguments.putBoolean("mount_cache", true);
     }
 
 
