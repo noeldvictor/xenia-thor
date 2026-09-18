@@ -239,7 +239,9 @@ Port rules:
   (`7c999ca76`, `3df64c029`). Check the git log before you start one. Some landed on 2026-08-18.
 - Largest unclaimed CPU item: LLVM functions are not in the a64 indirection table. Every a64 to LLVM
   call pays a full `ResolveFunction`. See `llvm_backend.cc:251`.
-- Upstream triage of 2026-09-18: see `docs/research/20260918-upstream-triage.md`.
+- Upstream port pass of 2026-09-18: 90 commits landed (Tier 1 to 4). Windows and NDK builds pass.
+  x64 corpus 14,333 failures, unchanged. Device tests are owed; the list is in
+  `docs/research/20260918-upstream-triage.md`, section "Port status".
 
 ## 9. Build, tools, and workflow
 

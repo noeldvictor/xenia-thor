@@ -145,6 +145,139 @@ tessellation); 2f858c4629 (XMP notifications, Black Ops II music); f213cc6a9f (H
 4. After the POSIX set: build NativeCore, deploy, and test suspend, resume, and a save on device.
 5. Record each ported hash and each N/A hash in the worklog.
 
+## Port status, 2026-09-18
+
+Result: 90 commits on master after the triage commit `29ad2fcb1c`. The full list is at the end of this section.
+
+Verification on this PC:
+
+| check | result |
+|---|---|
+| Windows MSVC build of xenia.exe | pass, 394 s |
+| Android native core NDK build (arm64-v8a) | pass, 435 s |
+| NDK aarch64 syntax check | pass on every changed .cc |
+| x64 PPC corpus, 169,117 cases | 14,333 failures. The last recorded count was 14,591 before a -258 fix on 2026-08-18, so the expected pre-session count is 14,333. No net change. |
+| a64 PPC corpus | not run. Needs the device. See the device list. |
+
+Tier 1: all 22 items landed. 29 clean cherry-picks plus the one-line heap release hunk (`980c63e5a6`). One pick needed a follow-up: the lvlx/lvrx literal-pool commit requires constexpr vec128 factories, ported from edge 2a10971772 (`5d56bb32f9`). The resolve shader headers were regenerated (`6257e2253f`).
+
+Tier 2: 28 of 30 landed. Not applicable with evidence: canary 174d2d4205 (robust mutexes; bionic has no PTHREAD_MUTEX_ROBUST) and canary 1ae82023ea (WaitMultiple try_lock poll; it reintroduces a 1 kHz wakeup per multi-waiter that our per-object condvar work removed). Partial: edge e6a86116f3 landed for SHL_V128 and SHR_V128; the other four sequences were already safe by register arrangement. canary 7ef873b0d5 was not needed: our worker never reads the client driver outside the global lock.
+
+Tier 3: landed 29fcaeac32, b308af27c7, 773efcdd05 (dedupe only), 81cfbe17c9, 77852914ff, 7101021150, 70ac6a3574, b4a5072505, e644b0e6c9 (as our own xbyak sequence). Already present: bfca9b2d97 (our dynamic constants arena), d2c8ca675e (our EmitLogicalImm helpers). Deferred: 52297ea8f8 + f21ebd49e9 (futex global mutex; 29 call sites name the mutex type and 3 use it directly; gain over bionic's pthread mutex is unmeasured), 10ac2f5eff (a64 MMIO fault recording; needs the canary XexInfoCache, the record_mmio_access_exceptions cvar and the memory callback, none of which exist here), fb1c3dec3f (CR6 with uminv/umaxv; a similar micro-shape measured slower, needs a device A/B), 5845f3437b series (async shader compilation, about 2,600 lines into a file with 9,019 changed lines; a session of its own), 6e5b8324f4 (audio pacing; behavior change that needs the device).
+
+Tier 4: landed the SPIR-V and cache half of the list (17 commits from the translator and cache package, plus 2f858c4629, 7be830a2dd as `8dc2265ecc`, accaef3f07 with a7a3eabdbb as `4e9f1c2e8e`, and the last hunk of 9da693480d as `5994a9b5e9`). Not applicable: 3cc741caa3 (our tree had no ReduceFloatPrecision; the 3a44f20c7b port carries the Inf/NaN pass-through), 0c843efb32 (needs the texture integer scale infrastructure from edge d119505289), cb240560df (no FSI_AlphaToMask here), 7cd47947b0 (needs the wide 1D texture base from edge 947075f880), 2b071d9b09 (no user clip plane support in our Vulkan backend), f213cc6a9f (our input system has no per-slot binding design). Not attempted: PR 1015, 1201, 1109, 858 (kernel correctness with heavy conflicts; rank C).
+
+Facts found during the ports:
+
+- Our a64 backend is the canary donor of 2026-05-18 (Herman S., xbyak_aarch64). Wunkolo's oaknut patches never apply.
+- The MMIO LDR + REV detection in our port 159be60a3b was wrong. The handler resumes at pc + 4 with length 4, so the REV still ran on a value the handler already swapped. Reverted in `8e1ad97553`. Needs one device read to confirm.
+- upper_ascii lowered instead of uppering. Nothing called it before the ListFiles collation.
+- Our launch paths never set the deployment type; every title saw kOther.
+- The SPIR-V shader storage kVersion is now 8.
+
+Device tests still owed (the Thor was not used in this session):
+
+1. a64 corpus run on device for `3c1b6421de`, `97fdd9f19e`, `8e1ad97553`, `fd3ec51a6b`, `a5f59a48ae`, `702be3b36f`, `eed733d546`. Last a64 count: 3,038 failures.
+2. MMIO revert `8e1ad97553`: log one XMA or GPU register read before and after.
+3. Dispatch header reconcile `a89c68078f`: a musou title or Crackdown loading.
+4. POSIX set `b1d29cc0af`, `50bbb74647`, `a39fb6a3bb`: suspend, resume, save state, and a title that uses NtQueueApcThread.
+5. VRS `31f99fa6f6` and `bf11a7b9b1`: Blue Dragon with VRS on; look for the one-shot clamp log line.
+6. GPU correctness set: run the PC trace loop first (`tools/pc/bd_trace_ab.sh`), then a Blue Dragon and Gears pixel check on device.
+7. Content and VFS set: in-game DLC install, save enumeration, a multi-fragment SVOD.
+
+Commits, newest first:
+
+- `5994a9b5e9` Disable aliased depth only when the color target writes depth bits
+- `8e4bd1d3c3` Regenerate the resolve_full SPIR-V headers for the k_16_16 EDRAM clamp
+- `316a27a4ba` Bind shared memory persistently for texture loads and resolves
+- `c3f07407b0` Skip the texture cache lock when a texture looks up to date
+- `12e754437d` Apply blend factors before MIN and MAX blend operations
+- `32f998e1ba` Store Vulkan gamma render targets as linear UNORM16
+- `97bad24483` Keep read-only depth bound when an aliased color target spares it
+- `67575c8bdb` Keep dummy texture headers whose swizzle is all literal 0s and 1s
+- `3f3f74e34d` Fix k_16_16 and k_16_16_16_16 EDRAM packing clamping in xesli
+- `195b6bf721` Initialize GPU registers to hardware reset defaults
+- `2ece4a1456` Emulate extended-range float16 in render target pack and unpack
+- `2233a13b05` Round scalar approximation results to 21 mantissa bits
+- `a17509e0d8` Apply float controls to Vulkan geometry shaders
+- `75b13003fb` Use min_linear and mip_linear for Vulkan sampler min and mip filters
+- `c45075e717` Fix stacked-texture inter-layer lerp base in SampleTexture
+- `dec32502ed` Clamp out-of-bounds vertex fetch words to 0 in SPIR-V
+- `af1fb529f3` Re-validate texture ranges before marking them up to date
+- `eb0f40dd87` Return init failure from SharedMemory::InitializeCommon
+- `4e9f1c2e8e` Collate ListFiles so directory order is the same on every host
+- `bf11a7b9b1` [Vulkan] Record the fragment shading rate only when it changes
+- `31f99fa6f6` [Vulkan] Clamp the coarse shading rate to the pass's sample count
+- `22db9cf597` [Vulkan] Cache host viewport info across draws
+- `bb64dfccdd` [GPU/PM4] Publish the ring read pointer every RB_BLKSZ dwords
+- `be3112544d` [Vulkan] Skip draws with surface_pitch == 0 to match D3D12
+- `8c9553bde4` [Base/POSIX] Classify directory entries from stat, not d_type
+- `840fbe0102` [Base/POSIX] Set O_APPEND only for append-only handles
+- `60199b1bf1` [Config] Keep the default when a config value has the wrong type
+- `a39fb6a3bb` [Base/POSIX] Fall back to nice values when SCHED_FIFO is refused
+- `50bbb74647` [Base/POSIX] Interrupt an alertable wait on a queued user callback
+- `1fa1c3dd9a` [Base/POSIX] SA_RESTART on suspend and terminate, atomic install flag
+- `b1d29cc0af` [Base/POSIX] Fix thread join, terminate, affinity and stale suspend token
+- `9ae1f08cf8` Revert "Revert "[Kernel] Initial XMP Notifications""
+- `fd3ec51a6b` a64: emit one immediate shift for splat-constant vector shift counts
+- `c5ddeddd76` [Memory] Round the AllocRange ceiling to the page, not to the alignment
+- `9154c42ad9` [Memory] Fix large-alignment physical allocs through offset heaps
+- `4b42d4167d` [XAM] Close a content package's files by its device path
+- `978a019896` [VFS] Bounds check the STFS hash table reader
+- `c0cb8c37dd` [VFS] Read SVOD fragments at explicit offsets
+- `6e99a4ef3f` [VFS] Lock symbolic link lookups
+- `89a8b798b3` Guard temp RW protection during virtual alloc
+- `3f15460ea5` Strip \??\ from symbolic link names before using them
+- `5f708b1d32` Keep loader-owned objects out of the title's handle numbering
+- `7bdc26f0e1` Take back the signature a dying object left in guest memory
+- `a89c68078f` Reconcile the guest dispatch header on native object lookup
+- `6935b6cdff` Reuse one APC per timer instead of allocating one per expiry
+- `eed733d546` Simplify the carry and srawx helpers in the PPC frontend
+- `f74856d6b5` [CPU/HIR] Flip the lane index in the constant Extract fold
+- `19dee716f2` [CPU/PPC] Implement mcrfs
+- `ff755357b7` [CPU] Do not return an error from unimplemented OE overflow checks
+- `fd1196626d` [CPU] Fix mcrf: copy the CR field instead of routing it through LoadCR
+- `97fdd9f19e` [A64] Run the pending stack sync check before the epilog
+- `3c1b6421de` [A64] Keep a constant vector operand off the clobbered scratch in SHL/SHR_V128
+- `8e1ad97553` [CPU/A64] Revert the LDR + REV byte-swap detection in MMIO decode
+- `20bb5d6ed0` [CPU] Move overlapping XEX patch regions with memmove
+- `4b64ffa1b0` [CPU] Publish JIT entry results under the entry table lock
+- `49f00de541` CLAUDE.md: add the subagent limit as standing directive 16
+- `702be3b36f` Rematerialize spills from the context instead of a local
+- `6257e2253f` Regenerate the resolve_fast_32bpp_4xmsaa SPIR-V headers with glslc
+- `8dc2265ecc` Set the deployment type in every launch path
+- `5d56bb32f9` Make the vec128 factory functions constexpr
+- `980c63e5a6` Release each heap region with its real length at dispose
+- `7486818064` [VFS] Resolve a content package root named without its trailing separator
+- `f36b16c40b` [Emulator] Align guest system time with host time at setup
+- `8d67f9a96c` [Base] Fix identifier pasting in the cvar update macros
+- `a26289522a` [GPU] Clamp dynamically addressed shader constant indices
+- `ce8ad4bcda` [Base] Saturate the WinSystemClock to steady_clock conversion
+- `df53b5e714` [VFS/XAM] Create the content directory XamContentResolve is asked for
+- `39972f24b7` [XAM] Match a content package that differs only in case
+- `dc90d20dc3` [Vulkan] Fix swapped stage and access masks on scratch buffer growth
+- `f62c178613` [Kernel] Disable allow_incompatible_title_update by default and log when applied
+- `1c9fe32385` [VFS] Refresh host entry timestamps on update
+- `35aeacf519` [XboxKrnl/IO] Refresh entry info in NtQueryFullAttributesFile
+- `ec913a3afd` [VFS] Hide the package thumbnail from guest enumeration
+- `6d9b2a13ee` [Kernel] Fire timers set with a past/epoch absolute due time
+- `d9afca652c` [A64] Load the lvlx/lvrx base control from the literal pool
+- `bb37fdd9e1` [Vulkan] Select back-face stencil ref/mask when culling only front faces
+- `71e8cf7378` [Vulkan] Use dedicated alpha blend factor map for alpha srcb/dest blend
+- `067ba43043` [Vulkan] Clamp scalar maxas/maxasf address register to [0, 255]
+- `c1102e3894` [GPU] Handle tessellated triangle strip and fan draws
+- `8615964989` [Vulkan] Clamp stacked-texture layer index for Inf/NaN coords
+- `b5e604c01a` [GPU] Fix scalar ALU swizzles with three-source vector ops
+- `3a6e93d1f7` [GPU] Fix mantissa placement in CPU Float7e3To32
+- `7d10c1df53` [Vulkan] Barrier consecutive uploads to the same image
+- `18835a3b26` [XAM] Add mutex for properties vector
+- `8a691c7dce` [CPU] Xbox360 cache line is always 128 bytes
+- `8bca68ac24` [Base] Increase arena chunk size
+- `3d29e0877b` [GPU/WGF] Fix resolve_fast_32bpp_4xmsaa sample addressing
+- `e764e61f03` [Vulkan] Fix stencil bit transfer shaders not discarding pixels
+- `778c7f9c5d` [CPU/PPC] Implement mcrxr instruction
+- `edf1904a62` [PPC] vsubcuw is actually implemented, enable it
+
 ---
 
 # Appendix A: xenia-edge report
