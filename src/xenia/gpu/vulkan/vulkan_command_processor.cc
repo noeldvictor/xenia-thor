@@ -7168,11 +7168,47 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // the VIEWPORT X per-tile in UpdateDynamicState (tile win_off=-608 -> vp x=+608)
   // so tile-2 lands at native[608..1280] instead of overlapping tile-1 at [0..672].
   draw_util::draw_ignore_window_offset = false;
-  draw_util::GetHostViewportInfo(
-      regs, 1, 1, false, device_properties.maxViewportDimensions[0],
-      device_properties.maxViewportDimensions[1], true,
-      normalized_depth_control, false, host_render_targets_used,
-      pixel_shader && pixel_shader->writes_depth(), viewport_info);
+  {
+    // Reuse the previous draw's host viewport while every input that
+    // GetHostViewportInfo reads is unchanged. Most draws in a pass share the
+    // viewport registers, so this skips the float work per draw.
+    const bool pixel_shader_writes_depth =
+        pixel_shader && pixel_shader->writes_depth();
+    HostViewportInfoKey viewport_key;
+    viewport_key.x_max = device_properties.maxViewportDimensions[0];
+    viewport_key.y_max = device_properties.maxViewportDimensions[1];
+    viewport_key.normalized_depth_control = normalized_depth_control.value;
+    viewport_key.pa_cl_clip_cntl = regs[XE_GPU_REG_PA_CL_CLIP_CNTL];
+    viewport_key.pa_cl_vte_cntl = regs[XE_GPU_REG_PA_CL_VTE_CNTL];
+    viewport_key.pa_su_sc_mode_cntl = regs[XE_GPU_REG_PA_SU_SC_MODE_CNTL];
+    viewport_key.pa_su_vtx_cntl = regs[XE_GPU_REG_PA_SU_VTX_CNTL];
+    viewport_key.pa_sc_window_offset = regs[XE_GPU_REG_PA_SC_WINDOW_OFFSET];
+    viewport_key.pa_cl_vport_xscale = regs[XE_GPU_REG_PA_CL_VPORT_XSCALE];
+    viewport_key.pa_cl_vport_yscale = regs[XE_GPU_REG_PA_CL_VPORT_YSCALE];
+    viewport_key.pa_cl_vport_zscale = regs[XE_GPU_REG_PA_CL_VPORT_ZSCALE];
+    viewport_key.pa_cl_vport_xoffset = regs[XE_GPU_REG_PA_CL_VPORT_XOFFSET];
+    viewport_key.pa_cl_vport_yoffset = regs[XE_GPU_REG_PA_CL_VPORT_YOFFSET];
+    viewport_key.pa_cl_vport_zoffset = regs[XE_GPU_REG_PA_CL_VPORT_ZOFFSET];
+    viewport_key.rb_depth_info = regs[XE_GPU_REG_RB_DEPTH_INFO];
+    viewport_key.flags = (host_render_targets_used ? 1u : 0u) |
+                         (pixel_shader_writes_depth ? 2u : 0u) |
+                         (cvars::gpu_binonce_full_scissor ? 4u : 0u) |
+                         (cvars::half_pixel_offset ? 8u : 0u);
+    if (previous_viewport_info_valid_ &&
+        !std::memcmp(&viewport_key, &previous_viewport_info_key_,
+                     sizeof(viewport_key))) {
+      viewport_info = previous_viewport_info_;
+    } else {
+      draw_util::GetHostViewportInfo(
+          regs, 1, 1, false, device_properties.maxViewportDimensions[0],
+          device_properties.maxViewportDimensions[1], true,
+          normalized_depth_control, false, host_render_targets_used,
+          pixel_shader_writes_depth, viewport_info);
+      previous_viewport_info_key_ = viewport_key;
+      previous_viewport_info_ = viewport_info;
+      previous_viewport_info_valid_ = true;
+    }
+  }
 
   // Update dynamic graphics pipeline state.
   UpdateDynamicState(viewport_info, primitive_polygonal,

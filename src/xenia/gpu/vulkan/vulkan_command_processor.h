@@ -2525,6 +2525,36 @@ class VulkanCommandProcessor : public CommandProcessor {
   // System shader constants.
   SpirvShaderTranslator::SystemConstants system_constants_;
 
+  // Host viewport of the previous draw, reused while the inputs
+  // draw_util::GetHostViewportInfo derives it from stay the same. The key
+  // holds every register, flag and cvar that function reads. Every field is
+  // a uint32_t so the key has no padding and compares with std::memcmp.
+  struct HostViewportInfoKey {
+    uint32_t x_max;
+    uint32_t y_max;
+    uint32_t normalized_depth_control;
+    uint32_t pa_cl_clip_cntl;
+    uint32_t pa_cl_vte_cntl;
+    uint32_t pa_su_sc_mode_cntl;
+    uint32_t pa_su_vtx_cntl;
+    uint32_t pa_sc_window_offset;
+    uint32_t pa_cl_vport_xscale;
+    uint32_t pa_cl_vport_yscale;
+    uint32_t pa_cl_vport_zscale;
+    uint32_t pa_cl_vport_xoffset;
+    uint32_t pa_cl_vport_yoffset;
+    uint32_t pa_cl_vport_zoffset;
+    uint32_t rb_depth_info;
+    // Bit 0: full_float24_in_0_to_1 (host render targets in use).
+    // Bit 1: pixel_shader_writes_depth.
+    // Bit 2: cvars::gpu_binonce_full_scissor.
+    // Bit 3: cvars::half_pixel_offset.
+    uint32_t flags;
+  };
+  HostViewportInfoKey previous_viewport_info_key_ = {};
+  draw_util::ViewportInfo previous_viewport_info_ = {};
+  bool previous_viewport_info_valid_ = false;
+
   // Temporary storage for memexport stream constants used in the draw.
   std::vector<draw_util::MemExportRange> memexport_ranges_;
 
