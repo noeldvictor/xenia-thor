@@ -142,6 +142,11 @@ class RenderTargetCache {
                                     float& clamp_alpha_high,
                                     uint32_t& keep_mask_low,
                                     uint32_t& keep_mask_high);
+  // Whether an aliased color write touches enabled depth or stencil bits.
+  static bool ColorOverlapsDepthStencil(
+      xenos::ColorRenderTargetFormat color_format, uint32_t color_keep_mask_low,
+      uint32_t color_keep_mask_high,
+      reg::RB_DEPTHCONTROL normalized_depth_control);
 
   virtual ~RenderTargetCache();
 
@@ -679,6 +684,9 @@ class RenderTargetCache {
     // render targets.
     // Render target this range is last used by.
     RenderTargetKey render_target;
+    // Host target containing the current depth bits (8:31).
+    // Stencil-only color writes leave it current.
+    RenderTargetKey depth_bits_target;
     // Last host-side depth render targets that used this range even if it has
     // been used by a different render target since then, only used if the
     // respective format has a different encoding on the host. They are tracked
@@ -701,6 +709,7 @@ class RenderTargetCache {
                    RenderTargetKey host_depth_render_target_float24)
         : end_tiles(end_tiles),
           render_target(render_target),
+          depth_bits_target(render_target),
           host_depth_render_target_unorm24(host_depth_render_target_unorm24),
           host_depth_render_target_float24(host_depth_render_target_float24) {}
     const RenderTargetKey& GetHostDepthRenderTarget(
@@ -736,6 +745,7 @@ class RenderTargetCache {
     }
     bool AreOwnersSame(const OwnershipRange& other_range) const {
       return render_target == other_range.render_target &&
+             depth_bits_target == other_range.depth_bits_target &&
              host_depth_render_target_unorm24 ==
                  other_range.host_depth_render_target_unorm24 &&
              host_depth_render_target_float24 ==
@@ -763,12 +773,17 @@ class RenderTargetCache {
   bool WouldOwnershipChangeRequireTransfers(RenderTargetKey dest,
                                             uint32_t start_tiles_base_relative,
                                             uint32_t length_tiles) const;
+  bool IsHostDepthCurrent(RenderTargetKey depth_target,
+                          uint32_t start_tiles_base_relative,
+                          uint32_t length_tiles) const;
   // Updates ownership_ranges_, adds the transfers needed for the ownership
-  // change to transfers_append_out if it's not null.
+  // change to transfers_append_out if it's not null. If keep_depth_bits is true
+  // the existing depth bits target is preserved.
   void ChangeOwnership(
       RenderTargetKey dest, uint32_t start_tiles_base_relative,
       uint32_t length_tiles, std::vector<Transfer>* transfers_append_out,
-      const Transfer::Rectangle* resolve_clear_cutout = nullptr);
+      const Transfer::Rectangle* resolve_clear_cutout = nullptr,
+      bool keep_depth_bits = false);
 
   // If failed to create, may contain nullptr to prevent attempting to create a
   // render target twice.
@@ -795,6 +810,9 @@ class RenderTargetCache {
   struct OwnershipClaimMemo {
     RenderTargetKey dest;
     uint32_t length_tiles = 0;
+    // Whether the memoized claim left the depth bits target of the ranges
+    // untouched (a stencil-only aliased color write).
+    bool keep_depth_bits = false;
     uint64_t version = ~uint64_t(0);
   };
   OwnershipClaimMemo ownership_claim_memos_[1 + xenos::kMaxColorRenderTargets];
