@@ -227,7 +227,9 @@ bool GetInfo(const std::filesystem::path& path, FileInfo* out_info) {
   return true;
 }
 
-std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
+namespace internal {
+
+std::vector<FileInfo> ListFilesUnsorted(const std::filesystem::path& path) {
   std::vector<FileInfo> result;
 
   WIN32_FIND_DATA ffd;
@@ -260,6 +262,8 @@ std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
 
   return result;
 }
+
+}  // namespace internal
 
 // Edge kernel-port: vfs HostPathEntry::SetAttributes needs a host-side
 // attribute setter. The guest X_FILE_ATTRIBUTE_* bits map 1:1 onto the Win32

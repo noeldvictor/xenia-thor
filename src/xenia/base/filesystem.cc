@@ -12,6 +12,9 @@
 #include <algorithm>
 #include <fstream>
 
+#include "xenia/base/string_util.h"
+#include "xenia/base/utf8.h"
+
 namespace xe {
 namespace filesystem {
 
@@ -81,6 +84,22 @@ std::optional<FileInfo> GetInfo(const std::filesystem::path& path) {
     return std::nullopt;
   }
   return info;
+}
+
+// Host listing order is not portable. NTFS collates while ext4 and f2fs hand
+// back hash order, so a directory enumerates differently per platform.
+// Collate on the uppercased name to match NTFS. Not console accurate: an
+// STFS package enumerates in slot order, which a host file system cannot
+// reproduce.
+static bool CollatesBefore(const FileInfo& left, const FileInfo& right) {
+  return xe::utf8::upper_ascii(xe::path_to_utf8(left.name)) <
+         xe::utf8::upper_ascii(xe::path_to_utf8(right.name));
+}
+
+std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
+  std::vector<FileInfo> files = internal::ListFilesUnsorted(path);
+  std::sort(files.begin(), files.end(), CollatesBefore);
+  return files;
 }
 
 std::vector<FileInfo> ListDirectories(const std::filesystem::path& path) {

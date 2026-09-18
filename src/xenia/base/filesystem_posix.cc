@@ -245,7 +245,9 @@ bool GetInfo(const std::filesystem::path& path, FileInfo* out_info) {
   return false;
 }
 
-std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
+namespace internal {
+
+std::vector<FileInfo> ListFilesUnsorted(const std::filesystem::path& path) {
   std::vector<FileInfo> result;
 
   DIR* dir = opendir(path.c_str());
@@ -290,6 +292,8 @@ std::vector<FileInfo> ListFiles(const std::filesystem::path& path) {
   closedir(dir);
   return result;
 }
+
+}  // namespace internal
 
 // Edge kernel-port: vfs HostPathEntry::SetAttributes needs a host-side
 // attribute setter. POSIX has no general attribute concept, so only the guest

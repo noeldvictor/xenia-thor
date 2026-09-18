@@ -127,6 +127,12 @@ struct FileInfo {
 bool GetInfo(const std::filesystem::path& path, FileInfo* out_info);
 // Optional-returning overload (Edge kernel-port: merged vfs uses this shape).
 std::optional<FileInfo> GetInfo(const std::filesystem::path& path);
+namespace internal {
+// Lists a directory in whatever order the host hands it back, which differs
+// between platforms. Callers want ListFiles.
+std::vector<FileInfo> ListFilesUnsorted(const std::filesystem::path& path);
+}  // namespace internal
+
 std::vector<FileInfo> ListFiles(const std::filesystem::path& path);
 
 // Edge kernel-port: creates a folder (and parents) at the specified path.

@@ -42,12 +42,8 @@ SvodContainerDevice::Result SvodContainerDevice::LoadHostFiles() {
     return Result::kFileMismatch;
   }
 
-  // Ensure data fragment files are sorted
+  // ListFiles collates by name on every host, so the fragments are ordered.
   auto fragment_files = filesystem::ListFiles(data_fragment_path);
-  std::sort(fragment_files.begin(), fragment_files.end(),
-            [](filesystem::FileInfo& left, filesystem::FileInfo& right) {
-              return left.name < right.name;
-            });
 
   if (fragment_files.size() != header_->content_metadata.data_file_count) {
     XELOGE("SVOD expecting {} data fragments, but {} are present.",
