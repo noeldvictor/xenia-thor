@@ -131,21 +131,35 @@ SignalType GetSystemSignalType(int num) {
   return static_cast<SignalType>(num - SIGRTMIN);
 }
 
-thread_local std::array<bool, static_cast<size_t>(SignalType::k_Count)>
+// A signal disposition is process-wide, so the installed flag is too. It was
+// thread_local, so every thread that created a thread re-ran sigaction. The
+// compare-exchange claims the install once; a failed sigaction gives the claim
+// back. Ported from canary c9eba5daf8.
+std::array<std::atomic<bool>, static_cast<size_t>(SignalType::k_Count)>
     signal_handler_installed = {};
 
 static void signal_handler(int signal, siginfo_t* info, void* context);
 
 void install_signal_handler(SignalType type) {
-  if (signal_handler_installed[static_cast<size_t>(type)]) return;
+  bool expected = false;
+  if (!signal_handler_installed[static_cast<size_t>(type)]
+           .compare_exchange_strong(expected, true)) {
+    return;
+  }
   struct sigaction action {};
   action.sa_flags = SA_SIGINFO;
+  // SA_RESTART on the suspend and terminate handlers: a syscall the signal
+  // interrupts resumes after the handler instead of failing with EINTR. The
+  // user-callback signal keeps EINTR on purpose: it exists to interrupt an
+  // alertable wait (see QueueUserCallback).
+  if (type != SignalType::kThreadUserCallback) {
+    action.sa_flags |= SA_RESTART;
+  }
   action.sa_sigaction = signal_handler;
   sigemptyset(&action.sa_mask);
-  // Mark installed on SUCCESS (was inverted: set on failure, so the early-return
-  // guard never fired and the disposition was needlessly re-installed each time).
-  if (sigaction(GetSystemSignal(type), &action, nullptr) != -1)
-    signal_handler_installed[static_cast<size_t>(type)] = true;
+  if (sigaction(GetSystemSignal(type), &action, nullptr) != 0) {
+    signal_handler_installed[static_cast<size_t>(type)] = false;
+  }
 }
 
 // TODO(dougvj)
