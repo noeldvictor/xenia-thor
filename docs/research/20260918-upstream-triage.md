@@ -156,7 +156,7 @@ Verification on this PC:
 | Windows MSVC build of xenia.exe | pass, 394 s |
 | Android native core NDK build (arm64-v8a) | pass, 435 s |
 | NDK aarch64 syntax check | pass on every changed .cc |
-| x64 PPC corpus, 169,117 cases | 14,333 failures. The last recorded count was 14,591 before a -258 fix on 2026-08-18, so the expected pre-session count is 14,333. No net change. |
+| x64 PPC corpus, 169,117 cases | 14,333 failures after the ports. A matched baseline on the pre-pick CPU sources (`29ad2fcb1c`, same PC, same build) also fails 14,333. The two failure sets are identical: 0 regressions, 0 fixes. The x64 corpus does not cover the a64 sequences or the OE-form, mcrf, mcrfs, mcrxr and vsubcuw paths, which have no corpus files. |
 | a64 PPC corpus | not run. Needs the device. See the device list. |
 
 Tier 1: all 22 items landed. 29 clean cherry-picks plus the one-line heap release hunk (`980c63e5a6`). One pick needed a follow-up: the lvlx/lvrx literal-pool commit requires constexpr vec128 factories, ported from edge 2a10971772 (`5d56bb32f9`). The resolve shader headers were regenerated (`6257e2253f`).
