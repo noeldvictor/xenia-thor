@@ -491,6 +491,10 @@ VulkanTextureCache::~VulkanTextureCache() {
   if (load_pipeline_layout_ != VK_NULL_HANDLE) {
     dfn.vkDestroyPipelineLayout(device, load_pipeline_layout_, nullptr);
   }
+  if (shared_memory_persistent_descriptor_pool_ != VK_NULL_HANDLE) {
+    dfn.vkDestroyDescriptorPool(
+        device, shared_memory_persistent_descriptor_pool_, nullptr);
+  }
 
   // Textures memory is allocated using the Vulkan Memory Allocator, destroy all
   // textures before destroying VMA.
@@ -1499,13 +1503,19 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
         &write_descriptor_set_dest_buffer_info;
     write_descriptor_set_dest.pTexelBufferView = nullptr;
   }
-  // TODO(Triang3l): Use a single 512 MB shared memory binding if possible.
+  // Bind the whole shared memory buffer persistently when possible (passing the
+  // texture's byte offset via guest_offset) instead of allocating and writing
+  // per-load source descriptors.
   // TODO(Triang3l): Scaled resolve buffer bindings.
+  const bool use_persistent_source =
+      shared_memory_persistent_descriptor_set_ != VK_NULL_HANDLE;
   VkDescriptorSet descriptor_set_source_base = VK_NULL_HANDLE;
   VkDescriptorSet descriptor_set_source_mips = VK_NULL_HANDLE;
   VkDescriptorBufferInfo write_descriptor_set_source_base_buffer_info;
   VkDescriptorBufferInfo write_descriptor_set_source_mips_buffer_info;
-  if (level_first == 0) {
+  if (level_first == 0 && use_persistent_source) {
+    descriptor_set_source_base = shared_memory_persistent_descriptor_set_;
+  } else if (level_first == 0) {
     descriptor_set_source_base =
         command_processor_.AllocateSingleTransientDescriptor(
             VulkanCommandProcessor::SingleTransientDescriptorLayout ::
@@ -1537,7 +1547,9 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
         &write_descriptor_set_source_base_buffer_info;
     write_descriptor_set_source_base.pTexelBufferView = nullptr;
   }
-  if (level_last != 0) {
+  if (level_last != 0 && use_persistent_source) {
+    descriptor_set_source_mips = shared_memory_persistent_descriptor_set_;
+  } else if (level_last != 0) {
     descriptor_set_source_mips =
         command_processor_.AllocateSingleTransientDescriptor(
             VulkanCommandProcessor::SingleTransientDescriptorLayout ::
@@ -1613,8 +1625,13 @@ bool VulkanTextureCache::LoadTextureDataFromResidentMemoryImpl(Texture& texture,
           kLoadDescriptorSetIndexSource, 1, &descriptor_set_source, 0, nullptr);
     }
 
-    // TODO(Triang3l): guest_offset relative to the storage buffer origin.
-    load_constants.guest_offset = 0;
+    // With the whole buffer bound persistently, guest_offset is relative to the
+    // buffer origin. With a per-load source descriptor, it's already offset to
+    // the texture's base or mip page, so it stays relative to that.
+    load_constants.guest_offset =
+        use_persistent_source
+            ? ((is_base ? texture_key.base_page : texture_key.mip_page) << 12)
+            : 0;
     if (!is_base) {
       load_constants.guest_offset +=
           guest_layout.mip_offsets_bytes[level] *
@@ -2464,6 +2481,72 @@ bool VulkanTextureCache::Initialize() {
                                  nullptr, &load_pipeline_layout_)) {
     XELOGE("VulkanTexture: Failed to create the texture load pipeline layout");
     return false;
+  }
+
+  // If the whole shared memory buffer fits within maxStorageBufferRange, create
+  // a persistent descriptor set binding it for texture load sources, so
+  // per-load transient source descriptors don't need to be allocated and
+  // written. The texture's byte offset is passed via guest_offset instead, as
+  // on Direct3D 12. When the buffer doesn't fit, the per-load sub-range
+  // descriptors are used.
+  if (vulkan_device->properties().maxStorageBufferRange >=
+      SharedMemory::kBufferSize) {
+    VkDescriptorPoolSize shared_memory_persistent_pool_size;
+    shared_memory_persistent_pool_size.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    shared_memory_persistent_pool_size.descriptorCount = 1;
+    VkDescriptorPoolCreateInfo shared_memory_persistent_pool_create_info;
+    shared_memory_persistent_pool_create_info.sType =
+        VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    shared_memory_persistent_pool_create_info.pNext = nullptr;
+    shared_memory_persistent_pool_create_info.flags = 0;
+    shared_memory_persistent_pool_create_info.maxSets = 1;
+    shared_memory_persistent_pool_create_info.poolSizeCount = 1;
+    shared_memory_persistent_pool_create_info.pPoolSizes =
+        &shared_memory_persistent_pool_size;
+    if (dfn.vkCreateDescriptorPool(
+            device, &shared_memory_persistent_pool_create_info, nullptr,
+            &shared_memory_persistent_descriptor_pool_) == VK_SUCCESS) {
+      VkDescriptorSetAllocateInfo shared_memory_persistent_set_allocate_info;
+      shared_memory_persistent_set_allocate_info.sType =
+          VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+      shared_memory_persistent_set_allocate_info.pNext = nullptr;
+      shared_memory_persistent_set_allocate_info.descriptorPool =
+          shared_memory_persistent_descriptor_pool_;
+      shared_memory_persistent_set_allocate_info.descriptorSetCount = 1;
+      shared_memory_persistent_set_allocate_info.pSetLayouts =
+          &load_descriptor_set_layout_storage_buffer;
+      if (dfn.vkAllocateDescriptorSets(
+              device, &shared_memory_persistent_set_allocate_info,
+              &shared_memory_persistent_descriptor_set_) == VK_SUCCESS) {
+        VkDescriptorBufferInfo shared_memory_persistent_buffer_info;
+        shared_memory_persistent_buffer_info.buffer =
+            static_cast<VulkanSharedMemory&>(shared_memory()).buffer();
+        shared_memory_persistent_buffer_info.offset = 0;
+        shared_memory_persistent_buffer_info.range = SharedMemory::kBufferSize;
+        VkWriteDescriptorSet shared_memory_persistent_write;
+        shared_memory_persistent_write.sType =
+            VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+        shared_memory_persistent_write.pNext = nullptr;
+        shared_memory_persistent_write.dstSet =
+            shared_memory_persistent_descriptor_set_;
+        shared_memory_persistent_write.dstBinding = 0;
+        shared_memory_persistent_write.dstArrayElement = 0;
+        shared_memory_persistent_write.descriptorCount = 1;
+        shared_memory_persistent_write.descriptorType =
+            VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+        shared_memory_persistent_write.pImageInfo = nullptr;
+        shared_memory_persistent_write.pBufferInfo =
+            &shared_memory_persistent_buffer_info;
+        shared_memory_persistent_write.pTexelBufferView = nullptr;
+        dfn.vkUpdateDescriptorSets(device, 1, &shared_memory_persistent_write,
+                                   0, nullptr);
+      } else {
+        dfn.vkDestroyDescriptorPool(
+            device, shared_memory_persistent_descriptor_pool_, nullptr);
+        shared_memory_persistent_descriptor_pool_ = VK_NULL_HANDLE;
+        shared_memory_persistent_descriptor_set_ = VK_NULL_HANDLE;
+      }
+    }
   }
 
   // Load pipelines, only the ones needed for the formats that will be used.

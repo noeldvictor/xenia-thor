@@ -2581,39 +2581,52 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
       } else {
         // TODO(Triang3l): Switching between descriptors if exceeding
         // maxStorageBufferRange.
-        // TODO(Triang3l): Use a single 512 MB shared memory binding if
-        // possible.
+        // Bind the whole shared memory buffer persistently when possible
+        // (passing the absolute destination byte offset via dest_base) instead
+        // of allocating and writing a per-resolve descriptor. The scaled
+        // resolve path passes dest_relative constants that assume a descriptor
+        // based at the destination, so it keeps the transient descriptor.
+        const bool use_persistent_dest =
+            texture_cache.shared_memory_persistent_descriptor_set() !=
+                VK_NULL_HANDLE &&
+            !draw_resolution_scaled;
         VkDescriptorSet descriptor_set_dest =
-            command_processor_.AllocateSingleTransientDescriptor(
-                VulkanCommandProcessor::SingleTransientDescriptorLayout ::
-                    kStorageBufferCompute);
+            use_persistent_dest
+                ? texture_cache.shared_memory_persistent_descriptor_set()
+                : command_processor_.AllocateSingleTransientDescriptor(
+                      VulkanCommandProcessor::SingleTransientDescriptorLayout ::
+                          kStorageBufferCompute);
         if (descriptor_set_dest != VK_NULL_HANDLE) {
-          // Write the destination descriptor.
+          // Write the destination descriptor. With the persistent binding the
+          // descriptor starts at the buffer origin, so the dest_base
+          // adjustment below subtracts 0 and the push constant stays absolute.
           // TODO(Triang3l): Scaled resolve buffer binding.
           VkDescriptorBufferInfo write_descriptor_set_dest_buffer_info;
           write_descriptor_set_dest_buffer_info.buffer = shared_memory.buffer();
           write_descriptor_set_dest_buffer_info.offset =
-              resolve_info.copy_dest_base;
+              use_persistent_dest ? 0 : resolve_info.copy_dest_base;
           write_descriptor_set_dest_buffer_info.range =
               resolve_info.copy_dest_extent_start -
               resolve_info.copy_dest_base +
               resolve_info.copy_dest_extent_length;
-          VkWriteDescriptorSet write_descriptor_set_dest;
-          write_descriptor_set_dest.sType =
-              VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-          write_descriptor_set_dest.pNext = nullptr;
-          write_descriptor_set_dest.dstSet = descriptor_set_dest;
-          write_descriptor_set_dest.dstBinding = 0;
-          write_descriptor_set_dest.dstArrayElement = 0;
-          write_descriptor_set_dest.descriptorCount = 1;
-          write_descriptor_set_dest.descriptorType =
-              VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-          write_descriptor_set_dest.pImageInfo = nullptr;
-          write_descriptor_set_dest.pBufferInfo =
-              &write_descriptor_set_dest_buffer_info;
-          write_descriptor_set_dest.pTexelBufferView = nullptr;
-          dfn.vkUpdateDescriptorSets(device, 1, &write_descriptor_set_dest, 0,
-                                     nullptr);
+          if (!use_persistent_dest) {
+            VkWriteDescriptorSet write_descriptor_set_dest;
+            write_descriptor_set_dest.sType =
+                VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+            write_descriptor_set_dest.pNext = nullptr;
+            write_descriptor_set_dest.dstSet = descriptor_set_dest;
+            write_descriptor_set_dest.dstBinding = 0;
+            write_descriptor_set_dest.dstArrayElement = 0;
+            write_descriptor_set_dest.descriptorCount = 1;
+            write_descriptor_set_dest.descriptorType =
+                VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+            write_descriptor_set_dest.pImageInfo = nullptr;
+            write_descriptor_set_dest.pBufferInfo =
+                &write_descriptor_set_dest_buffer_info;
+            write_descriptor_set_dest.pTexelBufferView = nullptr;
+            dfn.vkUpdateDescriptorSets(device, 1, &write_descriptor_set_dest,
+                                       0, nullptr);
+          }
 
           // Submit the resolve.
           // TODO(Triang3l): Transition the scaled resolve buffer.
@@ -2638,9 +2651,11 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
                 sizeof(copy_shader_constants.dest_relative),
                 &copy_shader_constants.dest_relative);
           } else {
-            // TODO(Triang3l): Proper dest_base in case of one 512 MB shared
-            // memory binding, or multiple shared memory bindings in case of
+            // TODO(Triang3l): Multiple shared memory bindings in case of
             // splitting due to maxStorageBufferRange overflow.
+            // The descriptor is offset to the destination (or to the buffer
+            // origin with the persistent binding), so make dest_base relative
+            // to it.
             copy_shader_constants.dest_base -=
                 uint32_t(write_descriptor_set_dest_buffer_info.offset);
             command_buffer.CmdVkPushConstants(
