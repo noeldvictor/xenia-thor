@@ -6301,6 +6301,13 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     return IssueCopy();
   }
 
+  if (regs.Get<reg::RB_SURFACE_INFO>().surface_pitch == 0) {
+    // Doesn't actually draw. Matches the Direct3D 12 backend.
+    // TODO(Triang3l): Do something so memexport still works in this case maybe?
+    // Unlikely that zero would even really be legal though.
+    return true;
+  }
+
   // BOTTLENECK-ISOLATION DIAGNOSTIC (default-off, breaks pixels on purpose):
   // gpu_diag_skip_alpha_test_draws drops the alpha-test (foliage) draws, and
   // gpu_diag_skip_draws_min_indices drops any draw with >= N indices (heavy
