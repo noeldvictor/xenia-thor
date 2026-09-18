@@ -78,6 +78,20 @@ XObject::~XObject() {
   assert_true(handles_.empty());
   assert_zero(pointer_ref_count_);
 
+  // The signature stamped into guest memory names this object's handle, and
+  // the object table hands that handle out again as soon as this object is
+  // gone. Anything reading that memory afterwards follows the handle to
+  // whatever owns it by then. Take the marker back.
+  if (guest_object_ptr_ && stashed_handle_) {
+    auto* stashed_header =
+        memory()->TranslateVirtual<X_DISPATCH_HEADER*>(guest_object_ptr_);
+    if (stashed_header->wait_list.flink_ptr == kXObjSignature &&
+        stashed_header->wait_list.blink_ptr == stashed_handle_) {
+      stashed_header->wait_list.flink_ptr = 0;
+      stashed_header->wait_list.blink_ptr = 0;
+    }
+  }
+
   if (allocated_guest_object_) {
     uint32_t header_addr = guest_object_ptr_ - sizeof(X_OBJECT_HEADER);
     auto header = memory()->TranslateVirtual<X_OBJECT_HEADER*>(header_addr);
@@ -901,6 +915,7 @@ void XObject::SetNativePointer(uint32_t native_ptr, bool uninitialized) {
   // Stash pointer in struct.
   // FIXME: This assumes the object has a dispatch header (some don't!)
   StashHandle(header, handle());
+  stashed_handle_ = handle();
 
   guest_object_ptr_ = native_ptr;
 }
