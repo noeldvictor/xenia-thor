@@ -22,10 +22,12 @@
 #include <semaphore.h>
 #include <signal.h>
 #include <sys/eventfd.h>
+#include <sys/resource.h>
 #include <sys/syscall.h>
 #include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -774,6 +776,7 @@ class PosixCondition<Thread> : public PosixConditionBase {
   /// Thread::GetCurrentThread() on the main thread
   explicit PosixCondition(pthread_t thread)
       : thread_(thread),
+        tid_(static_cast<pid_t>(syscall(SYS_gettid))),
         signaled_(false),
         exit_code_(0),
         state_(State::kRunning) {
@@ -904,29 +907,70 @@ class PosixCondition<Thread> : public PosixConditionBase {
 #endif
   }
 
+  // ThreadPriority tiers are -2..2 on every platform in this tree (threading.h
+  // keeps the Win32 scale). Upstream POSIX tiers are 1/8/16/24/32. Map a tier
+  // to that SCHED_FIFO value, so nice = 16 - fifo gives the upstream numbers:
+  // nice 15, 8, 0, -8, -16 for kLowest to kHighest.
+  static int TierToFifo(int tier) {
+    static constexpr int kFifo[5] = {1, 8, 16, 24, 32};
+    return kFifo[std::clamp(tier, -2, 2) + 2];
+  }
+  // Nearest tier for a SCHED_FIFO value 1..32. Also used on 16 - nice.
+  static int FifoToTier(int fifo) {
+    int delta = fifo - 16;
+    int tier = (delta + (delta >= 0 ? 4 : -4)) / 8;
+    return std::clamp(tier, -2, 2);
+  }
+
   int priority() {
     WaitStarted();
+    if (fifo_failed_) {
+      // SCHED_FIFO was refused, so the nice value holds the priority. Map it
+      // back into the tier scale so callers see one priority space.
+      errno = 0;
+      int nice_val = getpriority(PRIO_PROCESS, tid_);
+      if (nice_val == -1 && errno != 0) {
+        return -1;
+      }
+      return FifoToTier(16 - nice_val);
+    }
     int policy;
     sched_param param{};
     int ret = pthread_getschedparam(thread_, &policy, &param);
     if (ret != 0) {
       return -1;
     }
-
+    if (policy == SCHED_FIFO) {
+      return FifoToTier(param.sched_priority);
+    }
     return param.sched_priority;
   }
 
   void set_priority(int new_priority) {
     WaitStarted();
-    sched_param param{};
-    param.sched_priority = new_priority;
-    // SCHED_FIFO is real-time scheduling and requires privilege (CAP_SYS_NICE);
-    // an unprivileged Android app process cannot obtain it, so
-    // pthread_setschedparam fails with EPERM. A guest thread priority is only
-    // an advisory hint, so tolerate failure and keep the default scheduling
-    // instead of aborting. (This assert_always() crashed Back to the Future
-    // ~3s into boot when a guest worker thread requested a priority.)
-    (void)pthread_setschedparam(thread_, SCHED_FIFO, &param);
+    const int fifo = TierToFifo(new_priority);
+    if (!fifo_failed_) {
+      sched_param param{};
+      param.sched_priority = fifo;
+      int res = pthread_setschedparam(thread_, SCHED_FIFO, &param);
+      if (res == 0) {
+        return;
+      }
+      // SCHED_FIFO needs CAP_SYS_NICE. An Android app process never has it,
+      // so this failed with EPERM on every call and set_priority did nothing.
+      // Remember the refusal and use nice values under SCHED_OTHER from now
+      // on. Ported from canary 763b160c7a.
+      fifo_failed_ = true;
+      if (res != EPERM) {
+        XELOGW("set_priority: SCHED_FIFO refused with error {}", res);
+      }
+    }
+    // fifo 1..32 -> nice 15..-16, fifo 16 -> nice 0. Android raises
+    // RLIMIT_NICE for app processes, so a negative nice is allowed here.
+    int nice_val = std::clamp(16 - fifo, -20, 19);
+    if (tid_ > 0) {
+      setpriority(PRIO_PROCESS, tid_, nice_val);
+    }
   }
 
   AlertableWaitState& alertable_wait_state() { return alertable_wait_state_; }
@@ -1153,6 +1197,8 @@ class PosixCondition<Thread> : public PosixConditionBase {
     }
   }
   pthread_t thread_;
+  pid_t tid_ = 0;             // Kernel TID for the setpriority() fallback.
+  bool fifo_failed_ = false;  // True after SCHED_FIFO was refused.
   bool signaled_;
   int exit_code_;
   volatile State state_;
@@ -1479,6 +1525,9 @@ void* PosixCondition<Thread>::ThreadStartRoutine(void* parameter) {
 
   current_thread_ = thread;
   current_alertable_wait_state_ = &thread->handle_.alertable_wait_state_;
+  // Published to set_priority by the state_mutex_ handoff below, and
+  // set_priority calls WaitStarted first.
+  thread->handle_.tid_ = static_cast<pid_t>(syscall(SYS_gettid));
   {
     std::unique_lock<std::mutex> lock(thread->handle_.state_mutex_);
     // suspend_count_ must be published in the SAME critical section as
