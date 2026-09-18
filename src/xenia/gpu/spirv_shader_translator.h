@@ -440,16 +440,22 @@ class SpirvShaderTranslator : public ShaderTranslator {
     bool bindless_textures = false;
   };
 
+  // gamma_render_target_as_unorm16: for host render targets, k_8_8_8_8_GAMMA
+  // targets are stored as linear UNORM16 and encoded by the render target
+  // cache at EDRAM boundaries, so the pixel shader must not encode gamma
+  // itself even if the system flags request it.
   SpirvShaderTranslator(const Features& features,
                         bool native_2x_msaa_with_attachments,
                         bool native_2x_msaa_no_attachments,
                         bool edram_fragment_shader_interlock,
-                        bool edram_fsi_no_hardware_interlock = false)
+                        bool edram_fsi_no_hardware_interlock = false,
+                        bool gamma_render_target_as_unorm16 = false)
       : features_(features),
         native_2x_msaa_with_attachments_(native_2x_msaa_with_attachments),
         native_2x_msaa_no_attachments_(native_2x_msaa_no_attachments),
         edram_fragment_shader_interlock_(edram_fragment_shader_interlock),
-        edram_fsi_no_hardware_interlock_(edram_fsi_no_hardware_interlock) {}
+        edram_fsi_no_hardware_interlock_(edram_fsi_no_hardware_interlock),
+        gamma_render_target_as_unorm16_(gamma_render_target_as_unorm16) {}
 
   uint64_t GetDefaultVertexShaderModification(
       uint32_t dynamic_addressable_register_count,
@@ -562,6 +568,16 @@ class SpirvShaderTranslator : public ShaderTranslator {
                                uint32_t f24_shift, bool remap_to_0_to_0_5,
                                bool result_as_uint,
                                spv::Id ext_inst_glsl_std_450);
+
+  // Piecewise-linear gamma conversions for k_8_8_8_8_GAMMA values stored as
+  // linear UNORM16. Values may be scalars or vectors of up to 3 components.
+  // Unless pre_saturated is true, inputs are clamped to [0, 1] (NaN to 0).
+  static spv::Id PWLGammaToLinear(SpirvBuilder* builder_, spv::Id value,
+                                  bool pre_saturated,
+                                  spv::Id ext_inst_glsl_std_450);
+  static spv::Id LinearToPWLGamma(SpirvBuilder* builder_, spv::Id value,
+                                  bool pre_saturated,
+                                  spv::Id ext_inst_glsl_std_450);
 
  protected:
   void Reset() override;
@@ -808,10 +824,6 @@ class SpirvShaderTranslator : public ShaderTranslator {
 
   void ExportToMemory(uint8_t export_eM);
 
-  // The source may be a floating-point scalar or a vector.
-  spv::Id PWLGammaToLinear(spv::Id gamma, bool gamma_pre_saturated);
-  spv::Id LinearToPWLGamma(spv::Id linear, bool linear_pre_saturated);
-
   size_t FindOrAddTextureBinding(uint32_t fetch_constant,
                                  xenos::FetchOpDimension dimension,
                                  bool is_signed);
@@ -915,6 +927,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
   Features features_;
   bool native_2x_msaa_with_attachments_;
   bool native_2x_msaa_no_attachments_;
+  bool gamma_render_target_as_unorm16_;
 
   // For safety with different drivers (even though fragment shader interlock in
   // SPIR-V only has one control flow requirement - that both begin and end must

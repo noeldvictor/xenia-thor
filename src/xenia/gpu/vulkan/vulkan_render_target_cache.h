@@ -303,6 +303,12 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   }
   bool depth_float24_round() const { return depth_float24_round_; }
 
+  // Whether k_8_8_8_8_GAMMA host render targets are stored as linear UNORM16
+  // and encoded by this cache at the EDRAM boundaries (transfers, clears,
+  // dumps) instead of by the pixel shader.
+  bool gamma_render_target_as_unorm16() const {
+    return gamma_render_target_as_unorm16_;
+  }
   bool msaa_2x_attachments_supported() const {
     return msaa_2x_attachments_supported_;
   }

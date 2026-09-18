@@ -149,13 +149,18 @@ bool VulkanPipelineCache::Initialize() {
   denorm_flush_to_zero_float32_ = features.denorm_flush_to_zero_float32;
   rounding_mode_rte_float32_ = features.rounding_mode_rte_float32;
 
+  // Gamma render targets stored as linear UNORM16 are encoded by the render
+  // target cache at the EDRAM boundaries, so the pixel shader must not encode
+  // them itself (the command processor may still set the gamma flags).
   shader_translator_ = std::make_unique<SpirvShaderTranslator>(
       features,
       render_target_cache_.msaa_2x_attachments_supported(),
       render_target_cache_.msaa_2x_no_attachments_supported(),
       edram_fragment_shader_interlock,
       /*edram_fsi_no_hardware_interlock=*/edram_fragment_shader_interlock &&
-          !device_has_fsi);
+          !device_has_fsi,
+      /*gamma_render_target_as_unorm16=*/
+      render_target_cache_.gamma_render_target_as_unorm16());
 
   if (edram_fragment_shader_interlock) {
     std::vector<uint8_t> depth_only_fragment_shader_code =
