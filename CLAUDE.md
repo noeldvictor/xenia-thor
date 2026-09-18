@@ -122,12 +122,14 @@ Each directive has a date. The archive holds the full text and the evidence.
     directly with Bash, Read, and Edit. Use at most one subagent at a time, and only for a broad
     read-only search that would flood the main context. Never fan out several port, fix, or review
     agents in parallel. Ten agents ran in one session on 2026-09-18; that is the case to avoid.
-17. **No more cvars (user, 2026-09-18).** A fix or a lever that lives behind a cvar or an intent extra is
-    one the user cannot reproduce from the app. Ship behavior as the default in code. Do not add new
-    cvars for behavior. Do not test with `--ez`, `--ei`, or `--es` extras that the play button does not
-    pass. Launch through the app's own launch path (the launcher's VIEW intent, which the MCP
-    `xenia_launch` tool uses). A result from a launch the user cannot repeat from the app is not a result.
-    Existing cvars stay readable for diagnosis, but a default the user needs must not depend on one.
+17. **No cvars as the control surface (user, 2026-09-18).** Every behavior lever is a toggle in the
+    app menu (`XeniaOptimizations`) with a default. The user flips it there; the MCP flips it with
+    `xenia_toggle_set` and reads it with `xenia_toggles`. Do not add a lever without a menu toggle. Do
+    not test with `--ez`, `--ei`, or `--es` extras that the play button does not pass. Launch through
+    the app's own launch path (the launcher's VIEW intent, `xenia_launch`). A result from a launch the
+    user cannot repeat from the menu is not a result. Validated levers also have Android code
+    defaults (`XE_ANDROID_DEFAULT` in cvar.h) so a fresh install runs them; the toggle stays the
+    control. Diagnostic cvars (traces, dumps, censuses) are not levers and stay as they are.
 
 ## 5. Device safety and hygiene
 
@@ -246,8 +248,9 @@ Port rules:
   (`7c999ca76`, `3df64c029`). Check the git log before you start one. Some landed on 2026-08-18.
 - Largest unclaimed CPU item: LLVM functions are not in the a64 indirection table. Every a64 to LLVM
   call pays a full `ResolveFunction`. See `llvm_backend.cc:251`.
-- Cvar rework of 2026-09-18: 22 levers became Android code defaults, 43 app toggles removed, 4 user
-  choices kept. Details in the worklog. Not verified on device yet.
+- Cvar rework of 2026-09-18: 18 validated levers have Android code defaults; 49 menu toggles are the
+  control surface and an off toggle writes false, so the menu wins both ways. The MCP sets them.
+  Details in the worklog. Not verified on device.
 - Upstream port pass of 2026-09-18: 90 commits landed (Tier 1 to 4). Windows and NDK builds pass.
   x64 corpus 14,333 failures, unchanged. Device tests are owed; the list is in
   `docs/research/20260918-upstream-triage.md`, section "Port status".
@@ -269,7 +272,8 @@ device action instead of ad-hoc adb commands. Each tool applies the device rules
 | `xenia_screenshot` | screencap plus the foreground package, so a capture is never another session's app |
 | `xenia_backtrace` | native backtrace of every thread (`debuggerd -b`) for a wedged main thread |
 | `xenia_threads`, `xenia_memory` | per-thread CPU and nice; RSS, PSS, heap, and the files directory sizes |
-| `xenia_config_get`, `xenia_config_set` | the persisted `files/xenia.config.toml` |
+| `xenia_toggles`, `xenia_toggle_set` | the app menu toggles: list with defaults and device values; set one exactly as tapping it. The control surface for every lever |
+| `xenia_config_get`, `xenia_config_set` | the persisted `files/xenia.config.toml`, diagnosis only |
 | `xenia_build`, `xenia_install` | `thor_build.ps1` modes; install refuses while any emulator runs, then verifies the APK hash |
 | `xenia_git_head` | the commit to cite for a build |
 

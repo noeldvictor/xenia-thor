@@ -724,7 +724,7 @@ DEFINE_bool(
     "Default off.",
     "GPU");
 DEFINE_int32(
-    thor_gpu_thread_affinity_cpu, XE_ANDROID_DEFAULT(7, -1),
+    thor_gpu_thread_affinity_cpu, -1,
     "AYN Thor perf (roadmap R1): pin the 'GPU Commands' command-processor worker "
     "thread to this CPU core index (-1 = off / let the scheduler float it). The "
     "~197ms/frame critical path is single-thread-bound; the Thor's prime Cortex-X3 "
@@ -755,7 +755,7 @@ DEFINE_int32(
     "/proc scans; 700ms smooths transient compile/IO spikes. Android-only.",
     "GPU");
 DEFINE_int32(
-    gpu_cp_worker_nice, XE_ANDROID_DEFAULT(-15, 0),
+    gpu_cp_worker_nice, 0,
     "AYN Thor perf: lower the 'GPU Commands' command-processor worker thread's "
     "nice value (Android setpriority) so the OS does not deschedule it under "
     "guest-thread CPU contention - the GPU then stays fed instead of idling on "
@@ -1553,7 +1553,7 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_int32(
-    vulkan_mid_frame_submission_draws, XE_ANDROID_DEFAULT(1300, 0),
+    vulkan_mid_frame_submission_draws, 0,
     "If greater than 0, end and submit the current command buffer after this "
     "many draws instead of only at the swap, so the GPU overlaps the frame's "
     "rendering with the building of the rest of its command stream (attacks "

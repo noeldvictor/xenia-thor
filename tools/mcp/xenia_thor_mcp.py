@@ -330,6 +330,78 @@ def xenia_memory(pid: Optional[int] = None) -> str:
     return json.dumps(result, indent=2)
 
 
+PREFS_FILE = 'shared_prefs/xenia_android_settings.xml'
+OPTIMIZATIONS_JAVA = os.path.join(REPO, 'android', 'android_studio_project', 'app', 'src', 'main',
+                                  'java', 'jp', 'xenia', 'emulator', 'XeniaOptimizations.java')
+
+
+def _toggle_catalog() -> list[dict]:
+    """The app's optimization toggles: key, default, category, and the cvars each sets.
+    Parsed from XeniaOptimizations.java so the list never drifts from the app."""
+    text = open(OPTIMIZATIONS_JAVA, encoding='utf-8').read()
+    out = []
+    for m in re.finditer(r'new Optimization\(\s*"([^"]+)",\s*"([^"]*)",(.*?)\)\);', text, re.S):
+        key, title, body = m.group(1), m.group(2), m.group(3)
+        flags = re.findall(r',\s*(true|false)\s*,\s*(true|false)\s*,', body)
+        default = flags[0][0] == 'true' if flags else None
+        bools = re.findall(r'new BoolCvar\("([^"]+)"', body)
+        ints = re.findall(r'new IntCvar\("([^"]+)",\s*(-?\d+)\)', body)
+        out.append({'key': key, 'title': title, 'default': default,
+                    'cvars': bools + [f'{k}={v}' for k, v in ints]})
+    return out
+
+
+def _device_prefs() -> str:
+    return _run_as(f'cat {PREFS_FILE}')
+
+
+def _pref_bools(xml: str) -> dict:
+    return {k: v == 'true' for k, v in re.findall(r'<boolean name="([^"]+)" value="(true|false)"', xml)}
+
+
+@mcp.tool()
+def xenia_toggles() -> str:
+    """Every optimization toggle in the app menu: key, title, default, the value
+    set on the device, and the cvars it drives. This is the control surface
+    (CLAUDE.md directive 17): set these, never cvars."""
+    prefs = _pref_bools(_device_prefs())
+    rows = []
+    for t in _toggle_catalog():
+        rows.append({**t, 'device': prefs.get(t['key'], t['default'])})
+    return json.dumps(rows, indent=1)
+
+
+@mcp.tool()
+def xenia_toggle_set(key: str, enabled: bool) -> str:
+    """Set one app menu toggle on the device, exactly as tapping it in Settings.
+    Refuses while the app runs (the app caches preferences in memory). The
+    next launch from the play button or xenia_launch picks it up."""
+    keys = {t['key'] for t in _toggle_catalog()}
+    if key not in keys:
+        return json.dumps({'ok': False, 'reason': f'{key} is not an app toggle', 'known': sorted(keys)})
+    if _pid(PKG):
+        return json.dumps({'ok': False, 'reason': 'xenia is running; force-stop first'})
+    xml = _device_prefs()
+    if '<map' not in xml:
+        return json.dumps({'ok': False, 'reason': 'could not read the preferences file'})
+    value = 'true' if enabled else 'false'
+    rx = re.compile(r'<boolean name="' + re.escape(key) + r'" value="(true|false)" />')
+    if rx.search(xml):
+        xml = rx.sub(f'<boolean name="{key}" value="{value}" />', xml)
+    else:
+        xml = xml.replace('</map>', f'    <boolean name="{key}" value="{value}" />' + chr(10) + '</map>')
+    os.makedirs(SCRATCH, exist_ok=True)
+    local = os.path.join(SCRATCH, 'xenia_android_settings.xml')
+    with open(local, 'w', encoding='utf-8', newline='') as f:
+        f.write(xml)
+    tmp = '/data/local/tmp/xe_prefs.xml'
+    _adb('push', local, tmp)
+    _shell(f'run-as {PKG} cp {tmp} {PREFS_FILE}')
+    _shell(f'rm -f {tmp}')
+    now = _pref_bools(_device_prefs()).get(key)
+    return json.dumps({'ok': now == enabled, 'key': key, 'device': now})
+
+
 @mcp.tool()
 def xenia_config_get(key: str = '') -> str:
     """Read the persisted device config (files/xenia.config.toml). It overrides
