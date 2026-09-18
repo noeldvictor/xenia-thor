@@ -999,20 +999,22 @@ object_ref<XObject> XObject::GetNativeObject(KernelState* kernel_state,
   } else {
     // First use, create new.
     // https://www.nirsoft.net/kernel_struct/vista/KOBJECTS.html
+    // Host objects: an inlined KeInitializeEvent gets no handle on the console,
+    // so a guest slot spent here shifts every later handle the title sees.
     switch (type) {
       case X_DISPATCHER_FLAGS::DISPATCHER_MANUAL_RESET_EVENT:
       case X_DISPATCHER_FLAGS::DISPATCHER_AUTO_RESET_EVENT: {
-        auto ev = new XEvent(kernel_state);
+        auto ev = new XEvent(kernel_state, true);
         ev->InitializeNative(native_ptr, header);
         result = ev;
       } break;
       case X_DISPATCHER_FLAGS::DISPATCHER_MUTANT: {
-        auto mutant = new XMutant(kernel_state);
+        auto mutant = new XMutant(kernel_state, true);
         mutant->InitializeNative(native_ptr, header);
         result = mutant;
       } break;
       case X_DISPATCHER_FLAGS::DISPATCHER_SEMAPHORE: {
-        auto sem = new XSemaphore(kernel_state);
+        auto sem = new XSemaphore(kernel_state, true);
         auto success = sem->InitializeNative(native_ptr, header);
         // Can't report failure to the guest at late initialization:
         assert_true(success);
