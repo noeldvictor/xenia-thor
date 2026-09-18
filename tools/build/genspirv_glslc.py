@@ -34,7 +34,9 @@ def build(src_path):
     identifier = src_name[:-5].replace('.', '_')
     stage = STAGES[identifier[-2:]]
     src_dir = os.path.dirname(os.path.abspath(src_path))
-    out_dir = os.path.join(src_dir, 'bytecode', 'vulkan_spirv')
+    out_dir = os.environ.get('XE_SPIRV_OUT_DIR') or os.path.join(
+        src_dir, 'bytecode', 'vulkan_spirv')
+    os.makedirs(out_dir, exist_ok=True)
     base = os.path.join(out_dir, identifier)
     raw = base + '.glslc.spv'
     opt = base + '.spv'
