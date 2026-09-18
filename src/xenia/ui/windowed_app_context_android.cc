@@ -20,6 +20,7 @@
 #include <unistd.h>
 #include <array>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <limits>
 #include <string>
@@ -33,6 +34,7 @@
 #include "xenia/emulator.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/main_android.h"
+#include "xenia/cpu/precompile_status.h"
 #include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/window_android.h"
 #include "xenia/ui/windowed_app.h"
@@ -783,6 +785,27 @@ JNIEXPORT void JNICALL Java_jp_xenia_emulator_WindowedAppActivity_paintWindow(
     jboolean force_paint) {
   reinterpret_cast<xe::ui::AndroidWindowedAppContext*>(app_context_ptr)
       ->JniActivityPaintWindow(bool(force_paint));
+}
+
+// Load-window AOT precompile state for the "Compiling game code" overlay.
+// Returns "state,done,frontier,workers,pass,elapsed_ms,total_done". state is
+// 0 idle, 1 running, 2 done. The UI polls this instead of parsing logcat.
+JNIEXPORT jstring JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeGetAotProgress(JNIEnv* jni_env,
+                                                             jclass clazz) {
+  const xe::cpu::PrecompileStatus& s = xe::cpu::GetPrecompileStatus();
+  char buffer[128];
+  std::snprintf(buffer, sizeof(buffer), "%u,%u,%u,%u,%u,%llu,%llu",
+                s.state.load(std::memory_order_acquire),
+                s.done.load(std::memory_order_relaxed),
+                s.frontier.load(std::memory_order_relaxed),
+                s.workers.load(std::memory_order_relaxed),
+                s.pass.load(std::memory_order_relaxed),
+                static_cast<unsigned long long>(
+                    s.elapsed_ms.load(std::memory_order_relaxed)),
+                static_cast<unsigned long long>(
+                    s.total_done.load(std::memory_order_relaxed)));
+  return jni_env->NewStringUTF(buffer);
 }
 
 JNIEXPORT jlong JNICALL

@@ -25,6 +25,7 @@
 #include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/export_resolver.h"
 #include "xenia/cpu/lzx.h"
+#include "xenia/cpu/precompile_status.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xmodule.h"
@@ -1591,13 +1592,27 @@ void XexModule::PrecompileGuestFunctions() {
       worker_count, guest_runtime_functions_.size(), budget_ms, drain_frontier,
       lo, hi);
 
+  // Publish the pass for the app UI (see precompile_status.h).
+  PrecompileStatus& status = GetPrecompileStatus();
+  {
+    std::lock_guard<std::mutex> lock(precompile_mutex_);
+    status.frontier.store(static_cast<uint32_t>(precompile_work_.size()),
+                          std::memory_order_relaxed);
+  }
+  status.done.store(0, std::memory_order_relaxed);
+  status.workers.store(worker_count, std::memory_order_relaxed);
+  status.elapsed_ms.store(0, std::memory_order_relaxed);
+  status.pass.fetch_add(1, std::memory_order_relaxed);
+  status.state.store(PrecompileStatus::kRunning, std::memory_order_release);
+
   std::atomic<uint32_t> compiled{0};
   // In-flight compiles across workers: a worker must not conclude the frontier
   // is drained while another worker is still mid-compile (that compile can
   // declare new reachable functions), which would drop coverage.
   std::atomic<uint32_t> active{0};
   for (uint32_t t = 0; t < worker_count; ++t) {
-    precompile_threads_.emplace_back([this, deadline, &compiled, &active]() {
+    precompile_threads_.emplace_back([this, deadline, start, &compiled, &active,
+                                      &status]() {
       xe::threading::set_name("PrecompileJIT");
       ApplyPrecompileWorkerCorePolicy();
       int empty_rounds = 0;
@@ -1624,16 +1639,26 @@ void XexModule::PrecompileGuestFunctions() {
           processor_->ResolveFunction(addr);
           active.fetch_sub(1, std::memory_order_release);
           uint32_t done = compiled.fetch_add(1, std::memory_order_relaxed) + 1;
-          // RPCS3-style "compiling" progress: throttled log of done/frontier so
-          // the app can surface a compile progress bar (parse this line). Cheap
-          // (once per ~256 fns). The frontier grows as the call-graph is walked,
-          // so it's an approximate denominator that converges as it drains.
+          status.done.store(done, std::memory_order_relaxed);
+          status.total_done.fetch_add(1, std::memory_order_relaxed);
+          // Progress for the app: the UI polls GetPrecompileStatus() through
+          // JNI. The throttled log line stays for logcat readers. The frontier
+          // grows as the call graph is walked, so it is an approximate
+          // denominator that converges as it drains.
           if ((done & 0xFF) == 0) {
             size_t frontier;
             {
               std::lock_guard<std::mutex> lock(precompile_mutex_);
               frontier = precompile_work_.size();
             }
+            status.frontier.store(static_cast<uint32_t>(frontier),
+                                  std::memory_order_relaxed);
+            status.elapsed_ms.store(
+                static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::steady_clock::now() - start)
+                        .count()),
+                std::memory_order_relaxed);
             XELOGI("AOT precompile progress: {} / ~{} functions", done, frontier);
           }
           empty_rounds = 0;
@@ -1681,6 +1706,11 @@ void XexModule::PrecompileGuestFunctions() {
                            .count();
   XELOGI("cpu_precompile_guest_functions: pre-warmed {} function(s) in {}ms",
          compiled.load(std::memory_order_relaxed), elapsed);
+  status.done.store(compiled.load(std::memory_order_relaxed),
+                    std::memory_order_relaxed);
+  status.elapsed_ms.store(static_cast<uint64_t>(elapsed),
+                          std::memory_order_relaxed);
+  status.state.store(PrecompileStatus::kDone, std::memory_order_release);
 }
 
 void XexModule::StopPrecompile() {

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "xenia-thor": {
+      "command": "python",
+      "args": ["tools/mcp/xenia_thor_mcp.py"],
+      "env": { "XE_THOR_SERIAL": "c3ca0370" }
+    }
+  }
+}

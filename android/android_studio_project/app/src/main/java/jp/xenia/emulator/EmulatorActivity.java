@@ -114,6 +114,9 @@ public class EmulatorActivity extends WindowedAppActivity {
             float hatY);
 
     private static native long nativeGetGuestSwapCount();
+    // "state,done,frontier,workers,pass,elapsed_ms,total_done"; state 0 idle,
+    // 1 running, 2 done. Polled by the AOT overlay instead of parsing logcat.
+    private static native String nativeGetAotProgress();
 
     private static native double nativeGetGuestTimeScalar();
     /** Set guest speed from the UI - the discoverable path to fast-forward. */
@@ -1185,58 +1188,64 @@ public class EmulatorActivity extends WindowedAppActivity {
     };
 
     private void startAotCompileWatcher() {
+        // Polls the native precompile status (precompile_status.h) four times a
+        // second from a background thread and posts the overlay updates through
+        // the async handler. This replaced tailing logcat from inside the app,
+        // which produced no overlay on the device: the markers were logged but
+        // never reached the overlay (2026-09-18).
         mAotWatcherStop = false;
         mAotWatcherThread = new Thread(() -> {
-            final Pattern progress = Pattern.compile(
-                    "AOT precompile progress: (\\d+) / ~(\\d+) functions");
-            final Pattern done = Pattern.compile(
-                    "pre-warmed (\\d+) function\\(s\\) in (\\d+)ms");
-            try {
-                // -T 0: follow-only (a stale history line from a previous
-                // session in a reused process must not drive the overlay).
-                // Error stream merged so logcat can never block on a full
-                // stderr pipe. The Process is held in a field: onDestroy
-                // kills it, which is the ONLY way to unblock readLine().
-                final ProcessBuilder pb = new ProcessBuilder(
-                        "logcat", "--pid=" + android.os.Process.myPid(),
-                        "-T", "0", "-s", "xenia:*");
-                pb.redirectErrorStream(true);
-                final Process proc = pb.start();
-                mAotWatcherProc = proc;
-                final BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(proc.getInputStream()));
-                String line;
-                while (!mAotWatcherStop && (line = reader.readLine()) != null) {
-                    if (line.contains("load-window pre-warm on")) {
-                        mAotSawMarker = true;
-                        postToUi(this::showAotOverlay);
-                        continue;
-                    }
-                    final Matcher m = progress.matcher(line);
-                    if (m.find()) {
-                        final int doneCount = Integer.parseInt(m.group(1));
-                        final int total = Integer.parseInt(m.group(2));
-                        mAotSawMarker = true;
-                        postToUi(() -> updateAotOverlay(doneCount, total));
-                        continue;
-                    }
-                    final Matcher d = done.matcher(line);
-                    if (d.find()) {
-                        final int total = Integer.parseInt(d.group(1));
-                        final long ms = Long.parseLong(d.group(2));
-                        // Do NOT stop watching: titles load multiple XEX
-                        // modules and each runs its own precompile pass -
-                        // hide now, re-show on the next pre-warm marker.
-                        postToUi(() -> hideAotOverlay(total, ms));
+            int lastState = -1;
+            int lastPass = -1;
+            int lastDone = -1;
+            while (!mAotWatcherStop) {
+                String raw = null;
+                try {
+                    raw = nativeGetAotProgress();
+                } catch (final Throwable ignored) {
+                    // The native library may not be loaded yet.
+                }
+                if (raw != null) {
+                    final String[] f = raw.split(",");
+                    if (f.length >= 7) {
+                        int state = 0, done = 0, frontier = 0, pass = 0;
+                        long elapsed = 0;
+                        try {
+                            state = Integer.parseInt(f[0]);
+                            done = Integer.parseInt(f[1]);
+                            frontier = Integer.parseInt(f[2]);
+                            pass = Integer.parseInt(f[4]);
+                            elapsed = Long.parseLong(f[5]);
+                        } catch (final NumberFormatException ignored) {
+                        }
+                        final boolean newPass = pass != lastPass;
+                        if (state == 1) {
+                            if (newPass || state != lastState) {
+                                android.util.Log.i("xenia-aot",
+                                        "precompile pass " + pass + " running, frontier ~" + frontier);
+                                mAotSawMarker = true;
+                                postToUi(this::showAotOverlay);
+                            }
+                            if (done != lastDone || newPass) {
+                                final int d = done, t = frontier;
+                                postToUi(() -> updateAotOverlay(d, t));
+                            }
+                        } else if (state == 2 && lastState == 1) {
+                            android.util.Log.i("xenia-aot", "precompile pass " + pass
+                                    + " done: " + done + " functions in " + elapsed + " ms");
+                            final int d = done;
+                            final long ms = elapsed;
+                            postToUi(() -> hideAotOverlay(d, ms));
+                        }
+                        lastState = state;
+                        lastPass = pass;
+                        lastDone = done;
                     }
                 }
-            } catch (final Exception ignored) {
-                // Log tailing is best-effort; the game runs fine without the
-                // overlay.
-            } finally {
-                final Process proc = mAotWatcherProc;
-                if (proc != null) {
-                    proc.destroy();
+                try {
+                    Thread.sleep(250);
+                } catch (final InterruptedException e) {
+                    break;
                 }
             }
         }, "AotCompileWatcher");

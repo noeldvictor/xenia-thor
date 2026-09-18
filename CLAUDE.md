@@ -42,7 +42,7 @@ Write "I was wrong." when it is true.
 - Graphics: Vulkan through the Mesa Turnip driver. The Qualcomm driver is wrong for this work.
 - CPU: PowerPC guest code runs through the a64 backend and the LLVM backend. No x64 code is in the APK.
 - Targets: Blue Dragon 30 fps at 720p with full foliage. Burnout, Gears, Lost Odyssey, Banjo at 30 to 60 fps.
-- Ship each win as a cvar-gated toggle in `GameProfiles` or `XeniaOptimizations`. Default off until validated.
+- Ship each fix and each win as the app's default behavior. No cvar gates, no intent extras. See directive 17.
 - This is a research fork. Do not send fork bugs, traces, or compatibility claims upstream.
 - Legal content only. Never commit game files, keys, private data, dumps, screenshots, or config backups.
 
@@ -74,7 +74,7 @@ Each row names a section title in the archive. Search the archive for the title.
 | work on LLVM coverage | `SCALAR FMA LOWERING`, `ONE LLVM MODULE PER GUEST FUNCTION` | Fallbacks went 1,022 to 194 by lowering scalar FMA. |
 | expect a win from register residency | `THE MANUAL RESIZES STAGE 3`, `docs/reference/arm/aapcs64-callee-saved-notes.md` | AAPCS64 preserves only the low 64 bits of v8 to v15. Vector residency across a call is impossible. |
 | run anything on the Thor | `DEVICE HYGIENE`, `tools/thor/bd_fma_fps_ab.sh` | The device is shared. The idle check must abort, not print. |
-| edit this file with a script | Section 10 of this file | A script truncated this file to 0 bytes once. |
+| edit this file with a script | Section 11 of this file | A script truncated this file to 0 bytes once. |
 
 ## 4. Standing directives from the user
 
@@ -121,6 +121,12 @@ Each directive has a date. The archive holds the full text and the evidence.
     directly with Bash, Read, and Edit. Use at most one subagent at a time, and only for a broad
     read-only search that would flood the main context. Never fan out several port, fix, or review
     agents in parallel. Ten agents ran in one session on 2026-09-18; that is the case to avoid.
+17. **No more cvars (user, 2026-09-18).** A fix or a lever that lives behind a cvar or an intent extra is
+    one the user cannot reproduce from the app. Ship behavior as the default in code. Do not add new
+    cvars for behavior. Do not test with `--ez`, `--ei`, or `--es` extras that the play button does not
+    pass. Launch through the app's own launch path (the launcher's VIEW intent, which the MCP
+    `xenia_launch` tool uses). A result from a launch the user cannot repeat from the app is not a result.
+    Existing cvars stay readable for diagnosis, but a default the user needs must not depend on one.
 
 ## 5. Device safety and hygiene
 
@@ -137,8 +143,8 @@ Each directive has a date. The archive holds the full text and the evidence.
 - Verify a screenshot is yours: `dumpsys activity activities | grep topResumedActivity`.
 - When the user says stop using the device, stop polling it too. Kill the background task.
 - Killing a background task does not kill the emulator. Do both.
-- A bare `adb shell am start` runs the Qualcomm driver and none of the shipping optimizations. Pass the
-  four driver extras and the optimization cvars explicitly, or launch from the GUI.
+- A bare `adb shell am start` of EmulatorActivity runs the Qualcomm driver and none of the shipping
+  behavior. Launch through the launcher's VIEW intent (`xenia_launch`), which is the play button's path.
 - Run `--vulkan_validation=true` on device when a driver crash is suspected. The layer is bundled.
 
 ## 6. Measurement rules
@@ -243,7 +249,31 @@ Port rules:
   x64 corpus 14,333 failures, unchanged. Device tests are owed; the list is in
   `docs/research/20260918-upstream-triage.md`, section "Port status".
 
-## 9. Build, tools, and workflow
+## 9. Device control: the xenia-thor MCP server
+
+`tools/mcp/xenia_thor_mcp.py` is a stdio MCP server registered in `.mcp.json`. Use its tools for every
+device action instead of ad-hoc adb commands. Each tool applies the device rules.
+
+| tool | what it does |
+|---|---|
+| `xenia_device_status` | connection, xenia pid, other emulator pids, foreground app, temperatures, battery |
+| `xenia_preflight` | the launch gate: busy, hot, or low battery returns ok=false with reasons |
+| `xenia_launch` | the launcher's VIEW intent, the same path as the play button: profiles, optimizations, and Turnip come from the app. No cvar extras (directive 17) |
+| `xenia_force_stop` | force-stop and verify with pidof; optional wifi adb disconnect |
+| `xenia_logcat`, `xenia_logcat_clear` | filtered log dump saved under `scratch/mcp/`; clear before a run |
+| `xenia_aot_progress` | precompile state from the log markers and the overlay log |
+| `xenia_fps` | GPU pass timing lines and a median from `gpu_frame_us` |
+| `xenia_screenshot` | screencap plus the foreground package, so a capture is never another session's app |
+| `xenia_backtrace` | native backtrace of every thread (`debuggerd -b`) for a wedged main thread |
+| `xenia_threads`, `xenia_memory` | per-thread CPU and nice; RSS, PSS, heap, and the files directory sizes |
+| `xenia_config_get`, `xenia_config_set` | the persisted `files/xenia.config.toml` |
+| `xenia_build`, `xenia_install` | `thor_build.ps1` modes; install refuses while any emulator runs, then verifies the APK hash |
+| `xenia_git_head` | the commit to cite for a build |
+
+Rules that stay in force with the MCP: force-stop after every run, never use `adb shell input keyevent`,
+say the battery level when you launch, and stop polling when the user says stop.
+
+## 10. Build, tools, and workflow
 
 - Build scripts: `tools\thor\thor_build.ps1` with `-Mode NativeCore`, `ApkShell`, or `FullDeploy
   -DeviceSerial c3ca0370`. Debug: `tools\thor\thor_xenia_debug.ps1 -Mode Capture`.
@@ -267,7 +297,7 @@ Port rules:
   reproducible crashes. Use Perfetto only for scheduler, input, SurfaceFlinger, or present questions.
 - Before long build, deploy, capture, or git work, check for overlapping work by another session.
 
-## 10. Git and file rules
+## 11. Git and file rules
 
 - Work on `master`. Do not create feature branches unless asked. Forward-only: never `git revert`.
 - Targeted `git add` only. Never `git add -A`.
@@ -284,7 +314,7 @@ Port rules:
 - A stale `.git/index.lock` blocked every commit once. Check the lock timestamp before you blame a
   concurrent process.
 
-## 11. Where things live
+## 12. Where things live
 
 - Research notes: `docs/research/YYYYMMDD-topic.md`. The experiment ledger:
   `docs/research/experiment-ledger.md`.
