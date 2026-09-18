@@ -52,16 +52,18 @@ class SvodContainerDevice : public XContentContainerDevice {
                    SvodContainerEntry* parent);
   void BlockToOffset(size_t sector, size_t* address, size_t* file_index) const;
 
-  Result SetLayout(FILE* header, size_t& magic_offset);
-  Result SetEDGFLayout(FILE* header, size_t& magic_offset);
-  Result SetXSFLayout(FILE* header, size_t& magic_offset);
-  Result SetNormalLayout(FILE* header, size_t& magic_offset);
+  Result SetLayout(xe::filesystem::FileHandle* header, size_t& magic_offset);
+  Result SetEDGFLayout(xe::filesystem::FileHandle* header,
+                       size_t& magic_offset);
+  Result SetXSFLayout(xe::filesystem::FileHandle* header, size_t& magic_offset);
+  Result SetNormalLayout(xe::filesystem::FileHandle* header,
+                         size_t& magic_offset);
 
   const bool IsEDGFLayout() const {
     return header_->content_metadata.volume_descriptor.svod.features.bits
         .enhanced_gdf_layout;
   }
-  const bool IsXSFLayout(FILE* header) const;
+  const bool IsXSFLayout(xe::filesystem::FileHandle* header) const;
 
   size_t svod_base_offset_;
   SvodLayoutType svod_layout_;
