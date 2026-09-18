@@ -594,12 +594,18 @@ int InstrEmit_crxor(PPCHIRBuilder& f, const InstrData& i) {
 }
 
 int InstrEmit_mcrf(PPCHIRBuilder& f, const InstrData& i) {
-  // mcrf crfD, crfS:  CR[crfD] <- CR[crfS]
+  // mcrf crfD, crfS:  CR[4*crfD:4*crfD+3] <- CR[4*crfS:4*crfS+3]
   // crfD is the top 3 bits of the BO field, crfS the top 3 bits of BI (same
   // field layout the CR-logical ops use, e.g. crand's i.XL.BO >> 2).
+  // LoadCR(n) places the field at bit position 4*(7-n) of the word and
+  // StoreCR(n, v) reads the field from that same position. A StoreCR of a
+  // LoadCR word cannot cross fields: it wrote zeros whenever crfD != crfS.
+  // Copy the four bits one at a time, the way crand and cror do.
   uint32_t crfD = i.XL.BO >> 2;
   uint32_t crfS = i.XL.BI >> 2;
-  f.StoreCR(crfD, f.LoadCR(crfS));
+  for (uint32_t bit = 0; bit < 4; ++bit) {
+    f.StoreCRField(crfD, bit, f.LoadCRField(crfS, bit));
+  }
   return 0;
 }
 
