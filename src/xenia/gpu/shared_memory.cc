@@ -28,13 +28,14 @@ SharedMemory::SharedMemory(Memory& memory) : memory_(memory) {
 
 SharedMemory::~SharedMemory() { ShutdownCommon(); }
 
-void SharedMemory::InitializeCommon() {
+bool SharedMemory::InitializeCommon() {
   system_page_flags_.clear();
   system_page_flags_.resize(((kBufferSize >> page_size_log2_) + 63) / 64);
 
   memory_invalidation_callback_handle_ =
       memory_.RegisterPhysicalMemoryInvalidationCallback(
           MemoryInvalidationCallbackThunk, this);
+  return true;
 }
 
 void SharedMemory::InitializeSparseHostGpuMemory(uint32_t granularity_log2) {
