@@ -225,7 +225,6 @@ int InstrEmit_addzex(PPCHIRBuilder& f, const InstrData& i) {
     // With XER[SO] update too.
     // e.update_xer_with_overflow_and_carry(b.CreateExtractValue(v, 1));
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   } else {
     // Just CA update.
     f.StoreCA(AddWithCarryDidCarry(f, ra, f.LoadZeroInt64(), f.LoadCA()));
@@ -254,7 +253,6 @@ int InstrEmit_divdx(PPCHIRBuilder& f, const InstrData& i) {
     // If we are OE=1 we need to clear the overflow bit.
     // e.update_xer_with_overflow(e.get_uint64(0));
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   if (i.XO.Rc) {
     f.UpdateCR(0, v);
@@ -280,7 +278,6 @@ int InstrEmit_divdux(PPCHIRBuilder& f, const InstrData& i) {
     // If we are OE=1 we need to clear the overflow bit.
     // e.update_xer_with_overflow(e.get_uint64(0));
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   if (i.XO.Rc) {
     f.UpdateCR(0, v);
@@ -308,7 +305,6 @@ int InstrEmit_divwx(PPCHIRBuilder& f, const InstrData& i) {
     // If we are OE=1 we need to clear the overflow bit.
     // e.update_xer_with_overflow(e.get_uint64(0));
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   if (i.XO.Rc) {
     f.UpdateCR(0, v);
@@ -337,7 +333,6 @@ int InstrEmit_divwux(PPCHIRBuilder& f, const InstrData& i) {
     // If we are OE=1 we need to clear the overflow bit.
     // e.update_xer_with_overflow(e.get_uint64(0));
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   if (i.XO.Rc) {
     f.UpdateCR(0, v);
@@ -350,7 +345,6 @@ int InstrEmit_mulhdx(PPCHIRBuilder& f, const InstrData& i) {
   if (i.XO.OE) {
     // With XER update.
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   Value* v = f.MulHi(f.LoadGPR(i.XO.RA), f.LoadGPR(i.XO.RB));
   f.StoreGPR(i.XO.RT, v);
@@ -365,7 +359,6 @@ int InstrEmit_mulhdux(PPCHIRBuilder& f, const InstrData& i) {
   if (i.XO.OE) {
     // With XER update.
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   Value* v =
       f.MulHi(f.LoadGPR(i.XO.RA), f.LoadGPR(i.XO.RB), ARITHMETIC_UNSIGNED);
@@ -381,7 +374,6 @@ int InstrEmit_mulhwx(PPCHIRBuilder& f, const InstrData& i) {
   if (i.XO.OE) {
     // With XER update.
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   Value* v = f.SignExtend(f.MulHi(f.Truncate(f.LoadGPR(i.XO.RA), INT32_TYPE),
                                   f.Truncate(f.LoadGPR(i.XO.RB), INT32_TYPE)),
@@ -398,7 +390,6 @@ int InstrEmit_mulhwux(PPCHIRBuilder& f, const InstrData& i) {
   if (i.XO.OE) {
     // With XER update.
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   Value* v = f.ZeroExtend(
       f.MulHi(f.Truncate(f.LoadGPR(i.XO.RA), INT32_TYPE),
@@ -416,7 +407,6 @@ int InstrEmit_mulldx(PPCHIRBuilder& f, const InstrData& i) {
   if (i.XO.OE) {
     // With XER update.
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   Value* v = f.Mul(f.LoadGPR(i.XO.RA), f.LoadGPR(i.XO.RB));
   f.StoreGPR(i.XO.RT, v);
@@ -439,7 +429,6 @@ int InstrEmit_mullwx(PPCHIRBuilder& f, const InstrData& i) {
   if (i.XO.OE) {
     // With XER update.
     XEINSTRNOTIMPLEMENTED();
-    return 1;
   }
   Value* v = f.Mul(
       f.SignExtend(f.Truncate(f.LoadGPR(i.XO.RA), INT32_TYPE), INT64_TYPE),
@@ -454,33 +443,16 @@ int InstrEmit_mullwx(PPCHIRBuilder& f, const InstrData& i) {
 int InstrEmit_negx(PPCHIRBuilder& f, const InstrData& i) {
   // RT <- ¬(RA) + 1
   if (i.XO.OE) {
-    // With XER update.
-    // This is a different codepath as we need to use llvm.ssub.with.overflow.
-
-    // if RA == 0x8000000000000000 then no-op and set OV=1
-    // This may just magically do that...
-
+    // With XER update. OV is not tracked. Log it and emit the plain
+    // negation, the same as the other OE forms in this file. The ISA result
+    // for RA == 0x8000000000000000 is RA itself, which two's complement
+    // negation also gives; only the OV bit is missing.
     XEINSTRNOTIMPLEMENTED();
-    return 1;
-    // Function* ssub_with_overflow = Intrinsic::getDeclaration(
-    //    e.gen_module(), Intrinsic::ssub_with_overflow, jit_type_nint);
-    // jit_value_t v = b.CreateCall2(ssub_with_overflow,
-    //                         e.get_int64(0), f.LoadGPR(i.XO.RA));
-    // jit_value_t v0 = b.CreateExtractValue(v, 0);
-    // f.StoreGPR(i.XO.RT, v0);
-    // e.update_xer_with_overflow(b.CreateExtractValue(v, 1));
-
-    // if (i.XO.Rc) {
-    //  // With cr0 update.
-    //  f.UpdateCR(0, v0, e.get_int64(0), true);
-    //}
-  } else {
-    // No OE bit setting.
-    Value* v = f.Neg(f.LoadGPR(i.XO.RA));
-    f.StoreGPR(i.XO.RT, v);
-    if (i.XO.Rc) {
-      f.UpdateCR(0, v);
-    }
+  }
+  Value* v = f.Neg(f.LoadGPR(i.XO.RA));
+  f.StoreGPR(i.XO.RT, v);
+  if (i.XO.Rc) {
+    f.UpdateCR(0, v);
   }
   return 0;
 }
@@ -491,7 +463,6 @@ int InstrEmit_subfx(PPCHIRBuilder& f, const InstrData& i) {
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.OE) {
     XEINSTRNOTIMPLEMENTED();
-    return 1;
     // e.update_xer_with_overflow(EFLAGS??);
   }
   if (i.XO.Rc) {
@@ -508,7 +479,6 @@ int InstrEmit_subfcx(PPCHIRBuilder& f, const InstrData& i) {
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.OE) {
     XEINSTRNOTIMPLEMENTED();
-    return 1;
     // e.update_xer_with_overflow(EFLAGS??);
   } else {
     f.StoreCA(SubDidCarry(f, rb, ra));
@@ -536,7 +506,6 @@ int InstrEmit_subfex(PPCHIRBuilder& f, const InstrData& i) {
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.OE) {
     XEINSTRNOTIMPLEMENTED();
-    return 1;
     // e.update_xer_with_overflow_and_carry(b.CreateExtractValue(v, 1));
   } else {
     f.StoreCA(AddWithCarryDidCarry(f, not_ra, rb, f.LoadCA()));
@@ -554,7 +523,6 @@ int InstrEmit_subfmex(PPCHIRBuilder& f, const InstrData& i) {
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.OE) {
     XEINSTRNOTIMPLEMENTED();
-    return 1;
     // e.update_xer_with_overflow_and_carry(b.CreateExtractValue(v, 1));
   } else {
     f.StoreCA(
@@ -573,7 +541,6 @@ int InstrEmit_subfzex(PPCHIRBuilder& f, const InstrData& i) {
   f.StoreGPR(i.XO.RT, v);
   if (i.XO.OE) {
     XEINSTRNOTIMPLEMENTED();
-    return 1;
     // e.update_xer_with_overflow_and_carry(b.CreateExtractValue(v, 1));
   } else {
     f.StoreCA(AddWithCarryDidCarry(f, not_ra, f.LoadZeroInt64(), f.LoadCA()));
