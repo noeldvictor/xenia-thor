@@ -370,17 +370,16 @@ Function* Processor::ResolveFunction(uint32_t address) {
     // Grab symbol declaration.
     auto function = LookupFunction(address);
     if (!function) {
-      entry->status = Entry::STATUS_FAILED;
+      entry_table_.MarkFailed(entry);
       return nullptr;
     }
 
     if (!DemandFunction(function)) {
-      entry->status = Entry::STATUS_FAILED;
+      entry_table_.MarkFailed(entry);
       return nullptr;
     }
-    entry->function = function;
-    entry->end_address = function->end_address();
-    status = entry->status = Entry::STATUS_READY;
+    entry_table_.MarkReady(entry, function, function->end_address());
+    status = Entry::STATUS_READY;
   }
   if (status == Entry::STATUS_READY) {
     // Ready to use.
