@@ -668,12 +668,63 @@ EMITTER_OPCODE_TABLE(OPCODE_VECTOR_COMPARE_UGE, VECTOR_COMPARE_UGE_V128);
 // ============================================================================
 // OPCODE_VECTOR_SHL
 // ============================================================================
+// Returns true and the masked lane shift count when every lane of a constant
+// shift vector holds the same count. A splat-constant shift then needs one
+// immediate-form shift instead of a mask, a negate and a register shift.
+static bool VectorShiftSplatConstant(const vec128_t& shamt, uint16_t type,
+                                     uint32_t* out_count) {
+  switch (type) {
+    case INT8_TYPE:
+      for (size_t n = 1; n < 16; ++n) {
+        if (shamt.u8[n] != shamt.u8[0]) return false;
+      }
+      *out_count = shamt.u8[0] & 0x7;
+      return true;
+    case INT16_TYPE:
+      for (size_t n = 1; n < 8; ++n) {
+        if (shamt.u16[n] != shamt.u16[0]) return false;
+      }
+      *out_count = shamt.u16[0] & 0xF;
+      return true;
+    case INT32_TYPE:
+      for (size_t n = 1; n < 4; ++n) {
+        if (shamt.u32[n] != shamt.u32[0]) return false;
+      }
+      *out_count = shamt.u32[0] & 0x1F;
+      return true;
+    default:
+      return false;
+  }
+}
+
 struct VECTOR_SHL_V128
     : Sequence<VECTOR_SHL_V128, I<OPCODE_VECTOR_SHL, V128Op, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     int s1 = SrcVReg(e, i.src1, 0);
-    int s2 = SrcVReg(e, i.src2, 1);
     int d = i.dest.reg().getIdx();
+    uint32_t count = 0;
+    if (i.src2.is_constant &&
+        VectorShiftSplatConstant(i.src2.constant(), i.instr->flags, &count)) {
+      // Splat-constant count: one immediate shift, no mask or negate.
+      if (count == 0) {
+        if (d != s1) e.mov(VReg(d).b16, VReg(s1).b16);
+        return;
+      }
+      switch (i.instr->flags) {
+        case INT8_TYPE:
+          e.shl(VReg(d).b16, VReg(s1).b16, count);
+          return;
+        case INT16_TYPE:
+          e.shl(VReg(d).h8, VReg(s1).h8, count);
+          return;
+        case INT32_TYPE:
+          e.shl(VReg(d).s4, VReg(s1).s4, count);
+          return;
+        default:
+          break;
+      }
+    }
+    int s2 = SrcVReg(e, i.src2, 1);
     // Mask shift amounts to element width, then ushl.
     switch (i.instr->flags) {
       case INT8_TYPE: {
@@ -709,8 +760,30 @@ struct VECTOR_SHR_V128
     : Sequence<VECTOR_SHR_V128, I<OPCODE_VECTOR_SHR, V128Op, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     int s1 = SrcVReg(e, i.src1, 0);
-    int s2 = SrcVReg(e, i.src2, 1);
     int d = i.dest.reg().getIdx();
+    uint32_t count = 0;
+    if (i.src2.is_constant &&
+        VectorShiftSplatConstant(i.src2.constant(), i.instr->flags, &count)) {
+      // Splat-constant count: one immediate shift, no mask or negate.
+      if (count == 0) {
+        if (d != s1) e.mov(VReg(d).b16, VReg(s1).b16);
+        return;
+      }
+      switch (i.instr->flags) {
+        case INT8_TYPE:
+          e.ushr(VReg(d).b16, VReg(s1).b16, count);
+          return;
+        case INT16_TYPE:
+          e.ushr(VReg(d).h8, VReg(s1).h8, count);
+          return;
+        case INT32_TYPE:
+          e.ushr(VReg(d).s4, VReg(s1).s4, count);
+          return;
+        default:
+          break;
+      }
+    }
+    int s2 = SrcVReg(e, i.src2, 1);
     // Mask, negate, then ushl (negative shift = right shift).
     switch (i.instr->flags) {
       case INT8_TYPE: {
@@ -749,8 +822,30 @@ struct VECTOR_SHA_V128
     : Sequence<VECTOR_SHA_V128, I<OPCODE_VECTOR_SHA, V128Op, V128Op, V128Op>> {
   static void Emit(A64Emitter& e, const EmitArgType& i) {
     int s1 = SrcVReg(e, i.src1, 0);
-    int s2 = SrcVReg(e, i.src2, 1);
     int d = i.dest.reg().getIdx();
+    uint32_t count = 0;
+    if (i.src2.is_constant &&
+        VectorShiftSplatConstant(i.src2.constant(), i.instr->flags, &count)) {
+      // Splat-constant count: one immediate shift, no mask or negate.
+      if (count == 0) {
+        if (d != s1) e.mov(VReg(d).b16, VReg(s1).b16);
+        return;
+      }
+      switch (i.instr->flags) {
+        case INT8_TYPE:
+          e.sshr(VReg(d).b16, VReg(s1).b16, count);
+          return;
+        case INT16_TYPE:
+          e.sshr(VReg(d).h8, VReg(s1).h8, count);
+          return;
+        case INT32_TYPE:
+          e.sshr(VReg(d).s4, VReg(s1).s4, count);
+          return;
+        default:
+          break;
+      }
+    }
+    int s2 = SrcVReg(e, i.src2, 1);
     // Mask, negate, then sshl (signed shift with negative = arith right).
     switch (i.instr->flags) {
       case INT8_TYPE: {
