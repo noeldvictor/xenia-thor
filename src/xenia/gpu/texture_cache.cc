@@ -631,6 +631,13 @@ TextureCache::Texture* TextureCache::FindOrCreateTexture(TextureKey key) {
 }
 
 bool TextureCache::LoadTextureData(Texture& texture) {
+  // Lockless pre-check: if texture appears up-to-date, skip the lock.
+  // This is safe because worst case is a false positive (we acquire lock
+  // unnecessarily), never a false negative.
+  if (!texture.base_outdated_lockless() && !texture.mips_outdated_lockless()) {
+    return true;
+  }
+
   // Check what needs to be uploaded.
   bool base_outdated, mips_outdated;
   {

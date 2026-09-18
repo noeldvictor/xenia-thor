@@ -227,6 +227,11 @@ class TextureCache {
         const std::unique_lock<std::recursive_mutex>& global_lock) const {
       return mips_outdated_;
     }
+    // Lockless accessors for pre-check optimization.
+    // Safe to read without lock - worst case is false positive (outdated when
+    // not).
+    bool base_outdated_lockless() const { return base_outdated_; }
+    bool mips_outdated_lockless() const { return mips_outdated_; }
     bool MakeUpToDateAndWatch(
         const std::unique_lock<std::recursive_mutex>& global_lock);
 
