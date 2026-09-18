@@ -34,7 +34,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // TODO(Triang3l): Change to 0xYYYYMMDD once it's out of the rapid
     // prototyping stage (easier to do small granular updates with an
     // incremental counter).
-    static constexpr uint32_t kVersion = 7;
+    static constexpr uint32_t kVersion = 8;
 
     enum class DepthStencilMode : uint32_t {
       kNoModifiers,
@@ -106,6 +106,15 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // depth/shadow, no gfx loss. A distinct VARIANT so the normal color use of
       // the same guest PS stays byte-identical (modification 0). 0 = normal.
       uint32_t depth_only_alpha : 1;
+      // For host render targets with MIN/MAX blend op - whether to
+      // pre-multiply the shader output RGB / alpha by the source alpha (since
+      // Vulkan/D3D12 MIN/MAX ignores blend factors, but Xbox 360 applies
+      // them). Only RT0 with a kSrcAlpha source factor and a kOne destination
+      // factor is supported for now. One bit each (upstream stores full
+      // xenos::BlendFactor values) because the Thor-specific bits above leave
+      // no room for two 5-bit fields in the second uint32_t.
+      uint32_t rt0_blend_rgb_premult_src_alpha : 1;
+      uint32_t rt0_blend_a_premult_src_alpha : 1;
     } pixel;
     uint64_t value = 0;
 
