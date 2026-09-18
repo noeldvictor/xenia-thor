@@ -159,6 +159,21 @@ class VulkanCommandProcessor : public CommandProcessor {
         ->vulkan_device();
   }
 
+  // Highest coarse shading rate index (1x1, 2x1, 2x2, 4x2, 4x4) at or below
+  // rate_index that the device supports at sample_count (a
+  // VkSampleCountFlagBits value). The driver silently drops an unsupported
+  // rate, so selections are pinned to what will really apply. On Adreno, 4x2
+  // and 4x4 are single-sample only.
+  uint32_t ClampShadingRate(uint32_t rate_index, uint32_t sample_count) const {
+    const VkSampleCountFlags* sample_counts =
+        GetVulkanDevice()->extensions().fragment_shading_rate_sample_counts;
+    rate_index = std::min(rate_index, uint32_t(4));
+    while (rate_index > 0 && !(sample_counts[rate_index] & sample_count)) {
+      --rate_index;
+    }
+    return rate_index;
+  }
+
   // Returns the deferred drawing command list for the currently open
   // submission.
   DeferredCommandBuffer& deferred_command_buffer() {
@@ -2371,6 +2386,9 @@ class VulkanCommandProcessor : public CommandProcessor {
   // A flat A/B with vrs_escalated_draws_ == 0 is VOID, not a null result.
   uint32_t vrs_base_draws_ = 0;
   uint32_t vrs_escalated_draws_ = 0;
+  // Whether the one-shot "requested rate clamped to the sample count" warning
+  // has been logged.
+  bool vrs_clamp_reported_ = false;
   // Passes ended through EndRenderPass() - the MASTER teardown, which the
   // rt_change site deliberately bypasses with a raw CmdVkEndRenderPass. The
   // rt_change classifier alone saw only its own breaks and reported every ending

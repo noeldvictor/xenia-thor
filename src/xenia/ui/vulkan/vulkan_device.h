@@ -260,6 +260,14 @@ class VulkanDevice {
     // alpha-test foliage (gpu_vrs_foliage_rate). Confirmed present on both Thor
     // drivers. pipelineFragmentShadingRate enabled when supported.
     bool ext_KHR_fragment_shading_rate = false;
+    // VK_KHR_fragment_shading_rate: for each coarse rate, indexed 1x1, 2x1,
+    // 2x2, 4x2, 4x4, the VkSampleCountFlags the device supports it at, from
+    // vkGetPhysicalDeviceFragmentShadingRatesKHR. All bits set means "not
+    // queried, assume supported" so a missing query keeps the old behavior.
+    // On Adreno, 4x2 and 4x4 are single-sample only.
+    VkSampleCountFlags fragment_shading_rate_sample_counts[5] = {
+        ~VkSampleCountFlags(0), ~VkSampleCountFlags(0), ~VkSampleCountFlags(0),
+        ~VkSampleCountFlags(0), ~VkSampleCountFlags(0)};
     // VK_EXT_fragment_density_map (FDM): per-bin HW resolution downscale
     // (GRAS_BIN_FOVEAT, distinct from VRS coarse-shading per the Mesa-source gate
     // 2026-06-22) -> cuts the COUNT of rasterized/depth-tested/shaded fragments

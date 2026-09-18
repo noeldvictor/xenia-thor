@@ -1214,6 +1214,60 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     return nullptr;
   }
 
+  // VK_KHR_fragment_shading_rate: which sample counts each coarse rate is
+  // supported at. vkGetPhysicalDeviceFragmentShadingRatesKHR takes the
+  // physical device, so it is an instance-level function and is loaded through
+  // vkGetInstanceProcAddr rather than the device function table.
+  if (device->extensions_.ext_KHR_fragment_shading_rate) {
+    auto vkGetPhysicalDeviceFragmentShadingRatesKHR =
+        PFN_vkGetPhysicalDeviceFragmentShadingRatesKHR(
+            ifn.vkGetInstanceProcAddr(
+                vulkan_instance->instance(),
+                "vkGetPhysicalDeviceFragmentShadingRatesKHR"));
+    if (vkGetPhysicalDeviceFragmentShadingRatesKHR) {
+      uint32_t rate_count = 0;
+      vkGetPhysicalDeviceFragmentShadingRatesKHR(physical_device, &rate_count,
+                                                 nullptr);
+      std::vector<VkPhysicalDeviceFragmentShadingRateKHR> rates(rate_count);
+      for (VkPhysicalDeviceFragmentShadingRateKHR& rate : rates) {
+        rate.sType =
+            VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FRAGMENT_SHADING_RATE_KHR;
+        rate.pNext = nullptr;
+      }
+      vkGetPhysicalDeviceFragmentShadingRatesKHR(physical_device, &rate_count,
+                                                 rates.data());
+      static const VkExtent2D kRateTable[] = {
+          {1, 1}, {2, 1}, {2, 2}, {4, 2}, {4, 4}};
+      constexpr size_t kRateTableCount =
+          sizeof(kRateTable) / sizeof(kRateTable[0]);
+      VkSampleCountFlags* const rate_sample_counts =
+          device->extensions_.fragment_shading_rate_sample_counts;
+      // 1x1 is always supported. A rate the device does not list is
+      // unsupported at every sample count.
+      for (size_t i = 1; i < kRateTableCount; ++i) {
+        rate_sample_counts[i] = 0;
+      }
+      for (uint32_t i = 0; i < rate_count; ++i) {
+        for (size_t j = 0; j < kRateTableCount; ++j) {
+          if (rates[i].fragmentSize.width == kRateTable[j].width &&
+              rates[i].fragmentSize.height == kRateTable[j].height) {
+            rate_sample_counts[j] = rates[i].sampleCounts;
+          }
+        }
+      }
+      XELOGI(
+          "* VK_KHR_fragment_shading_rate sample count masks: 2x1={:#x} "
+          "2x2={:#x} 4x2={:#x} 4x4={:#x}",
+          rate_sample_counts[1], rate_sample_counts[2], rate_sample_counts[3],
+          rate_sample_counts[4]);
+    } else {
+      XELOGW(
+          "* VK_KHR_fragment_shading_rate: vkGetPhysicalDeviceFragmentShading"
+          "RatesKHR is unavailable, coarse rates are not clamped to the "
+          "sample count");
+    }
+  }
+
   // Get the queues.
 
   for (size_t queue_family_index = 0;

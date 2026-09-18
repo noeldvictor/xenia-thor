@@ -8726,7 +8726,27 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             ++vrs_base_draws_;
           }
         }
-        VkExtent2D frag_size = kVrsRates[vrs_foliage ? vrs_rate_index : 0u];
+        uint32_t vrs_emit_index = vrs_foliage ? vrs_rate_index : 0u;
+        // Clamp to what the device supports at this pass's sample count. On
+        // Adreno, 4x2 and 4x4 are single-sample only, and the driver silently
+        // drops an unsupported rate, so pin it here and report the clamp once.
+        if (vrs_emit_index != 0u) {
+          const uint32_t vrs_sample_count =
+              uint32_t(1) << uint32_t(render_target_cache_
+                                          ->last_update_render_pass_key()
+                                          .msaa_samples);
+          const uint32_t vrs_clamped_index =
+              ClampShadingRate(vrs_emit_index, vrs_sample_count);
+          if (vrs_clamped_index != vrs_emit_index && !vrs_clamp_reported_) {
+            vrs_clamp_reported_ = true;
+            XELOGW(
+                "VRS: requested rate index {} is unsupported at {} samples, "
+                "using rate index {}",
+                vrs_emit_index, vrs_sample_count, vrs_clamped_index);
+          }
+          vrs_emit_index = vrs_clamped_index;
+        }
+        VkExtent2D frag_size = kVrsRates[vrs_emit_index];
         deferred_command_buffer_.CmdVkSetFragmentShadingRate(
             frag_size, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
             VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR);
