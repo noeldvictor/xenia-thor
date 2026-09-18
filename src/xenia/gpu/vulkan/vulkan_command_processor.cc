@@ -4731,6 +4731,8 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
   }
   current_render_pass_ = render_pass;
   current_framebuffer_ = framebuffer;
+  // A new pass: its first draw must record the fragment shading rate again.
+  current_shading_rate_ = UINT32_MAX;
   // Mark where this pass starts in the draw stream so its draw count is known
   // when it ends. Set unconditionally here, which is the ONLY place the tracker
   // is assigned on this path - a mark set anywhere else could disagree with it.
@@ -5418,6 +5420,9 @@ void VulkanCommandProcessor::RecordBdCustomResolveIfActive() {
 
 void VulkanCommandProcessor::EndRenderPass() {
   assert_true(submission_open_);
+  // Sentinel, not 1x1: the fragment shading rate is treated as undefined at
+  // the start of the next pass, so its first draw must record one.
+  current_shading_rate_ = UINT32_MAX;
   if (current_render_pass_ == VK_NULL_HANDLE) {
     return;
   }
@@ -6161,6 +6166,9 @@ void VulkanCommandProcessor::BindExternalGraphicsPipeline(
   // a pending concatenation run was built against (it NULLs
   // current_guest_graphics_pipeline_ below), so realize the run first.
   FlushPendingMergeRun();
+  // An external pipeline has a static fragment shading rate. Binding it
+  // invalidates the dynamic rate, so the next guest draw must record it again.
+  current_shading_rate_ = UINT32_MAX;
   if (!keep_dynamic_depth_bias) {
     dynamic_depth_bias_update_needed_ = true;
   }
@@ -8746,10 +8754,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           }
           vrs_emit_index = vrs_clamped_index;
         }
-        VkExtent2D frag_size = kVrsRates[vrs_emit_index];
-        deferred_command_buffer_.CmdVkSetFragmentShadingRate(
-            frag_size, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
-            VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR);
+        // The rate is command buffer state that persists between draws, so
+        // record it only when it changes. BD's heavy passes issue about 890
+        // draws at one rate each; this turns those into one record per pass.
+        if (vrs_emit_index != current_shading_rate_) {
+          VkExtent2D frag_size = kVrsRates[vrs_emit_index];
+          deferred_command_buffer_.CmdVkSetFragmentShadingRate(
+              frag_size, VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR,
+              VK_FRAGMENT_SHADING_RATE_COMBINER_OP_KEEP_KHR);
+          current_shading_rate_ = vrs_emit_index;
+        }
       }
       // BD-30 post-process lever (gpu_skip_bloom, user-approved lower bloom/blur):
       // skip ADDITIVE full-screen composite draws (bloom / glow accumulation = a
@@ -10037,6 +10051,7 @@ bool VulkanCommandProcessor::BeginSubmission(bool is_guest_command) {
     dynamic_depth_clamp_enable_update_needed_ = true;
     current_render_pass_ = VK_NULL_HANDLE;
     current_framebuffer_ = nullptr;
+    current_shading_rate_ = UINT32_MAX;
     current_guest_graphics_pipeline_ = VK_NULL_HANDLE;
     current_external_graphics_pipeline_ = VK_NULL_HANDLE;
     current_external_compute_pipeline_ = VK_NULL_HANDLE;

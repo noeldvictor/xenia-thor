@@ -2389,6 +2389,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // Whether the one-shot "requested rate clamped to the sample count" warning
   // has been logged.
   bool vrs_clamp_reported_ = false;
+  // Index into the coarse rate table (1x1, 2x1, 2x2, 4x2, 4x4) of the last
+  // vkCmdSetFragmentShadingRateKHR recorded into the deferred command buffer,
+  // so a draw with the same rate as the previous one records nothing.
+  // UINT32_MAX means undefined: at the start of a submission, after a render
+  // pass ends, and after an external pipeline (static rate) is bound, the
+  // next guest draw must record the rate again.
+  uint32_t current_shading_rate_ = UINT32_MAX;
   // Passes ended through EndRenderPass() - the MASTER teardown, which the
   // rt_change site deliberately bypasses with a raw CmdVkEndRenderPass. The
   // rt_change classifier alone saw only its own breaks and reported every ending
