@@ -1025,10 +1025,16 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
   alignment = xe::round_up(alignment, page_size_);
   uint32_t page_count = get_page_count(size, page_size_);
   low_address = std::max(heap_base_, xe::align(low_address, alignment));
-  high_address = std::min(heap_base_ + (heap_size_ - 1),
-                          xe::align(high_address, alignment));
+  // Do not round the ceiling up to the alignment: a window that is not a
+  // multiple of it would then let the search place the allocation above the
+  // address the caller asked for, and an align() of a high_address near
+  // UINT32_MAX wraps to zero. The round-up was there so that a window
+  // exactly the size of the request does not lose a stride at the top; the
+  // page rounding below keeps that, and the search still aligns the base.
+  high_address = std::min(heap_base_ + (heap_size_ - 1), high_address);
   uint32_t low_page_number = (low_address - heap_base_) / page_size_;
-  uint32_t high_page_number = (high_address - heap_base_) / page_size_;
+  uint32_t high_page_number =
+      (high_address - heap_base_ + (page_size_ - 1)) / page_size_;
   low_page_number = std::min(uint32_t(page_table_.size()) - 1, low_page_number);
   high_page_number =
       std::min(uint32_t(page_table_.size()) - 1, high_page_number);
