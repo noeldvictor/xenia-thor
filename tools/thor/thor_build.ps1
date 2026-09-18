@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
     [ValidateSet("FullApk", "ApkShell", "NativeCore", "Install", "FullDeploy", "ApkShellDeploy")]
     [string]$Mode = "FullApk",
@@ -153,6 +153,16 @@ function Remove-StagedNativeLibs {
 }
 
 function Invoke-ApkShellGradle {
+    # AGP merges the existing cxx output into the APK even when the native
+    # build task is skipped. A copy staged into jniLibs then collides with it
+    # ("2 files found with path lib/arm64-v8a/libxenia-app.so"). So skip the
+    # native task first with nothing staged, and stage only when the APK comes
+    # out without the library (no cxx output on this machine).
+    Invoke-Gradle @($assembleTask, "-x", $nativeTask)
+    if (Test-ApkContainsNativeLibrary) {
+        return
+    }
+    Write-Warning "APK has no native library from the cxx output; staging from $(Get-ApkShellNativeSourceRoot)."
     $stagedFiles = Stage-ExistingNativeLibsForApkShell
     try {
         Invoke-Gradle @($assembleTask, "-x", $nativeTask)
@@ -162,28 +172,32 @@ function Invoke-ApkShellGradle {
     }
 }
 
+function Test-ApkContainsNativeLibrary {
+    $apkPath = Get-ApkPath
+    if (!(Test-Path -LiteralPath $apkPath)) {
+        return $false
+    }
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($apkPath)
+    try {
+        $requiredEntry = "lib/arm64-v8a/libxenia-app.so"
+        foreach ($entry in $zip.Entries) {
+            if ($entry.FullName -eq $requiredEntry) {
+                return $true
+            }
+        }
+        return $false
+    } finally {
+        $zip.Dispose()
+    }
+}
 function Assert-ApkContainsNativeLibrary {
     $apkPath = Get-ApkPath
     if (!(Test-Path -LiteralPath $apkPath)) {
         throw "APK not found: $apkPath"
     }
-
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $zip = [System.IO.Compression.ZipFile]::OpenRead($apkPath)
-    try {
-        $requiredEntry = "lib/arm64-v8a/libxenia-app.so"
-        $hasRequiredEntry = $false
-        foreach ($entry in $zip.Entries) {
-            if ($entry.FullName -eq $requiredEntry) {
-                $hasRequiredEntry = $true
-                break
-            }
-        }
-        if (!$hasRequiredEntry) {
-            throw "APK is missing $requiredEntry; refusing to install a launcher that cannot start native Xenia."
-        }
-    } finally {
-        $zip.Dispose()
+    if (!(Test-ApkContainsNativeLibrary)) {
+        throw "APK is missing lib/arm64-v8a/libxenia-app.so; refusing to install a launcher that cannot start native Xenia."
     }
 }
 
