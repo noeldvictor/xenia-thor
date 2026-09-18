@@ -227,7 +227,7 @@ class TextureCache {
         const std::unique_lock<std::recursive_mutex>& global_lock) const {
       return mips_outdated_;
     }
-    void MakeUpToDateAndWatch(
+    bool MakeUpToDateAndWatch(
         const std::unique_lock<std::recursive_mutex>& global_lock);
 
     void WatchCallback(
