@@ -117,6 +117,10 @@ Each directive has a date. The archive holds the full text and the evidence.
     make CPU work measurable on a CPU-bound title. CPU levers are capped at 6.8% on BD.
 15. **Blue Dragon full-speed work is paused** unless the user restarts it. BD is about 93% GPU-bound.
     The frame is 89.6% guest fragment shading and 10.4% EDRAM machinery. The in-pass GPU story is closed.
+16. **Do not spawn many subagents (user, 2026-09-18).** Subagents burn tokens too fast. Do the work
+    directly with Bash, Read, and Edit. Use at most one subagent at a time, and only for a broad
+    read-only search that would flood the main context. Never fan out several port, fix, or review
+    agents in parallel. Ten agents ran in one session on 2026-09-18; that is the case to avoid.
 
 ## 5. Device safety and hygiene
 
@@ -256,6 +260,7 @@ Port rules:
 - Skills: `.agents/skills/`. Read `xenia-windows-powershell-command-hygiene` and
   `xenia-thor-remote-debug` before command-heavy Android work. Codex agent rules: `AGENTS.md`.
 - Check `git log` before you start an optimization. A parallel session may have landed it.
+- Subagents: at most one at a time, read-only search only. See directive 16.
 - Use USB adb for installs, logcat, screenshots, and bugreports. Use `adb bugreport` only for
   reproducible crashes. Use Perfetto only for scheduler, input, SurfaceFlinger, or present questions.
 - Before long build, deploy, capture, or git work, check for overlapping work by another session.
