@@ -142,11 +142,18 @@ namespace {
 // mounted at ...\Content also swallows ...\Content_Eng.
 bool MountPathMatches(const std::string_view path,
                       const std::string_view mount_path) {
-  if (mount_path.empty() || !xe::utf8::starts_with_case(path, mount_path)) {
+  if (mount_path.empty()) {
+    return false;
+  }
+  const char last = mount_path.back();
+  // Links name a \Device\Content\N\ root without the trailing separator.
+  if (last == '\\' && path.size() + 1 == mount_path.size()) {
+    return xe::utf8::equal_case(path, mount_path.substr(0, path.size()));
+  }
+  if (!xe::utf8::starts_with_case(path, mount_path)) {
     return false;
   }
   // Mounts ending in a delimiter already sit on a component boundary.
-  const char last = mount_path.back();
   if (last == '\\' || last == ':') {
     return true;
   }
@@ -186,7 +193,8 @@ Entry* VirtualFileSystem::ResolvePath(const std::string_view path) {
     return nullptr;
   }
 
-  auto relative_path = normalized_path.substr(device->mount_path().size());
+  auto relative_path = normalized_path.substr(
+      std::min(normalized_path.size(), device->mount_path().size()));
   return device->ResolvePath(relative_path);
 }
 
