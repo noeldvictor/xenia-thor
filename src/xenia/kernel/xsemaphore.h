@@ -10,6 +10,8 @@
 #ifndef XENIA_KERNEL_XSEMAPHORE_H_
 #define XENIA_KERNEL_XSEMAPHORE_H_
 
+#include <mutex>
+
 #include "xenia/base/threading.h"
 #include "xenia/kernel/xobject.h"
 #include "xenia/kernel/xthread.h"
@@ -48,9 +50,16 @@ class XSemaphore : public XObject {
     return semaphore_.get();
   }
   void WaitCallback() override;
+  void SyncFromGuest() override;
 
  private:
   std::unique_ptr<xe::threading::Semaphore> semaphore_;
+  // Guards the count, the guest header it mirrors into and the host semaphore
+  // together, so a reconcile never samples a kernel write half done.
+  std::mutex count_lock_;
+  // Last count this kernel wrote, so SyncFromGuest can tell a guest write from
+  // one of ours. Guarded by count_lock_.
+  int32_t host_count_ = 0;
   // Fibers waiting cooperatively, in order, for fair permit handout.
   CooperativeWaiterFifo waiters_;
   uint32_t maximum_count_ = 0;

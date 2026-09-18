@@ -941,6 +941,9 @@ object_ref<XObject> XObject::GetNativeObject(KernelState* kernel_state,
     // handle that now belongs to something else - verify before trusting.
     uint32_t guest_ptr = kernel_state->memory()->HostToGuestVirtual(native_ptr);
     if (object && object->guest_object() == guest_ptr) {
+      // The only place the guest hands us a raw dispatch header, so the only
+      // place a direct write to it can be picked up.
+      object->SyncFromGuest();
       return object;
     }
   }
@@ -972,6 +975,11 @@ object_ref<XObject> XObject::GetNativeObject(KernelState* kernel_state,
         static_cast<const XObject*>(result)->guest_object() != guest_ptr) {
       result->Release();
       result = nullptr;
+    }
+    if (result) {
+      // The only place the guest hands us a raw dispatch header, so the only
+      // place a direct write to it can be picked up.
+      result->SyncFromGuest();
     }
   } else {
     // First use, create new.
