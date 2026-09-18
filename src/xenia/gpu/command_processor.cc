@@ -1196,9 +1196,10 @@ void CommandProcessor::EnableReadPointerWriteBack(uint32_t ptr,
   // ptr = RB_RPTR_ADDR, pointer to write back the address to.
   read_ptr_writeback_ptr_ = ptr;
   // CP_RB_CNTL Ring Buffer Control 0x704
-  // block_size = RB_BLKSZ, log2 of number of quadwords read between updates of
-  //              the read pointer.
-  read_ptr_update_freq_ = uint32_t(1) << block_size_log2 >> 2;
+  // block_size = RB_BLKSZ, log2 of the number of quadwords read between
+  // updates of the read pointer. Kept in dwords, the unit read_ptr_index_ and
+  // the write-back use. Usually 6, so 128 dwords.
+  read_ptr_update_freq_ = (uint32_t(1) << std::min(block_size_log2, 19u)) * 2;
   if (cvars::gpu_trace_swap) {
     XELOGI(
         "GPU swap trace: CommandProcessor EnableReadPointerWriteBack "
@@ -1550,6 +1551,17 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index,
                     primary_buffer_size_);
   reader.set_read_offset(read_index * sizeof(uint32_t));
   reader.set_write_offset(write_index * sizeof(uint32_t));
+
+  // The guest polls the read pointer write-back to see how much ring space it
+  // has, and hardware advances it as the ring drains. Publishing only once the
+  // burst ends leaves the guest waiting on work we have already done, so
+  // republish every RB_BLKSZ dwords on the way through. A zero stride means
+  // the guest never armed the write-back. The worker loop publishes the final
+  // position of the burst after this returns.
+  const size_t writeback_stride =
+      size_t(read_ptr_update_freq_) * sizeof(uint32_t);
+  size_t remaining = reader.read_count();
+  size_t remaining_at_writeback = remaining;
   do {
     if (!ExecutePacket(&reader)) {
       // This probably should be fatal - but we're going to continue anyways.
@@ -1557,7 +1569,18 @@ uint32_t CommandProcessor::ExecutePrimaryBuffer(uint32_t read_index,
       assert_always();
       break;
     }
-  } while (reader.read_count());
+    remaining = reader.read_count();
+    // remaining only grows back if a malformed packet ran the read offset past
+    // the end of the burst, and then there is nothing honest to publish.
+    if (writeback_stride && remaining <= remaining_at_writeback &&
+        remaining_at_writeback - remaining >= writeback_stride) {
+      // UpdatePrimaryReadPointer re-reads the target, the guest can re-point
+      // or disable the write-back from its own thread while we are draining.
+      UpdatePrimaryReadPointer(
+          uint32_t(reader.read_offset() / sizeof(uint32_t)), "rb_blksz");
+      remaining_at_writeback = remaining;
+    }
+  } while (remaining);
 
   OnPrimaryBufferEnd();
 
@@ -1572,9 +1595,13 @@ void CommandProcessor::UpdatePrimaryReadPointer(uint32_t read_index,
   const_cast<volatile uint32_t&>(
       register_file_->values[kCpRbRptrRegister]) = read_ptr_index_;
 
-  // TODO(benvanik): use reader->Read_update_freq_ and only issue after moving
-  //     that many indices.
+  // ExecutePrimaryBuffer calls this every read_ptr_update_freq_ dwords as it
+  // drains, and the worker loop calls it once more with the final position of
+  // the burst.
   if (read_ptr_writeback_ptr_) {
+    // Publishing the read pointer hands that ring space back to the guest, so
+    // the store has to land after our reads of it.
+    std::atomic_thread_fence(std::memory_order_release);
     xe::store_and_swap<uint32_t>(
         memory_->TranslatePhysical(read_ptr_writeback_ptr_), read_ptr_index_);
   }
