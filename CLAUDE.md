@@ -203,10 +203,11 @@ Sweep marks. Start the next upstream sweep from these. The triage of 2026-09-18 
 
 | source | last mark | date | new commits at 2026-09-18 |
 |---|---|---|---|
-| edge/edge | `1689b263d3` | 2026-09-18 | triaged 298 since `01efb80ed`; 69 kept |
+| edge/edge | `f6184518b4` | 2026-09-20 | 21 new since `1689b263d3`: the user-mode series, 3 fixes queued; see `docs/research/20260920-upstream-sweep-arm64-adreno.md` |
 | canary/canary_experimental | `aee0871dd7` | 2026-09-16 | triaged 950 since the fork base; 52 kept |
 | xendroid/main, author rfandango | `0b1120187` | 2026-08-16 | 0 new on main; `feat/vrs` 2 kept |
 | canary open pull requests | 60 open on 2026-09-18 | | 16 kept |
+| Mesa Turnip (Banners-Turnip) | bundled `26.3.0-20260807-r11`; newest `20260919` | | 167 driver commits between them; update and measure |
 | forks: wunkolo, xeniamac, arm64fork | tips of 2026-03-19, 2025-08-25, 2026-06-29 | | 7 kept across all |
 
 Sweep recipe:
