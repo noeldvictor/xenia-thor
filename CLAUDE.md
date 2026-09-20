@@ -252,6 +252,8 @@ Port rules:
 - Cvar rework of 2026-09-18: 18 validated levers have Android code defaults; 49 menu toggles are the
   control surface and an off toggle writes false, so the menu wins both ways. The MCP sets them.
   Details in the worklog. Not verified on device.
+- XNA user mode (edge series of 2026-09-19, 18 commits): not ported, by decision on 2026-09-20. XNA
+  titles do not run. Size and start point in `docs/research/20260920-upstream-sweep-arm64-adreno.md`.
 - Upstream port pass of 2026-09-18: 90 commits landed (Tier 1 to 4). Windows and NDK builds pass.
   x64 corpus 14,333 failures, unchanged. Device tests are owed; the list is in
   `docs/research/20260918-upstream-triage.md`, section "Port status".

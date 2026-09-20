@@ -35,6 +35,13 @@ Verdict: compatibility work for XNA indie titles, not performance. The a64 half 
 and the stack sync path, which our tree rewrote (a64_backend.cc +3,909 lines, a64_emitter.cc +6,646).
 Port only if an XNA title is a target. Not now.
 
+Decision (user, 2026-09-20): not ported. Size measured against master: 18 commits, 55 files, 2,616
+added lines; 1 of 21 commits applies clean; the largest commit conflicts in 11 files; the series also
+depends on the edge stackpoint and function-resolution rework of 2026-09-18, which we skipped. A port
+is a manual read of every file against ours plus a re-derivation of the a64 half, then a test with an
+XNA title, and no title on the device is one. Estimate: one to two sessions. Start here if an XNA title
+becomes a target: `32a95fff0d..f6184518b4` on `edge/edge`, in order, with `1e640ba491` for a64.
+
 Standalone fixes worth a later port (all conflict on context):
 
 | hash | what | why |
