@@ -469,7 +469,8 @@ def xenia_install(verify: bool = True) -> str:
     result = json.loads(xenia_build('ApkShellDeploy'))
     if result['exit'] != 0 or not verify:
         return json.dumps(result, indent=2)
-    local = _run(['sha256sum', APK])[1].split()[0][:16] if os.path.exists(APK) else ''
+    # sha256sum on Git Bash prefixes a backslash when the path had one.
+    local = _run(['sha256sum', APK])[1].split()[0].lstrip('\')[:16] if os.path.exists(APK) else ''
     apk_dev = _shell(f'pm path {PKG}').strip().replace('package:', '')
     dev = _shell(f'sha256sum {apk_dev}').split()[0][:16]
     result['sha256_local'] = local
