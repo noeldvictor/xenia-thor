@@ -280,11 +280,29 @@ def xenia_screenshot(name: str = '') -> str:
 @mcp.tool()
 def xenia_backtrace(pid: Optional[int] = None) -> str:
     """Native backtrace of every thread in the emulator process (debuggerd -b).
-    Use it when the UI watchdog reports the main thread wedged."""
+    Use it when the UI watchdog reports the main thread wedged.
+    debuggerd needs root, which the adb shell user lacks on this device
+    (2026-09-20). When it refuses, this returns the per-thread table from
+    /proc instead: state, CPU ticks, voluntary context switches, wait channel.
+    A main thread with few ticks and few switches while workers run is a
+    blocked main thread."""
     pid = pid or _pid(PKG)
     if not pid:
         return 'xenia is not running'
     out = _shell(f'debuggerd -b {pid}', timeout=120)
+    if 'root is required' in out or not out.strip():
+        script = (
+            f'for t in /proc/{pid}/task/*; do '
+            'tid=${t##*/}; '
+            'st=$(sed "s/.*) //" $t/stat | cut -d" " -f1,12,13); '
+            'vs=$(grep voluntary_ctxt $t/status | head -1 | cut -f2); '
+            'wc=$(cat $t/wchan 2>/dev/null); '
+            'echo "$tid $(cat $t/comm) $st $vs $wc"; done')
+        table = _shell(script, timeout=60)
+        rows = [r for r in table.splitlines() if r.strip()]
+        header = 'tid comm state utime_ticks stime_ticks vol_switches wchan'
+        return ('debuggerd refused: root is required. /proc thread table '
+                f'(main thread is tid {pid}):\n{header}\n' + '\n'.join(rows))
     os.makedirs(SCRATCH, exist_ok=True)
     path = os.path.join(SCRATCH, f'backtrace-{pid}-{_stamp()}.txt')
     with open(path, 'w', encoding='utf-8') as f:
@@ -470,7 +488,7 @@ def xenia_install(verify: bool = True) -> str:
     if result['exit'] != 0 or not verify:
         return json.dumps(result, indent=2)
     # sha256sum on Git Bash prefixes a backslash when the path had one.
-    local = _run(['sha256sum', APK])[1].split()[0].lstrip('\')[:16] if os.path.exists(APK) else ''
+    local = _run(['sha256sum', APK])[1].split()[0].lstrip('\\')[:16] if os.path.exists(APK) else ''
     apk_dev = _shell(f'pm path {PKG}').strip().replace('package:', '')
     dev = _shell(f'sha256sum {apk_dev}').split()[0][:16]
     result['sha256_local'] = local

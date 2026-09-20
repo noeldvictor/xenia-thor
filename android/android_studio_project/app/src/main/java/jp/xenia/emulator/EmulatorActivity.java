@@ -1047,11 +1047,15 @@ public class EmulatorActivity extends WindowedAppActivity {
     }
 
     // ---- AOT precompile progress overlay (RPCS3-style) -------------------
-    // The native precompiler logs three markers ("load-window pre-warm on",
-    // "AOT precompile progress: N / ~M functions", "pre-warmed N function(s)
-    // in Xms"). This watcher tails our own process logcat for them and drives
-    // a full-screen "Compiling" overlay - no JNI plumbing needed, and it only
-    // ever appears when precompile actually runs.
+    // The native precompiler publishes its state in PrecompileStatus
+    // (src/xenia/cpu/precompile_status.h). A background thread polls it
+    // through nativeGetAotProgress() and posts updates to this overlay.
+    //
+    // Root cause of the frozen overlay (2026-09-18 log, fixed 2026-09-20):
+    // Emulator::CompleteLaunch ran the module load, and with it the whole
+    // precompile pass, on the UI thread inside a native looper callback. No
+    // Java post could run until the compile ended. The load now runs on the
+    // emulator thread on Android (see emulator.cc), so the posts below run.
 
     private android.widget.LinearLayout mAotOverlay;
     private TextView mAotProgressText;
@@ -1179,7 +1183,7 @@ public class EmulatorActivity extends WindowedAppActivity {
     // precompile. Cancelled by the first real AOT marker.
     private final android.os.Handler mAotAutoHide =
             new android.os.Handler(android.os.Looper.getMainLooper());
-    private boolean mAotSawMarker;
+    private volatile boolean mAotSawMarker;
     private final Runnable mAotAutoHideRunnable = () -> {
         if (!mAotSawMarker) {
             removeAotOverlay();

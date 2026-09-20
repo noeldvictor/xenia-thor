@@ -1842,6 +1842,22 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
                                   const std::string_view module_path) {
   // Making changes to the UI (setting the icon) and executing game config load
   // callbacks which expect to be called from the UI thread.
+#if XE_PLATFORM_ANDROID
+  // Android runs the module load on the calling (emulator) thread.
+  // FinishLoadingUserModule runs the load-window AOT precompile and joins its
+  // workers. When the whole function ran on the UI thread, the Android main
+  // looper was blocked inside a native looper callback for the full compile.
+  // No Java post ran, sync or async, and the "Compiling game code" overlay
+  // stayed at "Starting" (device log of 2026-09-18, fixed 2026-09-20). Only
+  // the window calls and the game config callbacks hop to the UI thread.
+  auto in_ui_thread = [this](std::function<void()> fn) {
+    if (display_window_ && !display_window_->app_context().IsInUIThread()) {
+      display_window_->app_context().CallInUIThreadSynchronous(std::move(fn));
+      return;
+    }
+    fn();
+  };
+#else
   if (display_window_ && !display_window_->app_context().IsInUIThread()) {
     X_STATUS result = X_STATUS_UNSUCCESSFUL;
     auto path_copy = path;
@@ -1855,6 +1871,8 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     return result;
   }
   assert_true(display_window_->app_context().IsInUIThread());
+  auto in_ui_thread = [](std::function<void()> fn) { fn(); };
+#endif  // XE_PLATFORM_ANDROID
 
   // Setup NullDevices for raw HDD partition accesses
   // Cache/STFC code baked into games tries reading/writing to these
@@ -1879,7 +1897,7 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
   title_id_ = std::nullopt;
   title_name_ = "";
   title_version_ = "";
-  display_window_->SetIcon(nullptr, 0);
+  in_ui_thread([this]() { display_window_->SetIcon(nullptr, 0); });
 
   // Allow xam to request module loads.
   auto xam = kernel_state()->GetKernelModule<kernel::xam::XamModule>("xam.xex");
@@ -1929,16 +1947,19 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
     auto title_id = fmt::format("{:08X}", module->title_id());
 
     // Load the per-game configuration file and make sure updates are handled by
-    // the callbacks.
-    config::LoadGameConfig(title_id);
-    assert_true(game_config_load_callback_loop_next_index_ == SIZE_MAX);
-    game_config_load_callback_loop_next_index_ = 0;
-    while (game_config_load_callback_loop_next_index_ <
-           game_config_load_callbacks_.size()) {
-      game_config_load_callbacks_[game_config_load_callback_loop_next_index_++]
-          ->PostGameConfigLoad();
-    }
-    game_config_load_callback_loop_next_index_ = SIZE_MAX;
+    // the callbacks. The callback list is owned by the UI thread.
+    in_ui_thread([this, &title_id]() {
+      config::LoadGameConfig(title_id);
+      assert_true(game_config_load_callback_loop_next_index_ == SIZE_MAX);
+      game_config_load_callback_loop_next_index_ = 0;
+      while (game_config_load_callback_loop_next_index_ <
+             game_config_load_callbacks_.size()) {
+        game_config_load_callbacks_
+            [game_config_load_callback_loop_next_index_++]
+                ->PostGameConfigLoad();
+      }
+      game_config_load_callback_loop_next_index_ = SIZE_MAX;
+    });
 
     // NOTE(kernel-port): ported to the Edge resource-database API. The old
     // kernel::util::XdbfGameData / xdbf_utils.h path is gone - the merge
@@ -1975,7 +1996,9 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
 
       const std::vector<uint8_t> icon = game_info_database_->GetIcon();
       if (!icon.empty()) {
-        display_window_->SetIcon(icon.data(), icon.size());
+        in_ui_thread([this, &icon]() {
+          display_window_->SetIcon(icon.data(), icon.size());
+        });
       }
     }
   }
