@@ -1,0 +1,67 @@
+# Blue Dragon (USA, Europe), disc build 3C19B6F951F93D49.
+# Guest-side render levers. The hook sites come from re:Blue (zolaware/reblue,
+# config/hooks/render_tweaks.toml); the instructions were read from a device
+# dump of this build (docs/research/20260920-reblue-render-levers.md).
+# Each lever is the game's own code path, so the game computes its own tile
+# scissors and target sizes. This is what makes them safe where the emulator
+# side resolution downscale was not (archive entry of 2026-08-16).
+title_name = "Blue Dragon"
+title_id = "4D5307DF"
+hash = "3C19B6F951F93D49"
+
+[[patch]]
+name = "No anti-aliasing, single pass"
+desc = "Clears the game's FSAA flag (VisualRender+0x1BC8). The scene renders at 1x instead of 2x MSAA, and the game's predicated tiling switches off with it, so the 734-draw field pass runs once instead of once per tile."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x821335A4   # lwz r11,312(r30)  -> li r11,0
+  value = 0x39600000
+
+[[patch]]
+name = "Internal resolution 75%"
+desc = "Sets VisualRender.renderRate (+0x1BC4) to 0.75 in the constructor. The game renders the 3D scene at 960x540 and composes at 720p with its own scaler. HUD and text stay native."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x82133074   # mr r11,r30        -> lis r0,0x3F40 (0.75f)
+  value = 0x3C003F40
+  [[patch.be32]]
+  address = 0x8213307C   # stfs f30,0x1BC4(r31) -> stw r0,0x1BC4(r31)
+  value = 0x901F1BC4
+  [[patch.be32]]
+  address = 0x82133098   # stw r11,0x1B5C(r31) -> stw r30,0x1B5C(r31) (r11 was r30)
+  value = 0x93DF1B5C
+
+[[patch]]
+name = "Internal resolution 50%"
+desc = "Same as above with renderRate 0.5: the scene renders at 640x360. At width 640 the game also stops tiling."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x82133074   # -> lis r0,0x3F00 (0.5f)
+  value = 0x3C003F00
+  [[patch.be32]]
+  address = 0x8213307C
+  value = 0x901F1BC4
+  [[patch.be32]]
+  address = 0x82133098
+  value = 0x93DF1B5C
+
+[[patch]]
+name = "Shadow map 512"
+desc = "Sun shadow map 512x512 instead of 1024x1024 at both creation sites. Softer shadows, a quarter of the shadow-pass pixels."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x821871D8   # li r4,1024 -> li r4,512
+  value = 0x38800200
+  [[patch.be32]]
+  address = 0x821871E0   # li r3,1024 -> li r3,512
+  value = 0x38600200
+  [[patch.be32]]
+  address = 0x82175174   # li r4,1024 -> li r4,512
+  value = 0x38800200
+  [[patch.be32]]
+  address = 0x82175178   # li r3,1024 -> li r3,512
+  value = 0x38600200

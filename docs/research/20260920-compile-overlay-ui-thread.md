@@ -23,7 +23,11 @@ until the callback returns. `Handler.createAsync` cannot help: an async message 
 sync barrier, not a blocked looper. The Java stack shows `nativePollOnce` because the block is
 below it, in native code.
 
-## Evidence on the device (run of 2026-09-20 15:08, pid 29009, Blue Dragon)
+## Evidence on the device (run of 2026-09-20 15:08, pid 29009, Banjo-Kazooie)
+
+Correction: I first wrote Blue Dragon for this run. The crash report in `files/crash_logs`
+names Banjo-Kazooie: Nuts & Bolts. I was wrong. The frontier of 33,414 matches the Banjo run
+of 2026-09-18.
 
 | item | value |
 |---|---|
@@ -83,12 +87,18 @@ mappings per function over the last 31 s. The archive refuted the map-count hypo
 2026-08-10 with one sample of 2,177 mappings at 7,477 functions. That sample was from a different
 build and does not match this run (13,260 at ~6,000).
 
-The crashed run of 15:08 compiled 37,632 functions in one pass. Its mapping count is not
-measured. By extrapolation of the rate above, that pass passed 65,530 mappings before its end.
+The crashed run of 15:08 (Banjo-Kazooie) compiled 37,632 functions in one pass. Its mapping
+count is not measured. By extrapolation of the rate above, that pass passed 65,530 mappings before its end.
 A failed `mmap` returns ENOMEM, Scudo returns null, and LLVM raises `report_bad_alloc_error`.
 This matches the tombstone. The mapping count of a crashing run is the measurement that
-confirms it. The run of 15:47 survived because
-its second pass loaded 16,954 functions from the object cache instead of compiling them.
+confirms it.
+
+Correction (later the same day): I wrote that the run of 15:47 survived because its second pass
+loaded 16,954 functions from the object cache. I was wrong. The object cache wrote nothing on
+2026-09-20: its path was empty on the play-button path (`LLVMobjcache GATE ... path_set=0`),
+and every file on the device is from 2026-09-18. Pass 2 took 23 ms because pass 1 had already
+resolved those functions. The 15:08 run walked a frontier of 37,927 because it was a different
+title, Banjo-Kazooie; Blue Dragon's frontier is about 19,900.
 
 Not yet measured: which allocations own the mappings. The next step is a `maps` diff between
 two samples 30 s apart, grouped by permission and size, on the same run. That names the owner

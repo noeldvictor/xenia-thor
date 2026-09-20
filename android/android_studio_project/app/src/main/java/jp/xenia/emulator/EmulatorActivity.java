@@ -958,6 +958,9 @@ public class EmulatorActivity extends WindowedAppActivity {
         // reads them. See ensureObjectCacheDefaults for why this is not inside
         // the block above.
         ensureObjectCacheDefaults(intent);
+        // Bundled game patches must be in files/patches before the native
+        // patcher scans it at title load.
+        GamePatchManager.installBundled(this);
 
         super.onCreate(savedInstanceState);
 
@@ -1034,15 +1037,23 @@ public class EmulatorActivity extends WindowedAppActivity {
         if (!hadBundle) {
             cvars = new Bundle();
         }
-        if (cvars.containsKey("cpu_llvm_object_cache")
-                || intent.hasExtra("cpu_llvm_object_cache")) {
-            return;  // explicitly configured - leave it alone
+        // Only an explicit PATH counts as configured. The cache toggle puts the
+        // bool in the bundle on every launch, and keying on it left the path
+        // unset, so the cache silently did nothing (2026-09-20).
+        if (cvars.containsKey("cpu_llvm_object_cache_path")
+                || intent.hasExtra("cpu_llvm_object_cache_path")) {
+            return;
         }
         final java.io.File objcache = new java.io.File(getFilesDir(), "objcache");
         objcache.mkdirs();
-        cvars.putBoolean("cpu_llvm_object_cache", true);
+        // The toggle owns the two bools when it wrote them; the path is ours.
+        if (!cvars.containsKey("cpu_llvm_object_cache")) {
+            cvars.putBoolean("cpu_llvm_object_cache", true);
+        }
+        if (!cvars.containsKey("cpu_llvm_object_cache_skip_lowering")) {
+            cvars.putBoolean("cpu_llvm_object_cache_skip_lowering", true);
+        }
         cvars.putString("cpu_llvm_object_cache_path", objcache.getAbsolutePath());
-        cvars.putBoolean("cpu_llvm_object_cache_skip_lowering", true);
         intent.putExtra(EXTRA_CVARS, cvars);
     }
 

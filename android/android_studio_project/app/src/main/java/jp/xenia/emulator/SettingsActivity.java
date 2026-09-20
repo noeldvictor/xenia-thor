@@ -18,6 +18,7 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.LinkedHashMap;
+import java.util.Locale;
 
 public class SettingsActivity extends Activity {
     private RadioGroup mProfileGroup;
@@ -87,6 +88,7 @@ public class SettingsActivity extends Activity {
 
         addToggles(root);
         addOptimizations(root);
+        addObjectCacheSection(root);
         addButtons(root);
         setContentView(scrollView);
 
@@ -190,6 +192,110 @@ public class SettingsActivity extends Activity {
         button.setOnClickListener(view ->
                 startActivity(new Intent(this, GpuDriverManagerActivity.class)));
         root.addView(button, matchWrapWithTopMargin(4));
+    }
+
+    // ---- Compiled code cache -----------------------------------------------
+    // The LLVM AOT object cache: one .o per compiled guest function under
+    // files/objcache/objcache_v<N>_opt<O>_b<build>/. Each app build gets its own
+    // directory; the engine prunes the superseded ones when the next opens. The
+    // user still needs to see the size and be able to delete it. A delete forces
+    // a full recompile on the next launch (minutes for a large title).
+    private TextView mObjectCacheCaption;
+
+    private java.io.File objectCacheDir() {
+        return new java.io.File(getFilesDir(), "objcache");
+    }
+
+    private static long[] measureTree(final java.io.File dir) {
+        // {bytes, files, directories}
+        final long[] totals = new long[3];
+        final java.io.File[] entries = dir.listFiles();
+        if (entries == null) {
+            return totals;
+        }
+        for (final java.io.File entry : entries) {
+            if (entry.isDirectory()) {
+                totals[2]++;
+                final long[] sub = measureTree(entry);
+                totals[0] += sub[0];
+                totals[1] += sub[1];
+                totals[2] += sub[2];
+            } else {
+                totals[0] += entry.length();
+                totals[1]++;
+            }
+        }
+        return totals;
+    }
+
+    private static boolean deleteTree(final java.io.File dir) {
+        final java.io.File[] entries = dir.listFiles();
+        boolean ok = true;
+        if (entries != null) {
+            for (final java.io.File entry : entries) {
+                ok &= entry.isDirectory() ? deleteTree(entry) : entry.delete();
+            }
+        }
+        return dir.delete() && ok;
+    }
+
+    private void refreshObjectCacheCaption() {
+        final java.io.File dir = objectCacheDir();
+        new Thread(() -> {
+            final long[] t = measureTree(dir);
+            final java.io.File[] builds = dir.listFiles(java.io.File::isDirectory);
+            final int buildCount = builds == null ? 0 : builds.length;
+            final String text = String.format(Locale.US,
+                    "Compiled code cache: %.1f MB, %,d functions, %d build%s.\n"
+                            + "Location: %s\n"
+                            + "One .o file per compiled game function, written "
+                            + "during the compile at launch and loaded on the next "
+                            + "launch of the same game. Deleting forces a full "
+                            + "recompile on the next launch.",
+                    t[0] / 1048576.0, t[1], buildCount, buildCount == 1 ? "" : "s",
+                    dir.getAbsolutePath());
+            runOnUiThread(() -> {
+                if (mObjectCacheCaption != null) {
+                    mObjectCacheCaption.setText(text);
+                }
+            });
+        }, "objcache-measure").start();
+    }
+
+    private void addObjectCacheSection(final LinearLayout root) {
+        mObjectCacheCaption = new TextView(this);
+        mObjectCacheCaption.setText("Compiled code cache: measuring\u2026");
+        mObjectCacheCaption.setTextColor(getColor(R.color.xenia_text_secondary));
+        mObjectCacheCaption.setTextSize(12);
+        root.addView(mObjectCacheCaption, matchWrapWithTopMargin(18));
+
+        final Button delete = new Button(this);
+        delete.setText("Delete compiled code cache");
+        delete.setAllCaps(false);
+        delete.setOnClickListener(view -> new android.app.AlertDialog.Builder(this)
+                .setTitle("Delete compiled code cache?")
+                .setMessage("Every game compiles again on its next launch. "
+                        + "Do this while no game runs.")
+                .setPositiveButton("Delete", (dialog, which) -> {
+                    final java.io.File dir = objectCacheDir();
+                    new Thread(() -> {
+                        final long[] before = measureTree(dir);
+                        final boolean ok = deleteTree(dir);
+                        dir.mkdirs();
+                        runOnUiThread(() -> {
+                            Toast.makeText(this, String.format(Locale.US,
+                                    ok ? "Deleted %.1f MB (%,d files)"
+                                       : "Delete incomplete; %.1f MB (%,d files) were there",
+                                    before[0] / 1048576.0, before[1]),
+                                    Toast.LENGTH_LONG).show();
+                            refreshObjectCacheCaption();
+                        });
+                    }, "objcache-delete").start();
+                })
+                .setNegativeButton(android.R.string.cancel, null)
+                .show());
+        root.addView(delete, matchWrapWithTopMargin(4));
+        refreshObjectCacheCaption();
     }
 
     private void addControllerMappingButton(final LinearLayout root) {

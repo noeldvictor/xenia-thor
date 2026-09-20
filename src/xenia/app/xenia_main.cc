@@ -138,6 +138,10 @@ DEFINE_transient_bool(portable, false,
                       "General");
 
 DECLARE_bool(debug);
+#if XE_PLATFORM_ANDROID && XE_ARCH_ARM64
+// Defined by the LLVM backend, which only the ARM64 ABI builds.
+DECLARE_string(cpu_llvm_object_cache_path);
+#endif
 
 #if defined(XE_PLATFORM_ANDROID) && XE_PLATFORM_ANDROID
 DEFINE_bool(discord, false, "Enable Discord rich presence", "General");
@@ -559,6 +563,23 @@ bool EmulatorApp::OnInitialize() {
   XELOGI("Storage root: {}", xe::path_to_utf8(storage_root));
 
   config::SetupConfig(storage_root);
+
+#if XE_PLATFORM_ANDROID && XE_ARCH_ARM64
+  // The LLVM AOT object cache lives under the app's files dir. The app passed
+  // this path as an intent extra, but since the toggle rework it skips the
+  // extra whenever the cache toggle itself is in the bundle, and the cache then
+  // ran with no path: nothing stored, nothing loaded, a full recompile on every
+  // launch (device log 2026-09-20: "LLVMobjcache GATE ... path_set=0"). A code
+  // default keeps the cache on the play-button path. An explicit extra wins.
+  // A plain assignment: the backend reads the value at Setup, and the path is
+  // not persisted to the config file.
+  if (cvars::cpu_llvm_object_cache_path.empty()) {
+    cvars::cpu_llvm_object_cache_path =
+        xe::path_to_utf8(storage_root / "objcache");
+    XELOGI("LLVM object cache path defaulted to {}",
+           cvars::cpu_llvm_object_cache_path);
+  }
+#endif  // XE_PLATFORM_ANDROID && XE_ARCH_ARM64
 
   std::filesystem::path content_root = cvars::content_root;
   if (content_root.empty()) {

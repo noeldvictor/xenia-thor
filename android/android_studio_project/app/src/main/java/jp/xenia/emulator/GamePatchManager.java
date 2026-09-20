@@ -102,6 +102,48 @@ public final class GamePatchManager {
         return new File(context.getFilesDir(), PATCHES_DIRNAME);
     }
 
+    /** Asset directory with the patch files this build ships. */
+    public static final String BUNDLED_ASSET_DIR = "patches";
+
+    /**
+     * Copy every bundled {@code assets/patches/*.patch.toml} into
+     * {@code files/patches/} that is not there yet. A file already present is
+     * left alone, so the user's enable/disable choices survive an app update.
+     * Returns the number of files copied. Safe to call on every launch.
+     */
+    public static int installBundled(final Context context) {
+        final File dir = patchesDir(context);
+        dir.mkdirs();
+        int copied = 0;
+        try {
+            final String[] names = context.getAssets().list(BUNDLED_ASSET_DIR);
+            if (names == null) {
+                return 0;
+            }
+            for (final String name : names) {
+                if (!name.toLowerCase(Locale.US).endsWith(".patch.toml")) {
+                    continue;
+                }
+                final File target = new File(dir, name);
+                if (target.exists()) {
+                    continue;
+                }
+                try (InputStream in = context.getAssets().open(BUNDLED_ASSET_DIR + "/" + name);
+                     OutputStream out = new FileOutputStream(target)) {
+                    final byte[] buf = new byte[8192];
+                    int read;
+                    while ((read = in.read(buf)) > 0) {
+                        out.write(buf, 0, read);
+                    }
+                }
+                copied++;
+            }
+        } catch (final IOException e) {
+            android.util.Log.w("xenia-patches", "bundled patch install failed", e);
+        }
+        return copied;
+    }
+
     /** All locally-present patch files whose title_id matches, parsed. */
     public static List<PatchFile> listForTitle(
             final Context context, final String titleId) {

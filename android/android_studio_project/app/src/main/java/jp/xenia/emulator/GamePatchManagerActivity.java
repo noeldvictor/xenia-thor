@@ -40,6 +40,7 @@ public final class GamePatchManagerActivity extends Activity {
     protected void onCreate(final Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         XeniaAndroidSettings.ensureInitialized(this);
+        GamePatchManager.installBundled(this);
 
         final Intent intent = getIntent();
         if (intent != null) {

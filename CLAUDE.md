@@ -247,11 +247,12 @@ Port rules:
   `e0137c9a7`), XenDroid Vulkan descriptor set (`68e78ca92`, `036fedb3e`, `8e48dd4af`, `162c86ed1`),
   guest scheduler default on (edge `34357e257`), GPU busy time (edge `61810b48e`), FSI sample-mask fixes
   (`7c999ca76`, `3df64c029`). Check the git log before you start one. Some landed on 2026-08-18.
-- AOT OOM (2026-09-20): Blue Dragon now compiles about 38k functions with the 2026-09-18 code defaults
-  and dies in `PrecompileJIT` with `report_bad_alloc_error` on a cold cache, like Gears and MagnaCarta 2.
-  Measured: mappings grow 6,558 to 41,268 in one pass; the largest free VA gap stays 363.7 GiB;
-  `vm.max_map_count` is 65,530. Lead: mapping count, not fragmentation. Owner of the mappings not
-  measured. Note: `docs/research/20260920-compile-overlay-ui-thread.md`.
+- AOT OOM (2026-09-20): Banjo-Kazooie (frontier 33,414 to 37,927) dies in `PrecompileJIT` with
+  `report_bad_alloc_error` at 37,632 functions on a cold cache, like Gears and MagnaCarta 2. Blue
+  Dragon (about 19,900 functions) survives. Measured on BD: mappings grow 6,558 to 41,268 in one
+  pass; the largest free VA gap stays 363.7 GiB; `vm.max_map_count` is 65,530. Lead: mapping count,
+  not fragmentation. Owner of the mappings not measured. Note:
+  `docs/research/20260920-compile-overlay-ui-thread.md`.
 - Largest unclaimed CPU item: LLVM functions are not in the a64 indirection table. Every a64 to LLVM
   call pays a full `ResolveFunction`. See `llvm_backend.cc:251`.
 - Cvar rework of 2026-09-18: 18 validated levers have Android code defaults; 49 menu toggles are the
