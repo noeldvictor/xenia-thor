@@ -335,8 +335,20 @@ def xenia_fps(window_lines: int = 400) -> str:
         med = fr[len(fr) // 2]
         summary = {'samples': len(frames), 'median_gpu_frame_us': med,
                    'median_fps_from_gpu_frame': round(1e6 / med, 1) if med else None}
+    # Presented-frame rate from the app's FPS badge (tag xenia-fps, about two
+    # lines per second, guest swap count based). Available on the play-button
+    # path with no trace cvar. last_seconds selects the tail of the run.
+    fps_rows = _adb('logcat', '-d', '-s', 'xenia-fps:*', timeout=60).splitlines()
+    fps_vals = [float(m.group(1)) for l in fps_rows
+                for m in [re.search(r'fps=([0-9.]+)', l)] if m]
+    presented = {}
+    if fps_vals:
+        tail = fps_vals[-window_lines:]
+        s = sorted(tail)
+        presented = {'samples': len(tail), 'median_fps': s[len(s) // 2],
+                     'min_fps': s[0], 'max_fps': s[-1], 'last_10': tail[-10:]}
     return json.dumps({'title': title[-1] if title else None, 'summary': summary,
-                       'last_lines': timing[-5:]}, indent=2)
+                       'presented': presented, 'last_lines': timing[-5:]}, indent=2)
 
 
 @mcp.tool()

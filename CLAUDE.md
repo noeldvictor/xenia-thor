@@ -253,9 +253,15 @@ Port rules:
   Device: Banjo-Kazooie 38,104 functions compile in 693 s with 3,801 VMAs; Blue Dragon runs.
   The object cache is per app build (`__DATE__ __TIME__` of llvm_assembler.cc); a rebuild of that
   TU costs one cold compile per title. Note: `docs/research/20260920-compile-overlay-ui-thread.md`.
-- Game patches apply on Android (checked 2026-09-20 with the `Patcher:` log lines). The device
-  holds an enabled July patch "Field dynamic-res cap 640" in `files/patches/4D5307DF.patch.toml`:
-  it clamps the planar-reflection texture width, not the field. It is active in every BD run.
+- Game patches work on Android since 2026-09-20. Before, `XexModule::LoadContinue` ran the AOT
+  precompile before the patcher, so compiled code never saw a patch; every patch was inert. The
+  July "dynamic-res cap 640" patch on the device targets the planar-reflection width, not the field.
+- BD field, village start, play-button path (2026-09-20): 9.9 fps control; **15.8 fps with the
+  bundled "No anti-aliasing, single pass" patch** (the game's own FSAA flag, also ends predicated
+  tiling); 11.9 with the game's render rate at 0.75; shadow map 512 flat. Patches live in
+  `assets/patches/4D5307DF-thor.patch.toml`, toggled in the Game Patches screen, all off by
+  default. Note: `docs/research/20260920-reblue-render-levers.md`. Route and fps: `xenia_route`,
+  `xenia_press`, `xenia_fps` (tag `xenia-fps`), `tools/thor/bd_patch_ab.py`.
 - Largest unclaimed CPU item: LLVM functions are not in the a64 indirection table. Every a64 to LLVM
   call pays a full `ResolveFunction`. See `llvm_backend.cc:251`.
 - Cvar rework of 2026-09-18: 18 validated levers have Android code defaults; 49 menu toggles are the

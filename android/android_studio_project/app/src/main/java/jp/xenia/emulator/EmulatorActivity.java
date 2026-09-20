@@ -2231,6 +2231,11 @@ public class EmulatorActivity extends WindowedAppActivity {
         } else {
             mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS", fps));
         }
+        // One line per window (about 2 per second) so a script can read the
+        // presented-frame rate from logcat on the play-button path, where no
+        // trace cvar is set. Tag xenia-fps.
+        android.util.Log.i("xenia-fps", String.format(Locale.US,
+                "fps=%.1f swaps=%d window_ms=%d", fps, guestSwapDelta, elapsedNs / 1000000L));
         mFpsWindowStartNs = nowNs;
         mFpsLastGuestSwapCount = guestSwapCount;
     }

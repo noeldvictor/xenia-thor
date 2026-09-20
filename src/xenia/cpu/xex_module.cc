@@ -1297,11 +1297,13 @@ bool XexModule::LoadContinue() {
     page += desc.page_count;
   }
 
-  // Multicore JIT: kick off background precompilation of this module's guest
-  // functions now that the executable range is committed and the function-entry
-  // table is parsed. No-op unless cpu_precompile_guest_functions is set.
-  PrecompileGuestFunctions();
-
+  // The load-window AOT precompile is NOT started here. It ran here until
+  // 2026-09-20, which put it before KernelState::FinishLoadingUserModule
+  // applied the game patches: every function was compiled from the unpatched
+  // bytes, the patch landed in guest memory afterwards, and the compiled code
+  // never saw it (the PC, with no precompile, applied the same patches fine).
+  // FinishLoadingUserModule calls PrecompileGuestFunctions() after the
+  // patcher; that call used to be the 20 ms second pass.
   return true;
 }
 

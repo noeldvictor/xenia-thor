@@ -93,7 +93,31 @@ Field route, matched pairs, `verts > 50000`, frame generation off, VRS off:
 4. FSAA off + shadow 512.
 
 Read the screenshots before any number. A frame rate on a corrupted frame is not a frame rate.
-Results: not measured yet.
+
+## Results (2026-09-20, APK `50caa9bfa4ce2edb` plus the order fix below, `tools/thor/bd_patch_ab.py`)
+
+First attempt: every arm returned 9.9 fps with an identical frame. Cause: `XexModule::LoadContinue`
+ran the AOT precompile before `FinishLoadingUserModule` applied the patches, so every function
+was compiled from the unpatched bytes and the patch in guest memory was never executed. The PC
+has no precompile and applied the same patches. Fix: the precompile call inside `LoadContinue`
+is removed; the explicit call after the patcher in `FinishLoadingUserModule` (the former 20 ms
+second pass) is the only one. The July "dynamic-res cap 640" patch was inert for the same reason.
+
+Second attempt, with the fix. Route: title, then the documented START/A sequence through the
+debug gamepad broadcast, into the village field (Shu at the dock). 30 s of presented fps from
+the FPS badge (`xenia-fps` log), 60 samples per arm, same scene in every screenshot. Battery
+38 % charging. GPU 39 to 45 C at launch, 58 to 61 C at the end.
+
+| arm | median fps | min | max | frame |
+|---|---|---|---|---|
+| control (no patch) | 9.9 | 7.9 | 9.9 | complete |
+| No anti-aliasing, single pass | **15.8** | 13.8 | 15.9 | complete, same scene, no visible change at this scale |
+| Internal resolution 75% | 11.9 | 9.9 | 13.9 | complete, visibly softer (the game's 960x540 scene upscaled) |
+| Shadow map 512 | 9.9 | 7.9 | 9.9 | complete |
+
+FSAA off is +60 % at full 720p. The shadow pass costs nothing measurable. The render rate is
++20 % for a softer image, so it loses to FSAA off. Not measured yet: FSAA off combined with the
+render rate, and FSAA off combined with the VRS choice (+33 % on its own, directive 14).
 
 ## Not examined
 
