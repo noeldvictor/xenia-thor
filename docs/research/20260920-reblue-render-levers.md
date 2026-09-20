@@ -70,9 +70,12 @@ holds "Field dynamic-res cap 640 v11", enabled: it lowers the clamp at 0x8217866
 from 1280 to 640 and calls it the 3D field's dynamic resolution. re:Blue names that site: its
 `bdReflectionResolutionScaleHook` at 0x82178670 reads `PlaneReflectInfo.width` at +0xA8, the
 same field the clamp writes. So that patch limits the planar reflection texture width, not the
-field. The dump shows the original 1280 at both words; the dump fired at +5 s, close to the
-patcher, so whether the patcher applies it is not settled. The `Patcher:` log lines of one
-launch settle it. Not done: the device was in use.
+field. The dump shows the original 1280 at both words because the dump fired before the
+patcher ran. Settled later the same day with the `Patcher:` log lines: the patcher runs
+("2 matching patch file(s)", "Applying patch for: ... Field dynamic-res cap 640 v11"). So the
+July patch is active in every Blue Dragon run on this device, and the bundled file loads beside
+it. I first wrote that the patcher never runs; the lines had been lost in the log burst at the
+end of the precompile pass. I was wrong.
 
 ## Delivery
 

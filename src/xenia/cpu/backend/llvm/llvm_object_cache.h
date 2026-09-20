@@ -75,6 +75,12 @@ const char* LlvmLoweringBuildStamp();
 std::unique_ptr<llvm::ObjectCache> CreateAndWireObjectCache(
     llvm::orc::LLJITBuilder& builder, const std::string& dir);
 
+// Routes JIT code memory through 64 MB rwx slabs (one VMA per slab) instead of
+// one mmap plus mprotect per linked object (two VMAs per guest function, which
+// hits vm.max_map_count on titles above about 32,000 functions). See the
+// XeSlabMemoryMapper comment in llvm_object_cache.cc. No-op on Windows.
+void WireSlabJitMemory(llvm::orc::LLJITBuilder& builder);
+
 }  // namespace llvm_backend
 }  // namespace backend
 }  // namespace cpu

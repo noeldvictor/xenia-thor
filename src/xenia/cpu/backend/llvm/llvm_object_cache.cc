@@ -12,17 +12,31 @@
 #if XE_LLVM_BACKEND_ENABLED
 
 #include <atomic>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <system_error>
+#include <utility>
+#include <vector>
 
 #include "xenia/base/logging.h"
 
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
 #include "llvm/ExecutionEngine/Orc/IRCompileLayer.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
+#include "llvm/ExecutionEngine/Orc/LLJIT.h"
+#include "llvm/ExecutionEngine/Orc/MapperJITLinkMemoryManager.h"
+#include "llvm/ExecutionEngine/Orc/MemoryMapper.h"
+#include "llvm/ExecutionEngine/Orc/ObjectLinkingLayer.h"
+#include "llvm/ExecutionEngine/Orc/Shared/AllocationActions.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Support/MemoryBuffer.h"
+
+#if !defined(_WIN32)
+#include <sys/mman.h>
+#include <unistd.h>
+#endif
 
 // Subclassing llvm::ObjectCache and instantiating llvm::orc::SimpleCompiler from
 // -frtti code (this lib is -frtti for cvar.h's dynamic_cast) makes the compiler
@@ -46,6 +60,8 @@ extern "C" {
 // whose typeinfo references the base's; libLLVM (-fno-rtti) omits it. Never
 // dereferenced (llvm::Error dispatches via its own classID, not C++ typeid).
 [[gnu::weak]] const void* _ZTIN4llvm13ErrorInfoBaseE = nullptr;
+// XeSlabMemoryMapper below subclasses llvm::orc::MemoryMapper.
+[[gnu::weak]] const void* _ZTIN4llvm3orc12MemoryMapperE = nullptr;
 }
 #else
 // GCC (the qemu/linux cpu-tests build) emits a std::type_info reference for these
@@ -61,6 +77,8 @@ asm(".pushsection .data.rel.ro,\"aw\"\n"
     "_ZTIN4llvm3orc14SimpleCompilerE: .quad 0\n"
     ".weak _ZTIN4llvm13ErrorInfoBaseE\n"
     "_ZTIN4llvm13ErrorInfoBaseE: .quad 0\n"
+    ".weak _ZTIN4llvm3orc12MemoryMapperE\n"
+    "_ZTIN4llvm3orc12MemoryMapperE: .quad 0\n"
     ".popsection");
 #endif
 
@@ -230,6 +248,162 @@ std::unique_ptr<llvm::ObjectCache> CreateAndWireObjectCache(
       });
   return cache;
 }
+
+#if !defined(_WIN32)
+
+namespace {
+
+// JIT code memory in large slabs with one protection for the whole slab.
+//
+// The default in-process JITLink memory manager mmaps one block per linked
+// object and then mprotects each segment: a 4 KB r-x page for the code and a
+// 4 KB r-- page for the constants and .eh_frame. With one LLVM module per guest
+// function that is two VMAs per function, never mergeable because the
+// permissions alternate. Device count, 2026-09-20: 14,181 + 14,181 VMAs at
+// 14,181 functions. vm.max_map_count is 65,530, so a title with more than
+// about 32,000 functions dies in the precompile with mmap ENOMEM (Scudo
+// returns null, LLVM calls report_bad_alloc_error): Banjo-Kazooie at 37,632,
+// Gears, MagnaCarta 2. This mapper reserves 64 MB slabs as rwx and never
+// changes protections, so a slab stays one VMA. The a64 code cache is rwx too.
+// The layout is still page based (MapperJITLinkMemoryManager), so the memory
+// per function is unchanged.
+class XeSlabMemoryMapper : public llvm::orc::MemoryMapper {
+ public:
+  explicit XeSlabMemoryMapper(size_t page_size) : page_size_(page_size) {}
+  ~XeSlabMemoryMapper() override {
+    for (auto& r : reservations_) {
+      munmap(r.first, r.second);
+    }
+  }
+
+  unsigned int getPageSize() override {
+    return static_cast<unsigned int>(page_size_);
+  }
+
+  void reserve(size_t num_bytes, OnReservedFunction on_reserved) override {
+    void* p = mmap(nullptr, num_bytes, PROT_READ | PROT_WRITE | PROT_EXEC,
+                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (p == MAP_FAILED) {
+      on_reserved(llvm::make_error<llvm::StringError>(
+          "XeSlabMemoryMapper: mmap of JIT slab failed",
+          llvm::inconvertibleErrorCode()));
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      reservations_.emplace_back(p, num_bytes);
+    }
+    XELOGI("LLVM JIT memory: reserved a {} MB rwx slab at {}",
+           num_bytes >> 20, p);
+    on_reserved(llvm::orc::ExecutorAddrRange(
+        llvm::orc::ExecutorAddr::fromPtr(p), num_bytes));
+  }
+
+  // In process: the working memory is the target memory.
+  char* prepare(llvm::orc::ExecutorAddr addr, size_t) override {
+    return addr.toPtr<char*>();
+  }
+
+  void initialize(AllocInfo& ai, OnInitializedFunction on_initialized) override {
+    llvm::orc::ExecutorAddr min_addr(~0ULL);
+    for (auto& seg : ai.Segments) {
+      auto base = ai.MappingBase + seg.Offset;
+      size_t size = seg.ContentSize + seg.ZeroFillSize;
+      if (base < min_addr) {
+        min_addr = base;
+      }
+      if (seg.ZeroFillSize) {
+        std::memset((base + seg.ContentSize).toPtr<void*>(), 0,
+                    seg.ZeroFillSize);
+      }
+      if (static_cast<unsigned>(seg.AG.getMemProt()) &
+          static_cast<unsigned>(llvm::orc::MemProt::Exec)) {
+        char* b = base.toPtr<char*>();
+        __builtin___clear_cache(b, b + size);
+      }
+    }
+    auto deinit = llvm::orc::shared::runFinalizeActions(ai.Actions);
+    if (!deinit) {
+      on_initialized(deinit.takeError());
+      return;
+    }
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      deinit_actions_[min_addr] = std::move(*deinit);
+    }
+    on_initialized(min_addr);
+  }
+
+  void deinitialize(llvm::ArrayRef<llvm::orc::ExecutorAddr> allocations,
+                    OnDeinitializedFunction on_deinitialized) override {
+    llvm::Error err = llvm::Error::success();
+    for (auto addr : allocations) {
+      std::vector<llvm::orc::shared::WrapperFunctionCall> actions;
+      {
+        std::lock_guard<std::mutex> lock(mutex_);
+        auto it = deinit_actions_.find(addr);
+        if (it != deinit_actions_.end()) {
+          actions = std::move(it->second);
+          deinit_actions_.erase(it);
+        }
+      }
+      err = llvm::joinErrors(std::move(err),
+                             llvm::orc::shared::runDeallocActions(actions));
+    }
+    on_deinitialized(std::move(err));
+  }
+
+  void release(llvm::ArrayRef<llvm::orc::ExecutorAddr> reservations,
+               OnReleasedFunction on_released) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (auto addr : reservations) {
+      void* p = addr.toPtr<void*>();
+      for (auto it = reservations_.begin(); it != reservations_.end(); ++it) {
+        if (it->first == p) {
+          munmap(it->first, it->second);
+          reservations_.erase(it);
+          break;
+        }
+      }
+    }
+    on_released(llvm::Error::success());
+  }
+
+ private:
+  size_t page_size_;
+  std::mutex mutex_;
+  std::vector<std::pair<void*, size_t>> reservations_;
+  llvm::DenseMap<llvm::orc::ExecutorAddr,
+                 std::vector<llvm::orc::shared::WrapperFunctionCall>>
+      deinit_actions_;
+};
+
+constexpr size_t kJitSlabBytes = size_t(64) << 20;
+
+}  // namespace
+
+void WireSlabJitMemory(llvm::orc::LLJITBuilder& builder) {
+  builder.setObjectLinkingLayerCreator(
+      [](llvm::orc::ExecutionSession& es, const llvm::Triple&)
+          -> llvm::Expected<std::unique_ptr<llvm::orc::ObjectLayer>> {
+        size_t page_size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+        if (!page_size) {
+          page_size = 4096;
+        }
+        auto mapper = std::make_unique<XeSlabMemoryMapper>(page_size);
+        auto memmgr =
+            std::make_unique<llvm::orc::MapperJITLinkMemoryManager>(
+                kJitSlabBytes, std::move(mapper));
+        return std::make_unique<llvm::orc::ObjectLinkingLayer>(
+            es, std::move(memmgr));
+      });
+}
+
+#else  // _WIN32
+
+void WireSlabJitMemory(llvm::orc::LLJITBuilder&) {}
+
+#endif  // !_WIN32
 
 }  // namespace llvm_backend
 }  // namespace backend

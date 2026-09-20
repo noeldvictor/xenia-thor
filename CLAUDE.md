@@ -247,12 +247,15 @@ Port rules:
   `e0137c9a7`), XenDroid Vulkan descriptor set (`68e78ca92`, `036fedb3e`, `8e48dd4af`, `162c86ed1`),
   guest scheduler default on (edge `34357e257`), GPU busy time (edge `61810b48e`), FSI sample-mask fixes
   (`7c999ca76`, `3df64c029`). Check the git log before you start one. Some landed on 2026-08-18.
-- AOT OOM (2026-09-20): Banjo-Kazooie (frontier 33,414 to 37,927) dies in `PrecompileJIT` with
-  `report_bad_alloc_error` at 37,632 functions on a cold cache, like Gears and MagnaCarta 2. Blue
-  Dragon (about 19,900 functions) survives. Measured on BD: mappings grow 6,558 to 41,268 in one
-  pass; the largest free VA gap stays 363.7 GiB; `vm.max_map_count` is 65,530. Lead: mapping count,
-  not fragmentation. Owner of the mappings not measured. Note:
-  `docs/research/20260920-compile-overlay-ui-thread.md`.
+- AOT OOM fixed (2026-09-20): JITLink gave each function one r-x and one r-- page, 2 VMAs each,
+  and `vm.max_map_count` (65,530) killed titles above about 32,000 functions (Banjo, Gears,
+  MagnaCarta 2). `XeSlabMemoryMapper` (llvm_object_cache.cc) puts JIT code in 64 MB rwx slabs.
+  Device: Banjo-Kazooie 38,104 functions compile in 693 s with 3,801 VMAs; Blue Dragon runs.
+  The object cache is per app build (`__DATE__ __TIME__` of llvm_assembler.cc); a rebuild of that
+  TU costs one cold compile per title. Note: `docs/research/20260920-compile-overlay-ui-thread.md`.
+- Game patches apply on Android (checked 2026-09-20 with the `Patcher:` log lines). The device
+  holds an enabled July patch "Field dynamic-res cap 640" in `files/patches/4D5307DF.patch.toml`:
+  it clamps the planar-reflection texture width, not the field. It is active in every BD run.
 - Largest unclaimed CPU item: LLVM functions are not in the a64 indirection table. Every a64 to LLVM
   call pays a full `ResolveFunction`. See `llvm_backend.cc:251`.
 - Cvar rework of 2026-09-18: 18 validated levers have Android code defaults; 49 menu toggles are the

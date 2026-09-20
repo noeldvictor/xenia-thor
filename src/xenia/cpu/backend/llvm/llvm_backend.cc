@@ -892,6 +892,10 @@ bool LLVMBackend::Initialize(Processor* processor) {
   llvm::InitializeNativeTargetAsmPrinter();
   llvm::orc::LLJITBuilder builder;
 
+  // JIT code memory in rwx slabs: one VMA per 64 MB instead of two per guest
+  // function (the vm.max_map_count crash on large titles, 2026-09-20).
+  WireSlabJitMemory(builder);
+
   // AOT object cache (cpu_llvm_object_cache): persist each compiled function's
   // .o + reuse it next launch / on re-entry, skipping codegen. The cache subclass
   // + SimpleCompiler wiring live in the -fno-rtti llvm_object_cache.cc (see that

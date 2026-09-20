@@ -100,6 +100,21 @@ and every file on the device is from 2026-09-18. Pass 2 took 23 ms because pass 
 resolved those functions. The 15:08 run walked a frontier of 37,927 because it was a different
 title, Banjo-Kazooie; Blue Dragon's frontier is about 19,900.
 
-Not yet measured: which allocations own the mappings. The next step is a `maps` diff between
-two samples 30 s apart, grouped by permission and size, on the same run. That names the owner
-(JIT code slabs, Scudo secondary blocks, or object-cache files). This is not done.
+## The owner, and the fix (later the same day)
+
+A maps census (`tools/thor/aot_cache_cold_warm.py`) named the owner: `r-xp anon` and
+`r--p anon` counts equal to the function count, all 4 KB, alternating and adjacent. That is
+JITLink's `InProcessMemoryManager`: one `mmap` per linked object, then `mprotect` per segment.
+Two VMAs per function, never mergeable. 37,632 functions need about 75,000 VMAs; the limit is
+65,530.
+
+Fix: `XeSlabMemoryMapper` in `llvm_object_cache.cc` with `MapperJITLinkMemoryManager`, 64 MB
+rwx slabs, no per-segment protection change, so one VMA per slab. The a64 code cache is rwx
+too. The layout stays page based, so memory per function is unchanged.
+
+| run | functions | VMAs | RSS at end | result |
+|---|---|---|---|---|
+| Blue Dragon cold, before | 19,884 | 9,220 to 41,268 | 734 MB | ran |
+| Blue Dragon cold, slab | 19,884 | 3,459 to 3,732 | 778 MB | ran; title screen at 29.7 fps |
+| Banjo-Kazooie cold, before (15:08) | 37,632 of 37,927 | not measured | | SIGABRT `report_bad_alloc_error` |
+| Banjo-Kazooie cold, slab | 38,104 | 3,515 to 3,801 | 943 MB | compiled in 693 s |

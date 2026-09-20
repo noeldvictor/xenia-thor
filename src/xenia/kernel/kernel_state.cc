@@ -671,6 +671,11 @@ X_RESULT KernelState::FinishLoadingUserModule(
     return result;
   }
   module->Dump();
+  // Diagnostic (2026-09-20): the patcher's own match line ("Patcher: title")
+  // never appeared on the device, while it appears on the PC for the same
+  // disc. This line says whether the pointer exists at this point.
+  XELOGI("FinishLoadingUserModule: title {:08X}, patcher {}",
+         module->title_id(), emulator_->patcher() ? "present" : "NULL");
   // Apply any matching game patches now that the module is loaded and its build
   // hash has been computed (Dump() -> CalculateHash()). Non-matching titles
   // apply nothing, so this is safe to run for every loaded module.

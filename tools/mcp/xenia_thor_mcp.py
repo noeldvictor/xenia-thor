@@ -62,9 +62,15 @@ def _pid(package: str) -> Optional[int]:
 
 
 def _foreground() -> str:
-    out = _shell('dumpsys activity activities')
+    # Grep on the device: the full dump is large and adb sometimes cuts it
+    # ("Broken pipe"), which returned '' mid-game on 2026-09-20.
+    out = _shell('dumpsys activity activities 2>/dev/null | grep -m1 topResumedActivity')
     m = re.search(r'topResumedActivity=ActivityRecord\{\S+ u0 (\S+)', out)
-    return m.group(1).rstrip('}') if m else ''
+    if m:
+        return m.group(1).rstrip('}')
+    out = _shell('dumpsys window 2>/dev/null | grep -m1 mCurrentFocus')
+    m = re.search(r'Window\{\S+ u0 (\S+)\}', out)
+    return m.group(1) if m else ''
 
 
 def _temps() -> dict:
@@ -146,6 +152,11 @@ def xenia_preflight(max_temp_c: float = 55.0, min_battery: int = 30) -> str:
     bat = _battery()
     if bat['level'] is not None and bat['level'] < min_battery and not bat['charging']:
         reasons.append(f'battery {bat["level"]}% and not charging')
+    # A sleeping panel looks like a render bug and slows the load (57 s instead
+    # of 15 s on 2026-09-20). The rules forbid adb keyevents, so the user wakes it.
+    wake = _shell('dumpsys power | grep -m1 mWakefulness=').strip()
+    if wake and 'Awake' not in wake:
+        reasons.append(f'screen is asleep ({wake}); press the power button')
     return json.dumps({'ok': not reasons, 'reasons': reasons, 'temps': temps,
                        'battery': bat, 'foreground': fg}, indent=2)
 
@@ -178,6 +189,70 @@ def xenia_launch(target: str, force_stop_first: bool = True,
         pid = _pid(PKG)
     return json.dumps({'launched': pid is not None, 'pid': pid, 'am_start': out,
                        'command': cmd, 'battery': _battery()}, indent=2)
+
+
+BUTTON_KEYCODES = {
+    'A': 96, 'B': 97, 'X': 99, 'Y': 100, 'DPAD_UP': 19, 'DPAD_DOWN': 20,
+    'DPAD_LEFT': 21, 'DPAD_RIGHT': 22, 'START': 108, 'BACK': 109, 'LB': 102,
+    'RB': 103, 'LT': 104, 'RT': 105, 'LS': 106, 'RS': 107, 'GUIDE': 110,
+}
+
+
+def _press(button: str, hold_ms: int) -> str:
+    """Send one debug gamepad key through the app's exported broadcast
+    receiver (EmulatorActivity.ACTION_DEBUG_GAMEPAD_KEY). The key goes through
+    nativeOnAndroidGamepadKey like a real pad, so it works on a play-button
+    launch with no extras. Refuses unless our EmulatorActivity is in front, so
+    it can never reach another session's app (the adb keyevent mistake)."""
+    code = BUTTON_KEYCODES.get(button.upper())
+    if code is None:
+        return f'unknown button {button}; use one of {sorted(BUTTON_KEYCODES)}'
+    fg = _foreground()
+    if 'jp.xenia.emulator.EmulatorActivity' not in fg:
+        return f'refused: foreground is {fg}, not the emulator'
+    hold = max(1, min(2000, int(hold_ms)))
+    out = _shell(f'am broadcast --receiver-foreground -a {PKG}.DEBUG_GAMEPAD_KEY -p {PKG} '
+                 f'--ei key_code {code} --ei hold_ms {hold} --ez already_mapped true')
+    ok = 'Broadcast completed' in out
+    return f'{button.upper()} ({code}) held {hold} ms: {"sent" if ok else out.strip()[:120]}'
+
+
+@mcp.tool()
+def xenia_press(button: str, hold_ms: int = 120) -> str:
+    """Press one gamepad button in the running game: A, B, X, Y, DPAD_UP/DOWN/
+    LEFT/RIGHT, START, BACK, LB, RB, LT, RT, LS, RS, GUIDE. Goes through the app's
+    debug gamepad receiver, never through adb input keyevent."""
+    return _press(button, hold_ms)
+
+
+@mcp.tool()
+def xenia_route(sequence: str, default_wait_ms: int = 800) -> str:
+    """Replay a button route in the running game. sequence is space separated:
+    a button name presses it (default hold 120 ms), NAME:hold_ms sets the hold,
+    and a bare number waits that many milliseconds. Example:
+    "START wait 3000 A A:400 2000 DPAD_DOWN A". After each press the default
+    wait applies unless a number follows. Stops at the first refused press."""
+    log = []
+    tokens = sequence.split()
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        i += 1
+        if tok.lower() == 'wait':
+            continue
+        if tok.isdigit():
+            time.sleep(int(tok) / 1000.0)
+            log.append(f'wait {tok}')
+            continue
+        name, _, hold = tok.partition(':')
+        result = _press(name, int(hold) if hold.isdigit() else 120)
+        log.append(result)
+        if 'refused' in result or 'unknown' in result:
+            break
+        explicit_wait = i < len(tokens) and tokens[i].isdigit()
+        if not explicit_wait:
+            time.sleep(default_wait_ms / 1000.0)
+    return '\n'.join(log)
 
 
 @mcp.tool()
