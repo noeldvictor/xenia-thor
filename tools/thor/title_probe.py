@@ -184,6 +184,19 @@ def main():
         for l in bad[-15:]:
             print('   ', l[l.find('xenia'):].strip()[:170])
     finally:
+        # The in-process log ring dies with the process: save it first. It
+        # holds the file-system trace lines that logcat never shows.
+        try:
+            rows = m._api('/log?lines=8192', timeout=60)
+            path = os.path.join(m.SCRATCH, f'ring-{args.title}-{time.strftime("%Y%m%d-%H%M%S")}.txt')
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(chr(10).join(rows))
+            errs = [l for l in rows if 'DirtyDisc' in l or 'CRASH DIAG' in l or 'SPINLOCK' in l]
+            print(f'ring: {len(rows)} lines saved to {path}; {len(errs)} marker line(s)')
+            for l in errs[:5]:
+                print('   ', l[:200])
+        except Exception as e:
+            print('ring: not saved:', e)
         print('stop:', m.xenia_force_stop())
     return 0
 

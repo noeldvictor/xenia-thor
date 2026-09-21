@@ -116,3 +116,39 @@ and the value it stores, then read the emitter. Two exports failed that check to
 remaining inlined exports (`RtlEnterCriticalSection`, `RtlLeaveCriticalSection`,
 `RtlTryEnterCriticalSection`, `KeEnterCriticalRegion`, `KeLeaveCriticalRegion`) use the guest
 structure fields with the guest byte order; they pass.
+
+## Shader compilation was the 2 fps (measured 2026-09-20, evening)
+
+Profile in the game world (`xenia_profile`, 15 s): the command processor thread was the largest
+thread at 23.9 % of all samples; 74.5 % of that thread sat inside `libvulkan_freedreno.so`
+(spread over hundreds of small symbols), 12.9 % in malloc, 9 % in xenia (`spv::Builder`,
+`LoadShader`, `ConfigurePipeline`, the shader interpreter of the draw extent estimator). That
+is pipeline compilation. The GPU was 4 % busy. Three guest threads spun at 67 % each in the
+game's own wait function `0x8264DCD0` (a timed poll with a 5,000-tick window), which is the
+game waiting for the GPU.
+
+The counters added the same day: 320 pipelines in the first 100 s of the world, 54.5 s spent in
+`vkCreateGraphicsPipelines`, 170 ms per pipeline on average, batches of 64 at 6 to 18 s.
+
+The VkPipelineCache blob was saved only in `Shutdown`, which a force-stop never reaches. No
+blob ever existed on the device. With the periodic save (20 s after 16 new pipelines, written by
+a detached thread, renamed over the old file) the first run wrote 28.1 MB for 320 pipelines
+(88 KB each). The second run seeded from it: the same 320 pipelines took 5 ms in total, and the
+badge read 61 to 63 fps in the puzzle transition and the game's dialog (the earlier runs read
+0.0 there). Mesa's own disk cache (`MESA_SHADER_CACHE_DIR`) created its directory but wrote no
+files: this Turnip build has no disk cache, so the VkPipelineCache blob is the only layer.
+
+Open: 88 KB per pipeline means every pipeline carries its own shader binaries. The state that
+xenia bakes into pipelines (blend, depth, stencil, cull) could be dynamic state on Turnip
+(`VK_EXT_extended_dynamic_state3`) or graphics pipeline libraries, which would cut both the
+count and the first-visit cost. Next after the loader race below.
+
+## The loader race (open)
+
+Guest thread 0x1C (Banjo's loader) is not deterministic across runs: it reached the world at
+22:21 and 23:06; it read `\debug\db_index.txt`, passed null critical sections, and made a wild
+access at 22:56 (a run with a different route timing); it called `XamShowDirtyDiscErrorUI` at
++21 s, before any input, at 23:09. The content check that fails is cryptographic and the fork
+stubs it to success (`xboxkrnl_crypt.cc`), so the failing check is elsewhere. The probe now
+saves the in-process log ring before the force-stop so the loader's file trace before the call
+is kept.

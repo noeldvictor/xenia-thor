@@ -138,6 +138,11 @@ def _api(path: str, method: str = 'GET', timeout: int = 20, raw: bool = False):
     if API_HOST == '127.0.0.1' and not _api_forwarded:
         _run(['adb', '-s', SERIAL, 'forward', f'tcp:{API_PORT}', f'tcp:{API_PORT}'])
         _api_forwarded = True
+    # Quote the query values (a grep with a space broke the probe once).
+    if '?' in path:
+        base, _, qs = path.partition('?')
+        pairs = [(k, v) for k, _, v in (p.partition('=') for p in qs.split('&')) if k]
+        path = base + '?' + urllib.parse.urlencode(pairs)
     req = urllib.request.Request(_api_url(path), method=method)
     try:
         with urllib.request.urlopen(req, timeout=timeout) as r:
