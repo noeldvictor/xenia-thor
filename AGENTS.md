@@ -287,7 +287,11 @@ Port rules:
   costs milliseconds. The lower half of the world frame is black with speckles (Xenos axis,
   open). The `XamShowDirtyDiscErrorUI` dialog on the device is closed (2026-09-21): it was the
   profile cvar `xam_redirect_xui_font_cache`, removed from the Banjo profile. The PC dialog
-  was the x64 NaN helper (`943c14d15f`). Details: `docs/research/20260920-banjo-spinlock-protocol.md`,
+  was the x64 NaN helper (`943c14d15f`). START then stopped at the sign-in prompt: the login
+  persists through `logged_profile_slot_0_xuid` in the config file, which Android never reads,
+  so `ProfileManager` now signs the existing profile into slot 0 at start. START reaches the
+  main menu and three A presses reach the opening story in the world (2026-09-21).
+  Details: `docs/research/20260920-banjo-spinlock-protocol.md`,
   `docs/research/20260921-banjo-dirty-disc-font-cache.md`.
 - The device heats over consecutive runs: the case (`xo-therm`) at 44 C reaches the 70 C GPU
   abort within 45 s of play. `xenia_preflight` gates on case 41 C. Wait, do not lower the abort.

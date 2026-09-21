@@ -163,6 +163,31 @@ ProfileManager::ProfileManager(KernelState* kernel_state,
       XELOGE("ProfileManager: failed to create the default profile.");
     }
   }
+
+  // The login persists through the logged_profile_slot_N_xuid cvars in
+  // xenia.config.toml, and Android never reads that file (2026-09-20). So
+  // the first run signed the auto-created profile in and every later run
+  // found it on disk and signed nobody in: Banjo-Kazooie stopped at the
+  // sign-in prompt after START (2026-09-21). A handheld has one user. When
+  // slot 0 is empty and profiles exist, sign in the one named by
+  // user_gamertag, else the first one, the way a set-up console would.
+  if (cvars::profile_autocreate_default && !accounts_.empty() &&
+      !logged_profiles_.count(0)) {
+    uint64_t xuid = accounts_.begin()->first;
+    if (!cvars::user_gamertag.empty()) {
+      for (const auto& [account_xuid, account] : accounts_) {
+        if (account.GetGamertagString() == cvars::user_gamertag) {
+          xuid = account_xuid;
+          break;
+        }
+      }
+    }
+    XELOGI(
+        "ProfileManager: slot 0 is empty and {} profile(s) exist - signing "
+        "{:016X} into slot 0.",
+        accounts_.size(), xuid);
+    Login(xuid, 0);
+  }
 }
 
 void ProfileManager::ReloadProfile(const uint64_t xuid) {
