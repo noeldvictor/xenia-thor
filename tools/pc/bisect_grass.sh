@@ -40,6 +40,10 @@ EOF
 if git merge-base --is-ancestor 2edd685258 HEAD 2>/dev/null && ! git merge-base --is-ancestor 943c14d15f HEAD 2>/dev/null; then
   git cherry-pick -n 943c14d15f > /dev/null 2>&1 || { git reset -q --hard; echo "x64 fix does not apply at $here" | tee -a "$LOG"; }
 fi
+# The nop HID trigger file and pc_goto (the route this script drives).
+if ! git merge-base --is-ancestor 8f8fd4ccea HEAD 2>/dev/null; then
+  git cherry-pick -n 8f8fd4ccea > /dev/null 2>&1 || { git reset -q --hard; echo "nop trigger does not apply at $here" | tee -a "$LOG"; exit 125; }
+fi
 git submodule update --init --depth 1 > /dev/null 2>&1
 for tp in pugixml; do
   [ -d "third_party/$tp/src" ] || cp -r "$ROOT/third_party/$tp" third_party/ 2>/dev/null
@@ -65,15 +69,11 @@ logged_profile_slot_0_xuid = "B13EBABEBABEBABE"
 ' > storage/xenia.config.toml
 verdict=125
 for run in 1 2; do
-  rm -f storage/pc-vulkan-*.png
-  python "$ROOT/tools/pc/pc_screens.py" "$ISO" --gpu vulkan --seq "start@30000:300;b@42000:300" --shots 54,60 \
-    --storage "$(pwd)/storage" --exe "$(pwd)/build/bin/Windows/Release/xenia.exe" > "storage/run$run.txt" 2>&1
-  if ! grep -q "Title name" storage/xenia.log; then
-    echo "SKIP $here (no title loaded)" | tee -a "$LOG"; cp storage/xenia.log "$ROOT/scratch/banjo/bisect-grass-skip-$here.log" 2>/dev/null
-    git reset -q --hard > /dev/null 2>&1; exit 125
-  fi
-  python "$ROOT/tools/pc/grass_score.py" storage/pc-vulkan-54s.png storage/pc-vulkan-60s.png | tee -a "$LOG"
-  code=${PIPESTATUS[0]}
+  rm -f storage/goto-title.png
+  python "$ROOT/tools/pc/pc_goto.py" "$ISO" --gpu vulkan --screen title --timeout 200     --storage "$(pwd)/storage" --exe "$(pwd)/build/bin/Windows/Release/xenia.exe" > "storage/run$run.txt" 2>&1
+  code=$?
+  tail -1 "storage/run$run.txt" | tee -a "$LOG"
+  cp storage/goto-title.png "$ROOT/scratch/banjo/pcshots/bisect-$here-run$run.png" 2>/dev/null
   if [ "$code" = "1" ]; then verdict=1; break; fi
   if [ "$code" = "0" ]; then verdict=0; fi
 done
