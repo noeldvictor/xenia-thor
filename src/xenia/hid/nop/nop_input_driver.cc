@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -96,7 +97,8 @@ X_STATUS NopInputDriver::Setup() {
 
 bool NopInputDriver::IsResearchControllerConnected() const {
   return cvars::hid_nop_connected || !cvars::hid_nop_buttons.empty() ||
-         !cvars::hid_nop_button_sequence.empty();
+         !cvars::hid_nop_button_sequence.empty() ||
+         !cvars::hid_nop_trigger_file.empty();
 }
 
 uint16_t NopInputDriver::GetButtonsFromString(std::string buttons) {
@@ -177,12 +179,42 @@ uint16_t NopInputDriver::GetConfiguredButtons() {
 }
 
 uint16_t NopInputDriver::GetActiveButtons() const {
+  uint16_t active_buttons = 0;
+  // The trigger file: "start:300" presses START for 300 ms from now.
+  if (!cvars::hid_nop_trigger_file.empty()) {
+    const auto now = std::chrono::steady_clock::now();
+    if (now < trigger_until_) {
+      active_buttons |= trigger_buttons_;
+    } else if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                   now - trigger_last_poll_)
+                   .count() >= 100) {
+      trigger_last_poll_ = now;
+      FILE* f = fopen(cvars::hid_nop_trigger_file.c_str(), "rb");
+      if (f) {
+        char line[128] = {};
+        if (!fgets(line, sizeof(line), f)) {
+          line[0] = 0;
+        }
+        fclose(f);
+        std::remove(cvars::hid_nop_trigger_file.c_str());
+        std::string entry = TrimString(line);
+        const size_t colon = entry.find(':');
+        const int32_t hold_ms =
+            colon == std::string::npos
+                ? 200
+                : std::max(1, ParseIntOrDefault(
+                                  TrimString(entry.substr(colon + 1)), 200));
+        trigger_buttons_ = GetButtonsFromString(entry.substr(0, colon));
+        trigger_until_ = now + std::chrono::milliseconds(hold_ms);
+        active_buttons |= trigger_buttons_;
+      }
+    }
+  }
   if (cvars::hid_nop_buttons.empty() &&
       cvars::hid_nop_button_sequence.empty()) {
-    return 0;
+    return active_buttons;
   }
 
-  uint16_t active_buttons = 0;
   const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                               std::chrono::steady_clock::now() -
                               button_schedule_start_time_)

@@ -77,6 +77,14 @@ DEFINE_string(
     "Semicolon-separated research nop HID pulses in the form "
     "buttons@delay_ms:hold_ms, for example start@45000:3000;a@70000:3000.",
     "HID");
+DEFINE_string(
+    hid_nop_trigger_file, "",
+    "Research nop HID: a file path polled every input read. When the file "
+    "exists, its first line names buttons to press (start, a, a+b, ...) with "
+    "an optional :hold_ms, the press begins, and the file is deleted. A PC "
+    "script presses a button when the screen shows the right frame, without "
+    "the window focus a keyboard route needs (2026-09-21).",
+    "HID");
 DEFINE_int32(
     hid_nop_buttons_delay_ms, 0,
     "Research delay before the nop HID driver reports hid_nop_buttons.",

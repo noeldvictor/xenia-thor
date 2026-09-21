@@ -23,6 +23,7 @@ DECLARE_double(hotkey_slowmo_scalar);
 DECLARE_bool(hotkey_save_state);
 DECLARE_string(hotkey_state_path);
 DECLARE_string(hid_nop_button_sequence);
+DECLARE_string(hid_nop_trigger_file);
 DECLARE_int32(hid_nop_buttons_delay_ms);
 DECLARE_int32(hid_nop_buttons_hold_ms);
 

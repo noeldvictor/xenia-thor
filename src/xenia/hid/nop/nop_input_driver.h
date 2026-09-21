@@ -45,6 +45,10 @@ class NopInputDriver final : public InputDriver {
   uint16_t previous_keystroke_buttons_ = 0;
   bool research_logged_ = false;
   std::chrono::steady_clock::time_point button_schedule_start_time_;
+  // hid_nop_trigger_file state (GetActiveButtons is const; the poll mutates).
+  mutable std::chrono::steady_clock::time_point trigger_last_poll_{};
+  mutable std::chrono::steady_clock::time_point trigger_until_{};
+  mutable uint16_t trigger_buttons_ = 0;
 };
 
 }  // namespace nop
