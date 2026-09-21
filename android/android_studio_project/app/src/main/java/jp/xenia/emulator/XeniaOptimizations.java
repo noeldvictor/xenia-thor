@@ -41,9 +41,16 @@ public final class XeniaOptimizations {
     /** A boolean cvar set to true when the owning optimization is enabled. */
     static final class BoolCvar {
         final String name;
+        /** Value written when the toggle is on; the opposite when off. */
+        final boolean onValue;
 
         BoolCvar(final String name) {
+            this(name, true);
+        }
+
+        BoolCvar(final String name, final boolean onValue) {
             this.name = name;
+            this.onValue = onValue;
         }
     }
 
@@ -193,6 +200,23 @@ public final class XeniaOptimizations {
                         + "containing 'cortex' and so excluded every Qualcomm core.",
                 CATEGORY_CPU, false, false,
                 new BoolCvar[]{new BoolCvar("cpu_llvm_target_features_native")}, null));
+
+        list.add(new Optimization(
+                "opt_readable_zero_page",
+                "Readable zero page",
+                "Lets game code read the first 64 KB of guest memory instead of "
+                        + "faulting. Some games read a field through a null pointer "
+                        + "and rely on the console returning zeros there.",
+                "Banjo-Kazooie: Nuts & Bolts (2026-09-20): its function 0x82364250 "
+                        + "sets r31 = 0 for an empty table slot and then reads 36(r31); "
+                        + "0x82CD5268 reads at 0x1C the same way. On the console the zero "
+                        + "page is readable. With the page protected the read faults, the "
+                        + "thread is parked, and the loading screen never ends. This "
+                        + "writes protect_zero=false (Xenia's own switch for it). Off "
+                        + "keeps the page protected, which catches null reads in a log "
+                        + "but breaks these games.",
+                CATEGORY_CPU, true, true,
+                new BoolCvar[]{new BoolCvar("protect_zero", false)}, null));
 
         list.add(new Optimization(
                 "opt_uma_direct",
@@ -1112,14 +1136,14 @@ public final class XeniaOptimizations {
                 // return to their native default when off.
                 if (opt.boolCvars != null) {
                     for (final BoolCvar cvar : opt.boolCvars) {
-                        launchArguments.putBoolean(cvar.name, false);
+                        launchArguments.putBoolean(cvar.name, !cvar.onValue);
                     }
                 }
                 continue;
             }
             if (opt.boolCvars != null) {
                 for (final BoolCvar cvar : opt.boolCvars) {
-                    launchArguments.putBoolean(cvar.name, true);
+                    launchArguments.putBoolean(cvar.name, cvar.onValue);
                 }
             }
             if (opt.intCvars != null) {
