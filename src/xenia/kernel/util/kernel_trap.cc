@@ -9,13 +9,17 @@
 
 #include "xenia/kernel/util/kernel_trap.h"
 
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <cstring>
+#include <vector>
 #include <mutex>
 #include <thread>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/clock.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/string.h"
@@ -27,6 +31,19 @@
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/memory.h"
+
+DEFINE_string(kernel_trap_export, "",
+              "Arm the export trap on this kernel export at title load (the PC "
+              "has no debug server; the device uses the trap tool).",
+              "Kernel");
+DEFINE_uint64(kernel_trap_lr, 0,
+              "With kernel_trap_export: only calls whose guest lr equals this "
+              "value hit.",
+              "Kernel");
+DEFINE_string(kernel_trap_dump, "",
+              "With kernel_trap_export: memory dumped to the log at every hit, "
+              "a comma list of rN:len or hexaddr:len.",
+              "Kernel");
 
 namespace xe {
 namespace kernel {
@@ -54,6 +71,13 @@ struct TrapRecord {
   uint32_t stack[kStackWords] = {};
   size_t stack_count = 0;
   uint64_t when_ms = 0;
+  struct DumpRange {
+    int reg = -1;  // -1: absolute address
+    int32_t offset = 0;  // added to the register value ("r25-24")
+    uint32_t address = 0;
+    uint32_t length = 0;
+  };
+  std::vector<DumpRange> dumps;
 };
 
 TrapRecord& record() {
@@ -102,9 +126,43 @@ void KernelTrapHit(cpu::Export* export_entry, cpu::ppc::PPCContext* ctx) {
     }
   }
   uint32_t hit = rec.hits.fetch_add(1, std::memory_order_relaxed) + 1;
-  XELOGE("kernel trap hit #{}: {} on thread {:08X} lr={:08X} r1={:08X}", hit,
-         rec.export_name, rec.thread_id, static_cast<uint32_t>(ctx->lr),
-         static_cast<uint32_t>(ctx->r[1]));
+  XELOGE(
+      "kernel trap hit #{}: {} on thread {:08X} lr={:08X} r1={:08X} r3={:08X} "
+      "r4={:08X} r5={:08X} r6={:08X} r7={:08X}",
+      hit, rec.export_name, rec.thread_id, static_cast<uint32_t>(ctx->lr),
+      static_cast<uint32_t>(ctx->r[1]), static_cast<uint32_t>(ctx->r[3]),
+      static_cast<uint32_t>(ctx->r[4]), static_cast<uint32_t>(ctx->r[5]),
+      static_cast<uint32_t>(ctx->r[6]), static_cast<uint32_t>(ctx->r[7]));
+  // The dump ranges: one log line per range, hex, at most 4 KB each.
+  std::vector<TrapRecord::DumpRange> dumps;
+  {
+    std::lock_guard<std::mutex> lock(rec.mutex);
+    dumps = rec.dumps;
+  }
+  auto* memory = ctx->kernel_state->memory();
+  for (const auto& d : dumps) {
+    uint32_t addr = d.reg >= 0
+                        ? static_cast<uint32_t>(ctx->r[d.reg]) + d.offset
+                        : d.address;
+    uint32_t len = std::min<uint32_t>(d.length, 4096);
+    std::string hex;
+    hex.reserve(len * 2);
+    static const char kDigits[] = "0123456789ABCDEF";
+    for (uint32_t i = 0; i < len; ++i) {
+      uint32_t a = addr + i;
+      auto* heap = memory->LookupHeap(a);
+      if (!heap || heap->QueryRangeAccess(a, a) ==
+                       xe::memory::PageAccess::kNoAccess) {
+        break;
+      }
+      uint8_t b = *memory->TranslateVirtual(a);
+      hex.push_back(kDigits[b >> 4]);
+      hex.push_back(kDigits[b & 15]);
+    }
+    XELOGE("kernel trap dump #{} {}{}={:08X} len={}: {}", hit,
+           d.reg >= 0 ? "r" : "", d.reg >= 0 ? std::to_string(d.reg) : "",
+           addr, len, hex);
+  }
   if (rec.pause.load(std::memory_order_relaxed)) {
     // Hold this guest thread; the other threads keep running and the debug
     // server reads memory. Released by KernelTrapRelease or after 10 minutes.
@@ -158,6 +216,53 @@ std::string KernelTrapSet(std::string_view export_name, bool pause,
     }
   }
   return fmt::format("export '{}' not found", export_name);
+}
+
+void KernelTrapSetDump(std::string_view spec) {
+  TrapRecord& rec = record();
+  std::vector<TrapRecord::DumpRange> dumps;
+  size_t pos = 0;
+  while (pos < spec.size()) {
+    size_t comma = spec.find(',', pos);
+    if (comma == std::string_view::npos) {
+      comma = spec.size();
+    }
+    std::string item(spec.substr(pos, comma - pos));
+    pos = comma + 1;
+    size_t colon = item.find(':');
+    if (colon == std::string::npos || item.empty()) {
+      continue;
+    }
+    TrapRecord::DumpRange d;
+    std::string where = item.substr(0, colon);
+    d.length = static_cast<uint32_t>(std::strtoul(item.c_str() + colon + 1, nullptr, 0));
+    if (where.size() >= 2 && (where[0] == 'r' || where[0] == 'R') &&
+        std::isdigit(static_cast<unsigned char>(where[1]))) {
+      // "r25", "r25-24", "r25+8"
+      char* end = nullptr;
+      d.reg = static_cast<int>(std::strtol(where.c_str() + 1, &end, 10));
+      if (end && (*end == '-' || *end == '+')) {
+        d.offset = static_cast<int32_t>(std::strtol(end, nullptr, 10));
+      }
+    } else {
+      d.address = static_cast<uint32_t>(std::strtoul(where.c_str(), nullptr, 16));
+    }
+    dumps.push_back(d);
+  }
+  std::lock_guard<std::mutex> lock(rec.mutex);
+  rec.dumps = std::move(dumps);
+}
+
+void KernelTrapArmFromCvars() {
+  if (cvars::kernel_trap_export.empty()) {
+    return;
+  }
+  KernelTrapSetDump(cvars::kernel_trap_dump);
+  std::string err = KernelTrapSet(cvars::kernel_trap_export, false,
+                                  static_cast<uint32_t>(cvars::kernel_trap_lr));
+  if (!err.empty()) {
+    XELOGE("kernel_trap_export: {}", err);
+  }
 }
 
 void KernelTrapClear() {

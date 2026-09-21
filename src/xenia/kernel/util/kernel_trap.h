@@ -44,6 +44,14 @@ void KernelTrapHit(cpu::Export* export_entry, cpu::ppc::PPCContext* ctx);
 // Returns "" on success or the reason.
 std::string KernelTrapSet(std::string_view export_name, bool pause,
                           uint32_t lr_filter);
+// A dump spec applied at every hit and written to the log as hex: a comma
+// list of "rN:len" (memory at the guest address in register N) or
+// "addr:len" (hex address). Empty clears it. Both the PC (cvars) and the
+// device (the trap tool) use it; the log lines make a PC-versus-device diff.
+void KernelTrapSetDump(std::string_view spec);
+// Arms the trap from the kernel_trap_* cvars (the PC has no debug server).
+// Called once the export tables exist.
+void KernelTrapArmFromCvars();
 void KernelTrapClear();
 void KernelTrapRelease();
 // The last hit as JSON: {"armed":..,"hits":N,"paused":bool,"export":..,

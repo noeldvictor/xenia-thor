@@ -271,8 +271,9 @@ JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeStall(
 
 // The export trap: arm (name, pause), report, release, clear.
 JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeTrapSet(
-    JNIEnv* env, jclass, jstring name, jboolean pause, jint lr) {
+    JNIEnv* env, jclass, jstring name, jboolean pause, jint lr, jstring dump) {
   std::string n = FromJava(env, name);
+  xe::kernel::KernelTrapSetDump(FromJava(env, dump));
   std::string err = xe::kernel::KernelTrapSet(n, pause == JNI_TRUE,
                                               static_cast<uint32_t>(lr));
   return ToJava(env, err.empty() ? "{\"armed\":true}"

@@ -7,12 +7,15 @@
  ******************************************************************************
  */
 
+#include <mutex>
+#include <unordered_map>
 #include "xenia/base/logging.h"
 #include "xenia/kernel/info/file.h"
 #include "xenia/kernel/info/volume.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
+#include "xenia/vfs/devices/disc_image_entry.h"
 #include "xenia/kernel/xfile.h"
 #include "xenia/vfs/device.h"
 #include "xenia/xbox.h"
@@ -92,18 +95,36 @@ dword_result_t NtQueryInformationFile_entry(
       break;
     }
     case XFileSectorInformation: {
-      // SW that uses this uses the output as a way to uniquely identify a file
-      // for sorting/lookup, so an arbitrary stable 4-byte integer suffices.
-      // Banjo-Kazooie: Nuts & Bolts queries this to identify its hash-addressed
-      // \bundle content files; the fork previously returned INVALID_PARAMETER
-      // (unimplemented), which made Banjo's content lookup fail and threw a
-      // bogus "Disc Read Error" at the RARE splash (its file IO, dirty-disc and
-      // font-cache paths are all fine). Match upstream xenia-canary: return a
-      // stable path-hash. (Device-RE 2026-06-26: this fork-vs-canary diff was
-      // the real Banjo boot blocker behind the disc-read-error.)
+      // The console returns the start sector of the file on the disc; a title
+      // uses it as the unique id of a file (sort, lookup). Banjo-Kazooie:
+      // Nuts & Bolts keys its hash-addressed bundle content system on it.
+      // A disc image entry has the real sector, unique by construction and
+      // the same on the PC and the device. The upstream fallback for other
+      // devices is a path hash folded to 32 bits: std::hash differs between
+      // MSVC and libc++ and a fold can collide, so the fallback logs a
+      // collision when two paths get one id (2026-09-21).
       auto info = info_ptr.as<uint32_t*>();
-      size_t fname_hash = xe::memory::hash_combine(82589933LL, file->path());
-      *info = static_cast<uint32_t>(fname_hash ^ (fname_hash >> 32));
+      uint32_t sector_id = 0;
+      auto* disc_entry = dynamic_cast<vfs::DiscImageEntry*>(file->entry());
+      if (disc_entry && disc_entry->data_size()) {
+        sector_id = static_cast<uint32_t>(disc_entry->data_offset() / 2048);
+      } else {
+        size_t fname_hash = xe::memory::hash_combine(82589933LL, file->path());
+        sector_id = static_cast<uint32_t>(fname_hash ^ (fname_hash >> 32));
+      }
+      {
+        static std::mutex ids_mutex;
+        static std::unordered_map<uint32_t, std::string> ids;
+        std::lock_guard<std::mutex> lock(ids_mutex);
+        auto it = ids.find(sector_id);
+        if (it == ids.end()) {
+          ids.emplace(sector_id, file->path());
+        } else if (it->second != file->path()) {
+          XELOGE("XFileSectorInformation collision: {:08X} is {} and {}",
+                 sector_id, it->second, file->path());
+        }
+      }
+      *info = sector_id;
       out_length = sizeof(uint32_t);
       break;
     }

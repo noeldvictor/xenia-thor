@@ -285,8 +285,10 @@ Port rules:
   visit to a scene runs at 2 fps while Turnip compiles pipelines on the command processor
   thread (170 ms each); the VkPipelineCache blob now persists during play, and a cached visit
   costs milliseconds. The lower half of the world frame is black with speckles (Xenos axis,
-  open). One run in four ends in `XamShowDirtyDiscErrorUI` from the loader thread (open).
-  Details: `docs/research/20260920-banjo-spinlock-protocol.md`.
+  open). The `XamShowDirtyDiscErrorUI` dialog on the device is closed (2026-09-21): it was the
+  profile cvar `xam_redirect_xui_font_cache`, removed from the Banjo profile. The PC dialog
+  was the x64 NaN helper (`943c14d15f`). Details: `docs/research/20260920-banjo-spinlock-protocol.md`,
+  `docs/research/20260921-banjo-dirty-disc-font-cache.md`.
 - The device heats over consecutive runs: the case (`xo-therm`) at 44 C reaches the 70 C GPU
   abort within 45 s of play. `xenia_preflight` gates on case 41 C. Wait, do not lower the abort.
 
@@ -416,6 +418,33 @@ wrong: guess, rebuild (2 min), wait for the device to cool, run (3 min), read. T
    a check at +21 s in the capped intro runs at 52 C.
 6. **Do the next step while the device or the build runs.** A build is 2 min, a probe 3 min;
    write the next patch, the note, or the tool in that time.
+
+### Device-only rules (user, 2026-09-21: "take a step back, figure out why we are stuck in a loop")
+
+The Banjo dirty-disc dialog on the device was declared "the a64 recompiler" six times from
+2026-06-07 to 2026-09-21 with no direct evidence. The cause was the Banjo profile cvar
+`xam_redirect_xui_font_cache`, a device-only compatibility hack from June. One hour with the
+trap tool closed it: `docs/research/20260921-banjo-dirty-disc-font-cache.md`.
+
+1. **When the PC passes and the device fails, list what the PC does not do, first.** The list
+   is short and complete: the title's profile in `GameProfiles.java`, the `XE_ANDROID_DEFAULT`
+   code defaults in `cvar.h` and where they are used, the launcher extras in
+   `EmulatorActivity.java`, and the Android platform files. Test the profile cvars off before
+   any backend theory. A backend miscompile is the last hypothesis, not the first, and it is
+   tested with the PPC corpus in `src/xenia/cpu/ppc/testing/`, never with a game run.
+2. **Capture the failing operation, not the symptom.** `tools/thor/guest_trap_context.py`
+   traps an export with pause and prints the guest chain, the request objects at the
+   non-volatile registers, and every other thread's chain and stack text, in one run. A dialog
+   is one bit; the request that failed names the cause.
+3. **Compare sets before sequences.** Multi-threaded loaders reorder. The device's lookup ids
+   were a subset of the PC's except the one wrong id; the per-thread sequences "diverged"
+   at index 18 and meant nothing.
+4. **Crack the data offline.** `tools/pc/gdfx_read.py` reads the disc; the Banjo bundle table
+   is 12-byte entries `{id, offset, size}` after a 0x14-byte header; the id is
+   `(type << 24) | (~crc32(name) & 0xFFFFFF)`. Ten minutes of Python beat a device cycle.
+5. **A compatibility hack has a date and a reason; re-test it when the reason is gone.** The
+   font-cache redirect fixed a white screen on 2026-06-26 that later kernel fixes also fixed.
+   The hack stayed in the profile and became the bug.
 
 ### Debug loop rules (2026-09-20)
 

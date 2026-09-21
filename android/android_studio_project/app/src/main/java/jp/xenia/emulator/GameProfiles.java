@@ -317,33 +317,22 @@ public final class GameProfiles {
                         + "a separate unresolved boot blocker (stuck loading-screen IO "
                         + "stall) tracked outside the profile."));
 
-        // Banjo-Kazooie: Nuts & Bolts (4D5307ED): 30fps-native. STILL BOOT-BLOCKED
-        // by a false "Disc Read Error" (deep multi-gate verify; continued RE).
-        // PROVEN (2026-06-26, fork-vs-canary file-IO trace diff): NOT the
-        // filesystem/mount/disc-parse, NOT the reads (byte-identical to a canary
-        // run that boots), NOT a codegen optimization (opts-off still fails).
-        // FIXED one real gap: 3 crypto exports the fork declared but never
-        // implemented (XeKeysGetKey -> XeCryptRotSumSha -> XeCryptBnQwBeSigVerify)
-        // now stubbed to success in xboxkrnl_crypt.cc (match canary) - necessary
-        // but NOT sufficient. The FINAL dirty-disc gate is guest 0x82273090:
-        // r11 = *(r4+0x138); if 0 -> dirty-disc. That field is the loaded-content
-        // pointer = the content never loaded into the verify context even though
-        // the bytes were read. Lead: the async IO-completion DELIVERY for
-        // async-opened \bundle files (force_complete below changes the return
-        // status but the guest still doesn't consume the completion). The two
-        // cvars below are correct canary-matching helpers, kept for the eventual
-        // fix. Banjo is the lowest-priority title (BD-30 is #1).
+        // Banjo-Kazooie: Nuts & Bolts (4D5307ED): 30fps-native.
+        // The device "Disc Read Error" (2026-05 to 2026-09-21) was the profile
+        // itself: xam_redirect_xui_font_cache sent the XUI font cache files
+        // (GAME:\xuifontcachemeta\metafont_euro.ini and
+        // GAME:\xuifontcachefont\euro.sbp, both on the disc) to a cache: path
+        // without the file name, so the open failed, XUI fell back to the
+        // TrueType font "common_digistrip.ttf", the title built the resource id
+        // from that name with the type byte '.' (2E07DBDB; the bundle holds
+        // 9C07DBDB), the lookup failed, and the completion callback showed the
+        // dirty-disc dialog. The PC build never had the redirect and never
+        // showed the dialog. Evidence and method:
+        // docs/research/20260921-banjo-dirty-disc-font-cache.md.
         PROFILES.put("4D5307ED", new Profile("Banjo-Kazooie: Nuts & Bolts")
                 .add("gpu_frame_limit_fps", Integer.valueOf(30),
                         "Banjo-Kazooie: Nuts & Bolts is a 30fps-native Xbox 360 title - "
-                        + "cap at 30 (its native ceiling).")
-                .add("xam_redirect_xui_font_cache", Boolean.TRUE,
-                        "BOOT FIX (device-validated 2026-06-26): Banjo creates its XUI "
-                        + "font cache (xuifontcachefont/meta) relative to the READ-ONLY "
-                        + "game disc then polls for it - the create fails so the UI never "
-                        + "initializes (black screen, VdSwap frozen at ~267). Redirecting "
-                        + "those basenames to the writable cache: device lets "
-                        + "create+poll+read succeed."));
+                        + "cap at 30 (its native ceiling)."));
         // xboxkrnl_ntreadfile_force_complete was in this profile from
         // 2026-06-26 (a fix for the async \\bundle verify before the Edge
         // kernel port). Removed 2026-09-20: with it, three runs of three ended

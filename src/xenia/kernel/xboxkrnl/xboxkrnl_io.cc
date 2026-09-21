@@ -39,13 +39,13 @@ DEFINE_int32(
 
 DEFINE_bool(
     xam_redirect_xui_font_cache, false,
-    "Compatibility: redirect the XUI font cache (xuifontcachefont / "
-    "xuifontcachemeta) to the writable cache: device. Titles like Banjo-Kazooie: "
-    "Nuts & Bolts create these relative to the READ-ONLY game disc then POLL for "
-    "them to exist; the create fails so they never appear and the UI never "
-    "initializes (white screen). Routing every access to cache: lets "
-    "create+poll+read all succeed. Requires mount_cache (launcher forces it). "
-    "Inert for titles that don't touch these files. Default off.",
+    "Compatibility: redirect the XUI font cache directories (xuifontcachefont, "
+    "xuifontcachemeta) to the writable cache: device, file name kept. For a "
+    "title that creates the cache next to its read-only disc image and polls "
+    "for it. Off: Banjo-Kazooie: Nuts & Bolts ships both directories on the "
+    "disc; with the redirect on, the open failed, XUI fell back to a TrueType "
+    "font the title cannot resolve, and the title showed a dirty-disc dialog "
+    "(2026-09-21). Requires mount_cache.",
     "Kernel");
 
 // Redirect the XUI font cache to the writable cache: device (see the cvar). The
@@ -62,16 +62,16 @@ static bool RedirectXuiFontCache(std::string_view target_path,
   for (auto& c : lower) {
     if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
   }
-  const char* base = nullptr;
-  if (lower.find("xuifontcachemeta") != std::string::npos) {
-    base = "xuifontcachemeta";
-  } else if (lower.find("xuifontcachefont") != std::string::npos) {
-    base = "xuifontcachefont";
+  size_t pos = lower.find("xuifontcachemeta");
+  if (pos == std::string::npos) {
+    pos = lower.find("xuifontcachefont");
   }
-  if (!base) {
+  if (pos == std::string::npos) {
     return false;
   }
-  out = std::string("cache:\\") + base;
+  // Keep the directory name and the file name after it; before 2026-09-21
+  // the file name was dropped and every open failed.
+  out = std::string("cache:\\") + std::string(target_path.substr(pos));
   XELOGI("XUI font cache redirected to {}", out);
   return true;
 }

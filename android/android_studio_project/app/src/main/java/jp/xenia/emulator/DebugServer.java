@@ -82,7 +82,7 @@ public final class DebugServer {
     private static native String nativeStall();
     private static native String nativeCvarGet(String name);
     private static native boolean nativeCvarSet(String name, String value);
-    private static native String nativeTrapSet(String name, boolean pause, int lr);
+    private static native String nativeTrapSet(String name, boolean pause, int lr, String dump);
     private static native String nativeTrapReport();
     private static native void nativeTrapRelease();
     private static native void nativeTrapClear();
@@ -347,7 +347,7 @@ public final class DebugServer {
                 if ("POST".equals(method) && q.containsKey("name")) {
                     return nativeTrapSet(q.get("name"),
                             "1".equals(q.get("pause")) || "true".equals(q.get("pause")),
-                            hexParam(q, "lr", 0));
+                            hexParam(q, "lr", 0), q.containsKey("dump") ? q.get("dump") : "");
                 }
                 return nativeTrapReport();
             case "/trap_release":
@@ -447,9 +447,17 @@ public final class DebugServer {
                 break;
             }
             final int end = kernel.indexOf(',', i);
-            final int tid = Integer.parseInt(kernel.substring(i + 11, end));
+            // A thread without a host thread yet (or one already gone) reports
+            // a host tid outside the int range; it keeps its kernel row only.
+            String row = null;
+            try {
+                final long tid = Long.parseLong(kernel.substring(i + 11, end));
+                if (tid > 0 && tid <= Integer.MAX_VALUE) {
+                    row = host.get((int) tid);
+                }
+            } catch (NumberFormatException ignored) {
+            }
             sb.append(kernel, pos, end);
-            final String row = host.get(tid);
             if (row != null) {
                 sb.append(',').append(row);
             }
@@ -667,8 +675,8 @@ public final class DebugServer {
             {"route", "A button sequence, comma separated: START:150,wait:800,A. Waits are in ms.",
                     "{\"seq\":{\"type\":\"string\"}}"},
             {"pause", "Pause (on=true) or resume the emulator.", "{\"on\":{\"type\":\"boolean\"}}"},
-            {"trap", "A breakpoint on a kernel export, no rebuild: arm with name (e.g. XamShowDirtyDiscErrorUI) and pause=true to hold the calling guest thread at the hit; the other threads run. Without name: the report of the last hit (thread, all 32 guest registers, lr, ctr, 256 stack words from r1). Then use memory and disasm, and trap_release.",
-                    "{\"name\":{\"type\":\"string\"},\"pause\":{\"type\":\"boolean\"}}"},
+            {"trap", "A breakpoint on a kernel export, no rebuild: arm with name (e.g. XamShowDirtyDiscErrorUI) and pause=true to hold the calling guest thread at the hit; the other threads run. lr (hex) limits hits to one guest call site. dump (rN:len or hexaddr:len, comma list) writes memory as hex to the log at every hit. Without name: the report of the last hit (thread, all 32 guest registers, lr, ctr, 256 stack words from r1). Then use memory and disasm, and trap_release.",
+                    "{\"name\":{\"type\":\"string\"},\"pause\":{\"type\":\"boolean\"},\"lr\":{\"type\":\"string\"},\"dump\":{\"type\":\"string\"}}"},
             {"trap_release", "Release the guest thread held by the trap.", "{}"},
             {"trap_clear", "Disarm the trap and release any held thread.", "{}"},
             {"stop", "End the emulator process.", "{}"},

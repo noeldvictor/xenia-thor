@@ -15,6 +15,7 @@
 #include "xenia/hid/input_system.h"
 #include "xenia/kernel/guest_scheduler.h"
 #include "xenia/kernel/user_module.h"
+#include "xenia/kernel/util/kernel_trap.h"
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_memory.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_module.h"
@@ -674,6 +675,7 @@ X_RESULT KernelState::FinishLoadingUserModule(
   // Diagnostic (2026-09-20): the patcher's own match line ("Patcher: title")
   // never appeared on the device, while it appears on the PC for the same
   // disc. This line says whether the pointer exists at this point.
+  KernelTrapArmFromCvars();
   XELOGI("FinishLoadingUserModule: title {:08X}, patcher {}",
          module->title_id(), emulator_->patcher() ? "present" : "NULL");
   // Apply any matching game patches now that the module is loaded and its build
