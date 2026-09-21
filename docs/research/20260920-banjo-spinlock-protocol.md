@@ -235,3 +235,23 @@ but the PC cause is x64-only. The device (a64 and LLVM) fails at a later point (
 read of `undlefǯc4b`, not after the header) and only some of the time, so it has its own
 cause. The PC is now a passing oracle with the same kernel, which makes the device diff a
 backend question, not a kernel one.
+
+## 2026-09-21 03:30: the device cause is in the a64 backend (and LLVM), same game path
+
+- With the LLVM backend off (a64 for every function) the dialog comes at +11 s, every run.
+  With LLVM on it comes at +20 s. So both backends fail the same guest computation.
+- The PC (x64, fixed) and the device run the same kernel calls up to the third large-page
+  allocation after the full read of `undlefǯc4b` (`NtAllocateVirtualMemory(0,
+  0x18E440, 0x60801000) = 46B40000` on both). Then the PC opens `\debug	\cf\84f` and
+  continues; the device calls `XamShowDirtyDiscErrorUI` with no kernel call in between. The
+  difference is inside guest code that runs after that allocation: the bundle's index build
+  or resource lookup. On x64 the same path failed on `x op constant` scalar float math, so
+  the code is float-sensitive.
+- The three Android-only CPU levers (`arm64_jit_inline_extern_thunk`, `cpu_aot_maximize`,
+  `cpu_drop_redundant_atomic_release_barrier`) are not float levers.
+
+Next (bounded): name the guest functions between the last allocation and the dialog with the
+trap (`trap NtAllocateVirtualMemory pause=1` on the last hit, then `disasm` from the recorded
+lr and stack), scan them for the a64 corpus's failing instruction classes (3,038 failures,
+one class is 94 %), and compare the function's results between the PC and the device with
+`cpu_backend_llvm_trace_addr` / `arm64_compiled_call_trace_returns`. The PC is the oracle.
