@@ -60,6 +60,8 @@ import org.json.JSONObject;
  * POST /trace_frame                       record the next GPU frame to files/traces (.xtr)
  * POST /trace_stream ?on=1|0              stream every frame to one .xtr until off
  * GET  /trace_frame                       the trace files present
+ * GET  /drivers                           installed Vulkan drivers and the selected one
+ * POST /drivers     ?use= | ?install_url= | ?install_file= | ?delete=
  * GET  /launch_cvars                      diagnostic cvars for the next launch
  * POST /launch_cvars ?name=&value= | ?clear=1  set, remove, or clear them
  * POST /press       ?button=A&hold_ms=120 one gamepad button
@@ -358,6 +360,8 @@ public final class DebugServer {
                 return launchCvars(method, q);
             case "/backtrace":
                 return nativeHostBacktraces();
+            case "/drivers":
+                return drivers(method, q);
             case "/trace_stream": {
                 final java.io.File dir = new java.io.File(mActivity.getFilesDir(), "traces");
                 final boolean on = "1".equals(q.get("on")) || "true".equals(q.get("on"));
@@ -593,6 +597,79 @@ public final class DebugServer {
             }
         }
         return "{\"ok\":false,\"reason\":\"" + jsonEscape(key) + " is not an app toggle\"}";
+    }
+
+    /**
+     * GET /drivers: the installed Vulkan drivers (GpuDriverManager) and the
+     * selected id. POST ?use=<id> selects one for the next launch ("" = the
+     * system driver); ?install_url=<url> installs a Turnip zip from a URL
+     * (latest://owner/repo for a GitHub latest release), ?install_file=<path>
+     * a zip already on the device (the PC pushes it with run-as). A driver
+     * is a paradigm axis on its own (Turnip weekly builds, a custom fork), so
+     * a run must be able to name the one it used: the launch log prints it.
+     */
+    private String drivers(final String method, final Map<String, String> q) {
+        String note = "";
+        if ("POST".equals(method)) {
+            try {
+                if (q.containsKey("install_url")) {
+                    final GpuDriverPackage pkg = GpuDriverManager.installFromUrl(mActivity, q.get("install_url"));
+                    note = "installed " + pkg.id;
+                } else if (q.containsKey("install_file")) {
+                    try (java.io.FileInputStream in = new java.io.FileInputStream(q.get("install_file"))) {
+                        final GpuDriverPackage pkg = GpuDriverManager.installFromZip(mActivity, in);
+                        note = "installed " + pkg.id;
+                    }
+                }
+                if (q.containsKey("use")) {
+                    final String id = q.get("use");
+                    boolean known = id.isEmpty();
+                    for (final GpuDriverPackage pkg : GpuDriverManager.listInstalled(mActivity)) {
+                        if (pkg.id.equals(id)) {
+                            known = true;
+                        }
+                    }
+                    if (!known) {
+                        return "{\"ok\":false,\"reason\":\"no installed driver " + jsonEscape(id) + "\"}";
+                    }
+                    GpuDriverManager.setSelectedId(mActivity, id);
+                    note = (note.isEmpty() ? "" : note + "; ") + "selected " + (id.isEmpty() ? "system" : id)
+                            + " for the next launch";
+                }
+                if (q.containsKey("delete")) {
+                    GpuDriverManager.delete(mActivity, q.get("delete"));
+                    note = (note.isEmpty() ? "" : note + "; ") + "deleted " + q.get("delete");
+                }
+            } catch (Exception e) {
+                return "{\"ok\":false,\"reason\":\"" + jsonEscape(String.valueOf(e)) + "\"}";
+            }
+        }
+        final StringBuilder sb = new StringBuilder("{\"ok\":true,\"selected\":\"")
+                .append(jsonEscape(GpuDriverManager.getSelectedId(mActivity)))
+                .append("\",\"bundled_version\":\"").append(jsonEscape(GpuDriverManager.BUNDLED_TURNIP_VERSION))
+                .append("\",\"note\":\"").append(jsonEscape(note)).append("\",\"installed\":[");
+        boolean first = true;
+        for (final GpuDriverPackage pkg : GpuDriverManager.listInstalled(mActivity)) {
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            sb.append("{\"id\":\"").append(jsonEscape(pkg.id)).append("\",\"name\":\"").append(jsonEscape(pkg.name))
+                    .append("\",\"driver_version\":\"").append(jsonEscape(pkg.driverVersion))
+                    .append("\",\"package_version\":\"").append(jsonEscape(pkg.packageVersion))
+                    .append("\",\"library\":\"").append(jsonEscape(pkg.libraryName)).append("\"}");
+        }
+        sb.append("],\"recommended\":[");
+        first = true;
+        for (final GpuDriverManager.Recommended r : GpuDriverManager.RECOMMENDED) {
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            sb.append("{\"title\":\"").append(jsonEscape(r.title)).append("\",\"url\":\"").append(jsonEscape(r.url))
+                    .append("\",\"recommended\":").append(r.recommended).append('}');
+        }
+        return sb.append("]}").toString();
     }
 
     // Diagnostic cvars for the next launch (debug builds): the properties
@@ -899,6 +976,8 @@ public final class DebugServer {
             {"frame_stats", "What is on the panel as numbers: mean luma of the frame and each half, black fractions, saturated-hue fractions (red yellow green cyan blue magenta), gold, swaps. The keys a goto predicate uses.", "{}"},
             {"goto", "Drive the running title to a screen by what is on the panel, not by a clock. screen: a preset of the title (Banjo: title, menu, world), or steps: 'until:gold>0.35;press:START;settle:1500|until:lower_black>0.4'. Answers when the last predicate holds: {ok, reached, step, seconds, stats, log}.",
                     "{\"screen\":{\"type\":\"string\"},\"steps\":{\"type\":\"string\"}}"},
+            {"drivers", "The Vulkan drivers installed in the app (Turnip builds) and the selected one. use=<id> selects one for the next launch ('' = system); install_url=<url or latest://owner/repo> installs a zip; install_file=<device path> installs a pushed zip; delete=<id>. No arguments: list.",
+                    "{\"use\":{\"type\":\"string\"},\"install_url\":{\"type\":\"string\"},\"install_file\":{\"type\":\"string\"},\"delete\":{\"type\":\"string\"}}"},
             {"launch_cvars", "Diagnostic cvars applied at the NEXT launch, after the profile and the toggles (debug builds; init-time cvars such as render_target_path_vulkan or a GPU trace). No arguments: list. name+value: set one; empty value: remove one; clear=1: remove all.",
                     "{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"},\"clear\":{\"type\":\"boolean\"}}"},
             {"cvar_set", "Set a cvar in the running process (diagnosis only; toggles are the control surface). name, value.",
@@ -1012,6 +1091,7 @@ public final class DebugServer {
         TOOL_PATHS.put("toggle_set", "/toggle");
         TOOL_PATHS.put("cvar_get", "/cvar");
         TOOL_PATHS.put("launch_cvars", "/launch_cvars");
+        TOOL_PATHS.put("drivers", "/drivers");
         TOOL_PATHS.put("frame_stats", "/frame_stats");
         TOOL_PATHS.put("goto", "/goto");
         TOOL_PATHS.put("trace_frame", "/trace_frame");

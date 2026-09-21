@@ -296,8 +296,16 @@ Port rules:
   thread's semaphore). Two fault shapes so far: a halfword load at guest 0xFFFFFFF8 (null minus 8)
   inside the allocator 821E2F60 on the bundle thread, and a jump to host 0x200000000 (a guest
   target of 0x100000000, a 33-bit value) with the host lr in JIT code. The extended
-  `A64 CRASH DIAG` (every fault code, the lr function, r1, the guest back chain) is built and
-  waits for the next repro. Banjo's water draws fail in the Vulkan backend on the PC and the
+  `A64 CRASH DIAG` (every fault code, the lr function, r1, the guest back chain) now names it:
+  the main thread faults in guest 82716418 with r3 = 0 right after "Null critical section in
+  RtlEnterCriticalSection", after the title enumerated the two save games the fork wrote at
+  13:57 (XamContentCreateEnumeratorInternal lists them twice) and opened one. With the saves
+  moved aside the transition did not crash but stalled early instead: the bundle thread and a
+  second thread wait on the async read event F8000058 (NtCreateEvent) while the main thread
+  runs inside the allocator 821E2F60 - the async-completion race class of June
+  (`xboxkrnl_ntreadfile_force_complete`). Next: a run with `xboxkrnl_file_io_trace=true` through
+  `xenia_launch_cvars`, and a look at the save the fork writes (1,411 bytes + a 328-byte
+  header under `content/B13EBABEBABEBABE/4D5307ED/00000001`). Banjo's water draws fail in the Vulkan backend on the PC and the
   device alike (tessellation is unimplemented upstream; `PM4_DRAW_INDX(99, 17, 0): Failed in
   backend` = kTrianglePatch). The title screen shows speckle noise on textures (open).
   Details: `docs/research/20260920-banjo-spinlock-protocol.md`,
@@ -386,7 +394,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_git_head` | the commit to cite for a build |
 | `xenia_press`, `xenia_route` | one gamepad button, or a sequence with waits, through the app's debug gamepad broadcast. Refused unless the emulator is in front. The way into gameplay on a play-button launch |
 | `xenia_crash` | the crash picture: `A64 CRASH DIAG` (guest function, nearest function, guest lr and r3 to r6), unhandled host faults, storms, the crash buffer tombstone, the newest app crash report |
-| `xenia_profile` | fps, GPU busy, temperatures, per-thread CPU over a window; simpleperf sample of the app with the top symbols by dso (no root needed, the app is debuggable) |
+| `xenia_profile` | fps, GPU busy, temperatures, per-thread CPU over a window; simpleperf sample of the app with the top symbols by dso (no root needed, the app is debuggable). The `libxenia-app.so[+offset]` rows are symbolized against the unstripped .so (2026-09-21). A profile on a hot device is not a measurement: at junction 89 C the title screen ran at 7 fps with the main thread waiting and the GPU 35 % busy |
 | `xenia_probe` | launch a title, wait for the load, screenshot timeline with fps per interval, optional route, crash picture |
 | `xenia_trap_context` | hold a guest thread at a kernel export: registers, request objects, guest chain with disassembly, every other thread's chain and stack text |
 | `xenia_guest_disasm` | PowerPC disassembly of guest ranges through the in-app server |
@@ -395,6 +403,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_trace_frame` | record the next GPU frame on the device as an .xtr, pull it, render it on the PC with `xenia-gpu-vulkan-trace-dump` (the offscreen presenter fix); the PC render of the device's command stream |
 | `xenia_trace_replay` | replay a device trace ON THE DEVICE through the trace viewer's dump mode and pull the PNG: the GPU fix loop with no game boot |
 | `xenia_launch_cvars` | diagnostic cvars for the next launch (debug builds), typed by syntax; after the profile and the toggles; clear when done |
+| `xenia_gpu_driver` | the Vulkan drivers installed in the app (Turnip builds, a custom fork) and the selected one; select, install from a URL (`latest://owner/repo`) or push a zip from the PC, delete. The app's `drivers` tool. A driver is a paradigm axis: name the one a measurement used |
 | `xenia_backtrace` | now from inside the app: every thread's native frames (a realtime signal, `_Unwind_Backtrace`), symbolized on the PC with `llvm-symbolizer` against the unstripped .so. The hang picture: which host wait each guest thread sits in |
 | `xenia_patches`, `xenia_patch_set` | the game patch files on the device: list and toggle one `[[patch]]` by name, as the Game Patches screen does |
 | `xenia_guest_dump`, `xenia_disasm` | dump guest memory of a title to `scratch/mcp/` (diagnostic cvars, restored after), and disassemble PowerPC from a dump |

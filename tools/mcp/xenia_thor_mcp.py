@@ -618,6 +618,13 @@ def xenia_profile(seconds: int = 15, simpleperf: bool = True, callgraph: bool = 
                               '-n', '--percent-limit', '0.8'], timeout=300)
             rows = [l for l in rep.splitlines() if l.strip() and not l.startswith('Cmdline')]
             result['perf_data'] = local
+            # The device .so is stripped: simpleperf prints libxenia-app.so[+off].
+            # Name those offsets with llvm-symbolizer against the unstripped
+            # build (the same way xenia_backtrace does).
+            try:
+                rows = _symbolize_report_rows(rows)
+            except Exception as e:  # noqa: BLE001
+                result['symbolize'] = f'unavailable: {e}'
             result['top'] = rows[:40]
             code, rep2 = _run([HOST_SIMPLEPERF, 'report', '-i', local, '--sort', 'dso', '-n'],
                               timeout=300)
@@ -629,6 +636,32 @@ def xenia_profile(seconds: int = 15, simpleperf: bool = True, callgraph: bool = 
             except Exception as e:  # a missing report is not a failed profile
                 result['guest_hot'] = f'unavailable: {e}'
     return json.dumps(result, indent=2)
+
+
+def _symbolize_report_rows(rows: list) -> list:
+    """Replace libxenia-app.so[+offset] in simpleperf report rows with the
+    function and line from the unstripped .so of the last build."""
+    import re
+    so = os.path.join(REPO, 'android', 'android_studio_project', 'app', 'build', 'intermediates',
+                      'ndkBuild', 'githubDebug', 'obj', 'local', 'arm64-v8a', 'libxenia-app.so')
+    ndk = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk', 'ndk', '25.0.8775105',
+                       'toolchains', 'llvm', 'prebuilt', 'windows-x86_64', 'bin', 'llvm-symbolizer.exe')
+    pat = re.compile(r'libxenia-app\.so\[\+([0-9a-f]+)\]')
+    offsets = sorted({m.group(1) for row in rows for m in pat.finditer(row)})
+    if not offsets or not os.path.exists(so) or not os.path.exists(ndk):
+        return rows
+    proc = subprocess.run([ndk, '--obj=' + so, '--functions=short', '--inlining=false', '--demangle',
+                           '--basenames'] + ['0x' + o for o in offsets],
+                          capture_output=True, text=True, timeout=300)
+    names = {}
+    for o, block in zip(offsets, proc.stdout.strip().split('\n\n')):
+        lines = block.strip().split('\n')
+        if lines and lines[0] and lines[0] != '??':
+            names[o] = lines[0] + (' (' + lines[1] + ')' if len(lines) > 1 and not lines[1].startswith('??') else '')
+    out = []
+    for row in rows:
+        out.append(pat.sub(lambda m: 'libxenia-app.so ' + names.get(m.group(1), '[+' + m.group(1) + ']'), row))
+    return out
 
 
 @mcp.tool()
@@ -1327,6 +1360,43 @@ def xenia_goto(screen: str = 'menu', title: str = 'banjo', steps: str = '',
     if screenshot:
         result['screenshot'] = json.loads(xenia_screenshot('goto-' + screen)).get('path')
     return json.dumps(result, indent=1)
+
+
+@mcp.tool()
+def xenia_gpu_driver(use: str = None, install_url: str = '', install_zip: str = '',
+                     delete: str = '') -> str:
+    """The Vulkan drivers installed in the app (Turnip builds and a custom
+    fork) and the one selected for the next launch. No arguments: list.
+    use='<id>' selects one ('' = the system driver); install_url installs a
+    zip from a URL (latest://owner/repo = a GitHub latest release);
+    install_zip pushes a zip from the PC (run-as) and installs it; delete
+    removes one. The emulator must be running for the in-app server; the
+    selection applies at the next launch. A driver is a paradigm axis: name
+    the one a measurement used."""
+    if not _api_up():
+        return json.dumps({'error': 'the emulator is not running; launch a title first (the driver '
+                                    'manager lives in the app process)'})
+    if install_zip:
+        name = os.path.basename(install_zip)
+        with open(install_zip, 'rb') as f:
+            subprocess.run(['adb', '-s', SERIAL, 'shell', f'run-as {PKG} sh -c "cat > files/incoming_driver.zip"'],
+                           stdin=f, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300, check=False)
+        r = _api(f'/drivers?install_file=/data/user/0/{PKG}/files/incoming_driver.zip', 'POST', timeout=120)
+        _run_as('rm -f files/incoming_driver.zip')
+        r['pushed'] = name
+        if use is None and r.get('ok') and 'installed ' in r.get('note', ''):
+            use = r['note'].split('installed ')[1].split(';')[0]
+    elif install_url:
+        r = _api('/drivers?install_url=' + install_url, 'POST', timeout=300)
+        if use is None and r.get('ok') and 'installed ' in r.get('note', ''):
+            use = r['note'].split('installed ')[1].split(';')[0]
+    if use is not None:
+        r = _api('/drivers?use=' + use, 'POST', timeout=30)
+    elif delete:
+        r = _api('/drivers?delete=' + delete, 'POST', timeout=30)
+    else:
+        r = _api('/drivers', timeout=30)
+    return json.dumps(r, indent=1)
 
 
 @mcp.tool()
