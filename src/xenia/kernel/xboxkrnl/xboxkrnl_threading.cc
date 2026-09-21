@@ -1912,6 +1912,14 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
   spinlock_stats::Bump(spinlock_stats::calls);
   spinlock_stats::MaybeLog();
   bool counted_contended = false;
+  // Stall diagnostic (2026-09-20): Banjo-Kazooie spun here forever in
+  // sched_yield (simpleperf, 95 % of one core) after its first world frame.
+  // After two seconds of spinning, say once per call which lock, who holds
+  // it, who spins, and what the holder's thread is doing. Cheap: the clock is
+  // read every 4096 spins.
+  uint32_t spin_iterations = 0;
+  uint64_t spin_started_ms = 0;
+  bool spin_reported = false;
 
   // Lock.
   while (
@@ -1919,6 +1927,39 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
     if (!counted_contended) {
       counted_contended = true;
       spinlock_stats::Bump(spinlock_stats::contended);
+    }
+    if (!spin_reported && (++spin_iterations & 4095) == 0) {
+      uint64_t now_ms = xe::Clock::QueryHostSystemTime() / 10000;
+      if (!spin_started_ms) {
+        spin_started_ms = now_ms;
+      } else if (now_ms - spin_started_ms > 2000) {
+        spin_reported = true;
+        uint32_t owner_pcr = xe::byte_swap(lock->prcb_of_owner.value);
+        uint32_t lock_guest = ctx->HostToGuestVirtual(lock);
+        uint32_t owner_tid = 0;
+        uint32_t owner_state = 0;
+        if (owner_pcr) {
+          auto* owner_kpcr = ctx->TranslateVirtual<X_KPCR*>(owner_pcr);
+          uint32_t owner_kthread = owner_kpcr->prcb_data.current_thread.m_ptr;
+          if (owner_kthread) {
+            auto* kt = ctx->TranslateVirtual<X_KTHREAD*>(owner_kthread);
+            owner_tid = kt->thread_id;
+          }
+        }
+        auto* self = XThread::GetCurrentThread();
+        // The four words after the lock: a game critical section keeps its
+        // count, owner (r13 at first acquire) and old irql there.
+        const xe::be<uint32_t>* after =
+            reinterpret_cast<const xe::be<uint32_t>*>(lock);
+        XELOGE(
+            "SPINLOCK STALL: lock={:08X} owner_pcr={:08X} owner_tid={:08X} "
+            "spinner_tid={:08X} spinner_lr={:08X} our_pcr={:08X} r13={:016X} "
+            "words={:08X} {:08X} {:08X} {:08X} (held over 2 s)",
+            lock_guest, owner_pcr, owner_tid, self ? self->thread_id() : 0,
+            uint32_t(ctx->lr), our_pcr, uint64_t(ctx->r[13]),
+            uint32_t(after[1]), uint32_t(after[2]), uint32_t(after[3]),
+            uint32_t(after[4]));
+      }
     }
     // Under the cooperative scheduler the holder may be a fiber queued behind
     // us on this dispatch thread, so it can only run if we yield the fiber. A
@@ -2057,7 +2098,12 @@ dword_result_t KeRaiseIrqlToDpcLevel_entry(const ppc_context_t& ctx) {
   uint32_t old_irql = pcr->current_irql;
 
   if (old_irql > 2) {
-    XELOGE("KeRaiseIrqlToDpcLevel - old_irql > 2");
+    static std::atomic<uint32_t> storm{0};
+    uint32_t k = storm.fetch_add(1, std::memory_order_relaxed);
+    if (k < 16 || (k & 0xFFFF) == 0) {
+      XELOGE("KeRaiseIrqlToDpcLevel - old_irql {} > 2 (occurrence {})",
+             old_irql, k + 1);
+    }
   }
 
   pcr->current_irql = 2;
@@ -2070,7 +2116,12 @@ void xeKfLowerIrql(PPCContext* ctx, unsigned char new_irql) {
   X_KPCR* kpcr = ctx->TranslateVirtualGPR<X_KPCR*>(ctx->r[13]);
 
   if (new_irql > kpcr->current_irql) {
-    XELOGE("KfLowerIrql : new_irql > kpcr->current_irql!");
+    static std::atomic<uint32_t> storm{0};
+    uint32_t k = storm.fetch_add(1, std::memory_order_relaxed);
+    if (k < 16 || (k & 0xFFFF) == 0) {
+      XELOGE("KfLowerIrql : new_irql {} > kpcr->current_irql {} (occurrence {})",
+             new_irql, kpcr->current_irql, k + 1);
+    }
   }
   kpcr->current_irql = new_irql;
   if (new_irql < 2) {

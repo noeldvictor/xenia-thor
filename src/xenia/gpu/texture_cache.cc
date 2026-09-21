@@ -10,6 +10,7 @@
 #include "xenia/gpu/texture_cache.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -726,18 +727,26 @@ void TextureCache::BindingInfoFromFetchConstant(
   switch (fetch.type) {
     case xenos::FetchConstantType::kTexture:
       break;
-    case xenos::FetchConstantType::kInvalidTexture:
+    case xenos::FetchConstantType::kInvalidTexture: {
       if (cvars::gpu_allow_invalid_fetch_constants) {
         break;
       }
-      XELOGW(
-          "Texture fetch constant ({:08X} {:08X} {:08X} {:08X} {:08X} {:08X}) "
-          "has \"invalid\" type! This is incorrect behavior, but you can try "
-          "bypassing this by launching Xenia with "
-          "--gpu_allow_invalid_fetch_constants=true.",
-          fetch.dword_0, fetch.dword_1, fetch.dword_2, fetch.dword_3,
-          fetch.dword_4, fetch.dword_5);
+      // Banjo-Kazooie binds one such constant on most draws: 50,000 lines in
+      // 100 s of play on the GPU thread (2026-09-20). Say it 16 times, then
+      // once in 4,096.
+      static std::atomic<uint32_t> storm{0};
+      uint32_t k = storm.fetch_add(1, std::memory_order_relaxed);
+      if (k < 16 || (k & 0xFFF) == 0) {
+        XELOGW(
+            "Texture fetch constant ({:08X} {:08X} {:08X} {:08X} {:08X} {:08X}) "
+            "has \"invalid\" type (occurrence {})! This is incorrect behavior, "
+            "but you can try bypassing this by launching Xenia with "
+            "--gpu_allow_invalid_fetch_constants=true.",
+            fetch.dword_0, fetch.dword_1, fetch.dword_2, fetch.dword_3,
+            fetch.dword_4, fetch.dword_5, k + 1);
+      }
       return;
+    }
     default:
       XELOGW(
           "Texture fetch constant ({:08X} {:08X} {:08X} {:08X} {:08X} {:08X}) "

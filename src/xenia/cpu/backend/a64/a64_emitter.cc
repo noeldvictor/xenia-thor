@@ -4773,30 +4773,30 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
   const int32_t a64_apc_pending_count_offset = static_cast<int32_t>(
       offsetof(ppc::PPCContext, a64_apc_pending_count));
   constexpr uint32_t kKpcrCurrentThreadOffset = 0x100;
+  // X_KPCR::current_irql. One IRQL state, shared with the HLE
+  // (KeRaiseIrqlToDpcLevel_entry, xeKfLowerIrql, xeKfRaiseIrql), the kernel's
+  // DPC impersonation, the APC delivery gate (current_irql >= 1 masks APCs),
+  // and the guest's own reads of 0x18(r13). Until 2026-09-20 the inline raise
+  // and lower below used a private word (Processor::irql_) that nothing else
+  // read: an inline raise left the KPCR byte at 0, an HLE raise followed by an
+  // inline lower left it at 2 forever, and Banjo-Kazooie logged 1.3 million
+  // "old_irql > 2" and "new_irql > current_irql" lines in 100 s of play.
+  constexpr uint32_t kKpcrCurrentIrqlOffset = 0x18;
+  auto emit_load_kpcr = [&]() {
+    ldr(w9, ptr(GetContextReg(), r13_offset));
+    AddGuestAddressToMembase(w9, x9);
+  };
   constexpr uint32_t kRtlCriticalSectionLockCountOffset = 0x10;
   constexpr uint32_t kRtlCriticalSectionRecursionCountOffset = 0x14;
   constexpr uint32_t kRtlCriticalSectionOwningThreadOffset = 0x18;
 
   if (name == "KeRaiseIrqlToDpcLevel") {
-    ldr(x9, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
-                                      A64BackendContext, processor_irql))));
+    // The KPCR is per guest thread, so a plain byte load and store is the
+    // HLE's own sequence.
+    emit_load_kpcr();
+    ldrb(w10, ptr(x9, kKpcrCurrentIrqlOffset));
     mov(w11, static_cast<uint32_t>(cpu::Irql::DPC));
-
-    if (cvars::a64_lse_kernel_lock_fastpaths &&
-        IsFeatureEnabled(kA64EmitLSE)) {
-      swpal(w11, w10, ptr(x9));
-      sxtw(x10, w10);
-      str(x10, ptr(GetContextReg(), r3_offset));
-      return true;
-    }
-
-    auto& retry = NewCachedLabel();
-    L(retry);
-    ldaxr(w10, ptr(x9));
-    stlxr(w12, w11, ptr(x9));
-    cbnz(w12, retry);
-
-    sxtw(x10, w10);
+    strb(w11, ptr(x9, kKpcrCurrentIrqlOffset));
     str(x10, ptr(GetContextReg(), r3_offset));
     return true;
   }
@@ -4833,28 +4833,13 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       b(EQ, slow_poll);
     }
 
-    ldr(x9, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
-                                      A64BackendContext, processor_irql))));
+    emit_load_kpcr();
     ldr(w10, ptr(GetContextReg(), r3_offset));
-
-    if (cvars::a64_lse_kernel_lock_fastpaths &&
-        IsFeatureEnabled(kA64EmitLSE)) {
-      swpal(w10, w11, ptr(x9));
-      if (audit_kf_lower) {
-        EmitAtomicIncrement64(backend_->kf_lower_irql_apc_fastpath_count());
-      }
-      b(done);
-    } else {
-      auto& retry = NewCachedLabel();
-      L(retry);
-      ldaxr(w11, ptr(x9));
-      stlxr(w12, w10, ptr(x9));
-      cbnz(w12, retry);
-      if (audit_kf_lower) {
-        EmitAtomicIncrement64(backend_->kf_lower_irql_apc_fastpath_count());
-      }
-      b(done);
+    strb(w10, ptr(x9, kKpcrCurrentIrqlOffset));
+    if (audit_kf_lower) {
+      EmitAtomicIncrement64(backend_->kf_lower_irql_apc_fastpath_count());
     }
+    b(done);
 
     L(slow_pending);
     if (audit_kf_lower) {
@@ -4884,21 +4869,9 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
   }
 
   if (name == "KfLowerIrql" && cvars::a64_inline_kf_lower_irql) {
-    ldr(x9, ptr(GetBackendCtxReg(), static_cast<uint32_t>(offsetof(
-                                      A64BackendContext, processor_irql))));
+    emit_load_kpcr();
     ldr(w10, ptr(GetContextReg(), r3_offset));
-
-    if (cvars::a64_lse_kernel_lock_fastpaths &&
-        IsFeatureEnabled(kA64EmitLSE)) {
-      swpal(w10, w11, ptr(x9));
-      return true;
-    }
-
-    auto& retry = NewCachedLabel();
-    L(retry);
-    ldaxr(w11, ptr(x9));
-    stlxr(w12, w10, ptr(x9));
-    cbnz(w12, retry);
+    strb(w10, ptr(x9, kKpcrCurrentIrqlOffset));
     return true;
   }
 
@@ -4912,21 +4885,21 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
     AddGuestAddressToMembase(w9, x9);
   };
 
-  auto emit_release_spin_lock = [&]() {
-    if (cvars::a64_lse_kernel_lock_fastpaths &&
-        IsFeatureEnabled(kA64EmitLSE)) {
-      mov(w10, 0xFFFFFFFFu);
-      ldaddal(w10, w11, ptr(x9));
-      return;
-    }
-
-    auto& retry = NewCachedLabel();
-    L(retry);
-    ldaxr(w10, ptr(x9));
-    sub(w10, w10, 1);
-    stlxr(w11, w10, ptr(x9));
-    cbnz(w11, retry);
+  // One protocol for the KSPINLOCK word, shared with the HLE in
+  // xboxkrnl_threading.cc: held = the owner's PCR (r13) as the guest stores
+  // it, big-endian; free = 0. Until 2026-09-20 the inline acquire stored the
+  // host value 1 and the inline release decremented the word. The HLE acquire
+  // (KfAcquireSpinLock, KeTryToAcquireSpinLockAtRaisedIrql, and every slow
+  // path) stores the big-endian PCR, so a decrement of that word left a value
+  // such as 0xFF0BD000 (PCR 0x000CD000 minus one in host order), the lock
+  // read as held forever, and Banjo-Kazooie stalled after its first frame.
+  auto emit_load_owner_pcr_be = [&](Xbyak_aarch64::Label& slow) {
+    ldr(w11, ptr(GetContextReg(), r13_offset));
+    cbz(w11, slow);
+    rev(w11, w11);
   };
+
+  auto emit_release_spin_lock = [&]() { stlr(wzr, ptr(x9)); };
 
   if (cvars::a64_inline_kernel_spinlock_exports &&
       name == "KeAcquireSpinLockAtRaisedIrql") {
@@ -4936,12 +4909,12 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
     auto& done = NewCachedLabel();
 
     emit_load_spin_lock_ptr(slow);
+    emit_load_owner_pcr_be(slow);
 
     if (cvars::a64_lse_kernel_lock_fastpaths &&
         IsFeatureEnabled(kA64EmitLSE)) {
       L(retry);
       mov(w10, 0);
-      mov(w11, 1);
       casal(w10, w11, ptr(x9));
       cbz(w10, done);
       EmitSpinHint();
@@ -4950,7 +4923,6 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       L(retry);
       ldaxr(w10, ptr(x9));
       cbnz(w10, busy);
-      mov(w11, 1);
       stlxr(w12, w11, ptr(x9));
       cbnz(w12, retry);
       b(done);
@@ -4976,11 +4948,11 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
     auto& done = NewCachedLabel();
 
     emit_load_spin_lock_ptr(slow);
+    emit_load_owner_pcr_be(slow);
 
     if (cvars::a64_lse_kernel_lock_fastpaths &&
         IsFeatureEnabled(kA64EmitLSE)) {
       mov(w10, 0);
-      mov(w11, 1);
       casal(w10, w11, ptr(x9));
       cmp(w10, 0);
       cset(w10, EQ);
@@ -4990,7 +4962,6 @@ bool A64Emitter::TryEmitKernelHighFrequencyExternCall(
       L(retry);
       ldaxr(w10, ptr(x9));
       cbnz(w10, fail);
-      mov(w11, 1);
       stlxr(w12, w11, ptr(x9));
       cbnz(w12, retry);
       mov(x10, 1);

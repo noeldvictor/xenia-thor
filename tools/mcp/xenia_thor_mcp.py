@@ -422,6 +422,47 @@ def xenia_probe(title: str = 'banjo', seconds: int = 120, shot_every: int = 30,
     return out[-6000:]
 
 
+def _guest_code_map(pid: int) -> list[tuple[int, int]]:
+    """Host start addresses of the LLVM-compiled guest functions of this run,
+    from the log lines "LLVMobjload guest=0x.. host=0x.." (warm cache) and
+    "LLVMmap guest=0x.. host=0x.." (fresh compile). Sorted by host address; a
+    function ends where the next one starts."""
+    log = _shell(f'logcat -d --pid={pid} -s xenia', timeout=180)
+    rows = []
+    for mm in re.finditer(r'LLVM(?:objload|map) guest=0x([0-9A-Fa-f]{8}) host=0x([0-9A-Fa-f]{16})', log):
+        rows.append((int(mm.group(2), 16), int(mm.group(1), 16)))
+    rows.sort()
+    return rows
+
+
+def _guest_hot(perf_data: str, pid: int, top: int = 20) -> list[dict]:
+    """Samples in anonymous JIT code ("unknown" dso), attributed to guest
+    functions through _guest_code_map. Returns the hottest guest functions
+    with their share of ALL samples."""
+    import bisect
+    code, rep = _run([HOST_SIMPLEPERF, 'report', '-i', perf_data, '--sort', 'dso,vaddr_in_file',
+                      '-n', '--percent-limit', '0.05'], timeout=300)
+    fmap = _guest_code_map(pid)
+    starts = [h for h, _ in fmap]
+    per_fn: dict[int, float] = {}
+    per_fn_samples: dict[int, int] = {}
+    unknown_pct = 0.0
+    for l in rep.splitlines():
+        f = l.split()
+        if len(f) < 4 or not f[0].endswith('%') or f[2] != 'unknown':
+            continue
+        pct = float(f[0][:-1]); samples = int(f[1]); addr = int(f[3], 16)
+        unknown_pct += pct
+        i = bisect.bisect_right(starts, addr) - 1
+        guest = fmap[i][1] if i >= 0 else 0
+        per_fn[guest] = per_fn.get(guest, 0.0) + pct
+        per_fn_samples[guest] = per_fn_samples.get(guest, 0) + samples
+    rows = sorted(per_fn.items(), key=lambda kv: -kv[1])[:top]
+    out = [{'guest': f'{g:08X}' if g else 'a64 or unmapped', 'pct': round(v, 2),
+            'samples': per_fn_samples[g]} for g, v in rows]
+    return [{'jit_total_pct': round(unknown_pct, 2), 'mapped_functions': len(fmap)}] + out
+
+
 @mcp.tool()
 def xenia_profile(seconds: int = 15, simpleperf: bool = True, callgraph: bool = False) -> str:
     """Profile the running emulator for `seconds`: presented fps (xenia-fps),
@@ -477,6 +518,12 @@ def xenia_profile(seconds: int = 15, simpleperf: bool = True, callgraph: bool = 
             code, rep2 = _run([HOST_SIMPLEPERF, 'report', '-i', local, '--sort', 'dso', '-n'],
                               timeout=300)
             result['by_dso'] = [l for l in rep2.splitlines() if '%' in l][:12]
+            # Guest functions behind the anonymous JIT samples (LLVM functions
+            # by the log's host addresses; a64 functions stay unmapped).
+            try:
+                result['guest_hot'] = _guest_hot(local, pid)
+            except Exception as e:  # a missing report is not a failed profile
+                result['guest_hot'] = f'unavailable: {e}'
     return json.dumps(result, indent=2)
 
 
@@ -621,6 +668,70 @@ def xenia_backtrace(pid: Optional[int] = None) -> str:
         f.write(out)
     main = out.split('\n\n')[0] if out else ''
     return f'saved {path}\n{main[:4000]}'
+
+
+STALL_MARKERS = ('SPINLOCK STALL', 'A64 CRASH DIAG', 'guest crash', 'Fatal',
+                 'GPU is hung', 'unimplemented', 'Unhandled', 'DbgPrint',
+                 'ANR', 'watchdog')
+
+
+@mcp.tool()
+def xenia_stall(pid: Optional[int] = None, hot_threads: int = 3) -> str:
+    """The whole stall picture in one call, for a title that stopped producing
+    frames: the marker lines in the log (SPINLOCK STALL, A64 CRASH DIAG, guest
+    crash, GPU is hung, ...), the FPS badge state, GPU busy, the hottest
+    threads, and a /proc row (state, ticks, wait channel) for each of them. The
+    Banjo spin-lock stall of 2026-09-20 took a profile, a thread table, a
+    diagnostic build, and a decode by hand; this tool gives that picture in
+    seconds. A thread with high CPU and a sched_yield or futex wait channel is
+    a spinner: look at the SPINLOCK STALL line for the lock, its owner word,
+    and the guest link register of the spinner."""
+    pid = pid or _pid(PKG)
+    if not pid:
+        return json.dumps({'running': False})
+    log = _shell(f'logcat -d --pid={pid} -s xenia', timeout=120)
+    # Unique marker lines with a count, so 121 copies of one benign
+    # "unimplemented" line do not hide the one SPINLOCK STALL line.
+    counts: dict[str, int] = {}
+    for l in log.splitlines():
+        if any(k in l for k in STALL_MARKERS):
+            key = l[l.find('> ') + 2:].strip()[:220]
+            counts[key] = counts.get(key, 0) + 1
+    markers = [f'{v}x {k}' for k, v in counts.items()]
+    fps_rows = _adb('logcat', '-d', '-s', 'xenia-fps:*', timeout=60).splitlines()
+    fps_last = fps_rows[-1][fps_rows[-1].find('fps='):].strip() if fps_rows else 'no badge line'
+    gpu_busy = _shell('cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage').strip()
+    threads = _shell(f'ps -T -p {pid} -o TID,PCPU,NAME').splitlines()[1:]
+    def cpu(r):
+        f = r.split()
+        return float(f[1]) if len(f) > 2 and f[1].replace('.', '').isdigit() else 0.0
+    hot = sorted(threads, key=lambda r: -cpu(r))[:hot_threads]
+    rows = []
+    for r in hot:
+        tid = r.split()[0]
+        t = f'/proc/{pid}/task/{tid}'
+        info = _shell(f'echo "$(cat {t}/comm) $(sed "s/.*) //" {t}/stat | cut -d" " -f1,12,13) '
+                      f'$(cat {t}/wchan 2>/dev/null)"').strip()
+        rows.append({'tid': int(tid), 'cpu_pct': cpu(r), 'comm_state_uticks_sticks_wchan': info})
+    verdict = 'no marker'
+    if any('SPINLOCK STALL' in l for l in markers):
+        verdict = 'spin lock held forever: read the SPINLOCK STALL line'
+    elif any('A64 CRASH DIAG' in l or 'guest crash' in l for l in markers):
+        verdict = 'guest crash: read the A64 CRASH DIAG line, then xenia_crash'
+    elif any('GPU is hung' in l for l in markers):
+        verdict = 'GPU hang: run with vulkan validation'
+    else:
+        hot = [r for r in rows if r['cpu_pct'] > 60]
+        if hot and any('yield' in r['comm_state_uticks_sticks_wchan'] for r in hot):
+            verdict = 'a thread spins in sched_yield with no stall marker: xenia_profile(callgraph=True)'
+        elif hot:
+            verdict = (f'{len(hot)} thread(s) run guest code at full speed with no frames: '
+                       'CPU-bound or a guest spin; xenia_profile(callgraph=True) names the code')
+        elif fps_last.startswith('fps=0.0'):
+            verdict = 'no frames and no hot thread: every guest thread waits; xenia_backtrace'
+    return json.dumps({'running': True, 'pid': pid, 'verdict': verdict,
+                       'fps_badge': fps_last, 'gpu_busy': gpu_busy,
+                       'markers': markers[-12:], 'hot_threads': rows}, indent=2)
 
 
 @mcp.tool()

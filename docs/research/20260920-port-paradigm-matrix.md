@@ -53,7 +53,9 @@ which axis it crosses before touching code.
 - Xenos model: Banjo's lower half of the frame black with speckles in the game world. Next: a
   frame capture on the PC trace loop, then the tile and resolve path for its render target
   layout.
-- OS: a guest or host thread at 69 % CPU in `sched_yield` during Banjo gameplay. Next:
-  `xenia_profile(callgraph=True)` to name the caller; a sleep or a real wait instead of a yield.
-- present: count every present path in the FPS badge, not only `VdSwap`.
+- CPU ISA and memory model (closed): the `sched_yield` thread was `xeKeKfAcquireSpinLock`
+  spinning on a lock word the a64 inline release had decremented instead of zeroed; the inline
+  IRQL paths used a private word instead of the KPCR byte. Both inline paths now use the HLE's
+  state and encoding. `docs/research/20260920-banjo-spinlock-protocol.md`.
+- present (closed): the FPS badge counts Banjo's frames; the 0.0 was the stall.
 - host SIMD: audit the sse2neon uses on the hot paths (texture conversion, resolves, swizzles).

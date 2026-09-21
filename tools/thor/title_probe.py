@@ -65,6 +65,9 @@ def main():
     ap.add_argument('--shot-every', type=int, default=20)
     ap.add_argument('--route', default='')
     ap.add_argument('--load-limit', type=int, default=900)
+    ap.add_argument('--profile-at', type=int, default=0,
+                    help='seconds after the load to run xenia_profile (0 = never)')
+    ap.add_argument('--profile-seconds', type=int, default=15)
     args = ap.parse_args()
     m = load_mcp()
     title = TITLES.get(args.title, args.title)
@@ -105,6 +108,10 @@ def main():
             l0 = time.time()
             next_shot = l0 + args.shot_every
             ri = 0
+            saw_frames = False
+            zero_shots = 0
+            stall_reported = False
+            profiled = False
             while time.time() - l0 < args.seconds:
                 time.sleep(1)
                 now = time.time() - l0
@@ -113,6 +120,21 @@ def main():
                 temp = gpu_c(m)
                 if temp > 70:
                     result = f'ABORT: GPU {temp} C'; break
+                if args.profile_at and not profiled and now >= args.profile_at:
+                    profiled = True
+                    print(f'+{now:4.0f}s profile {args.profile_seconds} s ...')
+                    pr = json.loads(m.xenia_profile(args.profile_seconds, True, True))
+                    print('    presented fps:', pr.get('presented_fps'), 'perf:', pr.get('perf_data'))
+                    for l in pr.get('by_dso', [])[:6]:
+                        print('    dso:', l[:150])
+                    for l in pr.get('top', [])[:14]:
+                        print('    top:', l[:170])
+                    gh = pr.get('guest_hot')
+                    if isinstance(gh, list):
+                        for r in gh[:16]:
+                            print('    guest:', r)
+                    else:
+                        print('    guest:', gh)
                 while ri < len(route) and route[ri][0] <= now:
                     _, button, hold = route[ri]; ri += 1
                     print(f'+{now:4.0f}s press {button}: {m.xenia_press(button, hold)}')
@@ -123,6 +145,24 @@ def main():
                     med = f[len(f) // 2] if f else None
                     print(f'+{now:4.0f}s shot {os.path.basename(shot["path"])} fps median {med} '
                           f'(n={len(f)}) GPU {temp:.0f} C')
+                    # The stall reflex: frames seen, then two intervals without
+                    # a frame, means one stall picture (markers, hot threads,
+                    # wait channels) printed here instead of found by hand.
+                    if med:
+                        saw_frames = True
+                        zero_shots = 0
+                    else:
+                        zero_shots += 1
+                    if saw_frames and zero_shots >= 2 and not stall_reported:
+                        stall_reported = True
+                        st = json.loads(m.xenia_stall(pid))
+                        print(f'+{now:4.0f}s STALL: {st["verdict"]}; badge {st["fps_badge"]}; '
+                              f'GPU busy {st["gpu_busy"]}')
+                        for l in st['markers'][-6:]:
+                            print('    marker:', l[:200])
+                        for r in st['hot_threads']:
+                            print(f'    thread {r["tid"]} {r["cpu_pct"]}%: '
+                                  f'{r["comm_state_uticks_sticks_wchan"]}')
         print('result:', result)
         if result.startswith('died'):
             print(m._shell('logcat -b crash -d -t 60')[-3000:])

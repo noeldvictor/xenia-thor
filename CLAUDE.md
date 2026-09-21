@@ -7,7 +7,11 @@ Three rules that apply before `AGENTS.md` is read:
 
 - Write in ASD-STE100 Simplified Technical English and follow the writing principle
   (`AGENTS.md` section 1). Update `AGENTS.md` when a rule or the state changes.
-- Use the xenia-thor MCP tools for every device action (`AGENTS.md` section 9).
+- Use the xenia-thor MCP tools for every device action (`AGENTS.md` section 9). When the server
+  does not connect, import `tools/mcp/xenia_thor_mcp.py` from Python and call the same functions.
+- Every issue powers up the MCP: the fix commit also adds the tool or the reflex that gives the
+  picture in one call next time (`AGENTS.md` section 9). The loop stays at: syntax check, a
+  2-minute build, a 3-second install, one probe.
 - Never commit game files, keys, dumps, screenshots, or config backups.
 
 ## The port is a multi-axis paradigm change (user, 2026-09-20)

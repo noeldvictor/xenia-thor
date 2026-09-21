@@ -348,14 +348,28 @@ device action instead of ad-hoc adb commands. Each tool applies the device rules
 | `xenia_probe` | launch a title, wait for the load, screenshot timeline with fps per interval, optional route, crash picture |
 | `xenia_patches`, `xenia_patch_set` | the game patch files on the device: list and toggle one `[[patch]]` by name, as the Game Patches screen does |
 | `xenia_guest_dump`, `xenia_disasm` | dump guest memory of a title to `scratch/mcp/` (diagnostic cvars, restored after), and disassemble PowerPC from a dump |
+| `xenia_stall` | the stall picture in one call: stall markers in the log (`SPINLOCK STALL`, `A64 CRASH DIAG`, `GPU is hung`), the FPS badge, GPU busy, the hottest threads with state and wait channel, and a verdict. `xenia_probe` calls it by itself after two intervals without a frame |
 
 Rules that stay in force with the MCP: force-stop after every run, never use `adb shell input keyevent`,
 say the battery level when you launch, and stop polling when the user says stop.
 
 The MCP is the control surface for debugging, fixing, measuring, and profiling. Every device action
 goes through it. If the server fails to connect, run `python -m py_compile tools/mcp/xenia_thor_mcp.py`,
-fix the file, and call its functions from Python until the next session reconnects. `thor_build.ps1`
-runs that check before every build.
+fix the file, and call its functions from Python (`sys.path.insert(0, 'tools/mcp'); import
+xenia_thor_mcp as m`) until the session reconnects with `/mcp`. `thor_build.ps1` runs that check
+before every build.
+
+**The MCP grows with every issue (user, 2026-09-20).** When a bug or a mistake costs manual steps,
+the fix commit also adds the tool or the reflex that returns those steps in one call. The test: the
+next time the same class of problem appears, one MCP call must give the picture. Record the tool in
+the table above. Examples: the Banjo spin-lock stall of 2026-09-20 took a profile, a thread table, a
+diagnostic build, and a decode by hand; it became `xenia_stall` and the probe's stall reflex. The
+compile order bug became `xenia_patches`. The crash decode became `xenia_crash`.
+
+**Speed of the loop (user, 2026-09-20).** The loop is: syntax check (seconds), native build (2 m 12 s,
+ARM64 only), `xenia_install` (3 s, hash verified), `xenia_probe` (the load plus the probe length).
+Keep every step at that size. Run the build in the background and write the note or the next tool
+while it runs. Never wait on a step that a tool can do; never repeat a step by hand that a tool does.
 
 ### Debug loop rules (2026-09-20)
 
