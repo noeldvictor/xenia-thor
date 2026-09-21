@@ -34,6 +34,7 @@
 #include "xenia/cpu/processor.h"
 #include "xenia/emulator.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/util/kernel_trap.h"
 #include "xenia/kernel/util/object_table.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 #include "xenia/kernel/xthread.h"
@@ -266,6 +267,32 @@ JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeGpu(
 JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeStall(
     JNIEnv* env, jclass) {
   return ToJava(env, xe::kernel::xboxkrnl::xeSpinlockStallReportJson());
+}
+
+// The export trap: arm (name, pause), report, release, clear.
+JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeTrapSet(
+    JNIEnv* env, jclass, jstring name, jboolean pause, jint lr) {
+  std::string n = FromJava(env, name);
+  std::string err = xe::kernel::KernelTrapSet(n, pause == JNI_TRUE,
+                                              static_cast<uint32_t>(lr));
+  return ToJava(env, err.empty() ? "{\"armed\":true}"
+                                 : "{\"armed\":false,\"reason\":\"" +
+                                       JsonEscape(err) + "\"}");
+}
+
+JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeTrapReport(
+    JNIEnv* env, jclass) {
+  return ToJava(env, xe::kernel::KernelTrapReportJson());
+}
+
+JNIEXPORT void JNICALL Java_jp_xenia_emulator_DebugServer_nativeTrapRelease(
+    JNIEnv*, jclass) {
+  xe::kernel::KernelTrapRelease();
+}
+
+JNIEXPORT void JNICALL Java_jp_xenia_emulator_DebugServer_nativeTrapClear(
+    JNIEnv*, jclass) {
+  xe::kernel::KernelTrapClear();
 }
 
 JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeCvarGet(

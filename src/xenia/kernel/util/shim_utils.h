@@ -23,6 +23,7 @@
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/kernel/kernel_flags.h"
 #include "xenia/kernel/kernel_state.h"
+#include "xenia/kernel/util/kernel_trap.h"
 
 namespace xe {
 namespace kernel {
@@ -578,6 +579,14 @@ struct ExportRegistrerHelper {
             (!(TAGS & xe::cpu::ExportTag::kHighFrequency) ||
              cvars::log_high_frequency_kernel_calls)) {
           PrintKernelCall(export_entry, params);
+        }
+        // The export trap (kernel_trap.h): a breakpoint the debug server arms
+        // by export name, no rebuild.
+        constexpr uint32_t kTrapKey =
+            ((static_cast<uint32_t>(MODULE) + 1u) << 16) | ORDINAL;
+        XE_UNLIKELY_IF(g_kernel_trap_key.load(std::memory_order_relaxed) ==
+                       kTrapKey) {
+          KernelTrapHit(export_entry, ppc_context);
         }
         if constexpr (std::is_void<R>::value) {
           KernelTrampoline(fn, std::forward<std::tuple<Ps...>>(params),

@@ -278,7 +278,17 @@ Port rules:
 - Desktop oracles cannot validate an Android memory or threading port. Test on device.
 - Record each ported hash, each N/A hash, and the reason, in the dated research note.
 
-## 8. Current state, 2026-09-18
+## 8. Current state, 2026-09-18 (Banjo lines added 2026-09-20)
+
+- Banjo-Kazooie (4D5307ED) reaches the game world. Two a64 inline fast paths (spin lock,
+  IRQL) used their own encodings and stalled it; both use the HLE's state now. The first
+  visit to a scene runs at 2 fps while Turnip compiles pipelines on the command processor
+  thread (170 ms each); the VkPipelineCache blob now persists during play, and a cached visit
+  costs milliseconds. The lower half of the world frame is black with speckles (Xenos axis,
+  open). One run in four ends in `XamShowDirtyDiscErrorUI` from the loader thread (open).
+  Details: `docs/research/20260920-banjo-spinlock-protocol.md`.
+- The device heats over consecutive runs: the case (`xo-therm`) at 44 C reaches the 70 C GPU
+  abort within 45 s of play. `xenia_preflight` gates on case 41 C. Wait, do not lower the abort.
 
 - PPC hardware corpus: 169,117 cases in `src/xenia/cpu/ppc/testing/`. a64 failures 7,907 to 3,038 on
   2026-08-18. x64 failures 17,851 to 14,591 on 2026-08-18. One class is 94% of what is left on a64.
@@ -383,6 +393,29 @@ compile order bug became `xenia_patches`. The crash decode became `xenia_crash`.
 ARM64 only), `xenia_install` (3 s, hash verified), `xenia_probe` (the load plus the probe length).
 Keep every step at that size. Run the build in the background and write the note or the next tool
 while it runs. Never wait on a step that a tool can do; never repeat a step by hand that a tool does.
+
+### Speed rules (user, 2026-09-21: "too slow to fix bugs and keep moving on")
+
+The dirty-disc dialog of 2026-09-20 cost 14 device runs and two hours because the order was
+wrong: guess, rebuild (2 min), wait for the device to cool, run (3 min), read. The order is:
+
+1. **Kernel, HLE, and file-system bugs reproduce on the PC.** The Windows build runs the same
+   kernel. Banjo's ISO is at `scratch/banjo/banjo.iso` (never committed); the canary oracle is
+   `scratch/oracle/xenia_canary.exe`. A PC run is 30 to 75 s with no thermal wait:
+   `build/bin/Windows/Release/xenia.exe --storage_root=scratch/banjo/pc --log_file=... --mount_cache=true scratch/banjo/banjo.iso`.
+   When the fork fails and the oracle passes, diff the file-I/O traces (the June 7 method).
+2. **No rebuild for state at a kernel export.** The in-app MCP `trap` tool arms a breakpoint on
+   an export by name, records every guest register and 256 stack words, and with `pause=true`
+   holds the thread so `memory` and `disasm` read the live state. `trap_release` continues.
+3. **Bypass first when a bypass exists, then understand.** A cvar or toggle that skips a
+   failing check is a 10-minute test. (Here the bypass led to the game's own exit, which the
+   git history already said: `cc45b9efc3`. Read `git log --grep` for the symptom first.)
+4. **Get the decisive data before the first guess.** One diagnostic run with the file-I/O
+   trace, the stall picture, or a trap beats four guesses.
+5. **Do not wait for a cool-down before a CPU-side test.** The 70 C abort protects the GPU;
+   a check at +21 s in the capped intro runs at 52 C.
+6. **Do the next step while the device or the build runs.** A build is 2 min, a probe 3 min;
+   write the next patch, the note, or the tool in that time.
 
 ### Debug loop rules (2026-09-20)
 

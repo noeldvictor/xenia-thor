@@ -3009,12 +3009,20 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
       xe::Clock::QueryHostUptimeMillis() - pipeline_create_ms_start;
   pipeline_create_ms_ += create_ms;
   ui::vulkan::VulkanPipelineStatsRecord(create_ms);
+  {
+    const PipelineDescription& d = creation_arguments.pipeline->first;
+    uint64_t pair = d.vertex_shader_hash * 31 + d.vertex_shader_modification;
+    pair = pair * 31 + d.pixel_shader_hash;
+    pair = pair * 31 + d.pixel_shader_modification;
+    pipeline_shader_pairs_.insert(pair);
+  }
   if ((pipeline_create_count_ & 63) == 0) {
     XELOGI(
         "VulkanPipelineCache: {} pipelines created, {} ms in creation "
-        "(last 64: {} ms)",
+        "(last 64: {} ms), {} distinct shader pairs",
         pipeline_create_count_, pipeline_create_ms_,
-        pipeline_create_ms_ - pipeline_create_ms_at_report_);
+        pipeline_create_ms_ - pipeline_create_ms_at_report_,
+        pipeline_shader_pairs_.size());
     pipeline_create_ms_at_report_ = pipeline_create_ms_;
   }
   SavePipelineCacheIfDue(false);

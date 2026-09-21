@@ -813,6 +813,23 @@ Java_jp_xenia_emulator_EmulatorActivity_nativeGetAotProgress(JNIEnv* jni_env,
   return jni_env->NewStringUTF(buffer);
 }
 
+// The title id of the loaded module as 8 hex digits, or "" before the load.
+// The launcher guesses the id from the file name through a games database and
+// guessed 58410954 (the XBLA Banjo-Kazooie) for the Nuts & Bolts disc, so no
+// profile applied (2026-09-20). The activity records the real id per launch
+// target and the launcher uses it next time.
+JNIEXPORT jstring JNICALL
+Java_jp_xenia_emulator_EmulatorActivity_nativeGetTitleId(JNIEnv* jni_env,
+                                                         jclass clazz) {
+  xe::Emulator* emulator = xe::GetGlobalEmulator();
+  if (!emulator || !emulator->title_id()) {
+    return jni_env->NewStringUTF("");
+  }
+  char buffer[16];
+  std::snprintf(buffer, sizeof(buffer), "%08X", emulator->title_id());
+  return jni_env->NewStringUTF(buffer);
+}
+
 JNIEXPORT jlong JNICALL
 Java_jp_xenia_emulator_EmulatorActivity_nativeGetGuestSwapCount(
     JNIEnv* jni_env, jclass clazz) {

@@ -114,6 +114,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             float hatY);
 
     private static native long nativeGetGuestSwapCount();
+    private static native String nativeGetTitleId();
     // "state,done,frontier,workers,pass,elapsed_ms,total_done"; state 0 idle,
     // 1 running, 2 done. Polled by the AOT overlay instead of parsing logcat.
     private static native String nativeGetAotProgress();
@@ -1263,6 +1264,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                         } else if (state == 2 && lastState == 1) {
                             android.util.Log.i("xenia-aot", "precompile pass " + pass
                                     + " done: " + done + " functions in " + elapsed + " ms");
+                            rememberLoadedTitleId();
                             final int d = done;
                             final long ms = elapsed;
                             postToUi(() -> hideAotOverlay(d, ms));
@@ -2295,6 +2297,23 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     WindowSurfaceView debugSurfaceView() {
         return findViewById(R.id.emulator_surface_view);
+    }
+
+    /** Record the disc's title id for this launch target, for the launcher. */
+    private void rememberLoadedTitleId() {
+        final String real = nativeGetTitleId();
+        final Intent intent = getIntent();
+        if (real.isEmpty() || intent == null) {
+            return;
+        }
+        final Bundle args = getLaunchArguments(intent);
+        final String target = args != null ? args.getString("target", "") : "";
+        final String guessed = intent.getStringExtra(EXTRA_TITLE_ID);
+        XeniaAndroidSettings.rememberTitleId(this, target, real);
+        if (guessed == null || !real.equalsIgnoreCase(guessed)) {
+            android.util.Log.w(TAG, "title id: launcher passed " + guessed + ", the disc says "
+                    + real + "; recorded for the next launch of " + target);
+        }
     }
 
     private void updateFpsCounter(final long nowNs) {

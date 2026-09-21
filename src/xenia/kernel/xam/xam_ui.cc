@@ -789,6 +789,34 @@ DECLARE_XAM_EXPORT1(XamShowDeviceSelectorUI, kUI, kImplemented);
 
 void XamShowDirtyDiscErrorUI_entry(dword_t user_index) {
   XELOGE("XamShowDirtyDiscErrorUI: user_index={}", uint32_t(user_index));
+  // Diagnostic (2026-09-21): the guest call chain that decided on the
+  // dialog. The JIT keeps the PowerPC stack layout, so every 0x82xxxxxx word
+  // in the 512 words above r1 is a candidate return address (Banjo-Kazooie
+  // reads a whole \Bundle file, computes for 236 ms, then calls this).
+  {
+    auto* ctx = cpu::ThreadState::Get()->context();
+    uint32_t r1 = static_cast<uint32_t>(ctx->r[1]);
+    std::string chain;
+    auto* mem = kernel_memory();
+    for (uint32_t i = 0; i < 512; ++i) {
+      uint32_t addr = r1 + i * 4;
+      auto* heap = mem->LookupHeap(addr);
+      if (!heap || heap->QueryRangeAccess(addr, addr + 3) ==
+                       xe::memory::PageAccess::kNoAccess) {
+        break;  // the top of the stack; the page above is not committed
+      }
+      uint32_t v = xe::load_and_swap<uint32_t>(mem->TranslateVirtual(addr));
+      if ((v & 0xFF000000u) == 0x82000000u) {
+        chain += fmt::format(" [{:+d}]{:08X}", static_cast<int>(i * 4), v);
+      }
+    }
+    XELOGE("XamShowDirtyDiscErrorUI: r1={:08X} lr={:08X} r3={:08X} r4={:08X} "
+           "r5={:08X} r30={:08X} r31={:08X} stack code words:{}",
+           r1, static_cast<uint32_t>(ctx->lr), static_cast<uint32_t>(ctx->r[3]),
+           static_cast<uint32_t>(ctx->r[4]), static_cast<uint32_t>(ctx->r[5]),
+           static_cast<uint32_t>(ctx->r[30]), static_cast<uint32_t>(ctx->r[31]),
+           chain);
+  }
   if (cvars::xam_suppress_dirty_disc_error) {
     XELOGW(
         "XamShowDirtyDiscErrorUI suppressed (xam_suppress_dirty_disc_error); "

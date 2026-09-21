@@ -15,6 +15,7 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
+#include "xenia/base/platform.h"
 #include "xenia/base/string.h"
 #include "xenia/base/string_buffer.h"
 
@@ -227,9 +228,22 @@ void SetupConfig(const std::filesystem::path& config_folder) {
   // let's also load the default config
   if (!config_folder.empty()) {
     config_path = config_folder / config_name;
+#if XE_PLATFORM_ANDROID
+    // Android (2026-09-20): the file is written for inspection and never
+    // read. SaveConfig writes every cvar with its current value, so a file
+    // from an older build pinned every old default forever: the 18 Android
+    // code defaults of 2026-09-18 and mount_cache were all dead on a device
+    // with an old file, and Banjo's font-cache redirect failed on an unmounted
+    // cache: device. The app menu toggles, the game profiles, and the launch
+    // extras are the control surface (directive 17); the in-app debug server
+    // sets a cvar live for diagnosis.
+    XELOGI("Config: {} is written but not read on Android",
+           xe::path_to_utf8(config_path));
+#else
     if (std::filesystem::exists(config_path)) {
       ReadConfig(config_path, true);
     }
+#endif
     // Re-save the loaded config to present the most up-to-date list of
     // parameters to the user, if new options were added, descriptions were
     // updated, or default values were changed.

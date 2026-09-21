@@ -890,6 +890,13 @@ public class LauncherActivity extends Activity {
             final String title,
             final String path,
             final String launchUri) {
+        // The id the emulator read from the disc on an earlier launch beats
+        // the name lookup (which returned the XBLA Banjo-Kazooie for the Nuts
+        // & Bolts disc).
+        final String learned = XeniaAndroidSettings.learnedTitleId(this, path);
+        if (TITLE_ID_PATTERN.matcher(learned).matches()) {
+            return learned.toUpperCase(Locale.US);
+        }
         final String titleId = XeniaCoverArt.findCachedTitleId(
                 this, title, path + " " + launchUri);
         if (!titleId.isEmpty() && TITLE_ID_PATTERN.matcher(titleId).matches()) {

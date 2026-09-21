@@ -374,6 +374,51 @@ public final class XeniaAndroidSettings {
         }
     }
 
+    // ---- learned title ids (2026-09-20) ---------------------------------
+    // files/title_ids.properties: launch target -> the title id the emulator
+    // read from the disc. A file, not SharedPreferences, because the launcher
+    // (:launcher process) reads what the emulator process wrote.
+    private static File learnedTitleIdsFile(final Context context) {
+        return new File(context.getFilesDir(), "title_ids.properties");
+    }
+
+    private static java.util.Properties loadLearnedTitleIds(final Context context) {
+        final java.util.Properties p = new java.util.Properties();
+        final File f = learnedTitleIdsFile(context);
+        if (f.isFile()) {
+            try (java.io.FileInputStream in = new java.io.FileInputStream(f)) {
+                p.load(in);
+            } catch (java.io.IOException ignored) {
+            }
+        }
+        return p;
+    }
+
+    /** The id the emulator read for this launch target, or "". */
+    public static String learnedTitleId(final Context context, final String launchTarget) {
+        if (launchTarget == null || launchTarget.isEmpty()) {
+            return "";
+        }
+        return loadLearnedTitleIds(context).getProperty(launchTarget, "");
+    }
+
+    public static void rememberTitleId(
+            final Context context, final String launchTarget, final String titleId) {
+        if (launchTarget == null || launchTarget.isEmpty() || titleId == null
+                || titleId.length() != 8) {
+            return;
+        }
+        final java.util.Properties p = loadLearnedTitleIds(context);
+        if (titleId.equals(p.getProperty(launchTarget))) {
+            return;
+        }
+        p.setProperty(launchTarget, titleId);
+        try (java.io.FileOutputStream out = new java.io.FileOutputStream(learnedTitleIdsFile(context))) {
+            p.store(out, "launch target -> title id read from the disc");
+        } catch (java.io.IOException ignored) {
+        }
+    }
+
     public static String resolveLaunchTarget(final Context context, final Uri target) {
         if (target == null) {
             return "";

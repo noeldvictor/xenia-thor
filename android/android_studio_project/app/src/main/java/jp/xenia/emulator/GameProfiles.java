@@ -343,14 +343,13 @@ public final class GameProfiles {
                         + "game disc then polls for it - the create fails so the UI never "
                         + "initializes (black screen, VdSwap frozen at ~267). Redirecting "
                         + "those basenames to the writable cache: device lets "
-                        + "create+poll+read succeed.")
-                .add("xboxkrnl_ntreadfile_force_complete", Boolean.TRUE,
-                        "BOOT FIX: Banjo opens its \\bundle content files async; the fork "
-                        + "returned STATUS_PENDING and the guest's async-completion path "
-                        + "did not consume it, leaving its content table empty. Forcing "
-                        + "synchronous completion (return the real success status, "
-                        + "matching canary) routes Banjo to its working sync-consume "
-                        + "path."));
+                        + "create+poll+read succeed."));
+        // xboxkrnl_ntreadfile_force_complete was in this profile from
+        // 2026-06-26 (a fix for the async \\bundle verify before the Edge
+        // kernel port). Removed 2026-09-20: with it, three runs of three ended
+        // in the dirty-disc dialog right after the \\bundle\\4f read; without
+        // it one run of four did. The kernel port changed the I/O layer the fix
+        // was written for.
         // The zero-page read (0x82364250, 0x82CD5268) is the "Readable zero
         // page" toggle in XeniaOptimizations, not a profile value: the launcher
         // passed title id 58410954 for this ISO on 2026-09-20, so profiles did

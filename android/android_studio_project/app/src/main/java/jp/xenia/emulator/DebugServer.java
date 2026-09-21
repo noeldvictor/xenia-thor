@@ -82,6 +82,10 @@ public final class DebugServer {
     private static native String nativeStall();
     private static native String nativeCvarGet(String name);
     private static native boolean nativeCvarSet(String name, String value);
+    private static native String nativeTrapSet(String name, boolean pause, int lr);
+    private static native String nativeTrapReport();
+    private static native void nativeTrapRelease();
+    private static native void nativeTrapClear();
 
     private DebugServer(final EmulatorActivity activity) {
         mActivity = activity;
@@ -339,6 +343,19 @@ public final class DebugServer {
                         + jsonEscape(nativeCvarGet(q.get("name"))) + "\"}";
             case "/toggle":
                 return setToggle(q.get("key"), "1".equals(q.get("enabled")) || "true".equals(q.get("enabled")));
+            case "/trap":
+                if ("POST".equals(method) && q.containsKey("name")) {
+                    return nativeTrapSet(q.get("name"),
+                            "1".equals(q.get("pause")) || "true".equals(q.get("pause")),
+                            hexParam(q, "lr", 0));
+                }
+                return nativeTrapReport();
+            case "/trap_release":
+                nativeTrapRelease();
+                return "{\"released\":true}";
+            case "/trap_clear":
+                nativeTrapClear();
+                return "{\"cleared\":true}";
             case "/press":
                 return press(q.get("button"), intParam(q, "hold_ms", 120));
             case "/route":
@@ -650,6 +667,10 @@ public final class DebugServer {
             {"route", "A button sequence, comma separated: START:150,wait:800,A. Waits are in ms.",
                     "{\"seq\":{\"type\":\"string\"}}"},
             {"pause", "Pause (on=true) or resume the emulator.", "{\"on\":{\"type\":\"boolean\"}}"},
+            {"trap", "A breakpoint on a kernel export, no rebuild: arm with name (e.g. XamShowDirtyDiscErrorUI) and pause=true to hold the calling guest thread at the hit; the other threads run. Without name: the report of the last hit (thread, all 32 guest registers, lr, ctr, 256 stack words from r1). Then use memory and disasm, and trap_release.",
+                    "{\"name\":{\"type\":\"string\"},\"pause\":{\"type\":\"boolean\"}}"},
+            {"trap_release", "Release the guest thread held by the trap.", "{}"},
+            {"trap_clear", "Disarm the trap and release any held thread.", "{}"},
             {"stop", "End the emulator process.", "{}"},
     };
 
@@ -753,6 +774,9 @@ public final class DebugServer {
         TOOL_PATHS.put("press", "/press");
         TOOL_PATHS.put("route", "/route");
         TOOL_PATHS.put("pause", "/pause");
+        TOOL_PATHS.put("trap", "/trap");
+        TOOL_PATHS.put("trap_release", "/trap_release");
+        TOOL_PATHS.put("trap_clear", "/trap_clear");
         TOOL_PATHS.put("stop", "/stop");
     }
 

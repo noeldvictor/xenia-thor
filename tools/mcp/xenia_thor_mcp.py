@@ -86,6 +86,10 @@ def _temps() -> dict:
             t = int(parts[1]) / 1000.0
             if re.match(r'(cpu|gpu|cpuss)', parts[0]) and t > hottest:
                 hottest = t
+            if parts[0] == 'xo-therm':
+                # The case sensor: the shell heats over several runs and a
+                # warm case reaches the 70 C GPU abort within 45 s of play.
+                temps['case_c'] = t
     if hottest:
         temps['hottest_cpu_gpu_zone_c'] = hottest
     busy = _shell('cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage').strip()
@@ -121,6 +125,7 @@ def _stamp() -> str:
 # simpleperf, the tombstones after a death, the probe workflow. The helpers
 # below let tools/thor scripts call the same endpoints from Python.
 API_PORT = 41337
+PERF_MAP_DEVICE_PATH = f'/data/data/{PKG}/files/perf.map'
 API_HOST = os.environ.get('XE_THOR_API_HOST', '127.0.0.1')
 _api_forwarded = False
 
@@ -200,7 +205,7 @@ def xenia_device_status() -> str:
 
 
 @mcp.tool()
-def xenia_preflight(max_temp_c: float = 55.0, min_battery: int = 30) -> str:
+def xenia_preflight(max_temp_c: float = 55.0, min_battery: int = 30, max_case_c: float = 41.0) -> str:
     """Apply the device rules before a launch. Returns ok=false with reasons if
     the device is busy, hot, or low on battery. The device is shared with other
     sessions; never launch when another emulator runs."""
@@ -221,6 +226,9 @@ def xenia_preflight(max_temp_c: float = 55.0, min_battery: int = 30) -> str:
     hot = temps.get('gpu_c', temps.get('hottest_cpu_gpu_zone_c', 0.0))
     if hot > max_temp_c:
         reasons.append(f'gpu {hot:.1f} C is above {max_temp_c} C')
+    case = temps.get('case_c', 0.0)
+    if case > max_case_c:
+        reasons.append(f'case {case:.1f} C is above {max_case_c} C; the run would hit the 70 C abort within a minute')
     bat = _battery()
     if bat['level'] is not None and bat['level'] < min_battery and not bat['charging']:
         reasons.append(f'battery {bat["level"]}% and not charging')
@@ -263,8 +271,21 @@ def xenia_launch(target: str, force_stop_first: bool = True,
     while time.time() < deadline and pid is None:
         time.sleep(1)
         pid = _pid(PKG)
+    # Diagnostic, not a lever: the a64 backend appends a perf-map line per
+    # function it emits from now on, so simpleperf samples in a64 code resolve
+    # to guest functions (LLVM functions come from the log). Set through the
+    # in-app server as soon as it answers; the launch itself is unchanged.
+    perf_map = ''
+    if pid:
+        for _ in range(20):
+            try:
+                _api(f'/cvar?name=cpu_perf_map_path&value={PERF_MAP_DEVICE_PATH}', 'POST', timeout=2)
+                perf_map = PERF_MAP_DEVICE_PATH
+                break
+            except RuntimeError:
+                time.sleep(0.5)
     return json.dumps({'launched': pid is not None, 'pid': pid, 'am_start': out,
-                       'command': cmd, 'battery': _battery()}, indent=2)
+                       'command': cmd, 'battery': _battery(), 'perf_map': perf_map}, indent=2)
 
 
 BUTTON_KEYCODES = {
@@ -510,6 +531,10 @@ def _guest_code_map(pid: int) -> list[tuple[int, int]]:
     rows = []
     for mm in re.finditer(r'LLVM(?:objload|map) guest=0x([0-9A-Fa-f]{8}) host=0x([0-9A-Fa-f]{16})', log):
         rows.append((int(mm.group(2), 16), int(mm.group(1), 16)))
+    # a64 functions: the perf map the backend writes when cpu_perf_map_path is
+    # set (xenia_launch sets it): "<start> <size> guest_<addr>".
+    for mm in re.finditer(r'^([0-9a-f]+) [0-9a-f]+ guest_([0-9A-Fa-f]{8})', _run_as('cat files/perf.map 2>/dev/null'), re.M):
+        rows.append((int(mm.group(1), 16), int(mm.group(2), 16)))
     rows.sort()
     return rows
 
@@ -1006,7 +1031,9 @@ def xenia_config_get(key: str = '') -> str:
 
 # device MCP serves this; kept for tools/thor scripts
 def xenia_config_set(key: str, value: str) -> str:
-    """Set one key in the persisted device config. value is written as given,
+    """INERT since 2026-09-20: Android writes xenia.config.toml but never reads it. Use the
+    device MCP cvar_set for a live value, a toggle for a shipped lever, or a launch extra.
+    Set one key in the persisted device config. value is written as given,
     so quote strings ("\"x\"") and use true/false for booleans."""
     current = _run_as('cat files/xenia.config.toml')
     rows = current.splitlines()

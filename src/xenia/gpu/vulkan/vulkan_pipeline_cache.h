@@ -15,6 +15,7 @@
 #include <functional>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "xenia/base/hash.h"
@@ -410,6 +411,12 @@ class VulkanPipelineCache {
   uint64_t pipeline_count_at_save_ = 0;
   uint64_t pipeline_cache_last_save_ms_ = 0;
   void SavePipelineCacheIfDue(bool force);
+  // Distinct (vertex shader, pixel shader, modifications) pairs among the
+  // created pipelines. Pipelines beyond this count differ only in fixed
+  // function state (blend, depth, stencil, cull, topology), which the
+  // dynamic-state levers can fold; pipelines within it are new shader
+  // compiles that only a persistent cache can skip.
+  std::unordered_set<uint64_t> pipeline_shader_pairs_;
 
   std::unordered_map<PipelineDescription, Pipeline, PipelineDescription::Hasher>
       pipelines_;

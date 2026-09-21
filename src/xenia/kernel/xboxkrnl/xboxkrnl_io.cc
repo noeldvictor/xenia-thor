@@ -10,6 +10,7 @@
 #include <atomic>
 #include <limits>
 
+#include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/kernel/info/file.h"
@@ -395,15 +396,30 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
             file->position());
       }
       if (ShouldTraceFileIo()) {
+        // The first 32 bytes and a hash of the data the guest got, so a
+        // wrong-data theory is a diff against the image, not a guess.
+        std::string head;
+        uint64_t data_hash = 0;
+        if (bytes_read && XSUCCEEDED(result)) {
+          const uint8_t* p =
+              kernel_memory()->TranslateVirtual(buffer.guest_address());
+          for (uint32_t i = 0; i < std::min<uint32_t>(bytes_read, 32); ++i) {
+            head += fmt::format("{:02X}", p[i]);
+          }
+          for (uint32_t i = 0; i < bytes_read; ++i) {
+            data_hash = (data_hash ^ p[i]) * 0x100000001B3ull;
+          }
+        }
         XELOGI(
             "NtReadFile trace: path='{}' handle={:08X} event={:08X} "
             "request={} requested_offset={} position_before={} bytes_read={} "
-            "status={:08X} buffer={:08X} position_after={} synchronous={}",
+            "status={:08X} buffer={:08X} position_after={} synchronous={} "
+            "head={} hash={:016X}",
             file->entry()->absolute_path(), uint32_t(file_handle),
             uint32_t(event_handle), uint32_t(buffer_length), requested_offset,
             position_before, bytes_read, uint32_t(result),
             uint32_t(buffer.guest_address()), file->position(),
-            file->is_synchronous());
+            file->is_synchronous(), head, data_hash);
       }
       if (ShouldLogFileIoStatus(result)) {
         XELOGW(
@@ -421,6 +437,28 @@ dword_result_t NtReadFile_entry(dword_t file_handle, dword_t event_handle,
         io_status_block->information = bytes_read;
       }
 
+      // Diagnostic (2026-09-20): Banjo's \\bundle verify reads async with a
+      // completion APC and ends in the dirty-disc dialog when the completion
+      // is not consumed. Say what each async read asked for; the "APC
+      // delivered" log pairs with it.
+      if (!file->is_synchronous() || ((uint32_t)apc_routine_ptr & ~1)) {
+        static std::atomic<uint32_t> async_reads{0};
+        uint32_t k = async_reads.fetch_add(1, std::memory_order_relaxed);
+        if (k < 64) {
+          auto* ctx = cpu::ThreadState::Get()->context();
+          auto* kpcr = ctx->TranslateVirtualGPR<X_KPCR*>(ctx->r[13]);
+          XELOGI(
+              "NtReadFile async #{}: path='{}' tid={:08X} apc_routine={:08X} "
+              "apc_context={:08X} event={:08X} iosb={:08X} bytes={} "
+              "status={:08X} irql={} sync={}",
+              k, file->entry()->absolute_path(),
+              XThread::GetCurrentThread()->thread_id(),
+              uint32_t(apc_routine_ptr), uint32_t(apc_context),
+              uint32_t(event_handle), io_status_block.guest_address(),
+              bytes_read, uint32_t(result), kpcr->current_irql,
+              file->is_synchronous());
+        }
+      }
       // Queue the APC callback. It must be delivered via the APC mechanism even
       // though were are completing immediately.
       // Low bit probably means do not queue to IO ports.

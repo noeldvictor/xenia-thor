@@ -152,3 +152,26 @@ access at 22:56 (a run with a different route timing); it called `XamShowDirtyDi
 stubs it to success (`xboxkrnl_crypt.cc`), so the failing check is elsewhere. The probe now
 saves the in-process log ring before the force-stop so the loader's file trace before the call
 is kept.
+
+## The dirty-disc dialog: the profile never applied, and the cache device was not mounted
+
+Two findings from the run at 23:31, the first with Banjo's game profile active:
+
+1. The launcher guessed the title id from the file name through the games database and got
+   `58410954`, the XBLA Banjo-Kazooie, for the Nuts & Bolts disc. So `GameProfiles` never
+   applied: no 30 fps cap (the 60 fps cap let the GPU reach 70 C within 45 s of the puzzle
+   transition), no XUI font cache redirect, no forced NtReadFile completion (the fork's own
+   fix for the async `undle` verify that ends in the dirty-disc dialog). Fix: the emulator
+   records the id it read from the disc per launch target (`files/title_ids.properties`) and
+   the launcher uses it next time. With the profile: 29.7 fps capped, GPU 54 C for 200 s.
+2. With the redirect active the log says `ResolvePath(cache:) failed - device not found`.
+   `mount_cache` is an Android code default (true) since 2026-09-18, but the device's
+   `xenia.config.toml` from an older build pinned it false, and the file wins over a compiled
+   default. `SaveConfig` writes every cvar with its current value, so a file from an older build
+   pins every old default forever: the 18 Android code defaults of 2026-09-18 were all dead on
+   this device. Fix: Android writes the file for inspection and never reads it. The menu
+   toggles, the game profiles, and the launch extras are the control surface (directive 17);
+   the in-app MCP sets a cvar live for diagnosis.
+
+The dirty-disc dialog came twice in two runs with the redirect active and unmounted cache, and
+once in four without the profile. The run after both fixes is the test.

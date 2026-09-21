@@ -2301,6 +2301,17 @@ static bool ProcessApcList(PPCContext* ctx, X_KTHREAD* current_thread,
     uint32_t arg2 = xe::load_and_swap<uint32_t>(scratch_ptr + 12);
 
     if (normal_routine) {
+      // Diagnostic (2026-09-20), pairs with "NtReadFile async": the first 64
+      // APC deliveries with the list (0 kernel, 1 user) and the thread.
+      static std::atomic<uint32_t> delivered_count{0};
+      uint32_t k = delivered_count.fetch_add(1, std::memory_order_relaxed);
+      if (k < 64) {
+        XELOGI(
+            "APC delivered #{}: list={} tid={:08X} routine={:08X} "
+            "context={:08X} arg1={:08X}",
+            k, list_index, uint32_t(current_thread->thread_id), normal_routine,
+            normal_context, arg1);
+      }
       uint64_t normal_args[] = {normal_context, arg1, arg2};
       ctx->processor->Execute(ctx->thread_state, normal_routine, normal_args,
                               xe::countof(normal_args));
