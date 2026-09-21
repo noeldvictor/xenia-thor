@@ -51,6 +51,13 @@ namespace kernel {
 
 std::atomic<uint32_t> g_kernel_trap_key{0};
 std::atomic<uint32_t> g_kernel_trap_lr{0};
+std::atomic<bool> g_kernel_trap_r3_enabled{false};
+std::atomic<uint32_t> g_kernel_trap_r3{0};
+
+void KernelTrapSetR3Filter(bool enabled, uint32_t value) {
+  g_kernel_trap_r3.store(value, std::memory_order_relaxed);
+  g_kernel_trap_r3_enabled.store(enabled, std::memory_order_release);
+}
 
 namespace {
 
@@ -96,6 +103,11 @@ const char* kModuleNames[] = {"xboxkrnl.exe", "xam.xex", "xbdm.xex"};
 void KernelTrapHit(cpu::Export* export_entry, cpu::ppc::PPCContext* ctx) {
   uint32_t lr_filter = g_kernel_trap_lr.load(std::memory_order_relaxed);
   if (lr_filter && static_cast<uint32_t>(ctx->lr) != lr_filter) {
+    return;
+  }
+  if (g_kernel_trap_r3_enabled.load(std::memory_order_acquire) &&
+      static_cast<uint32_t>(ctx->r[3]) !=
+          g_kernel_trap_r3.load(std::memory_order_relaxed)) {
     return;
   }
   TrapRecord& rec = record();

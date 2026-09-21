@@ -35,6 +35,12 @@ extern std::atomic<uint32_t> g_kernel_trap_key;
 // When non-zero, only a call whose guest lr equals this value is a hit, so a
 // trap on a frequent export (RtlEnterCriticalSection) can name one call site.
 extern std::atomic<uint32_t> g_kernel_trap_lr;
+// When set, only a call whose r3 equals this value is a hit (the null
+// object passed to RtlEnterCriticalSection, one handle, one address).
+extern std::atomic<bool> g_kernel_trap_r3_enabled;
+extern std::atomic<uint32_t> g_kernel_trap_r3;
+// Sets or clears the r3 filter; applies to the current and later traps.
+void KernelTrapSetR3Filter(bool enabled, uint32_t value);
 
 // Called by the shim trampoline when its key matches.
 void KernelTrapHit(cpu::Export* export_entry, cpu::ppc::PPCContext* ctx);

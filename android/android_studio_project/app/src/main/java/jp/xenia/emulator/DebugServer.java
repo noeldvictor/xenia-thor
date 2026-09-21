@@ -92,7 +92,7 @@ public final class DebugServer {
     private static native String nativeStall();
     private static native String nativeCvarGet(String name);
     private static native boolean nativeCvarSet(String name, String value);
-    private static native String nativeTrapSet(String name, boolean pause, int lr, String dump);
+    private static native String nativeTrapSet(String name, boolean pause, int lr, String dump, String r3);
     private static native String nativeTraceFrame(String dir);
     private static native String nativeHostBacktraces();
     private static native String nativeTraceStream(String dir, boolean on);
@@ -394,7 +394,8 @@ public final class DebugServer {
                 if ("POST".equals(method) && q.containsKey("name")) {
                     return nativeTrapSet(q.get("name"),
                             "1".equals(q.get("pause")) || "true".equals(q.get("pause")),
-                            hexParam(q, "lr", 0), q.containsKey("dump") ? q.get("dump") : "");
+                            hexParam(q, "lr", 0), q.containsKey("dump") ? q.get("dump") : "",
+                            q.containsKey("r3") ? q.get("r3") : "");
                 }
                 return nativeTrapReport();
             case "/trap_release":
@@ -987,8 +988,8 @@ public final class DebugServer {
             {"route", "A button sequence, comma separated: START:150,wait:800,A. Waits are in ms.",
                     "{\"seq\":{\"type\":\"string\"}}"},
             {"pause", "Pause (on=true) or resume the emulator.", "{\"on\":{\"type\":\"boolean\"}}"},
-            {"trap", "A breakpoint on a kernel export, no rebuild: arm with name (e.g. XamShowDirtyDiscErrorUI) and pause=true to hold the calling guest thread at the hit; the other threads run. lr (hex) limits hits to one guest call site. dump (rN:len or hexaddr:len, comma list) writes memory as hex to the log at every hit. Without name: the report of the last hit: registers, 256 stack words, the guest call chain, the memory at r24-r31 with one dereference (request objects), and the text on the stack (thread, all 32 guest registers, lr, ctr, 256 stack words from r1). Then use memory and disasm, and trap_release.",
-                    "{\"name\":{\"type\":\"string\"},\"pause\":{\"type\":\"boolean\"},\"lr\":{\"type\":\"string\"},\"dump\":{\"type\":\"string\"}}"},
+            {"trap", "A breakpoint on a kernel export, no rebuild: arm with name (e.g. XamShowDirtyDiscErrorUI) and pause=true to hold the calling guest thread at the hit; the other threads run. lr (hex) limits hits to one guest call site. dump (rN:len or hexaddr:len, comma list) writes memory as hex to the log at every hit. r3 (hex) limits hits to calls whose first argument equals it (0 = the null object). Without name: the report of the last hit: registers, 256 stack words, the guest call chain, the memory at r24-r31 with one dereference (request objects), and the text on the stack (thread, all 32 guest registers, lr, ctr, 256 stack words from r1). Then use memory and disasm, and trap_release.",
+                    "{\"name\":{\"type\":\"string\"},\"pause\":{\"type\":\"boolean\"},\"lr\":{\"type\":\"string\"},\"dump\":{\"type\":\"string\"},\"r3\":{\"type\":\"string\"}}"},
             {"trap_release", "Release the guest thread held by the trap.", "{}"},
             {"trap_clear", "Disarm the trap and release any held thread.", "{}"},
             {"stop", "End the emulator process.", "{}"},

@@ -1,6 +1,6 @@
 """One call: the guest call chain and the disassembly at a kernel export hit.
 
-  python tools/thor/guest_trap_context.py [title=banjo] [export=XamShowDirtyDiscErrorUI] [seconds=90]
+  python tools/thor/guest_trap_context.py [title=banjo] [export=XamShowDirtyDiscErrorUI] [seconds=90] [r3=hex]
 
 Launches the title through the device MCP, arms the export trap with pause
 as soon as the in-app server answers, waits for the hit, and then, with the
@@ -58,6 +58,7 @@ def main():
     title = sys.argv[1] if len(sys.argv) > 1 else 'banjo'
     export = sys.argv[2] if len(sys.argv) > 2 else 'XamShowDirtyDiscErrorUI'
     seconds = int(sys.argv[3]) if len(sys.argv) > 3 else 90
+    r3 = sys.argv[4] if len(sys.argv) > 4 else ''  # hex; '' = any
     out = []
 
     def say(s=''):
@@ -72,7 +73,7 @@ def main():
     armed = None
     while time.time() - t0 < 60:
         try:
-            armed = m._api('/trap?name=%s&pause=1' % export, 'POST', timeout=2)
+            armed = m._api('/trap?name=%s&pause=1%s' % (export, '&r3=' + r3 if r3 else ''), 'POST', timeout=2)
             break
         except RuntimeError:
             time.sleep(0.5)

@@ -30,6 +30,13 @@
 #include "xenia/ui/vulkan/vulkan_util.h"
 
 DEFINE_bool(
+    vulkan_persistent_shared_memory_binding, true,
+    "Bind the whole shared memory buffer once for texture loads and unscaled "
+    "resolves (guest_offset carries the texture's byte offset), instead of a "
+    "transient sub-range descriptor per load. Off restores the per-load "
+    "descriptors: the A/B for a texture that loads wrong (2026-09-21).",
+    "Vulkan");
+DEFINE_bool(
     gpu_vulkan_tex_keep_ubwc, false,
     "Efficiency (texture-bandwidth recovery): keep Adreno UBWC alive on TEXTURES "
     "that need MUTABLE_FORMAT by attaching a VkImageFormatListCreateInfo naming the "
@@ -2489,8 +2496,9 @@ bool VulkanTextureCache::Initialize() {
   // written. The texture's byte offset is passed via guest_offset instead, as
   // on Direct3D 12. When the buffer doesn't fit, the per-load sub-range
   // descriptors are used.
-  if (vulkan_device->properties().maxStorageBufferRange >=
-      SharedMemory::kBufferSize) {
+  if (cvars::vulkan_persistent_shared_memory_binding &&
+      vulkan_device->properties().maxStorageBufferRange >=
+          SharedMemory::kBufferSize) {
     VkDescriptorPoolSize shared_memory_persistent_pool_size;
     shared_memory_persistent_pool_size.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     shared_memory_persistent_pool_size.descriptorCount = 1;
