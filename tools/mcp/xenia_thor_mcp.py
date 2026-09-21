@@ -1098,6 +1098,45 @@ def xenia_install(verify: bool = True) -> str:
 
 
 @mcp.tool()
+def xenia_trap_context(title: str = 'banjo', export: str = 'XamShowDirtyDiscErrorUI',
+                       seconds: int = 90) -> str:
+    """Launch a title, hold the guest thread at the first call of a kernel
+    export, and return the picture that names the cause: registers, the
+    text at r3-r6, the memory at r24-r31 with one dereference (request
+    objects), the guest call chain with disassembly at every return
+    address, and every other thread's chain and stack text. The in-app
+    trap report carries chain, mem and stack_text itself; this wraps
+    tools/thor/guest_trap_context.py, which adds the disassembly and saves
+    the packet to scratch/mcp/trap-<export>-<stamp>.txt."""
+    cmd = [sys.executable, '-u', os.path.join(REPO, 'tools', 'thor', 'guest_trap_context.py'),
+           title, export, str(seconds)]
+    code, out = _run(cmd, timeout=seconds + 300)
+    return out[-12000:]
+
+
+@mcp.tool()
+def xenia_guest_disasm(title: str, ranges: str) -> str:
+    """PowerPC disassembly of guest code ranges through the in-app server:
+    ranges is a space list of hexaddr[:count] (count defaults to 64). Uses
+    the running title, or launches it and force-stops it after."""
+    cmd = [sys.executable, '-u', os.path.join(REPO, 'tools', 'thor', 'guest_disasm.py'), title]
+    cmd += ranges.split()
+    code, out = _run(cmd, timeout=300)
+    return out[-12000:]
+
+
+@mcp.tool()
+def xenia_dialog_check(seconds: int = 75, label: str = 'run') -> str:
+    """One Banjo run: the time XamShowDirtyDiscErrorUI appears, or "no
+    dialog", plus the log lines that name a cause and the saved log ring.
+    Exit 0 no dialog, 1 dialog, 2 launch failed or died."""
+    cmd = [sys.executable, '-u', os.path.join(REPO, 'tools', 'thor', 'banjo_dialog_check.py'),
+           str(seconds), label]
+    code, out = _run(cmd, timeout=seconds + 240)
+    return f'exit {code}' + chr(10) + out[-6000:]
+
+
+@mcp.tool()
 def xenia_git_head() -> str:
     """Commit the working tree is at, for citing builds."""
     return _run(['git', '-C', REPO, 'log', '-1', '--format=%h %cd %s', '--date=short'])[1]

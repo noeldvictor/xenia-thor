@@ -370,6 +370,9 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_crash` | the crash picture: `A64 CRASH DIAG` (guest function, nearest function, guest lr and r3 to r6), unhandled host faults, storms, the crash buffer tombstone, the newest app crash report |
 | `xenia_profile` | fps, GPU busy, temperatures, per-thread CPU over a window; simpleperf sample of the app with the top symbols by dso (no root needed, the app is debuggable) |
 | `xenia_probe` | launch a title, wait for the load, screenshot timeline with fps per interval, optional route, crash picture |
+| `xenia_trap_context` | hold a guest thread at a kernel export: registers, request objects, guest chain with disassembly, every other thread's chain and stack text |
+| `xenia_guest_disasm` | PowerPC disassembly of guest ranges through the in-app server |
+| `xenia_dialog_check` | one Banjo run: dialog time or none, the cause lines, the saved log ring |
 | `xenia_patches`, `xenia_patch_set` | the game patch files on the device: list and toggle one `[[patch]]` by name, as the Game Patches screen does |
 | `xenia_guest_dump`, `xenia_disasm` | dump guest memory of a title to `scratch/mcp/` (diagnostic cvars, restored after), and disassemble PowerPC from a dump |
 | `xenia_stall` | the stall picture in one call from inside the app: the last spin-lock stall record, the hottest threads over one second with wait channel, the badge history, the GPU counters, the stall and crash lines of the log ring, and a verdict. `xenia_probe` calls it by itself after two intervals without a frame |
@@ -432,10 +435,11 @@ trap tool closed it: `docs/research/20260921-banjo-dirty-disc-font-cache.md`.
    `EmulatorActivity.java`, and the Android platform files. Test the profile cvars off before
    any backend theory. A backend miscompile is the last hypothesis, not the first, and it is
    tested with the PPC corpus in `src/xenia/cpu/ppc/testing/`, never with a game run.
-2. **Capture the failing operation, not the symptom.** `tools/thor/guest_trap_context.py`
-   traps an export with pause and prints the guest chain, the request objects at the
-   non-volatile registers, and every other thread's chain and stack text, in one run. A dialog
-   is one bit; the request that failed names the cause.
+2. **Capture the failing operation, not the symptom.** The in-app `trap` report carries the
+   guest call chain, the memory at r24 to r31 with one dereference (the request objects), and
+   the text on the stack; every `threads` row carries its chain and stack text. The PC tool
+   `xenia_trap_context` (`tools/thor/guest_trap_context.py`) presents them with disassembly at
+   each return address. A dialog is one bit; the request that failed names the cause.
 3. **Compare sets before sequences.** Multi-threaded loaders reorder. The device's lookup ids
    were a subset of the PC's except the one wrong id; the per-thread sequences "diverged"
    at index 18 and meant nothing.

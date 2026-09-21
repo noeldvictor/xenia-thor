@@ -9,6 +9,7 @@
 
 #include "xenia/kernel/util/kernel_trap.h"
 
+#include <algorithm>
 #include <cctype>
 #include <chrono>
 #include <cstdlib>
@@ -272,6 +273,142 @@ void KernelTrapClear() {
 
 void KernelTrapRelease() { record().release.store(true, std::memory_order_release); }
 
+namespace {
+
+// One guest word, or false when the page is not readable.
+bool GuestWord(Memory* memory, uint32_t address, uint32_t* out) {
+  if (!memory || (address & 3)) {
+    return false;
+  }
+  auto* heap = memory->LookupHeap(address);
+  if (!heap || heap->QueryRangeAccess(address, address + 3) ==
+                   xe::memory::PageAccess::kNoAccess) {
+    return false;
+  }
+  *out = xe::load_and_swap<uint32_t>(
+      memory->TranslateVirtual<const uint8_t*>(address));
+  return true;
+}
+
+Memory* GuestMemory() {
+  auto* ks = kernel_state();
+  return ks ? ks->memory() : nullptr;
+}
+
+bool InGuestHeap(uint32_t v) { return v >= 0x10000 && v < 0x8C000000; }
+
+std::string WordsJson(Memory* memory, uint32_t at, int count) {
+  std::string json = "[";
+  for (int i = 0; i < count; ++i) {
+    uint32_t w = 0;
+    if (!GuestWord(memory, at + i * 4, &w)) {
+      break;
+    }
+    json += fmt::format("{}\"{:08X}\"", i ? "," : "", w);
+  }
+  return json + "]";
+}
+
+}  // namespace
+
+std::string GuestChainJson(uint32_t sp, uint32_t lr, int max_frames) {
+  Memory* memory = GuestMemory();
+  std::string json = fmt::format("[\"{:08X}\"", lr);
+  uint32_t frame = sp;
+  for (int i = 0; i < max_frames; ++i) {
+    uint32_t prev = 0, ret = 0;
+    if (!GuestWord(memory, frame, &prev) || prev <= frame ||
+        prev - frame > 0x100000 || !GuestWord(memory, prev - 8, &ret) ||
+        ret < 0x82000000 || ret >= 0x8C000000) {
+      break;
+    }
+    json += fmt::format(",\"{:08X}\"", ret);
+    frame = prev;
+  }
+  return json + "]";
+}
+
+std::string GuestStackTextJson(uint32_t sp, uint32_t length, int max_items) {
+  Memory* memory = GuestMemory();
+  std::string json = "[";
+  int items = 0;
+  if (memory) {
+    // The readable prefix, page by page: a guest stack ends at a guard
+    // page and the range above sp often crosses it.
+    auto* heap = memory->LookupHeap(sp);
+    uint32_t readable = 0;
+    while (heap && readable < length) {
+      uint32_t page_end = ((sp + readable) | 0xFFF) + 1;
+      uint32_t end = std::min(page_end, sp + length);
+      if (memory->LookupHeap(end - 1) != heap ||
+          heap->QueryRangeAccess(sp + readable, end - 1) ==
+              xe::memory::PageAccess::kNoAccess) {
+        break;
+      }
+      readable = end - sp;
+    }
+    length = readable;
+    if (length) {
+      const uint8_t* p = memory->TranslateVirtual<const uint8_t*>(sp);
+      uint32_t i = 0;
+      while (i < length && items < max_items) {
+        uint32_t j = i;
+        while (j < length && p[j] >= 32 && p[j] < 127) {
+          ++j;
+        }
+        if (j - i >= 6) {
+          std::string text;
+          for (uint32_t k = i; k < j; ++k) {
+            if (p[k] == '"' || p[k] == '\\') {
+              text.push_back('\\');
+            }
+            text.push_back(static_cast<char>(p[k]));
+          }
+          json += fmt::format("{}\"+{}:{}\"", items ? "," : "", i, text);
+          ++items;
+        }
+        i = j + 1;
+      }
+    }
+  }
+  return json + "]";
+}
+
+std::string GuestRegisterMemoryJson(const uint64_t* r) {
+  Memory* memory = GuestMemory();
+  std::string json = "{";
+  bool first = true;
+  for (int n = 24; n < 32; ++n) {
+    uint32_t v = static_cast<uint32_t>(r[n]);
+    uint32_t probe = 0;
+    if (!InGuestHeap(v) || !GuestWord(memory, v & ~3u, &probe)) {
+      continue;
+    }
+    v &= ~3u;
+    json += fmt::format("{}\"r{}\":{{\"at\":\"{:08X}\",\"words\":{},\"deref\":{{",
+                        first ? "" : ",", n, v, WordsJson(memory, v, 16));
+    first = false;
+    bool first_deref = true;
+    for (int k = 0; k < 8; ++k) {
+      uint32_t w = 0;
+      if (!GuestWord(memory, v + k * 4, &w) || !InGuestHeap(w) ||
+          w >= 0x82000000 || (w & 3)) {
+        continue;
+      }
+      uint32_t probe2 = 0;
+      if (!GuestWord(memory, w, &probe2)) {
+        continue;
+      }
+      json += fmt::format("{}\"+{:02X}\":{{\"at\":\"{:08X}\",\"words\":{}}}",
+                          first_deref ? "" : ",", k * 4, w,
+                          WordsJson(memory, w, 16));
+      first_deref = false;
+    }
+    json += "}}";
+  }
+  return json + "}";
+}
+
 std::string KernelTrapReportJson() {
   TrapRecord& rec = record();
   std::lock_guard<std::mutex> lock(rec.mutex);
@@ -293,7 +430,15 @@ std::string KernelTrapReportJson() {
   for (size_t i = 0; i < rec.stack_count; ++i) {
     json += fmt::format("{}\"{:08X}\"", i ? "," : "", rec.stack[i]);
   }
-  json += "]}";
+  json += "]";
+  if (rec.hits.load(std::memory_order_relaxed)) {
+    // Live guest memory: right while the thread is held, best effort after.
+    uint32_t sp = static_cast<uint32_t>(rec.r[1]);
+    json += ",\"chain\":" + GuestChainJson(sp, static_cast<uint32_t>(rec.lr));
+    json += ",\"mem\":" + GuestRegisterMemoryJson(rec.r);
+    json += ",\"stack_text\":" + GuestStackTextJson(sp, 2048);
+  }
+  json += "}";
   return json;
 }
 

@@ -654,7 +654,7 @@ public final class DebugServer {
             // name, description, JSON schema properties (a JSON object text)
             {"status", "Title, guest and host uptime, swap count, precompile state, memory, GPU temperature and busy.", "{}"},
             {"fps", "The FPS badge history: the last 60 half-second windows with fps, swaps, window_ms.", "{}"},
-            {"threads", "Every kernel thread: id, name, host tid, CPU ticks, host state, wait channel, guest state and wait reason, lr, r1, r3, r13.", "{}"},
+            {"threads", "Every kernel thread: id, name, host tid, CPU ticks, host state, wait channel, guest state and wait reason, lr, r1, r3, r13. Each guest thread also carries its call chain and the printable text on its stack.", "{}"},
             {"log", "The in-process log ring (last 8,192 lines; logcat rotation never touches it). lines (default 200), grep (substring filter).",
                     "{\"lines\":{\"type\":\"integer\"},\"grep\":{\"type\":\"string\"}}"},
             {"memory", "Guest memory as hex. addr (hex string), len (bytes, max 4 MB).",
@@ -675,7 +675,7 @@ public final class DebugServer {
             {"route", "A button sequence, comma separated: START:150,wait:800,A. Waits are in ms.",
                     "{\"seq\":{\"type\":\"string\"}}"},
             {"pause", "Pause (on=true) or resume the emulator.", "{\"on\":{\"type\":\"boolean\"}}"},
-            {"trap", "A breakpoint on a kernel export, no rebuild: arm with name (e.g. XamShowDirtyDiscErrorUI) and pause=true to hold the calling guest thread at the hit; the other threads run. lr (hex) limits hits to one guest call site. dump (rN:len or hexaddr:len, comma list) writes memory as hex to the log at every hit. Without name: the report of the last hit (thread, all 32 guest registers, lr, ctr, 256 stack words from r1). Then use memory and disasm, and trap_release.",
+            {"trap", "A breakpoint on a kernel export, no rebuild: arm with name (e.g. XamShowDirtyDiscErrorUI) and pause=true to hold the calling guest thread at the hit; the other threads run. lr (hex) limits hits to one guest call site. dump (rN:len or hexaddr:len, comma list) writes memory as hex to the log at every hit. Without name: the report of the last hit: registers, 256 stack words, the guest call chain, the memory at r24-r31 with one dereference (request objects), and the text on the stack (thread, all 32 guest registers, lr, ctr, 256 stack words from r1). Then use memory and disasm, and trap_release.",
                     "{\"name\":{\"type\":\"string\"},\"pause\":{\"type\":\"boolean\"},\"lr\":{\"type\":\"string\"},\"dump\":{\"type\":\"string\"}}"},
             {"trap_release", "Release the guest thread held by the trap.", "{}"},
             {"trap_clear", "Disarm the trap and release any held thread.", "{}"},

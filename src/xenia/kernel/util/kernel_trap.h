@@ -55,8 +55,25 @@ void KernelTrapArmFromCvars();
 void KernelTrapClear();
 void KernelTrapRelease();
 // The last hit as JSON: {"armed":..,"hits":N,"paused":bool,"export":..,
-// "tid":..,"r":[32 hex],"lr":..,"ctr":..,"stack_base":..,"stack":[256 hex]}.
+// "tid":..,"r":[32 hex],"lr":..,"ctr":..,"stack_base":..,"stack":[256 hex],
+// "chain":[return addresses],"mem":{"rN":{"at","words","deref"}},
+// "stack_text":["+off:text"]}. The last three come from live guest memory,
+// so the picture the Banjo dirty-disc needed (2026-09-21) is one call.
 std::string KernelTrapReportJson();
+
+// The guest picture behind a stack pointer, from live guest memory. The
+// threads walk and the trap report both use these; a client needs no
+// memory reads of its own.
+// The PowerPC back chain: the frame at [sp], the return address at
+// [frame - 8]. A JSON array of hex return addresses, lr first.
+std::string GuestChainJson(uint32_t sp, uint32_t lr, int max_frames = 16);
+// Printable ASCII runs of 6 or more characters in [sp, sp + length):
+// a JSON array of "+offset:text".
+std::string GuestStackTextJson(uint32_t sp, uint32_t length, int max_items = 16);
+// 16 words at each of r24 to r31 that points into the guest heap, and one
+// dereference of the first 8 words that point below the code: a JSON
+// object keyed "r24".."r31".
+std::string GuestRegisterMemoryJson(const uint64_t* r);
 
 }  // namespace kernel
 }  // namespace xe

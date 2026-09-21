@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -140,7 +141,11 @@ JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeThreads(
       xe::kernel::XThread>(xe::kernel::XObject::Type::Thread);
   std::string json = "[";
   bool first = true;
+  std::set<uint32_t> seen;  // two handles on one thread gave two rows
   for (auto& t : threads) {
+    if (!seen.insert(t->thread_id()).second) {
+      continue;
+    }
     if (!first) {
       json += ",";
     }
@@ -165,12 +170,23 @@ JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeThreads(
     json += fmt::format(
         "{{\"tid\":\"{:08X}\",\"name\":\"{}\",\"host_tid\":{},\"guest\":{},"
         "\"running\":{},\"state\":{},\"wait_reason\":{},\"lr\":\"{:08X}\","
-        "\"r1\":\"{:08X}\",\"r3\":\"{:016X}\",\"r13\":\"{:08X}\"}}",
+        "\"r1\":\"{:08X}\",\"r3\":\"{:016X}\",\"r13\":\"{:08X}\"",
         t->thread_id(), JsonEscape(t->thread_name()), host_tid,
         t->is_guest_thread() ? "true" : "false",
         t->is_running() ? "true" : "false", state, wait_reason,
         static_cast<uint32_t>(lr), static_cast<uint32_t>(r1), r3,
         static_cast<uint32_t>(r13));
+    // The guest chain and the text on the stack: the thread that queued a
+    // failing request blocks on it with the request name in its frames
+    // (Banjo dirty-disc, 2026-09-21).
+    if (t->is_guest_thread() && r1 >= 0x10000 && r1 < 0x8C000000) {
+      json += ",\"chain\":" + xe::kernel::GuestChainJson(
+                                    static_cast<uint32_t>(r1),
+                                    static_cast<uint32_t>(lr), 12);
+      json += ",\"stack_text\":" + xe::kernel::GuestStackTextJson(
+                                         static_cast<uint32_t>(r1), 2048, 12);
+    }
+    json += "}";
   }
   json += "]";
   return ToJava(env, json);

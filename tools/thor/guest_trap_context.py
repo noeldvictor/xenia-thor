@@ -101,9 +101,17 @@ def main():
             if t:
                 say('r%d text: %s' % (n, t))
         # Memory at the non-volatile registers that hold heap pointers, and
-        # one dereference: a request object and the block it points at.
+        # one dereference: a request object and the block it points at. The
+        # in-app report carries this as "mem" since 2026-09-21; older apps
+        # get the same picture from memory reads here.
         say()
-        for n in range(24, 32):
+        mem_json = report.get('mem')
+        if isinstance(mem_json, dict):
+            for reg, block in mem_json.items():
+                say('%s [%s]: %s' % (reg, block.get('at'), ' '.join(block.get('words', []))))
+                for off, sub in (block.get('deref') or {}).items():
+                    say('   %s -> [%s]: %s' % (off, sub.get('at'), ' '.join(sub.get('words', []))))
+        for n in (range(24, 32) if not isinstance(mem_json, dict) else ()):
             v = regs[n]
             if not (0x10000 <= v < 0x8C000000):
                 continue
@@ -123,19 +131,30 @@ def main():
         say('call chain (return address <- frame):')
         chain = []
         sp = regs[1]
-        ret = int(report['lr'], 16)
-        chain.append((ret, sp))
-        for _ in range(12):
-            prev = word(sp)
-            if prev is None or prev <= sp or prev - sp > 0x100000:
-                break
-            ret = word(prev - 8)
-            if ret is None or not (0x82000000 <= ret < 0x8C000000):
-                break
-            chain.append((ret, prev))
-            sp = prev
+        if isinstance(report.get('chain'), list) and report['chain']:
+            # The app walked the chain itself (frame addresses come from
+            # the back chain below, for the print only).
+            frame = sp
+            for i, hexret in enumerate(report['chain']):
+                chain.append((int(hexret, 16), frame))
+                nxt = word(frame)
+                frame = nxt if nxt else frame
+        else:
+            ret = int(report['lr'], 16)
+            chain.append((ret, sp))
+            for _ in range(12):
+                prev = word(sp)
+                if prev is None or prev <= sp or prev - sp > 0x100000:
+                    break
+                ret = word(prev - 8)
+                if ret is None or not (0x82000000 <= ret < 0x8C000000):
+                    break
+                chain.append((ret, prev))
+                sp = prev
         for ret, frame in chain:
             say('  %08X <- frame %08X' % (ret, frame))
+        if isinstance(report.get('stack_text'), list) and report['stack_text']:
+            say('  stack text: ' + ' | '.join(report['stack_text']))
         for ret, frame in chain[:8]:
             say()
             say('== around %08X' % ret)
@@ -172,28 +191,32 @@ def main():
                 continue
             say('  thread %s %s lr=%s r1=%08X state=%s wait=%s' % (
                 t['tid'], t.get('name', ''), t['lr'], sp, t.get('state'), t.get('wait_reason')))
-            tchain = []
-            fr = sp
-            for _ in range(10):
-                prev = word(fr)
-                if prev is None or prev <= fr or prev - fr > 0x100000:
-                    break
-                ret = word(prev - 8)
-                if ret is None or not (0x82000000 <= ret < 0x8C000000):
-                    break
-                tchain.append(ret)
-                fr = prev
-            say('    chain: ' + ' '.join('%08X' % r for r in tchain))
-            b = mem(sp, 2048)
-            texts = []
-            i = 0
-            while i < len(b):
-                j = i
-                while j < len(b) and 32 <= b[j] < 127:
-                    j += 1
-                if j - i >= 6:
-                    texts.append('+%d:%s' % (i, b[i:j].decode('ascii')))
-                i = j + 1
+            if isinstance(t.get('chain'), list):
+                say('    chain: ' + ' '.join(t['chain'][1:]))
+                texts = t.get('stack_text') or []
+            else:
+                tchain = []
+                fr = sp
+                for _ in range(10):
+                    prev = word(fr)
+                    if prev is None or prev <= fr or prev - fr > 0x100000:
+                        break
+                    ret = word(prev - 8)
+                    if ret is None or not (0x82000000 <= ret < 0x8C000000):
+                        break
+                    tchain.append(ret)
+                    fr = prev
+                say('    chain: ' + ' '.join('%08X' % r for r in tchain))
+                b = mem(sp, 2048)
+                texts = []
+                i = 0
+                while i < len(b):
+                    j = i
+                    while j < len(b) and 32 <= b[j] < 127:
+                        j += 1
+                    if j - i >= 6:
+                        texts.append('+%d:%s' % (i, b[i:j].decode('ascii')))
+                    i = j + 1
             if texts:
                 say('    stack text: ' + ' | '.join(texts[:16]))
     finally:
