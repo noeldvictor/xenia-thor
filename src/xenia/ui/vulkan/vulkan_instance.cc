@@ -84,6 +84,10 @@ DEFINE_string(
     "the stderr-not-in-logcat problem) and localize the deferred per-pass tile-resolve "
     "cost. Default empty = unset.",
     "Vulkan");
+// Defined in gpu/vulkan/vulkan_pipeline_cache.cc. The same toggle ("Persistent
+// shader pipeline cache") and directory also drive the driver's own disk cache.
+DECLARE_bool(vulkan_persistent_pipeline_cache);
+DECLARE_string(vulkan_pipeline_cache_path);
 #endif
 
 namespace xe {
@@ -147,6 +151,21 @@ std::unique_ptr<VulkanInstance> VulkanInstance::Create(
              /*overwrite=*/1);
       XELOGI("Turnip: set IR3_SHADER_DEBUG='{}' before driver load",
              cvars::gpu_vulkan_driver_ir3_debug);
+    }
+    // Mesa's own disk shader cache (ir3 binaries keyed by shader hash), in the
+    // same directory as the VkPipelineCache blob. Turnip creates it in
+    // tu_CreateDevice from these variables; without MESA_SHADER_CACHE_DIR an
+    // Android app has no HOME and gets no cache. GameNative sets the same pair.
+    // Pipeline creation was 74 % of the command processor thread in Banjo's
+    // first world at 2 fps (2026-09-20). gpu_vulkan_driver_env below overrides.
+    if (cvars::vulkan_persistent_pipeline_cache &&
+        !cvars::vulkan_pipeline_cache_path.empty()) {
+      const std::string mesa_dir = cvars::vulkan_pipeline_cache_path + "/mesa";
+      setenv("MESA_SHADER_CACHE_DIR", mesa_dir.c_str(), /*overwrite=*/1);
+      setenv("MESA_SHADER_CACHE_DISABLE", "false", /*overwrite=*/1);
+      setenv("MESA_SHADER_CACHE_MAX_SIZE", "512M", /*overwrite=*/1);
+      XELOGI("Turnip: MESA_SHADER_CACHE_DIR='{}' (512M) before driver load",
+             mesa_dir);
     }
     // General driver-env escape hatch: "VAR=val;VAR2=val2" -> setenv each before the
     // in-process dlopen. For MESA_GPU_TRACES/MESA_GPU_TRACEFILE (per-render-stage GPU

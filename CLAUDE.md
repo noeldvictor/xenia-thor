@@ -7,8 +7,10 @@ Three rules that apply before `AGENTS.md` is read:
 
 - Write in ASD-STE100 Simplified Technical English and follow the writing principle
   (`AGENTS.md` section 1). Update `AGENTS.md` when a rule or the state changes.
-- Use the xenia-thor MCP tools for every device action (`AGENTS.md` section 9). When the server
-  does not connect, import `tools/mcp/xenia_thor_mcp.py` from Python and call the same functions.
+- The debug server is inside the emulator app (HTTP, port 41337; `DebugServer.java` and
+  `debug_api_android.cc`). The PC MCP (`tools/mcp/xenia_thor_mcp.py`) is its client; adb is only
+  for install, port forward, launch, force-stop, and simpleperf (`AGENTS.md` section 9). When the
+  MCP does not connect, import the module from Python and call the same functions.
 - Every issue powers up the MCP: the fix commit also adds the tool or the reflex that gives the
   picture in one call next time (`AGENTS.md` section 9). The loop stays at: syntax check, a
   2-minute build, a 3-second install, one probe.

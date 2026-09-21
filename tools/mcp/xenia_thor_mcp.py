@@ -110,6 +110,73 @@ def _stamp() -> str:
     return datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
 
 
+# ---- the MCP inside the emulator (DebugServer.java, port 41337) -------------
+# The emulator process is itself an MCP server (http://127.0.0.1:41337/mcp,
+# registered in .mcp.json as "xenia-thor-device", reached through
+# `adb forward tcp:41337 tcp:41337` or wifi). Claude Code calls its tools
+# directly: status, fps, threads, log, memory, disasm, gpu, stall,
+# screenshot, toggles, toggle_set, cvar_get, cvar_set, press, route, pause,
+# stop. This PC server keeps only what the app cannot do to itself: device
+# status and preflight, the launch intent, force-stop, build and install,
+# simpleperf, the tombstones after a death, the probe workflow. The helpers
+# below let tools/thor scripts call the same endpoints from Python.
+API_PORT = 41337
+API_HOST = os.environ.get('XE_THOR_API_HOST', '127.0.0.1')
+_api_forwarded = False
+
+
+def _api_url(path: str) -> str:
+    return f'http://{API_HOST}:{API_PORT}{path}'
+
+
+def _api(path: str, method: str = 'GET', timeout: int = 20, raw: bool = False):
+    """One call to the in-app debug API. Returns parsed JSON (or bytes when
+    raw). Raises RuntimeError with the reason when the app is not reachable."""
+    import urllib.request
+    import urllib.error
+    global _api_forwarded
+    if API_HOST == '127.0.0.1' and not _api_forwarded:
+        _run(['adb', '-s', SERIAL, 'forward', f'tcp:{API_PORT}', f'tcp:{API_PORT}'])
+        _api_forwarded = True
+    req = urllib.request.Request(_api_url(path), method=method)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            body = r.read()
+    except (urllib.error.URLError, ConnectionError, OSError) as e:
+        raise RuntimeError(f'debug API not reachable at {_api_url(path)}: {e}; '
+                           'is the emulator running (xenia_launch)?')
+    if raw:
+        return body
+    text = body.decode('utf-8', errors='replace')
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return {'text': text[-4000:]}
+
+
+def _api_up() -> bool:
+    try:
+        _api('/', timeout=3)
+        return True
+    except RuntimeError:
+        return False
+
+
+@mcp.tool()
+def xenia_api(path: str, method: str = 'GET') -> str:
+    """Any endpoint of the in-app debug server: /status /fps /threads
+    /log?lines=&grep= /memory?addr=&len= /disasm?addr=&count= /gpu /stall
+    /toggles /cvar?name= (POST /cvar?name=&value=) POST /toggle?key=&enabled=1
+    POST /press?button=&hold_ms= POST /route?seq=START:150,wait:800,A
+    POST /pause?on=1 POST /stop. The server runs inside the emulator process;
+    this reaches it through adb forward or wifi (XE_THOR_API_HOST)."""
+    try:
+        r = _api(path, method)
+    except RuntimeError as e:
+        return json.dumps({'error': str(e)})
+    return json.dumps(r, indent=2)[:12000]
+
+
 @mcp.tool()
 def xenia_device_status() -> str:
     """Connection, running emulators, foreground app, temperatures, battery."""
@@ -171,6 +238,7 @@ def xenia_launch(target: str, force_stop_first: bool = True,
     extras are passed (CLAUDE.md directive 17): what this runs is what the user
     gets from the app. target: absolute path of the ISO, XEX, or content dir on
     the device."""
+    _run(['adb', '-s', SERIAL, 'forward', f'tcp:{API_PORT}', f'tcp:{API_PORT}'])
     if not skip_preflight:
         pre = json.loads(xenia_preflight())
         if not pre['ok']:
@@ -178,6 +246,9 @@ def xenia_launch(target: str, force_stop_first: bool = True,
     if force_stop_first:
         _shell(f'am force-stop {PKG}')
         time.sleep(1)
+    # A short title key (bd, banjo) resolves to its device path; a bare key
+    # passed as a path once started the emulator with no game (2026-09-20).
+    target = TITLES.get(target, target)
     uri = 'file://' + urllib.parse.quote(target)
     cmd = ' '.join(shlex.quote(a) for a in
                    ['am', 'start', '-n', LAUNCHER, '-a', 'android.intent.action.VIEW', '-d', uri])
@@ -217,15 +288,18 @@ def _press(button: str, hold_ms: int) -> str:
     return f'{button.upper()} ({code}) held {hold} ms: {"sent" if ok else out.strip()[:120]}'
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_press(button: str, hold_ms: int = 120) -> str:
     """Press one gamepad button in the running game: A, B, X, Y, DPAD_UP/DOWN/
     LEFT/RIGHT, START, BACK, LB, RB, LT, RT, LS, RS, GUIDE. Goes through the app's
     debug gamepad receiver, never through adb input keyevent."""
-    return _press(button, hold_ms)
+    try:
+        return json.dumps(_api(f'/press?button={button}&hold_ms={hold_ms}', 'POST'))
+    except RuntimeError:
+        return _press(button, hold_ms)
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_route(sequence: str, default_wait_ms: int = 800) -> str:
     """Replay a button route in the running game. sequence is space separated:
     a button name presses it (default hold 120 ms), NAME:hold_ms sets the hold,
@@ -345,7 +419,7 @@ def xenia_patch_set(title_id: str, name: str, enabled: bool) -> str:
     return f'no patch named "{name}" for {title_id}'
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_guest_dump(title: str = 'bd', base: int = 0x82000000, size_mb: int = 8,
                      at_guest_ms: int = 3000, out_name: str = '') -> str:
     """Dump guest memory of a title to a local file: sets the diagnostic
@@ -392,7 +466,7 @@ def xenia_guest_dump(title: str = 'bd', base: int = 0x82000000, size_mb: int = 8
     return json.dumps({'result': result, 'path': path, 'bytes': len(data)})
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_disasm(dump_path: str, address: int, count: int = 24, base: int = 0x82000000) -> str:
     """Disassemble PowerPC guest code from a guest memory dump (xenia_guest_dump)
     around a guest address: count instructions from address. Uses the bundled
@@ -538,6 +612,17 @@ def xenia_force_stop(disconnect_wifi_adb: bool = False) -> str:
     return json.dumps(result)
 
 
+# device MCP serves this; kept for tools/thor scripts
+def xenia_log(lines: int = 200, grep: str = '') -> str:
+    """The emulator's own log ring (last 8,192 lines, no logcat rotation),
+    from the in-app debug server. grep filters by substring."""
+    try:
+        rows = _api(f'/log?lines={lines}&grep={grep}', timeout=30)
+    except RuntimeError as e:
+        return json.dumps({'error': str(e)})
+    return '\n'.join(rows) if isinstance(rows, list) else json.dumps(rows)
+
+
 @mcp.tool()
 def xenia_logcat(pattern: str = '', lines: int = 200, xenia_only: bool = True,
                  save: bool = True) -> str:
@@ -569,7 +654,7 @@ def xenia_logcat_clear() -> str:
     return _adb('logcat', '-c') or 'cleared'
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_aot_progress() -> str:
     """Precompile state from the log: the last progress line, the pre-warm
     marker, and the done marker. Also the process state."""
@@ -588,7 +673,7 @@ def xenia_aot_progress() -> str:
     }, indent=2)
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_fps(window_lines: int = 400) -> str:
     """Recent GPU pass timing lines (gpu_frame_us, gpu_pass_us, between_us) and
     the title name. Gate on verts > 50000 before quoting a Blue Dragon number."""
@@ -623,20 +708,30 @@ def xenia_fps(window_lines: int = 400) -> str:
                        'presented': presented, 'last_lines': timing[-5:]}, indent=2)
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_screenshot(name: str = '') -> str:
     """Capture the screen to scratch/mcp and report the foreground package, so
     a capture of another session's app is never mistaken for ours."""
     os.makedirs(SCRATCH, exist_ok=True)
-    fg = _foreground()
     path = os.path.join(SCRATCH, f'{name or "screen"}-{_stamp()}.png')
+    # The in-app server copies the game surface itself (PixelCopy): always
+    # our app, no other session's screen.
+    try:
+        png = _api('/screenshot', timeout=30, raw=True)
+        if png[:4] == bytes([0x89]) + b'PNG':
+            with open(path, 'wb') as f:
+                f.write(png)
+            return json.dumps({'path': path, 'foreground': PKG, 'ours': True, 'source': 'debug API'})
+    except RuntimeError:
+        pass
+    fg = _foreground()
     _shell('screencap -p /data/local/tmp/xe_shot.png')
     _adb('pull', '/data/local/tmp/xe_shot.png', path)
     _shell('rm -f /data/local/tmp/xe_shot.png')
     return json.dumps({'path': path, 'foreground': fg, 'ours': PKG in fg})
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_backtrace(pid: Optional[int] = None) -> str:
     """Native backtrace of every thread in the emulator process (debuggerd -b).
     Use it when the UI watchdog reports the main thread wedged.
@@ -675,7 +770,7 @@ STALL_MARKERS = ('SPINLOCK STALL', 'A64 CRASH DIAG', 'guest crash', 'Fatal',
                  'ANR', 'watchdog')
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_stall(pid: Optional[int] = None, hot_threads: int = 3) -> str:
     """The whole stall picture in one call, for a title that stopped producing
     frames: the marker lines in the log (SPINLOCK STALL, A64 CRASH DIAG, guest
@@ -689,6 +784,30 @@ def xenia_stall(pid: Optional[int] = None, hot_threads: int = 3) -> str:
     pid = pid or _pid(PKG)
     if not pid:
         return json.dumps({'running': False})
+    # The in-app server gives the picture from inside: the last stall record,
+    # the hottest threads over one second, the badge history, the GPU counters.
+    try:
+        st = _api('/stall', timeout=30)
+        markers = _api('/log?lines=40&grep=STALL', timeout=30)
+        crash = _api('/log?lines=20&grep=CRASH DIAG', timeout=30)
+        st['markers'] = (markers if isinstance(markers, list) else []) + (crash if isinstance(crash, list) else [])
+        sp = st.get('spinlock', {})
+        hot = [r for r in st.get('hot_threads', []) if r.get('cpu_pct', 0) > 60]
+        fps = st.get('fps', [])
+        last_fps = fps[-1]['fps'] if fps else None
+        if sp.get('count', 0) and sp.get('age_ms', 10**9) < 30000:
+            st['verdict'] = f"spin lock {sp['lock']} held: spinner {sp['spinner_tid']} at lr {sp['lr']}"
+        elif hot and any('yield' in r.get('wchan', '') for r in hot):
+            st['verdict'] = 'a thread spins in sched_yield: xenia_profile(callgraph=True)'
+        elif hot:
+            st['verdict'] = f'{len(hot)} thread(s) run at full speed with fps {last_fps}: CPU-bound or a guest spin; xenia_profile'
+        elif last_fps == 0.0:
+            st['verdict'] = 'no frames and no hot thread: every guest thread waits; /threads shows lr and wait_reason'
+        else:
+            st['verdict'] = f'frames flow at {last_fps} fps'
+        return json.dumps(st, indent=1)[:12000]
+    except RuntimeError:
+        pass
     log = _shell(f'logcat -d --pid={pid} -s xenia', timeout=120)
     # Unique marker lines with a count, so 121 copies of one benign
     # "unimplemented" line do not hide the one SPINLOCK STALL line.
@@ -734,9 +853,35 @@ def xenia_stall(pid: Optional[int] = None, hot_threads: int = 3) -> str:
                        'markers': markers[-12:], 'hot_threads': rows}, indent=2)
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
+def xenia_shader_cache() -> str:
+    """Is the GPU thread compiling shaders? The VulkanPipelineCache lines of
+    the current log (a line per 64 pipelines with the creation time, the seed
+    line, the persist lines) and the cache files on the device: the
+    VkPipelineCache blob and Mesa's own disk cache (files/vk_pipeline_cache).
+    Pipeline creation was 74 % of the command processor thread in Banjo's
+    first world at 2 fps (2026-09-20); a second run must show a seed line and
+    fewer creation ms."""
+    log = _adb('logcat', '-d', '-s', 'xenia:*', timeout=180)
+    lines = [l[l.find('> ') + 2:].strip()[:200] for l in log.splitlines()
+             if 'VulkanPipelineCache' in l or 'MESA_SHADER_CACHE' in l]
+    files = _run_as('ls -la files/vk_pipeline_cache 2>/dev/null; '
+                    'du -sk files/vk_pipeline_cache/mesa 2>/dev/null; '
+                    'find files/vk_pipeline_cache/mesa -type f 2>/dev/null | wc -l')
+    return json.dumps({'log': lines[-12:], 'device_files': files.strip().splitlines()[-8:]},
+                      indent=2)
+
+
+# device MCP serves this; kept for tools/thor scripts
 def xenia_threads(pid: Optional[int] = None, top: int = 20) -> str:
     """Per-thread CPU use, nice value and name of the emulator process."""
+    try:
+        rows = _api('/threads')
+        if isinstance(rows, list):
+            rows.sort(key=lambda r: -r.get('cpu_ticks', 0))
+            return json.dumps(rows[:top], indent=1)
+    except RuntimeError:
+        pass
     pid = pid or _pid(PKG)
     if not pid:
         return 'xenia is not running'
@@ -746,7 +891,7 @@ def xenia_threads(pid: Optional[int] = None, top: int = 20) -> str:
     return '\n'.join(rows[:1] + body[:top])
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_memory(pid: Optional[int] = None) -> str:
     """Where the memory goes: RSS, PSS, native heap, and the size of the object
     cache and code caches under the app files directory."""
@@ -800,7 +945,7 @@ def _pref_bools(xml: str) -> dict:
     return {k: v == 'true' for k, v in re.findall(r'<boolean name="([^"]+)" value="(true|false)"', xml)}
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_toggles() -> str:
     """Every optimization toggle in the app menu: key, title, default, the value
     set on the device, and the cvars it drives. This is the control surface
@@ -812,7 +957,7 @@ def xenia_toggles() -> str:
     return json.dumps(rows, indent=1)
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_toggle_set(key: str, enabled: bool) -> str:
     """Set one app menu toggle on the device, exactly as tapping it in Settings.
     Refuses while the app runs (the app caches preferences in memory). The
@@ -843,7 +988,7 @@ def xenia_toggle_set(key: str, enabled: bool) -> str:
     return json.dumps({'ok': now == enabled, 'key': key, 'device': now})
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_config_get(key: str = '') -> str:
     """Read the persisted device config (files/xenia.config.toml). It overrides
     compiled defaults; only intent extras beat it. Empty key returns all lines."""
@@ -854,7 +999,7 @@ def xenia_config_get(key: str = '') -> str:
     return '\n'.join(rows) or f'{key} not in config'
 
 
-@mcp.tool()
+# device MCP serves this; kept for tools/thor scripts
 def xenia_config_set(key: str, value: str) -> str:
     """Set one key in the persisted device config. value is written as given,
     so quote strings ("\"x\"") and use true/false for booleans."""

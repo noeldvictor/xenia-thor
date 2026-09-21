@@ -228,6 +228,16 @@ $nativeTask = ":app:externalNativeBuild$Variant"
 if ($LASTEXITCODE -ne 0) {
     throw "tools/mcp/xenia_thor_mcp.py does not compile; fix it before building"
 }
+# The NDK makefiles (build/*.prj.Android.mk) list every source file and are
+# generated. A new .cc is invisible to the build until premake runs again
+# (debug_api_android.cc linked to nothing on 2026-09-20). Premake takes 2 s,
+# so it runs before every native build.
+if ($Mode -in @("NativeCore", "FullApk", "FullDeploy")) {
+    & (Join-Path $RepoRoot "tools\build\bin\premake5.exe") --file=premake5.lua --os=android androidndk | Select-Object -Last 1
+    if ($LASTEXITCODE -ne 0) {
+        throw "premake5 androidndk failed"
+    }
+}
 
 switch ($Mode) {
     "FullApk" {

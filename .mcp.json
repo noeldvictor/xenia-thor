@@ -2,8 +2,16 @@
   "mcpServers": {
     "xenia-thor": {
       "command": "python",
-      "args": ["tools/mcp/xenia_thor_mcp.py"],
-      "env": { "XE_THOR_SERIAL": "c3ca0370" }
+      "args": [
+        "tools/mcp/xenia_thor_mcp.py"
+      ],
+      "env": {
+        "XE_THOR_SERIAL": "c3ca0370"
+      }
+    },
+    "xenia-thor-device": {
+      "type": "http",
+      "url": "http://127.0.0.1:41337/mcp"
     }
   }
 }

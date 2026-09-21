@@ -21,6 +21,7 @@
 #include "xenia/base/atomic.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
+#include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/mutex.h"
@@ -1897,6 +1898,34 @@ static void MaybeLog() {
 }
 }  // namespace spinlock_stats
 
+// The last stall, for the debug API (one struct, relaxed atomics: a torn
+// read gives a mixed report, never a fault).
+namespace {
+struct SpinlockStallRecord {
+  std::atomic<uint32_t> count{0};
+  std::atomic<uint32_t> lock{0};
+  std::atomic<uint32_t> owner_pcr{0};
+  std::atomic<uint32_t> spinner_tid{0};
+  std::atomic<uint32_t> lr{0};
+  std::atomic<uint64_t> when_ms{0};
+};
+SpinlockStallRecord g_spinlock_stall;
+}  // namespace
+
+std::string xeSpinlockStallReportJson() {
+  uint64_t when = g_spinlock_stall.when_ms.load(std::memory_order_relaxed);
+  uint64_t now = xe::Clock::QueryHostUptimeMillis();
+  return fmt::format(
+      "{{\"count\":{},\"lock\":\"{:08X}\",\"owner_pcr\":\"{:08X}\","
+      "\"spinner_tid\":\"{:08X}\",\"lr\":\"{:08X}\",\"age_ms\":{}}}",
+      g_spinlock_stall.count.load(std::memory_order_relaxed),
+      g_spinlock_stall.lock.load(std::memory_order_relaxed),
+      g_spinlock_stall.owner_pcr.load(std::memory_order_relaxed),
+      g_spinlock_stall.spinner_tid.load(std::memory_order_relaxed),
+      g_spinlock_stall.lr.load(std::memory_order_relaxed),
+      when ? now - when : 0);
+}
+
 uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
                                bool change_irql) {
   SCOPE_profile_cpu_i("guestsync", "SpinLockAcquire");
@@ -1951,6 +1980,14 @@ uint32_t xeKeKfAcquireSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,
         // count, owner (r13 at first acquire) and old irql there.
         const xe::be<uint32_t>* after =
             reinterpret_cast<const xe::be<uint32_t>*>(lock);
+        g_spinlock_stall.lock.store(lock_guest, std::memory_order_relaxed);
+        g_spinlock_stall.owner_pcr.store(owner_pcr, std::memory_order_relaxed);
+        g_spinlock_stall.spinner_tid.store(self ? self->thread_id() : 0,
+                                           std::memory_order_relaxed);
+        g_spinlock_stall.lr.store(uint32_t(ctx->lr), std::memory_order_relaxed);
+        g_spinlock_stall.when_ms.store(xe::Clock::QueryHostUptimeMillis(),
+                                       std::memory_order_relaxed);
+        g_spinlock_stall.count.fetch_add(1, std::memory_order_relaxed);
         XELOGE(
             "SPINLOCK STALL: lock={:08X} owner_pcr={:08X} owner_tid={:08X} "
             "spinner_tid={:08X} spinner_lr={:08X} our_pcr={:08X} r13={:016X} "

@@ -21,6 +21,12 @@ uint64_t VulkanPerfCountersNow();
 
 void VulkanPerfCountersRecordIssueSwap();
 uint64_t VulkanPerfCountersGetIssueSwapCount();
+// Always on (not gated on vulkan_trace_perf_counters): graphics pipelines
+// created in this process and the milliseconds spent in their creation. The
+// debug API reports them; a rising count during play means the driver
+// compiles shaders on the command processor thread.
+void VulkanPipelineStatsRecord(uint64_t create_ms);
+void VulkanPipelineStatsGet(uint64_t* out_count, uint64_t* out_ms);
 void VulkanPerfCountersRecordGraphicsPipelineCacheHit();
 void VulkanPerfCountersRecordGraphicsPipelineCreate(uint64_t start_ticks,
                                                     int32_t result);

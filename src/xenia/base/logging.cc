@@ -211,9 +211,56 @@ void AndroidLogSink::WriteLineBuffer() {
   line_buffer_[line_buffer_used_] = '\0';
   // Write.
   __android_log_write(current_priority_, tag_.c_str(), line_buffer_);
+  logging::LogRingAppend(line_buffer_, line_buffer_used_);
   line_buffer_used_ = 0;
 }
 #endif  // XE_PLATFORM_ANDROID
+
+// The in-process log ring for the debug server (2026-09-20): logcat rotates
+// (40,000 lines in 15 s at a warm load) and a PC-side reader missed the
+// SPINLOCK STALL line twice. 8,192 lines of up to 255 bytes, 2 MB, one mutex.
+namespace {
+constexpr size_t kLogRingLines = 8192;
+constexpr size_t kLogRingLineBytes = 256;
+struct LogRing {
+  std::mutex mutex;
+  std::vector<char> lines = std::vector<char>(kLogRingLines * kLogRingLineBytes);
+  uint64_t next = 0;  // total lines appended
+};
+LogRing& log_ring() {
+  static LogRing ring;
+  return ring;
+}
+}  // namespace
+
+void logging::LogRingAppend(const char* text, size_t length) {
+  LogRing& ring = log_ring();
+  std::lock_guard<std::mutex> lock(ring.mutex);
+  char* slot = &ring.lines[(ring.next % kLogRingLines) * kLogRingLineBytes];
+  size_t copy = std::min(length, kLogRingLineBytes - 1);
+  std::memcpy(slot, text, copy);
+  slot[copy] = '\0';
+  ++ring.next;
+}
+
+std::vector<std::string> logging::LogRingTail(size_t max_lines,
+                                              std::string_view filter) {
+  std::vector<std::string> out;
+  LogRing& ring = log_ring();
+  std::lock_guard<std::mutex> lock(ring.mutex);
+  uint64_t first = ring.next > kLogRingLines ? ring.next - kLogRingLines : 0;
+  // Walk backwards so the newest max_lines matching lines are kept.
+  for (uint64_t i = ring.next; i > first && out.size() < max_lines; --i) {
+    const char* slot = &ring.lines[((i - 1) % kLogRingLines) * kLogRingLineBytes];
+    std::string_view line(slot);
+    if (!filter.empty() && line.find(filter) == std::string_view::npos) {
+      continue;
+    }
+    out.emplace_back(line);
+  }
+  std::reverse(out.begin(), out.end());
+  return out;
+}
 
 class Logger {
  public:

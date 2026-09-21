@@ -10,6 +10,8 @@
 #ifndef XENIA_KERNEL_XBOXKRNL_XBOXKRNL_THREADING_H_
 #define XENIA_KERNEL_XBOXKRNL_XBOXKRNL_THREADING_H_
 
+#include <string>
+
 #include "xenia/kernel/util/shim_utils.h"
 #include "xenia/xbox.h"
 
@@ -65,6 +67,10 @@ uint32_t xeNtQueueApcThread(uint32_t thread_handle, uint32_t apc_routine,
                             uint32_t apc_routine_context, uint32_t arg1,
                             uint32_t arg2, cpu::ppc::PPCContext* context);
 void xeKfLowerIrql(PPCContext* ctx, unsigned char new_irql);
+// The last spin-lock stall (a lock held over 2 s) as JSON for the debug API:
+// {"count":N,"lock":"..","owner_pcr":"..","spinner_tid":"..","lr":"..",
+//  "age_ms":N}. count is 0 when none happened.
+std::string xeSpinlockStallReportJson();
 unsigned char xeKfRaiseIrql(PPCContext* ctx, unsigned char new_irql);
 
 void xeKeKfReleaseSpinLock(PPCContext* ctx, X_KSPINLOCK* lock,

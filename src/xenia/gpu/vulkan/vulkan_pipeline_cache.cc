@@ -17,11 +17,13 @@
 #include <fstream>
 #include <memory>
 #include <system_error>
+#include <thread>
 #include <utility>
 #include <vector>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
+#include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
@@ -84,34 +86,57 @@ std::vector<uint8_t> LoadPipelineCacheData() {
   return data;
 }
 
-void SavePipelineCacheData(const ui::vulkan::VulkanDevice::Functions& dfn,
-                           VkDevice device, VkPipelineCache cache) {
+// Writes the blob to a temporary file, then renames it over the cache file, so
+// a force-stop in the middle of a write leaves the previous cache intact.
+void WritePipelineCacheFile(std::vector<uint8_t> data) {
+  const std::filesystem::path path = PipelineCacheFilePath();
+  const std::filesystem::path tmp = path.string() + ".tmp";
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+  {
+    std::ofstream file(tmp, std::ios::binary | std::ios::trunc);
+    if (!file) {
+      XELOGW("VulkanPipelineCache: could not open '{}' to persist the cache",
+             cvars::vulkan_pipeline_cache_path);
+      return;
+    }
+    file.write(reinterpret_cast<const char*>(data.data()),
+               static_cast<std::streamsize>(data.size()));
+    if (!file) {
+      XELOGW("VulkanPipelineCache: write of {} bytes failed", data.size());
+      return;
+    }
+  }
+  std::filesystem::rename(tmp, path, ec);
+  if (ec) {
+    XELOGW("VulkanPipelineCache: rename to '{}' failed: {}", path.string(),
+           ec.message());
+    return;
+  }
+  XELOGI("VulkanPipelineCache: persisted {} bytes to '{}'", data.size(),
+         path.string());
+}
+
+std::vector<uint8_t> GetPipelineCacheData(
+    const ui::vulkan::VulkanDevice::Functions& dfn, VkDevice device,
+    VkPipelineCache cache) {
+  std::vector<uint8_t> data;
   size_t data_size = 0;
   if (dfn.vkGetPipelineCacheData(device, cache, &data_size, nullptr) !=
           VK_SUCCESS ||
       data_size == 0) {
-    return;
-  }
-  std::vector<uint8_t> data(data_size);
-  if (dfn.vkGetPipelineCacheData(device, cache, &data_size, data.data()) !=
-      VK_SUCCESS) {
-    return;
+    return data;
   }
   data.resize(data_size);
-  const std::filesystem::path path = PipelineCacheFilePath();
-  std::error_code ec;
-  std::filesystem::create_directories(path.parent_path(), ec);
-  std::ofstream file(path, std::ios::binary | std::ios::trunc);
-  if (!file) {
-    XELOGW("VulkanPipelineCache: could not open '{}' to persist the cache",
-           cvars::vulkan_pipeline_cache_path);
-    return;
+  if (dfn.vkGetPipelineCacheData(device, cache, &data_size, data.data()) !=
+      VK_SUCCESS) {
+    data.clear();
+    return data;
   }
-  file.write(reinterpret_cast<const char*>(data.data()),
-             static_cast<std::streamsize>(data.size()));
-  XELOGI("VulkanPipelineCache: persisted {} bytes of pipeline cache to disk",
-         data.size());
+  data.resize(data_size);
+  return data;
 }
+
 
 }  // namespace
 
@@ -219,6 +244,9 @@ bool VulkanPipelineCache::Initialize() {
         pipeline_cache_create_info.pInitialData = initial_data.data();
         XELOGI("VulkanPipelineCache: seeding from {} bytes of on-disk cache",
                initial_data.size());
+      } else {
+        XELOGI("VulkanPipelineCache: no on-disk cache at '{}' yet",
+               PipelineCacheFilePath().string());
       }
     }
     dfn.vkCreatePipelineCache(vulkan_device->device(),
@@ -246,11 +274,7 @@ void VulkanPipelineCache::Shutdown() {
 
   // Persist the pipeline cache to disk (best effort) before destroying it, so
   // the next launch can skip re-compiling the shaders it already saw.
-  if (cvars::vulkan_persistent_pipeline_cache &&
-      !cvars::vulkan_pipeline_cache_path.empty() &&
-      pipeline_cache_ != VK_NULL_HANDLE) {
-    SavePipelineCacheData(dfn, device, pipeline_cache_);
-  }
+  SavePipelineCacheIfDue(true);
 
   // Destroy the in-memory pipeline cache.
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyPipelineCache, device,
@@ -2921,6 +2945,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
       ui::vulkan::VulkanPerfCountersEnabled()
           ? ui::vulkan::VulkanPerfCountersNow()
           : 0;
+  const uint64_t pipeline_create_ms_start = xe::Clock::QueryHostUptimeMillis();
   const VkResult pipeline_create_result = dfn.vkCreateGraphicsPipelines(
       device, pipeline_cache_, 1, &pipeline_create_info, nullptr, &pipeline);
   ui::vulkan::VulkanPerfCountersRecordGraphicsPipelineCreate(
@@ -2979,7 +3004,57 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   }
 
   creation_arguments.pipeline->second.pipeline = pipeline;
+  ++pipeline_create_count_;
+  const uint64_t create_ms =
+      xe::Clock::QueryHostUptimeMillis() - pipeline_create_ms_start;
+  pipeline_create_ms_ += create_ms;
+  ui::vulkan::VulkanPipelineStatsRecord(create_ms);
+  if ((pipeline_create_count_ & 63) == 0) {
+    XELOGI(
+        "VulkanPipelineCache: {} pipelines created, {} ms in creation "
+        "(last 64: {} ms)",
+        pipeline_create_count_, pipeline_create_ms_,
+        pipeline_create_ms_ - pipeline_create_ms_at_report_);
+    pipeline_create_ms_at_report_ = pipeline_create_ms_;
+  }
+  SavePipelineCacheIfDue(false);
   return true;
+}
+
+// Saves the cache to disk when at least 16 pipelines were created since the
+// last save and 20 s passed, or when forced. The blob is read on this thread
+// (the creator's thread, so the read is ordered after the creations) and
+// written by a detached thread, so the command processor does not wait for
+// the flash.
+void VulkanPipelineCache::SavePipelineCacheIfDue(bool force) {
+  if (!cvars::vulkan_persistent_pipeline_cache ||
+      cvars::vulkan_pipeline_cache_path.empty() ||
+      pipeline_cache_ == VK_NULL_HANDLE) {
+    return;
+  }
+  const uint64_t new_pipelines = pipeline_create_count_ - pipeline_count_at_save_;
+  if (!new_pipelines) {
+    return;
+  }
+  const uint64_t now_ms = xe::Clock::QueryHostUptimeMillis();
+  if (!force && (new_pipelines < 16 ||
+                 now_ms - pipeline_cache_last_save_ms_ < 20000)) {
+    return;
+  }
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  std::vector<uint8_t> data = GetPipelineCacheData(
+      vulkan_device->functions(), vulkan_device->device(), pipeline_cache_);
+  pipeline_count_at_save_ = pipeline_create_count_;
+  pipeline_cache_last_save_ms_ = now_ms;
+  if (data.empty()) {
+    return;
+  }
+  if (force) {
+    WritePipelineCacheFile(std::move(data));
+    return;
+  }
+  std::thread(WritePipelineCacheFile, std::move(data)).detach();
 }
 
 }  // namespace vulkan

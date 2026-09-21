@@ -397,6 +397,19 @@ class VulkanPipelineCache {
   // cache is spec-transparent vs VK_NULL_HANDLE (identical pipelines, just faster
   // creation) - no rendering change. Disk persistence + pre-warm is a follow-up.
   VkPipelineCache pipeline_cache_ = VK_NULL_HANDLE;
+  // Pipeline creation is the frame limiter when a scene brings new shader and
+  // state combinations: Banjo-Kazooie ran at 2 fps in its first world with
+  // 74 % of the command processor thread inside the Turnip driver
+  // (2026-09-20). These count the creations and their time, print a line every
+  // 64, and drive the periodic save of the cache to disk (the old save ran only
+  // in Shutdown, which a force-stop or a crash never reaches, so the on-disk
+  // cache never existed on the device).
+  uint64_t pipeline_create_count_ = 0;
+  uint64_t pipeline_create_ms_ = 0;
+  uint64_t pipeline_create_ms_at_report_ = 0;
+  uint64_t pipeline_count_at_save_ = 0;
+  uint64_t pipeline_cache_last_save_ms_ = 0;
+  void SavePipelineCacheIfDue(bool force);
 
   std::unordered_map<PipelineDescription, Pipeline, PipelineDescription::Hasher>
       pipelines_;

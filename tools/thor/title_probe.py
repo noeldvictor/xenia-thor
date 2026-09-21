@@ -43,12 +43,18 @@ def gpu_c(m):
 
 
 def fps_recent(m, seconds):
-    rows = m._adb('logcat', '-d', '-s', 'xenia-fps:*', timeout=60).splitlines()
+    # The badge history from the MCP inside the emulator (60 windows); the
+    # logcat line stays as the fallback when the app is not reachable.
     vals = []
-    for l in rows:
-        mm = re.search(r'fps=([0-9.]+) swaps=(\d+) window_ms=(\d+)', l)
-        if mm:
-            vals.append((float(mm.group(1)), int(mm.group(3))))
+    try:
+        for row in m._api('/fps', timeout=20):
+            vals.append((float(row['fps']), int(row['window_ms'])))
+    except RuntimeError:
+        rows = m._adb('logcat', '-d', '-s', 'xenia-fps:*', timeout=60).splitlines()
+        for l in rows:
+            mm = re.search(r'fps=([0-9.]+) swaps=(\d+) window_ms=(\d+)', l)
+            if mm:
+                vals.append((float(mm.group(1)), int(mm.group(3))))
     acc, out = 0, []
     for v, w in reversed(vals):
         out.append(v)
@@ -94,13 +100,18 @@ def main():
             time.sleep(5)
             if m._pid(m.PKG) != pid:
                 result = 'died during load'; break
-            log = m._shell(f'logcat -d --pid={pid} -s xenia', timeout=120)
-            if 'pre-warmed' in log:
-                pw = [l for l in log.splitlines() if 'pre-warmed' in l]
+            # The load is done when the in-app log ring holds the pre-warm
+            # line (the precompile pass ended); the title comes from /status.
+            try:
+                pw = m._api('/log?lines=4&grep=pre-warmed', timeout=30)
+            except RuntimeError:
+                pw = []
+            if pw:
                 print(f'+{time.time() - t0:.0f}s loaded:', pw[0][pw[0].find('pre-warmed'):].strip()[:80])
-                for l in log.splitlines():
-                    if 'Title name:' in l or 'Patcher: title' in l or 'Applying patch' in l:
-                        print('   ', l[l.find('i> '):].strip()[:150])
+                st = m._api('/status', timeout=20)
+                print(f'    title {st.get("title_id")} {st.get("title_name")}')
+                for l in m._api('/log?lines=6&grep=patch', timeout=20) or []:
+                    print('   ', l[:150])
                 break
         else:
             result = 'load timeout'

@@ -13,6 +13,8 @@
 #include <cstdarg>
 #include <cstdint>
 #include <string>
+#include <string_view>
+#include <vector>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/string.h"
@@ -105,6 +107,12 @@ void AppendLogLineFormat(LogLevel log_level, const char prefix_char,
 // Appends a line to the log.
 void AppendLogLine(LogLevel log_level, const char prefix_char,
                    const std::string_view str);
+
+// The in-process ring of the last 8,192 log lines (Android only; elsewhere
+// the ring stays empty). The debug server reads it; logcat rotation does not
+// affect it.
+void LogRingAppend(const char* text, size_t length);
+std::vector<std::string> LogRingTail(size_t max_lines, std::string_view filter);
 
 }  // namespace logging
 

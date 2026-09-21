@@ -995,6 +995,7 @@ public class EmulatorActivity extends WindowedAppActivity {
         setupFpsOverlay(launchArguments);
         setupInGameMenu();
         registerDebugGamepadReceiver();
+        DebugServer.start(this);
         // Draw the compile overlay IMMEDIATELY, before native init and before
         // anything can stall the UI thread.
         //
@@ -1469,6 +1470,7 @@ public class EmulatorActivity extends WindowedAppActivity {
     @Override
     protected void onResume() {
         super.onResume();
+        mDebugResumed = true;
         if (mRefreshFpsFromPreferencesOnResume) {
             mRefreshFpsFromPreferencesOnResume = false;
             setShowFps(XeniaAndroidSettings.getPreferences(this).getBoolean(
@@ -1480,6 +1482,7 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     @Override
     protected void onPause() {
+        mDebugResumed = false;
         stopFpsTicker();
         super.onPause();
     }
@@ -1495,6 +1498,7 @@ public class EmulatorActivity extends WindowedAppActivity {
         }
         mAotWatcherThread = null;
         unregisterDebugGamepadReceiver();
+        DebugServer.stopServer();
         super.onDestroy();
     }
 
@@ -2255,6 +2259,44 @@ public class EmulatorActivity extends WindowedAppActivity {
         mFpsCallbackScheduled = false;
     }
 
+    // ---- hooks for DebugServer (the in-app debug API, 2026-09-20) --------
+    private volatile boolean mDebugResumed;
+    private final String[] mDebugFpsHistory = new String[60];
+    private int mDebugFpsHistoryNext;
+
+    boolean debugIsResumed() {
+        return mDebugResumed;
+    }
+
+    /** The last 60 badge windows, oldest first, as a JSON array. */
+    String debugFpsHistoryJson() {
+        final StringBuilder sb = new StringBuilder("[");
+        synchronized (mDebugFpsHistory) {
+            final int n = Math.min(mDebugFpsHistoryNext, mDebugFpsHistory.length);
+            final int start = mDebugFpsHistoryNext - n;
+            for (int i = 0; i < n; ++i) {
+                if (i > 0) {
+                    sb.append(',');
+                }
+                sb.append(mDebugFpsHistory[(start + i) % mDebugFpsHistory.length]);
+            }
+        }
+        return sb.append(']').toString();
+    }
+
+    /** One mapped gamepad key through the same path as a real pad; UI thread. */
+    void debugInjectKey(final int mappedKeyCode, final int holdMs) {
+        injectDebugGamepadKey(mappedKeyCode, holdMs);
+    }
+
+    void debugSetPaused(final boolean paused) {
+        nativeSetEmulatorPaused(paused);
+    }
+
+    WindowSurfaceView debugSurfaceView() {
+        return findViewById(R.id.emulator_surface_view);
+    }
+
     private void updateFpsCounter(final long nowNs) {
         if (!mShowFps || mFpsOverlay == null) {
             return;
@@ -2286,6 +2328,13 @@ public class EmulatorActivity extends WindowedAppActivity {
         // trace cvar is set. Tag xenia-fps.
         android.util.Log.i("xenia-fps", String.format(Locale.US,
                 "fps=%.1f swaps=%d window_ms=%d", fps, guestSwapDelta, elapsedNs / 1000000L));
+        synchronized (mDebugFpsHistory) {
+            mDebugFpsHistory[mDebugFpsHistoryNext % mDebugFpsHistory.length] =
+                    String.format(Locale.US, "{\"t_ms\":%d,\"fps\":%.1f,\"swaps\":%d,\"window_ms\":%d}",
+                            android.os.SystemClock.uptimeMillis(), fps, guestSwapDelta,
+                            elapsedNs / 1000000L);
+            ++mDebugFpsHistoryNext;
+        }
         mFpsWindowStartNs = nowNs;
         mFpsLastGuestSwapCount = guestSwapCount;
     }

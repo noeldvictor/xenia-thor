@@ -533,7 +533,13 @@ bool Memory::AccessViolationCallback(
   }
   uint32_t virtual_address = HostToGuestVirtual(host_address);
   BaseHeap* heap = LookupHeap(virtual_address);
-  if (heap->heap_type() != HeapType::kGuestPhysical) {
+  // A guest access into a gap between heaps has no heap. Until 2026-09-20
+  // this read heap_type() through null, so the fault handler itself faulted
+  // at host address 0x18, the report showed guest_pc=0, and the thread
+  // re-faulted forever with the global lock held (Banjo-Kazooie, after a
+  // null critical section). Return false: the fault is reported as the
+  // guest's own unhandled access, with its guest pc.
+  if (!heap || heap->heap_type() != HeapType::kGuestPhysical) {
     return false;
   }
 

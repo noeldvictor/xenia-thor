@@ -189,6 +189,21 @@ uint64_t VulkanPerfCountersGetIssueSwapCount() {
       std::memory_order_relaxed);
 }
 
+namespace {
+std::atomic<uint64_t> g_pipeline_stats_count{0};
+std::atomic<uint64_t> g_pipeline_stats_ms{0};
+}  // namespace
+
+void VulkanPipelineStatsRecord(uint64_t create_ms) {
+  g_pipeline_stats_count.fetch_add(1, std::memory_order_relaxed);
+  g_pipeline_stats_ms.fetch_add(create_ms, std::memory_order_relaxed);
+}
+
+void VulkanPipelineStatsGet(uint64_t* out_count, uint64_t* out_ms) {
+  *out_count = g_pipeline_stats_count.load(std::memory_order_relaxed);
+  *out_ms = g_pipeline_stats_ms.load(std::memory_order_relaxed);
+}
+
 void VulkanPerfCountersRecordGraphicsPipelineCacheHit() {
   if (!VulkanPerfCountersEnabled()) {
     return;

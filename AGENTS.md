@@ -321,10 +321,22 @@ Port rules:
   x64 corpus 14,333 failures, unchanged. Device tests are owed; the list is in
   `docs/research/20260918-upstream-triage.md`, section "Port status".
 
-## 9. Device control: the xenia-thor MCP server
+## 9. Device control: the debug server inside the emulator, and the MCP client
 
-`tools/mcp/xenia_thor_mcp.py` is a stdio MCP server registered in `.mcp.json`. Use its tools for every
-device action instead of ad-hoc adb commands. Each tool applies the device rules.
+**The server is inside the emulator (user, 2026-09-20).** `DebugServer.java` runs in the emulator
+process and serves HTTP on port 41337 (debug builds). Its endpoints read the running engine directly
+through `src/xenia/ui/debug_api_android.cc`: `/status`, `/fps`, `/threads` (kernel threads with host
+tid, CPU ticks, state, wait reason, lr, r1, r3), `/log` (the in-process ring of 8,192 lines; logcat
+rotation does not touch it), `/memory`, `/disasm`, `/gpu` (swap count, pipelines created, creation
+ms), `/stall` (the last spin-lock stall, the hottest threads over one second, the badge history),
+`/screenshot` (PixelCopy of the game surface), `/toggles`, `/cvar`, and the actions `/press`,
+`/route`, `/toggle`, `/pause`, `/stop`. Reach it with `adb forward tcp:41337 tcp:41337` or over
+wifi (`XE_THOR_API_HOST=192.168.1.33`).
+
+`tools/mcp/xenia_thor_mcp.py` is the PC-side MCP client, a stdio server registered in `.mcp.json`.
+Its tools call the in-app server first (`_api()`), and use adb only for what the app cannot do to
+itself: install, port forward, the launch intent, force-stop, and simpleperf. `xenia_api` reaches any
+endpoint. When a tool still runs an adb command that the app could answer, move it into the app.
 
 | tool | what it does |
 |---|---|
@@ -348,7 +360,8 @@ device action instead of ad-hoc adb commands. Each tool applies the device rules
 | `xenia_probe` | launch a title, wait for the load, screenshot timeline with fps per interval, optional route, crash picture |
 | `xenia_patches`, `xenia_patch_set` | the game patch files on the device: list and toggle one `[[patch]]` by name, as the Game Patches screen does |
 | `xenia_guest_dump`, `xenia_disasm` | dump guest memory of a title to `scratch/mcp/` (diagnostic cvars, restored after), and disassemble PowerPC from a dump |
-| `xenia_stall` | the stall picture in one call: stall markers in the log (`SPINLOCK STALL`, `A64 CRASH DIAG`, `GPU is hung`), the FPS badge, GPU busy, the hottest threads with state and wait channel, and a verdict. `xenia_probe` calls it by itself after two intervals without a frame |
+| `xenia_stall` | the stall picture in one call from inside the app: the last spin-lock stall record, the hottest threads over one second with wait channel, the badge history, the GPU counters, the stall and crash lines of the log ring, and a verdict. `xenia_probe` calls it by itself after two intervals without a frame |
+| `xenia_api`, `xenia_log`, `xenia_shader_cache` | any endpoint of the in-app server; the in-process log ring with a filter; the pipeline creation lines and the cache files on the device |
 
 Rules that stay in force with the MCP: force-stop after every run, never use `adb shell input keyevent`,
 say the battery level when you launch, and stop polling when the user says stop.
