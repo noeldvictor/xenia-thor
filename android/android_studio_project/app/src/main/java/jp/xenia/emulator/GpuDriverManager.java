@@ -66,6 +66,13 @@ public final class GpuDriverManager {
     }
 
     /** A curated, one-tap recommended driver (verified download URLs). */
+    /**
+     * A catalog URL of the form {@code latest://owner/repo} names a GitHub
+     * repository whose newest release holds the driver zip. It is resolved at
+     * download time through the releases API, so the catalog never goes stale.
+     */
+    public static final String LATEST_SCHEME = "latest://";
+
     public static final class Recommended {
         public final String title;
         public final String summary;
@@ -96,6 +103,14 @@ public final class GpuDriverManager {
 
     static {
         final ArrayList<Recommended> list = new ArrayList<>();
+        list.add(new Recommended(
+                "Banners-Turnip latest (A7xx)",
+                "The build the APK bundles, but the newest release: The412Banner/"
+                        + "Banners-Turnip rebuilds Mesa Turnip on every upstream commit. "
+                        + "Resolved through the GitHub releases API at download time. "
+                        + "Bleeding-edge: validate on your games after each update.",
+                LATEST_SCHEME + "The412Banner/Banners-Turnip",
+                false));
         list.add(new Recommended(
                 "Turnip v26.0.0 R8",
                 "Latest stable Mesa Turnip for Adreno 7xx — the recommended default. "
@@ -347,12 +362,71 @@ public final class GpuDriverManager {
 
     // ---- install ----------------------------------------------------------
 
+    /**
+     * Resolve {@code latest://owner/repo} to the download URL of the A6xx/A7xx
+     * asset of the newest release: the {@code Turnip-v*.zip} asset with no
+     * variant suffix (no "A8xx", no "Test"), the same rule as
+     * tools/update_turnip.py.
+     */
+    public static String resolveLatestAssetUrl(final String latestUrl) throws IOException {
+        final String repo = latestUrl.substring(LATEST_SCHEME.length()).trim();
+        if (!repo.matches("[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")) {
+            throw new IllegalArgumentException("Bad repository: " + repo);
+        }
+        final URL api = new URL("https://api.github.com/repos/" + repo + "/releases/latest");
+        final HttpURLConnection connection = (HttpURLConnection) api.openConnection();
+        connection.setConnectTimeout(20000);
+        connection.setReadTimeout(30000);
+        connection.setRequestProperty("User-Agent", "xenia-thor");
+        connection.setRequestProperty("Accept", "application/vnd.github+json");
+        try {
+            connection.connect();
+            final int code = connection.getResponseCode();
+            if (code / 100 != 2) {
+                throw new IOException("GitHub API failed (HTTP " + code + ")");
+            }
+            final StringBuilder body = new StringBuilder();
+            try (java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(connection.getInputStream(),
+                            java.nio.charset.StandardCharsets.UTF_8))) {
+                final char[] buf = new char[8192];
+                int read;
+                while ((read = reader.read(buf)) > 0) {
+                    body.append(buf, 0, read);
+                }
+            }
+            final org.json.JSONObject release = new org.json.JSONObject(body.toString());
+            final org.json.JSONArray assets = release.optJSONArray("assets");
+            final ArrayList<String> names = new ArrayList<>();
+            if (assets != null) {
+                for (int i = 0; i < assets.length(); i++) {
+                    final org.json.JSONObject asset = assets.getJSONObject(i);
+                    final String name = asset.optString("name", "");
+                    names.add(name);
+                    if (name.matches("Turnip-v[^/]*?\\.zip")
+                            && !name.contains("A8xx") && !name.contains("Test")) {
+                        return asset.getString("browser_download_url");
+                    }
+                }
+            }
+            throw new IOException("No A6xx/A7xx asset in " + release.optString("tag_name", "?")
+                    + "; assets: " + names);
+        } catch (final org.json.JSONException e) {
+            throw new IOException("Bad GitHub API response", e);
+        } finally {
+            connection.disconnect();
+        }
+    }
+
     /** Download an ADPKG zip over http(s) and install it. Runs synchronously. */
     public static GpuDriverPackage installFromUrl(
             final Context context, final String urlString) throws IOException {
-        final String trimmed = urlString != null ? urlString.trim() : "";
+        String trimmed = urlString != null ? urlString.trim() : "";
         if (trimmed.isEmpty()) {
             throw new IllegalArgumentException("Enter a driver download URL");
+        }
+        if (trimmed.startsWith(LATEST_SCHEME)) {
+            trimmed = resolveLatestAssetUrl(trimmed);
         }
         final URL url = new URL(trimmed);
         final String protocol = url.getProtocol();

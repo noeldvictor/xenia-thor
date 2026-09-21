@@ -1,112 +1,106 @@
 # xenia-thor
 
-**An AI experiment, not an emulator you should use.**
+**An AI experiment, not an emulator for users.**
 
-`xenia-thor` is a personal fork of Xenia where essentially all of the work is
-done by an agentic AI coding assistant, aimed at one device: the AYN Thor /
-Thor Max (Snapdragon 8 Gen 2, Adreno 740, Android ARM64). The point of the
-repository is the experiment — can an AI agent do sustained, measured, low-level
-emulator engineering — not the resulting binary.
+`xenia-thor` is a personal fork of Xenia. An agentic AI coding assistant does almost all of the
+work. The target is one device: the AYN Thor and Thor Max (Snapdragon 8 Gen 2, Adreno 740, native
+Android, `arm64-v8a`). The repository exists for the experiment: can an AI agent do sustained,
+measured, low-level emulator engineering. The binary is a by-product.
 
-It is **extremely unstable**. It breaks from commit to commit, on purpose.
+It is unstable. It breaks from commit to commit, by design.
 
----
+## No support
 
-## Read this before doing anything else
+- Do not ask the Xenia project, the Xenia Discord, or any emulator community for help with this
+  fork. They did not write it and cannot fix it.
+- Do not report anything from this fork upstream. A crash here is almost always this fork's bug.
+- Do not cite this fork as evidence that Xenia supports Android or the AYN Thor. It does not.
+- Do not treat anything here as a compatibility claim. A game that works in one commit worked once,
+  on one device, in one scene.
+- There are no releases, no prebuilt APKs, and no install instructions for users.
 
-**There is no support. None. Not from me, and absolutely not from upstream.**
+## Thanks to the Xenia developers
 
-- **Do not ask the Xenia project, the Xenia Discord, or any emulator community
-  for help with this fork.** They did not write it, they cannot fix it, and it
-  is not their responsibility.
-- **Do not report anything from this fork upstream.** Crashes here are almost
-  always mine, not theirs.
-- **Do not cite this as evidence that Xenia supports Android or the AYN Thor.**
-  It does not.
-- **Do not treat anything here as a compatibility claim.** A game "working" in
-  one commit means it worked once, on one device, on one scene.
-- **There are no releases, no builds, and no install instructions for users.**
-  If you want to run it: build it yourself, debug it yourself, keep the pieces.
-
-If it breaks, that is the expected outcome. You are on your own — by design.
-
-## Thanks to the actual Xenia developers
-
-Everything of value underneath this fork is theirs. Years of research,
-engineering, and open-source work made it possible for an AI agent to have
-something worth experimenting on at all.
+Everything of value under this fork is theirs: years of research, engineering, and open-source
+work. This fork is not their problem.
 
 - [xenia-project/xenia](https://github.com/xenia-project/xenia)
 - [xenia.jp](https://xenia.jp/)
+- [xenia-canary/xenia-canary](https://github.com/xenia-canary/xenia-canary), the base of this fork
+- [has207/xenia-edge](https://github.com/has207/xenia-edge) and
+  [rfandango/XenDroid](https://github.com/rfandango/XenDroid), the compatibility references
 
-Please respect their time. **This fork is not their problem.**
+## What the work is
 
----
+One device, one architecture, measured changes.
 
-## What the experiment is actually about
+- **CPU.** PowerPC guest code runs through the ARM64 (`a64`) JIT backend and an LLVM
+  whole-function recompiler with an ahead-of-time precompile at launch. No x86 code is in the APK.
+  Much of the work removes structure the a64 backend inherited from the x64 backend it was derived
+  from (two-operand destructive forms, a 7-register budget, TSO assumptions).
+- **GPU.** Vulkan on Mesa Turnip, for the Adreno 740's tiled renderer. The Qualcomm driver is not
+  used; the driver ships inside the APK.
+- **Method.** A performance claim survives a device measurement or it is recorded as unproven.
+  Run-to-run drift on this device is about 2.8 %, larger than most effects, so measurements are
+  matched pairs in one session with equal thermal starts, frame generation off, and a captured
+  gameplay route. Menus and videos are not tests. Negative results are recorded with the same care
+  as wins in `docs/research/experiments.db` (`python tools/exp_ledger.py check "<keyword>"`).
+- **Control surface.** Every behavior lever is a toggle in the app menu, or a game patch in the
+  Game Patches screen. No cvar extras: a launch the user cannot repeat from the play button is not
+  a result.
 
-One device, one architecture, measured changes:
+## State on 2026-09-20
 
-- **CPU:** the ARM64 (`a64`) JIT backend and an LLVM whole-function recompiler.
-  Most of the current work is finding places where the backend inherited **x86's
-  two-operand destructive model** from the x64 backend it was derived from, and
-  rethinking them for AArch64's three-operand, non-destructive ISA.
-- **GPU:** Vulkan on Mesa Turnip, targeting the Adreno 740's TBDR behaviour.
-- **Method:** every performance claim has to survive a real measurement, or it
-  gets recorded as unproven and dropped.
-
-The measurement discipline matters more than any individual change, because
-run-to-run drift on this device (~2.8%) is larger than most effects being
-tested. Comparing two builds cannot resolve them. So: one session, both arms
-behind a cvar, equal thermal starts, a drift-control arm, frame cap **off**, and
-guest-throughput as the metric rather than fps — a frame cap hides exactly the
-CPU headroom you are trying to measure.
-
-Negative results are recorded as carefully as wins, in
-`docs/research/experiments.db` (`python tools/exp_ledger.py check "<keyword>"`).
-Several plausible optimisations in this repo are marked DEAD **because they were
-measured**, not because they were untried.
+- Blue Dragon: 9.9 fps in the village field on the play-button path; 15.8 fps with the bundled
+  "No anti-aliasing, single pass" game patch (the game's own 1x path, which also ends its
+  predicated tiling). Blue Dragon is low priority now: [re:Blue](https://github.com/zolaware/reblue)
+  is a native recompilation of it.
+- Banjo-Kazooie: Nuts & Bolts: compiles (38,104 functions) and plays the intro, then stalls on the
+  loading screen after a guest null read; under investigation.
+- The AOT precompile no longer dies on large titles: JIT code lives in 64 MB slabs instead of two
+  VMAs per function (`vm.max_map_count`).
+- The object cache works on the play-button path (Blue Dragon: 414 s cold, 15 s warm). Settings
+  shows its size and can delete it.
+- Game patches apply before the precompile; before this date every patch was inert on Android.
 
 ## Building
 
-There are no prebuilt APKs. The Android build:
+No prebuilt APKs. Windows host, Android NDK r25, ARM64 only.
 
-```bash
-# The path must not contain spaces; a junction avoids that.
-cmd /c mklink /J C:\xt "<repo>"
-cmd /c "C:\xt\android\android_studio_project\gradlew.bat -p C:\xt\android\android_studio_project :app:assembleGithubDebug"
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode NativeCore
+powershell -NoProfile -ExecutionPolicy Bypass -File tools\thor\thor_build.ps1 -Mode ApkShellDeploy -DeviceSerial c3ca0370
 ```
 
-Output lands in `android/android_studio_project/app/build/outputs/apk/`.
-
-Desktop builds (used for GPU structure work, not for the device) go through
-premake + MSBuild; see `CLAUDE.md`.
+`NativeCore` builds `libxenia-app.so` with the NDK (about 3 to 7 minutes). `ApkShell` packages the
+APK in seconds. The build script generates `build/version.h` and the object-cache stamp, and refuses
+to build if the MCP server does not compile. Desktop builds (PC trace replay, PC kernel checks) go
+through premake and MSBuild; see `AGENTS.md` section 10.
 
 ## Device work
 
-Helper scripts for the Thor live in `tools/thor/` and `tools/thor_launch.sh`.
-Two traps worth knowing if you ignore the advice above and try anyway:
-
-- A bare `adb shell am start` runs the **Qualcomm** driver, not Turnip, and
-  silently invalidates every GPU measurement. `tools/thor_launch.sh` passes the
-  driver extras explicitly and verifies the device prints as
-  `Turnip Adreno (TM) 740`.
-- If the panel is asleep the activity never gets a surface and every frame is
-  dropped, while a screenshot returns pure black and the emulator looks broken.
-  Check `dumpsys power | grep mWakefulness` first.
+`tools/mcp/xenia_thor_mcp.py` is a stdio MCP server over adb, registered in `.mcp.json`. Every
+device action goes through it: preflight (heat, battery, screen awake, another emulator running),
+launch through the play button's path, force-stop, logs, screenshots, fps, toggles, config, game
+patches, button presses and routes, crash picture, guest memory dump and disassembly, and a
+profiler (system sampling plus simpleperf). The rules it enforces are in `AGENTS.md` sections 5, 6,
+and 9. Experiment scripts with their abort conditions live in `tools/thor/`.
 
 ## Layout
 
-- `CLAUDE.md` — the working agreement, device facts, and hard-won gotchas.
-- `AGENTS.md` — agent instructions.
-- `docs/research/` — findings, audits, and post-mortems.
-- `docs/research/experiments.db` — the experiment ledger, including dead ends.
-- `.agents/skills/` — task-specific procedures.
+- `AGENTS.md`: the rules, the sources, the current state, and the debug loop. The single
+  instruction file for every agent. `CLAUDE.md` points to it.
+- `docs/research/`: dated findings, audits, and corrections. `docs/worklogs/`: one file per day.
+- `docs/research/experiments.db` and `experiment-ledger.md`: the experiment ledger, dead ends
+  included.
+- `.agents/skills/`: task procedures.
+- `tools/mcp/`, `tools/thor/`, `tools/pc/`, `tools/edram_bench/`: device control, device
+  experiments, PC trace replay, GPU harness.
+- `android/android_studio_project/app/src/main/assets/`: the bundled Turnip driver and the bundled
+  game patches.
 
 ## Legal
 
-Emulator research on legally owned content only. Not for piracy, bypassing
-access controls, redistributing game content, or posting copyrighted assets.
-
-**Again: an AI experiment. No support, no releases, no promises. Do it
-yourself.**
+Emulator research on legally owned content only. Not for piracy, bypassing access controls,
+redistributing game content, or posting copyrighted assets. The repository holds no game files,
+keys, dumps, or screenshots of games.

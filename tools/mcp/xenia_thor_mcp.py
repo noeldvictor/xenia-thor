@@ -255,6 +255,231 @@ def xenia_route(sequence: str, default_wait_ms: int = 800) -> str:
     return '\n'.join(log)
 
 
+TITLES = {
+    'bd': ('/storage/2664-21DE/Roms/xbox360/Blue Dragon.m3u/'
+           'Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso'),
+    'banjo': ('/storage/2664-21DE/Roms/xbox360/Banjo-Kazooie - Nuts & Bolts (USA) '
+              '(En,Ja,Fr,De,Es,It,Nl,Sv,No,Zh,Ko,Pl,Ru,Cs).iso'),
+}
+NDK = os.environ.get('XE_NDK') or os.path.expanduser(
+    '~/AppData/Local/Android/Sdk/ndk/25.0.8775105')
+PPC_OBJDUMP = os.path.join(REPO, 'third_party', 'binutils-ppc-cygwin',
+                           'powerpc-none-elf-objdump.exe')
+HOST_SIMPLEPERF = os.path.join(NDK, 'simpleperf', 'bin', 'windows', 'x86_64', 'simpleperf.exe')
+DEVICE_SIMPLEPERF = os.path.join(NDK, 'simpleperf', 'bin', 'android', 'arm64', 'simpleperf')
+
+
+def _title_path(title: str) -> str:
+    return TITLES.get(title, title)
+
+
+@mcp.tool()
+def xenia_crash(pid: Optional[int] = None) -> str:
+    """The crash picture of the current or last run: the a64 crash diagnostic
+    ("A64 CRASH DIAG": guest function, nearest function, guest lr and r3-r6),
+    unhandled host faults and fault storms, guest crash dialogs, the last
+    tombstone from the crash buffer, and the newest app crash report."""
+    out = {}
+    log = _adb('logcat', '-d', '-s', 'xenia:*', 'xenia-fault:*', timeout=120)
+    keys = ('A64 CRASH DIAG', 'UNHANDLED host fault', 'UNHANDLED fault STORM',
+            'guest crash', 'Fatal', 'GPU is hung', 'has waited 60s')
+    hits = [l[l.find(' I ') + 3:].strip() if ' I ' in l else l.strip()
+            for l in log.splitlines() if any(k in l for k in keys)]
+    out['log_lines'] = hits[:3] + (['...'] if len(hits) > 6 else []) + hits[-3:] if len(hits) > 6 else hits
+    crash = _adb('logcat', '-b', 'crash', '-d', timeout=60)
+    frames = [l[l.find('F DEBUG'):].strip() for l in crash.splitlines()
+              if 'F DEBUG' in l and ('signal ' in l or ' pc ' in l or 'pid:' in l)]
+    out['tombstone'] = frames[-14:]
+    newest = _run_as('sh -c "ls -t files/crash_logs 2>/dev/null | head -1"').strip()
+    if newest:
+        out['crash_report'] = newest
+        out['crash_report_head'] = _run_as(f'head -c 600 files/crash_logs/{newest}')[:600]
+    return json.dumps(out, indent=2)
+
+
+def _patch_files(title_id: str):
+    names = _run_as('ls files/patches').split()
+    return [n for n in names if n.lower().startswith(title_id.lower()) and n.endswith('.patch.toml')]
+
+
+@mcp.tool()
+def xenia_patches(title_id: str) -> str:
+    """List the game patch files on the device for a title id (8 hex) and each
+    [[patch]] with its enabled state. The same view as the Game Patches screen."""
+    result = {}
+    for f in _patch_files(title_id):
+        text = _run_as(f'cat files/patches/{f}')
+        entries = []
+        for block in text.split('[[patch]]')[1:]:
+            name = re.search(r'name = "([^"]+)"', block)
+            enabled = re.search(r'is_enabled = (true|false)', block)
+            entries.append({'name': name.group(1) if name else '?',
+                            'enabled': enabled.group(1) == 'true' if enabled else None})
+        result[f] = entries
+    return json.dumps(result, indent=2)
+
+
+@mcp.tool()
+def xenia_patch_set(title_id: str, name: str, enabled: bool) -> str:
+    """Enable or disable one [[patch]] by name in the title's patch files on the
+    device, exactly as the Game Patches screen does (rewrites is_enabled)."""
+    for f in _patch_files(title_id):
+        text = _run_as(f'cat files/patches/{f}')
+        blocks = text.split('[[patch]]')
+        changed = False
+        for i in range(1, len(blocks)):
+            m = re.search(r'name = "([^"]+)"', blocks[i])
+            if m and m.group(1) == name:
+                blocks[i] = re.sub(r'is_enabled = (true|false)',
+                                   f'is_enabled = {"true" if enabled else "false"}', blocks[i], count=1)
+                changed = True
+        if changed:
+            local = os.path.join(SCRATCH, 'patch_set.toml')
+            os.makedirs(SCRATCH, exist_ok=True)
+            with open(local, 'w', encoding='utf-8', newline='\n') as fh:
+                fh.write('[[patch]]'.join(blocks))
+            _adb('push', local, '/data/local/tmp/patch_set.toml')
+            _run_as(f'cp /data/local/tmp/patch_set.toml files/patches/{f}')
+            _shell('rm -f /data/local/tmp/patch_set.toml')
+            return f'{f}: "{name}" -> {"enabled" if enabled else "disabled"}'
+    return f'no patch named "{name}" for {title_id}'
+
+
+@mcp.tool()
+def xenia_guest_dump(title: str = 'bd', base: int = 0x82000000, size_mb: int = 8,
+                     at_guest_ms: int = 3000, out_name: str = '') -> str:
+    """Dump guest memory of a title to a local file: sets the diagnostic
+    dump_guest_mem cvars in the persisted config, launches through the
+    play-button path, waits for the dump line, pulls the file to
+    scratch/mcp/, restores the config, force-stops. The dump is game
+    content: it stays under scratch/. title: bd, banjo, or a device path."""
+    keys = {'dump_guest_mem_at_ms': str(at_guest_ms), 'dump_guest_mem_size_mb': str(size_mb),
+            'dump_guest_mem_base': str(base),
+            'dump_guest_mem_path': f'"/data/data/{PKG}/files/gm.bin"'}
+    restore = {'dump_guest_mem_at_ms': '0', 'dump_guest_mem_size_mb': '64',
+               'dump_guest_mem_base': '2181038080',
+               'dump_guest_mem_path': '"/data/local/tmp/guestmem.bin"'}
+    for k, v in keys.items():
+        xenia_config_set(k, v)
+    result = 'time limit'
+    try:
+        xenia_logcat_clear()
+        launch = json.loads(xenia_launch(_title_path(title)))
+        if not launch.get('launched'):
+            return json.dumps(launch)
+        pid = launch['pid']
+        t0 = time.time()
+        while time.time() - t0 < 900:
+            time.sleep(5)
+            if _pid(PKG) != pid:
+                result = 'died'; break
+            log = _shell(f'logcat -d --pid={pid} -s xenia', timeout=120)
+            if 'guest-mem dump' in log:
+                result = 'dumped'; break
+    finally:
+        xenia_force_stop()
+        for k, v in restore.items():
+            xenia_config_set(k, v)
+    if result != 'dumped':
+        return json.dumps({'result': result})
+    os.makedirs(SCRATCH, exist_ok=True)
+    path = os.path.join(SCRATCH, out_name or f'guest-{title}-{base:08X}-{_stamp()}.bin')
+    data = subprocess.run(['adb', '-s', SERIAL, 'exec-out', f'run-as {PKG} cat files/gm.bin'],
+                          capture_output=True, timeout=300).stdout
+    with open(path, 'wb') as fh:
+        fh.write(data)
+    _run_as('rm -f files/gm.bin')
+    return json.dumps({'result': result, 'path': path, 'bytes': len(data)})
+
+
+@mcp.tool()
+def xenia_disasm(dump_path: str, address: int, count: int = 24, base: int = 0x82000000) -> str:
+    """Disassemble PowerPC guest code from a guest memory dump (xenia_guest_dump)
+    around a guest address: count instructions from address. Uses the bundled
+    powerpc-none-elf-objdump."""
+    start = address
+    stop = address + count * 4
+    cmd = [PPC_OBJDUMP, '-D', '-b', 'binary', '-m', 'powerpc:common', '-EB',
+           f'--adjust-vma={base:#x}', f'--start-address={start:#x}',
+           f'--stop-address={stop:#x}', dump_path]
+    code, out = _run(cmd, timeout=120)
+    rows = [l for l in out.splitlines() if re.match(r'\s*[0-9a-f]{8}:', l)]
+    return '\n'.join(rows) or out[-500:]
+
+
+@mcp.tool()
+def xenia_probe(title: str = 'banjo', seconds: int = 120, shot_every: int = 30,
+                route: str = '') -> str:
+    """Launch a title through the play-button path, wait for the load, then a
+    screenshot timeline with fps per interval and an optional button route
+    ("<s after load>:<BUTTON>[:hold_ms] ..."), then the crash picture.
+    Force-stops at the end. Wraps tools/thor/title_probe.py."""
+    cmd = [sys.executable, '-u', os.path.join(REPO, 'tools', 'thor', 'title_probe.py'),
+           '--title', title, '--seconds', str(seconds), '--shot-every', str(shot_every)]
+    if route:
+        cmd += ['--route', route]
+    code, out = _run(cmd, timeout=seconds + 1200)
+    return out[-6000:]
+
+
+@mcp.tool()
+def xenia_profile(seconds: int = 15, simpleperf: bool = True, callgraph: bool = False) -> str:
+    """Profile the running emulator for `seconds`: presented fps (xenia-fps),
+    GPU busy, temperatures, and per-thread CPU at the start and the end; with
+    simpleperf, a CPU sample of the app (debuggable, no root) and the top
+    symbols by dso from the host report. JIT'd guest code shows as unnamed
+    addresses unless cpu_perf_map_path is set (a64 functions only)."""
+    pid = _pid(PKG)
+    if not pid:
+        return 'xenia is not running'
+    os.makedirs(SCRATCH, exist_ok=True)
+    result = {'pid': pid, 'seconds': seconds}
+    result['threads_start'] = xenia_threads(pid, top=8)
+    t0 = time.time()
+    perf_proc = None
+    if simpleperf:
+        if not _shell('ls /data/local/tmp/simpleperf 2>/dev/null').strip():
+            _adb('push', DEVICE_SIMPLEPERF, '/data/local/tmp/simpleperf')
+            _shell('chmod 755 /data/local/tmp/simpleperf')
+        args = ['adb', '-s', SERIAL, 'shell', '/data/local/tmp/simpleperf', 'record',
+                '--app', PKG, '--duration', str(seconds), '-f', '2000',
+                '-o', '/data/local/tmp/xe_perf.data']
+        if callgraph:
+            args += ['-g']
+        perf_proc = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                     text=True, encoding='utf-8', errors='replace')
+    samples = []
+    while time.time() - t0 < seconds:
+        time.sleep(3)
+        busy = _shell('cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage').strip()
+        temp = _shell('cat /sys/class/kgsl/kgsl-3d0/temp').strip()
+        samples.append({'t': round(time.time() - t0), 'gpu_busy': busy,
+                        'gpu_c': int(temp) / 1000 if temp.isdigit() else None})
+    result['samples'] = samples
+    result['threads_end'] = xenia_threads(pid, top=8)
+    fps = json.loads(xenia_fps(window_lines=seconds * 2 + 4)).get('presented')
+    result['presented_fps'] = fps
+    if perf_proc:
+        try:
+            perf_out = perf_proc.communicate(timeout=seconds + 60)[0]
+        except subprocess.TimeoutExpired:
+            perf_proc.kill()
+            perf_out = 'simpleperf timed out'
+        result['simpleperf_record'] = perf_out.strip()[-300:]
+        local = os.path.join(SCRATCH, f'perf-{pid}-{_stamp()}.data')
+        _adb('pull', '/data/local/tmp/xe_perf.data', local, timeout=300)
+        if os.path.exists(local) and os.path.getsize(local) > 0:
+            code, rep = _run([HOST_SIMPLEPERF, 'report', '-i', local, '--sort', 'dso,symbol',
+                              '-n', '--percent-limit', '0.8'], timeout=300)
+            rows = [l for l in rep.splitlines() if l.strip() and not l.startswith('Cmdline')]
+            result['perf_data'] = local
+            result['top'] = rows[:40]
+            code, rep2 = _run([HOST_SIMPLEPERF, 'report', '-i', local, '--sort', 'dso', '-n'],
+                              timeout=300)
+            result['by_dso'] = [l for l in rep2.splitlines() if '%' in l][:12]
+    return json.dumps(result, indent=2)
+
+
 @mcp.tool()
 def xenia_force_stop(disconnect_wifi_adb: bool = False) -> str:
     """Force-stop the emulator and verify it is gone. Use after every run."""

@@ -324,7 +324,12 @@ Module* Processor::GetModule(const std::string_view name) {
 
 std::vector<Module*> Processor::GetModules() {
   auto global_lock = global_critical_region_.Acquire();
-  std::vector<Module*> clone(modules_.size());
+  // reserve, not size: the sized constructor made N null entries and the
+  // push_backs appended after them, so every caller saw N nulls first. The
+  // a64 crash diagnostic called ForEachFunction on one and faulted inside the
+  // fault handler, which then re-entered forever (Banjo-Kazooie, 2026-09-20).
+  std::vector<Module*> clone;
+  clone.reserve(modules_.size());
   for (const auto& module : modules_) {
     clone.push_back(module.get());
   }

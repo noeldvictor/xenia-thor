@@ -220,6 +220,15 @@ function Grant-DebugStorageAccess {
 $assembleTask = ":app:assemble$Variant"
 $nativeTask = ":app:externalNativeBuild$Variant"
 
+# Before every mode: the generated headers (build/version.h and the LLVM
+# lowering stamp that keys the object cache) and a syntax check of the MCP
+# server, which sat broken for a whole session once (2026-09-20).
+& python (Join-Path $RepoRoot "tools\build\gen_version_h.py")
+& python -m py_compile (Join-Path $RepoRoot "tools\mcp\xenia_thor_mcp.py")
+if ($LASTEXITCODE -ne 0) {
+    throw "tools/mcp/xenia_thor_mcp.py does not compile; fix it before building"
+}
+
 switch ($Mode) {
     "FullApk" {
         Invoke-Gradle @($assembleTask)

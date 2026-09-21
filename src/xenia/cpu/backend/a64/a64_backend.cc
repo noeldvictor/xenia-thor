@@ -3842,19 +3842,35 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
       // memory, not the a64 cache). Scan all guest functions' host machine_code
       // ranges to NAME the intermittent-JIT-crash function so it can be a64-routed
       // (cpu_backend_llvm_skip_addrs). This is the root-blocker crash-mapper.
+      // LLVM functions register Setup(code, 0): no length, so a range test
+      // never matches them. Their code is laid out in order, so the nearest
+      // function start at or below the host pc is the container (2026-09-20).
+      uint32_t nearest_fn = 0;
+      uintptr_t nearest_delta = ~uintptr_t(0);
       if (!guest_fn) {
         uintptr_t hpc = uintptr_t(ex->pc());
         for (auto* mod : processor()->GetModules()) {
+          if (!mod) {
+            continue;  // a null entry here faulted inside this handler once
+          }
           mod->ForEachFunction([&](Function* f) {
             if (guest_fn || !f->is_guest()) {
               return;
             }
             auto* gf = static_cast<GuestFunction*>(f);
             uint8_t* mc = gf->machine_code();
-            if (mc && hpc >= uintptr_t(mc) &&
-                hpc < uintptr_t(mc) + gf->machine_code_length()) {
+            if (!mc || hpc < uintptr_t(mc)) {
+              return;
+            }
+            if (hpc < uintptr_t(mc) + gf->machine_code_length()) {
               guest_fn = gf->address();
               guest_pc = gf->MapMachineCodeToGuestAddress(hpc);
+              return;
+            }
+            uintptr_t delta = hpc - uintptr_t(mc);
+            if (delta < nearest_delta) {
+              nearest_delta = delta;
+              nearest_fn = gf->address();
             }
           });
           if (guest_fn) {
@@ -3863,12 +3879,26 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
         }
       }
       auto* hc = ex->thread_context();
+      // x20 holds the PPCContext in both backends (LLVM reserves x20/x21).
+      auto* ppc = reinterpret_cast<ppc::PPCContext*>(hc->x[20]);
+      uint64_t g_lr = 0, g_r3 = 0, g_r4 = 0, g_r5 = 0, g_r6 = 0;
+      if (ppc && ppc->virtual_membase == reinterpret_cast<uint8_t*>(hc->x[21])) {
+        g_lr = ppc->lr;
+        g_r3 = ppc->r[3];
+        g_r4 = ppc->r[4];
+        g_r5 = ppc->r[5];
+        g_r6 = ppc->r[6];
+      }
       XELOGE(
           "A64 CRASH DIAG: unhandled AV guest_fn={:08X} guest_pc={:08X} "
-          "host_pc={:016X} fault_addr={:016X} x21_membase={:016X} "
-          "x25={:016X} lr={:016X}",
-          guest_fn, guest_pc, ex->pc(), ex->fault_address(), hc->x[21],
-          hc->x[25], hc->x[30]);
+          "nearest_fn={:08X}+{:X} host_pc={:016X} fault_addr={:016X} "
+          "x21_membase={:016X} x25={:016X} lr={:016X} guest_lr={:08X} "
+          "r3={:08X} r4={:08X} r5={:08X} r6={:08X}",
+          guest_fn, guest_pc, nearest_fn,
+          nearest_fn ? nearest_delta : uintptr_t(0), ex->pc(),
+          ex->fault_address(), hc->x[21], hc->x[25], hc->x[30],
+          uint32_t(g_lr), uint32_t(g_r3), uint32_t(g_r4), uint32_t(g_r5),
+          uint32_t(g_r6));
     }
   }
 

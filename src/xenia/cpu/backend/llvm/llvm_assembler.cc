@@ -90,7 +90,15 @@ namespace llvm_backend {
 // Compile stamp of THIS translation unit - the one that owns every lowering.
 // Declared in llvm_object_cache.h; see that header for why the cache directory
 // is keyed on it rather than on a hand-maintained version constant.
+// A content hash of the lowering sources when the build generated it
+// (tools/build/gen_version_h.py), else the compile time. The compile time
+// discarded every title's object cache on any rebuild of this TU.
+#if __has_include("build/llvm_lowering_stamp.h")
+#include "build/llvm_lowering_stamp.h"
+const char* LlvmLoweringBuildStamp() { return XE_LLVM_LOWERING_STAMP; }
+#else
 const char* LlvmLoweringBuildStamp() { return __DATE__ " " __TIME__; }
+#endif
 }  // namespace llvm_backend
 }  // namespace backend
 }  // namespace cpu

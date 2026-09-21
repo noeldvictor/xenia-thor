@@ -282,8 +282,9 @@ public final class GpuDriverManagerActivity extends Activity {
         root.addView(browse, matchWrapWithTopMargin(14));
 
         final TextView credit = new TextView(this);
-        credit.setText("Recommended builds from the community K11MCH1/AdrenoToolsDrivers "
-                + "project. Turnip is the Mesa open-source Vulkan driver for Adreno.");
+        credit.setText("Builds from the community projects The412Banner/Banners-Turnip, "
+                + "K11MCH1/AdrenoToolsDrivers, and MrPurple666/purple-turnip. Turnip is "
+                + "the Mesa open-source Vulkan driver for Adreno.");
         credit.setTextColor(getColor(R.color.xenia_text_secondary));
         credit.setTextSize(11);
         root.addView(credit, matchWrapWithTopMargin(6));
