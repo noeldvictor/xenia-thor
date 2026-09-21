@@ -959,6 +959,7 @@ public class EmulatorActivity extends WindowedAppActivity {
         // reads them. See ensureObjectCacheDefaults for why this is not inside
         // the block above.
         ensureObjectCacheDefaults(intent);
+        applyDebugLaunchCvars(intent);
         // Bundled game patches must be in files/patches before the native
         // patcher scans it at title load.
         GamePatchManager.installBundled(this);
@@ -1056,6 +1057,61 @@ public class EmulatorActivity extends WindowedAppActivity {
             cvars.putBoolean("cpu_llvm_object_cache_skip_lowering", true);
         }
         cvars.putString("cpu_llvm_object_cache_path", objcache.getAbsolutePath());
+        intent.putExtra(EXTRA_CVARS, cvars);
+    }
+
+    // ---- Diagnostic launch cvars (debug builds) ----------------------------
+    // files/debug_launch_cvars.properties holds name=value lines that a
+    // diagnosis wants in effect from process start: the render target path,
+    // a GPU trace, a memory option. The live cvar_set of the debug server is
+    // too late for those. The debug server's launch_cvars tool edits the file
+    // and the PC MCP writes it through run-as when no title runs. Applied last,
+    // so it overrides the profile and the toggles; empty or missing = no-op.
+    // Never in a release build: the toggles and profiles are the user's
+    // control surface (directive 17).
+    static final String DEBUG_LAUNCH_CVARS_FILE = "debug_launch_cvars.properties";
+
+    private void applyDebugLaunchCvars(final Intent intent) {
+        if (!BuildConfig.DEBUG || intent == null) {
+            return;
+        }
+        final java.io.File file = new java.io.File(getFilesDir(), DEBUG_LAUNCH_CVARS_FILE);
+        if (!file.isFile()) {
+            return;
+        }
+        final java.util.Properties props = new java.util.Properties();
+        try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+            props.load(in);
+        } catch (java.io.IOException e) {
+            Log.w(TAG, "debug launch cvars unreadable: " + e);
+            return;
+        }
+        if (props.isEmpty()) {
+            return;
+        }
+        Bundle cvars = intent.getBundleExtra(EXTRA_CVARS);
+        if (cvars == null) {
+            cvars = new Bundle();
+        }
+        for (final String name : props.stringPropertyNames()) {
+            // The native reader calls the getter of the cvar's own type
+            // (getBoolean for a bool cvar), and a String entry then reads as
+            // false or 0. Type the value by its syntax; a uint64 cvar (rare)
+            // needs a long and gets an int here.
+            final String value = props.getProperty(name).trim();
+            if ("true".equalsIgnoreCase(value) || "false".equalsIgnoreCase(value)) {
+                cvars.putBoolean(name, Boolean.parseBoolean(value));
+            } else if (value.matches("-?\\d{1,9}")) {
+                cvars.putInt(name, Integer.parseInt(value));
+            } else if (value.matches("-?\\d+")) {
+                cvars.putLong(name, Long.parseLong(value));
+            } else if (value.matches("-?\\d*\\.\\d+")) {
+                cvars.putDouble(name, Double.parseDouble(value));
+            } else {
+                cvars.putString(name, value);
+            }
+            Log.i(TAG, "debug launch cvar " + name + "=" + value);
+        }
         intent.putExtra(EXTRA_CVARS, cvars);
     }
 

@@ -762,37 +762,60 @@ def xenia_screenshot(name: str = '') -> str:
 
 
 # device MCP serves this; kept for tools/thor scripts
-def xenia_backtrace(pid: Optional[int] = None) -> str:
-    """Native backtrace of every thread in the emulator process (debuggerd -b).
-    Use it when the UI watchdog reports the main thread wedged.
-    debuggerd needs root, which the adb shell user lacks on this device
-    (2026-09-20). When it refuses, this returns the per-thread table from
-    /proc instead: state, CPU ticks, voluntary context switches, wait channel.
-    A main thread with few ticks and few switches while workers run is a
-    blocked main thread."""
-    pid = pid or _pid(PKG)
-    if not pid:
-        return 'xenia is not running'
-    out = _shell(f'debuggerd -b {pid}', timeout=120)
-    if 'root is required' in out or not out.strip():
-        script = (
-            f'for t in /proc/{pid}/task/*; do '
-            'tid=${t##*/}; '
-            'st=$(sed "s/.*) //" $t/stat | cut -d" " -f1,12,13); '
-            'vs=$(grep voluntary_ctxt $t/status | head -1 | cut -f2); '
-            'wc=$(cat $t/wchan 2>/dev/null); '
-            'echo "$tid $(cat $t/comm) $st $vs $wc"; done')
-        table = _shell(script, timeout=60)
-        rows = [r for r in table.splitlines() if r.strip()]
-        header = 'tid comm state utime_ticks stime_ticks vol_switches wchan'
-        return ('debuggerd refused: root is required. /proc thread table '
-                f'(main thread is tid {pid}):\n{header}\n' + '\n'.join(rows))
+def xenia_backtrace(pid: Optional[int] = None, only: str = 'XThread,Emulator,or.github,GPU,Audio,XMA',
+                    max_frames: int = 24) -> str:
+    """Native backtrace of every thread in the emulator process, symbolized:
+    the hang picture (which host lock, wait, or syscall each guest thread
+    sits in). The app captures its own threads from inside the process
+    (debuggerd needs root); this symbolizes the module+offset frames with
+    the NDK llvm-symbolizer against the unstripped libxenia-app.so of the
+    last build. only: a comma list of thread-name substrings to show ('' =
+    all). Saves the full text to scratch/mcp/backtrace-<stamp>.txt."""
+    try:
+        data = _api('/backtrace', timeout=60)
+    except RuntimeError as e:
+        return f'in-app backtrace unavailable: {e}'
+    if not isinstance(data, dict) or 'threads' not in data:
+        return json.dumps(data)[:2000]
+    # Symbolize every libxenia-app.so offset in one llvm-symbolizer run.
+    so = os.path.join(REPO, 'android', 'android_studio_project', 'app', 'build', 'intermediates',
+                      'ndkBuild', 'githubDebug', 'obj', 'local', 'arm64-v8a', 'libxenia-app.so')
+    ndk = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk', 'ndk', '25.0.8775105',
+                       'toolchains', 'llvm', 'prebuilt', 'windows-x86_64', 'bin', 'llvm-symbolizer.exe')
+    offsets = []
+    for t in data['threads']:
+        for f in t.get('frames', []):
+            if f.get('module') == 'libxenia-app.so':
+                offsets.append(f['offset'])
+    names = {}
+    if offsets and os.path.exists(so) and os.path.exists(ndk):
+        uniq = sorted(set(offsets))
+        proc = subprocess.run([ndk, '--obj=' + so, '--functions=short', '--inlining=false',
+                               '--demangle', '--basenames'] + ['0x' + o for o in uniq],
+                              capture_output=True, text=True, timeout=300)
+        blocks = proc.stdout.strip().split('\n\n')
+        for o, block in zip(uniq, blocks):
+            lines = block.strip().split('\n')
+            if len(lines) >= 2:
+                names[o] = f'{lines[0]} ({lines[1]})'
+            elif lines:
+                names[o] = lines[0]
+    filters = [x.strip() for x in only.split(',') if x.strip()]
+    out = [f"pid {data.get('pid')}: {len(data['threads'])} threads; symbols from {os.path.basename(so)}"]
+    for t in data['threads']:
+        comm = t.get('comm', '')
+        if filters and not any(f in comm for f in filters):
+            continue
+        out.append(f"--- {t['tid']} {comm} wchan={t.get('wchan', '')}")
+        for i, f in enumerate(t.get('frames', [])[:max_frames]):
+            sym = names.get(f['offset']) if f.get('module') == 'libxenia-app.so' else f.get('symbol', '')
+            out.append(f"  #{i:02d} {f.get('module', '?')}+0x{f['offset']} {sym or ''}")
+    text = '\n'.join(out)
     os.makedirs(SCRATCH, exist_ok=True)
-    path = os.path.join(SCRATCH, f'backtrace-{pid}-{_stamp()}.txt')
+    path = os.path.join(SCRATCH, f'backtrace-{_stamp()}.txt')
     with open(path, 'w', encoding='utf-8') as f:
-        f.write(out)
-    main = out.split('\n\n')[0] if out else ''
-    return f'saved {path}\n{main[:4000]}'
+        f.write(text)
+    return f'saved {path}\n' + text[:12000]
 
 
 STALL_MARKERS = ('SPINLOCK STALL', 'A64 CRASH DIAG', 'guest crash', 'Fatal',
@@ -1134,6 +1157,176 @@ def xenia_dialog_check(seconds: int = 75, label: str = 'run') -> str:
            str(seconds), label]
     code, out = _run(cmd, timeout=seconds + 240)
     return f'exit {code}' + chr(10) + out[-6000:]
+
+
+@mcp.tool()
+def xenia_launch_cvars(set: str = '', clear: bool = False) -> str:
+    """Diagnostic cvars for the NEXT launch (debug builds): set is a comma
+    list of name=value; an empty value removes one; clear removes all; no
+    arguments lists them. They apply after the profile and the toggles, so
+    init-time cvars (render_target_path_vulkan, a GPU trace, UMA options)
+    can be tested without a rebuild. Goes through the in-app server when a
+    title runs, else writes files/debug_launch_cvars.properties with run-as.
+    Not a control surface: clear them when the diagnosis is done."""
+    if _api_up():
+        if clear:
+            return json.dumps(_api('/launch_cvars?clear=1', 'POST'))
+        out = None
+        for item in [i for i in set.split(',') if i.strip()]:
+            name, _, value = item.partition('=')
+            out = _api(f'/launch_cvars?name={name.strip()}&value={value.strip()}', 'POST')
+        return json.dumps(out if out is not None else _api('/launch_cvars'))
+    path = 'files/debug_launch_cvars.properties'
+    current = {}
+    if not clear:
+        for line in _run_as(f'cat {path} 2>/dev/null').splitlines():
+            if '=' in line and not line.startswith('#'):
+                k, _, v = line.partition('=')
+                current[k.strip()] = v.strip()
+    for item in [i for i in set.split(',') if i.strip()]:
+        name, _, value = item.partition('=')
+        if value.strip():
+            current[name.strip()] = value.strip()
+        else:
+            current.pop(name.strip(), None)
+    body = ''.join(f'{k}={v}\\n' for k, v in sorted(current.items()))
+    _run_as(f"sh -c \"printf '{body}' > {path}\"")
+    return json.dumps({'file': path, 'cvars': current, 'via': 'run-as',
+                       'note': 'applies at the next launch, after the profile and the toggles'})
+
+
+@mcp.tool()
+def xenia_trace_frame(pull: bool = True, dump: bool = True) -> str:
+    """Record the next GPU frame on the device as an .xtr trace, pull it to
+    scratch/traces, and replay it on the PC with xenia-gpu-vulkan-trace-dump
+    (a PNG of the frame as the desktop GPU renders the same command stream).
+    A device-only glitch that the PC replay renders correctly is in the
+    device's execution (Android code or the driver), not in the command
+    stream; one that the replay also shows is in the shared GPU logic and
+    can be bisected on the PC."""
+    before = {f['name'] for f in _api('/trace_frame').get('files', [])}
+    req = _api('/trace_frame', 'POST', timeout=10)
+    name = None
+    for _ in range(40):
+        time.sleep(0.5)
+        files = _api('/trace_frame').get('files', [])
+        new = [f for f in files if f['name'] not in before]
+        if new:
+            # The writer closes the file at the swap; wait for the size to settle.
+            size = new[-1]['bytes']
+            time.sleep(1)
+            files = _api('/trace_frame').get('files', [])
+            cur = [f for f in files if f['name'] == new[-1]['name']]
+            if cur and cur[0]['bytes'] == size and size > 0:
+                name = cur[0]['name']
+                break
+    if not name:
+        return json.dumps({'requested': req, 'error': 'no trace file appeared in 20 s'})
+    result = {'requested': req, 'file': name}
+    if pull:
+        out_dir = os.path.join(REPO, 'scratch', 'traces')
+        os.makedirs(out_dir, exist_ok=True)
+        local = os.path.join(out_dir, name)
+        # run-as cat through adb exec-out keeps the bytes intact.
+        with open(local, 'wb') as f:
+            subprocess.run(['adb', '-s', SERIAL, 'exec-out', 'run-as', PKG, 'cat', f'files/traces/{name}'],
+                           stdout=f, stderr=subprocess.DEVNULL, timeout=300, check=False)
+        result['local'] = local
+        result['local_bytes'] = os.path.getsize(local) if os.path.exists(local) else 0
+        if dump and result['local_bytes'] > 0:
+            exe = os.path.join(REPO, 'build', 'bin', 'Windows', 'Release', 'xenia-gpu-vulkan-trace-dump.exe')
+            if os.path.exists(exe):
+                png = local + '.png'
+                code, out = _run([exe, '--target_trace_file=' + local, '--trace_dump_path=' + out_dir,
+                                  '--log_file=' + local + '.log'], timeout=600)
+                result['dump_exit'] = code
+                result['dump_out'] = out[-800:]
+                pngs = sorted((os.path.join(out_dir, f) for f in os.listdir(out_dir)
+                               if f.endswith('.png')), key=os.path.getmtime)
+                result['png'] = pngs[-1] if pngs else None
+            else:
+                result['dump'] = 'xenia-gpu-vulkan-trace-dump.exe not built'
+    return json.dumps(result, indent=1)
+
+
+@mcp.tool()
+def xenia_trace_replay(trace: str, frame: int = -1, timeout_s: int = 180) -> str:
+    """Replay a captured GPU trace ON THE DEVICE and return the rendered frame
+    as a PNG on the PC: the GPU fix loop without a game boot. trace is a file
+    name in the app's files/traces (from trace_frame or trace_stream) or an
+    absolute device path; frame is an index or -1 for the last. Starts the
+    app's trace viewer activity in dump mode, waits for the .done marker,
+    pulls the PNG to scratch/traces/<name>.<frame>.device.png, force-stops
+    the app, and reports the lower-half black fraction. Compare with the PC
+    replay of the same trace (xenia_trace_frame) to split the command stream
+    from the device's execution of it."""
+    device_path = trace if trace.startswith('/') else f'/data/user/0/{PKG}/files/traces/{trace}'
+    name = os.path.basename(device_path)
+    png_device = f'/data/user/0/{PKG}/files/traces/{name}.{frame}.png'
+    _run_as(f'rm -f files/traces/{name}.{frame}.png files/traces/{name}.{frame}.png.done')
+    _shell(f'am force-stop {PKG}')
+    time.sleep(1)
+    out = _shell('am start -n ' + PKG + '/jp.xenia.emulator.GpuTraceViewerActivity'
+                 f' --es target_trace_file "{device_path}" --es trace_viewer_dump_png "{png_device}"'
+                 f' --ei trace_viewer_dump_frame {frame}')
+    t0 = time.time()
+    marker = ''
+    while time.time() - t0 < timeout_s:
+        time.sleep(1)
+        marker = _run_as(f'cat files/traces/{name}.{frame}.png.done 2>/dev/null').strip()
+        if marker:
+            break
+        if _pid(PKG) is None and time.time() - t0 > 5:
+            marker = 'process died'
+            break
+    result = {'trace': device_path, 'frame': frame, 'am_start': out.strip()[-200:],
+              'seconds': int(time.time() - t0), 'marker': marker}
+    if marker.startswith('ok'):
+        out_dir = os.path.join(REPO, 'scratch', 'traces')
+        os.makedirs(out_dir, exist_ok=True)
+        local = os.path.join(out_dir, f'{name}.{frame}.device.png')
+        with open(local, 'wb') as f:
+            subprocess.run(['adb', '-s', SERIAL, 'exec-out', 'run-as', PKG, 'cat', f'files/traces/{name}.{frame}.png'],
+                           stdout=f, stderr=subprocess.DEVNULL, timeout=120, check=False)
+        result['png'] = local
+        result['png_bytes'] = os.path.getsize(local)
+        try:
+            from PIL import Image
+            im = Image.open(local).convert('L')
+            w, h = im.size
+            px = im.crop((0, h // 2, w, h)).getdata()
+            result['size'] = [w, h]
+            result['lower_black'] = round(sum(1 for v in px if v < 12) / max(1, len(px)), 3)
+        except Exception as e:  # noqa: BLE001
+            result['score_error'] = str(e)
+    _shell(f'am force-stop {PKG}')
+    return json.dumps(result, indent=1)
+
+
+@mcp.tool()
+def xenia_goto(screen: str = 'menu', title: str = 'banjo', steps: str = '',
+               launch: bool = True, screenshot: bool = True) -> str:
+    """Drive a title to a screen by what is on the panel (the app's goto
+    tool), launching it first when it is not running. screen is a preset of
+    the title (Banjo: title, menu, world) or steps a raw route:
+    'until:gold>0.35;press:START;settle:1500|until:lower_black>0.4'. Returns
+    the app's answer (reached, seconds, the frame stats at each step) and a
+    screenshot path. The title stays running for the next call."""
+    result = {}
+    if launch and not _api_up():
+        r = json.loads(xenia_launch(title, skip_preflight=True))
+        result['launch'] = {k: r.get(k) for k in ('launched', 'pid')}
+        if not r.get('launched'):
+            result['preflight'] = r.get('preflight')
+            return json.dumps(result, indent=1)
+        t0 = time.time()
+        while time.time() - t0 < 60 and not _api_up():
+            time.sleep(1)
+    path = '/goto?steps=' + steps if steps else '/goto?screen=' + screen
+    result['goto'] = _api(path, 'POST', timeout=400)
+    if screenshot:
+        result['screenshot'] = json.loads(xenia_screenshot('goto-' + screen)).get('path')
+    return json.dumps(result, indent=1)
 
 
 @mcp.tool()

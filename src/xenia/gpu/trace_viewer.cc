@@ -9,10 +9,13 @@
 
 #include "xenia/gpu/trace_viewer.h"
 
+#include <algorithm>
 #include <cinttypes>
 #include <string>
+#include <thread>
 
 #include "third_party/half/include/half.hpp"
+#include "third_party/stb/stb_image_write.h"
 #include "third_party/imgui/imgui.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/clock.h"
@@ -44,6 +47,14 @@
 
 DEFINE_string(target_trace_file, "", "Specifies the trace file to load.",
               "GPU");
+DEFINE_string(trace_viewer_dump_png, "",
+              "Render trace_viewer_dump_frame of the trace, save it as this "
+              "PNG, and quit. The device replays a captured frame after each "
+              "GPU change in seconds, with no game boot (2026-09-21).",
+              "GPU");
+DEFINE_int32(trace_viewer_dump_frame, -1,
+             "With trace_viewer_dump_png: the frame index, or -1 for the last.",
+             "GPU");
 
 namespace xe {
 namespace gpu {
@@ -64,7 +75,11 @@ TraceViewer::TraceViewer(xe::ui::WindowedAppContext& app_context,
   AddPositionalOption("target_trace_file");
 }
 
-TraceViewer::~TraceViewer() = default;
+TraceViewer::~TraceViewer() {
+  if (dump_thread_.joinable()) {
+    dump_thread_.join();
+  }
+}
 
 bool TraceViewer::OnInitialize() {
   std::string path = cvars::target_trace_file;
@@ -109,7 +124,56 @@ bool TraceViewer::OnInitialize() {
                              "Unable to load trace file; not found?");
     return false;
   }
+  if (!cvars::trace_viewer_dump_png.empty()) {
+    // Off the UI thread: the replay compiles the frame's pipelines the first
+    // time, and the UI thread must keep answering the system meanwhile.
+    dump_thread_ = std::thread([this]() { DumpFrameAndQuit(); });
+  }
   return true;
+}
+
+void TraceViewer::DumpFrameAndQuit() {
+  const std::string png_path = cvars::trace_viewer_dump_png;
+  int frame_count = player_->frame_count();
+  int frame = cvars::trace_viewer_dump_frame < 0
+                  ? frame_count - 1
+                  : cvars::trace_viewer_dump_frame;
+  frame = std::max(0, std::min(frame, frame_count - 1));
+  XELOGI("Trace viewer dump: frame {} of {} to {}", frame, frame_count,
+         png_path);
+  player_->SeekFrame(frame);
+  player_->WaitOnPlayback();
+  bool written = false;
+  ui::Presenter* presenter = graphics_system_->presenter();
+  ui::RawImage raw_image;
+  if (presenter && presenter->CaptureGuestOutput(raw_image)) {
+    std::filesystem::path path = xe::to_path(png_path);
+    xe::filesystem::CreateParentFolder(path);
+    FILE* handle = xe::filesystem::OpenFile(path, "wb");
+    if (handle) {
+      auto callback = [](void* context, void* data, int size) {
+        fwrite(data, 1, size, static_cast<FILE*>(context));
+      };
+      stbi_write_png_to_func(callback, handle, int(raw_image.width),
+                             int(raw_image.height), 4, raw_image.data.data(),
+                             int(raw_image.stride));
+      fclose(handle);
+      written = true;
+    }
+  }
+  // The marker file tells a client the PNG is complete (or that the capture
+  // failed) without a timeout.
+  {
+    FILE* marker = xe::filesystem::OpenFile(xe::to_path(png_path + ".done"), "wb");
+    if (marker) {
+      fprintf(marker, "%s frame=%d of %d width=%u height=%u\n",
+              written ? "ok" : "capture-failed", frame, frame_count,
+              unsigned(raw_image.width), unsigned(raw_image.height));
+      fclose(marker);
+    }
+  }
+  XELOGI("Trace viewer dump: {}", written ? "written" : "capture failed");
+  app_context().CallInUIThread([this]() { app_context().QuitFromUIThread(); });
 }
 
 bool TraceViewer::Setup() {

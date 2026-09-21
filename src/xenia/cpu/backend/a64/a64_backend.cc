@@ -3832,7 +3832,12 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
   // BD a64-crash diagnostic: log the GUEST function of an unhandled access
   // violation (the fault-storm crash the HLE triggers) so it can be identified
   // and its a64 codegen fixed. Only the first few (the storm re-faults).
-  if (ex->code() == Exception::Code::kAccessViolation) {
+  // Every unhandled fault, not only an access violation: a jump to a wild
+  // address is an instruction fetch fault with pc outside every code range,
+  // and the picture then comes from the host lr (the caller's code) and the
+  // guest back chain (2026-09-21, Banjo puzzle transition).
+  if (ex->code() != Exception::Code::kIllegalInstruction ||
+      !IsArm64Brk(xe::load<uint32_t>(reinterpret_cast<void*>(ex->pc())))) {
     static std::atomic<int> av_log{0};
     if (av_log.fetch_add(1) < 5) {
       GuestFunction* fn = code_cache()->LookupFunction(ex->pc());
@@ -3879,26 +3884,90 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
         }
       }
       auto* hc = ex->thread_context();
+      // The caller's code: the host lr names the guest function that made
+      // the call when the pc itself is outside every code range.
+      uint32_t lr_fn = 0, lr_guest_pc = 0;
+      {
+        uintptr_t hlr = uintptr_t(hc->x[30]);
+        GuestFunction* lfn = hlr ? code_cache()->LookupFunction(hlr) : nullptr;
+        if (lfn) {
+          lr_fn = lfn->address();
+          lr_guest_pc = lfn->MapMachineCodeToGuestAddress(hlr);
+        } else if (hlr) {
+          uintptr_t best = ~uintptr_t(0);
+          for (auto* mod : processor()->GetModules()) {
+            if (!mod) {
+              continue;
+            }
+            mod->ForEachFunction([&](Function* f) {
+              if (!f->is_guest()) {
+                return;
+              }
+              auto* gf = static_cast<GuestFunction*>(f);
+              uint8_t* mc = gf->machine_code();
+              if (!mc || hlr < uintptr_t(mc)) {
+                return;
+              }
+              uintptr_t delta = hlr - uintptr_t(mc);
+              if (delta < best) {
+                best = delta;
+                lr_fn = gf->address();
+              }
+            });
+          }
+        }
+      }
       // x20 holds the PPCContext in both backends (LLVM reserves x20/x21).
       auto* ppc = reinterpret_cast<ppc::PPCContext*>(hc->x[20]);
-      uint64_t g_lr = 0, g_r3 = 0, g_r4 = 0, g_r5 = 0, g_r6 = 0;
+      uint64_t g_lr = 0, g_r1 = 0, g_r3 = 0, g_r4 = 0, g_r5 = 0, g_r6 = 0;
+      std::string chain;
       if (ppc && ppc->virtual_membase == reinterpret_cast<uint8_t*>(hc->x[21])) {
         g_lr = ppc->lr;
+        g_r1 = ppc->r[1];
         g_r3 = ppc->r[3];
         g_r4 = ppc->r[4];
         g_r5 = ppc->r[5];
         g_r6 = ppc->r[6];
+        // The guest back chain from r1: the frame at [sp], the return
+        // address at [frame - 8]. Only pages that are mapped are read.
+        uint32_t sp = uint32_t(g_r1);
+        auto* memory = processor()->memory();
+        for (int i = 0; i < 12 && sp; ++i) {
+          auto* heap = memory->LookupHeap(sp);
+          if (!heap || heap->QueryRangeAccess(sp, sp + 3) ==
+                           xe::memory::PageAccess::kNoAccess) {
+            break;
+          }
+          uint32_t prev = xe::load_and_swap<uint32_t>(
+              memory->TranslateVirtual<const uint8_t*>(sp));
+          if (prev <= sp || prev - sp > 0x100000) {
+            break;
+          }
+          auto* heap2 = memory->LookupHeap(prev - 8);
+          if (!heap2 || heap2->QueryRangeAccess(prev - 8, prev - 5) ==
+                            xe::memory::PageAccess::kNoAccess) {
+            break;
+          }
+          uint32_t ret = xe::load_and_swap<uint32_t>(
+              memory->TranslateVirtual<const uint8_t*>(prev - 8));
+          if (ret < 0x82000000 || ret >= 0x8C000000) {
+            break;
+          }
+          chain += fmt::format(" {:08X}", ret);
+          sp = prev;
+        }
       }
       XELOGE(
-          "A64 CRASH DIAG: unhandled AV guest_fn={:08X} guest_pc={:08X} "
-          "nearest_fn={:08X}+{:X} host_pc={:016X} fault_addr={:016X} "
-          "x21_membase={:016X} x25={:016X} lr={:016X} guest_lr={:08X} "
-          "r3={:08X} r4={:08X} r5={:08X} r6={:08X}",
-          guest_fn, guest_pc, nearest_fn,
+          "A64 CRASH DIAG: unhandled fault code={} guest_fn={:08X} "
+          "guest_pc={:08X} nearest_fn={:08X}+{:X} host_pc={:016X} "
+          "fault_addr={:016X} x21_membase={:016X} x25={:016X} lr={:016X} "
+          "lr_fn={:08X} lr_guest_pc={:08X} guest_lr={:08X} r1={:08X} "
+          "r3={:08X} r4={:08X} r5={:08X} r6={:08X} chain:{}",
+          uint32_t(ex->code()), guest_fn, guest_pc, nearest_fn,
           nearest_fn ? nearest_delta : uintptr_t(0), ex->pc(),
-          ex->fault_address(), hc->x[21], hc->x[25], hc->x[30],
-          uint32_t(g_lr), uint32_t(g_r3), uint32_t(g_r4), uint32_t(g_r5),
-          uint32_t(g_r6));
+          ex->fault_address(), hc->x[21], hc->x[25], hc->x[30], lr_fn,
+          lr_guest_pc, uint32_t(g_lr), uint32_t(g_r1), uint32_t(g_r3),
+          uint32_t(g_r4), uint32_t(g_r5), uint32_t(g_r6), chain);
     }
   }
 

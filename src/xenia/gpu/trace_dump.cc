@@ -9,6 +9,8 @@
 
 #include "xenia/gpu/trace_dump.h"
 
+#include <algorithm>
+
 #include "third_party/stb/stb_image_write.h"
 #include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
@@ -23,13 +25,20 @@
 #include "xenia/ui/window.h"
 #include "xenia/xbox.h"
 
-#define STB_IMAGE_WRITE_IMPLEMENTATION
+// The stb_image_write implementation lives in stb_image_write_impl.cc, so the
+// trace viewer can write a PNG without pulling this file (and its
+// target_trace_file cvar) into the same link (2026-09-21).
 #undef _CRT_SECURE_NO_WARNINGS
 #undef _CRT_NONSTDC_NO_DEPRECATE
 #include "third_party/stb/stb_image_write.h"
 
 DEFINE_path(target_trace_file, "", "Specifies the trace file to load.", "GPU");
 DEFINE_path(trace_dump_path, "", "Output path for dumped files.", "GPU");
+DEFINE_int32(trace_dump_frame, 0,
+             "The frame of the trace to render: an index, or -1 for the last "
+             "frame (a streamed trace of a title that stopped swapping ends on "
+             "the frame that stays on the panel).",
+             "GPU");
 
 namespace xe {
 namespace gpu {
@@ -95,6 +104,8 @@ int TraceDump::Main(const std::vector<std::string>& args) {
 bool TraceDump::Setup() {
   // Create the emulator but don't initialize so we can setup the window.
   emulator_ = std::make_unique<Emulator>("", "", "", "");
+  // The guest output capture below needs a presenter; there is no window.
+  emulator_->set_offscreen_presentation(true);
   X_STATUS result = emulator_->Setup(
       nullptr, nullptr, false, nullptr,
       [this]() { return CreateGraphicsSystem(); }, nullptr);
@@ -120,7 +131,11 @@ bool TraceDump::Load(const std::filesystem::path& trace_file_path) {
 
 int TraceDump::Run() {
   BeginHostCapture();
-  player_->SeekFrame(0);
+  int frame_count = player_->frame_count();
+  int frame = cvars::trace_dump_frame < 0 ? frame_count - 1 : cvars::trace_dump_frame;
+  frame = std::max(0, std::min(frame, frame_count - 1));
+  XELOGI("Trace dump: rendering frame {} of {}", frame, frame_count);
+  player_->SeekFrame(frame);
   player_->SeekCommand(
       static_cast<int>(player_->current_frame()->commands.size() - 1));
   player_->WaitOnPlayback();

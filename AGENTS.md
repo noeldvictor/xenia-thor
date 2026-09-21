@@ -291,6 +291,15 @@ Port rules:
   persists through `logged_profile_slot_0_xuid` in the config file, which Android never reads,
   so `ProfileManager` now signs the existing profile into slot 0 at start. START reaches the
   main menu and three A presses reach the opening story in the world (2026-09-21).
+  Open (2026-09-21 evening): the puzzle transition crashes a guest thread in two runs of three,
+  and the game then stalls with a half-lit puzzle on the panel (every thread waits on the crashed
+  thread's semaphore). Two fault shapes so far: a halfword load at guest 0xFFFFFFF8 (null minus 8)
+  inside the allocator 821E2F60 on the bundle thread, and a jump to host 0x200000000 (a guest
+  target of 0x100000000, a 33-bit value) with the host lr in JIT code. The extended
+  `A64 CRASH DIAG` (every fault code, the lr function, r1, the guest back chain) is built and
+  waits for the next repro. Banjo's water draws fail in the Vulkan backend on the PC and the
+  device alike (tessellation is unimplemented upstream; `PM4_DRAW_INDX(99, 17, 0): Failed in
+  backend` = kTrianglePatch). The title screen shows speckle noise on textures (open).
   Details: `docs/research/20260920-banjo-spinlock-protocol.md`,
   `docs/research/20260921-banjo-dirty-disc-font-cache.md`.
 - The device heats over consecutive runs: the case (`xo-therm`) at 44 C reaches the 70 C GPU
@@ -346,7 +355,13 @@ tid, CPU ticks, state, wait reason, lr, r1, r3), `/log` (the in-process ring of 
 rotation does not touch it), `/memory`, `/disasm`, `/gpu` (swap count, pipelines created, creation
 ms), `/stall` (the last spin-lock stall, the hottest threads over one second, the badge history),
 `/screenshot` (PixelCopy of the game surface), `/toggles`, `/cvar`, and the actions `/press`,
-`/route`, `/toggle`, `/pause`, `/stop`. Reach it with `adb forward tcp:41337 tcp:41337` or over
+`/route`, `/toggle`, `/pause`, `/stop`. Added 2026-09-21: `/trap` carries the guest chain, the memory
+at r24 to r31 with one dereference, and the stack text; `/threads` rows carry their chain and stack
+text; `/frame_stats` and `/goto` (screen-driven routing, `ScreenRoutes.java`); `/backtrace`
+(in-process native frames); `/trace_frame` and `/trace_stream` (.xtr into `files/traces`);
+`/launch_cvars` (the next launch's diagnostic cvars, `files/debug_launch_cvars.properties`).
+The trace viewer activity takes `am start` extras (`target_trace_file`, `trace_viewer_dump_png`,
+`trace_viewer_dump_frame`) and renders one frame to a PNG, then quits. Reach it with `adb forward tcp:41337 tcp:41337` or over
 wifi (`XE_THOR_API_HOST=192.168.1.33`).
 
 `tools/mcp/xenia_thor_mcp.py` is the PC-side MCP client, a stdio server registered in `.mcp.json`.
@@ -364,7 +379,6 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_aot_progress` | precompile state from the log markers and the overlay log |
 | `xenia_fps` | GPU pass timing lines and a median from `gpu_frame_us` |
 | `xenia_screenshot` | screencap plus the foreground package, so a capture is never another session's app |
-| `xenia_backtrace` | native backtrace of every thread (`debuggerd -b`) for a wedged main thread |
 | `xenia_threads`, `xenia_memory` | per-thread CPU and nice; RSS, PSS, heap, and the files directory sizes |
 | `xenia_toggles`, `xenia_toggle_set` | the app menu toggles: list with defaults and device values; set one exactly as tapping it. The control surface for every lever |
 | `xenia_config_get`, `xenia_config_set` | the persisted `files/xenia.config.toml`, diagnosis only |
@@ -377,6 +391,11 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_trap_context` | hold a guest thread at a kernel export: registers, request objects, guest chain with disassembly, every other thread's chain and stack text |
 | `xenia_guest_disasm` | PowerPC disassembly of guest ranges through the in-app server |
 | `xenia_dialog_check` | one Banjo run: dialog time or none, the cause lines, the saved log ring |
+| `xenia_goto` | drive a title to a screen by what is on the panel (the app's `goto`): presets per title (Banjo: title, menu, world) or raw steps `until:gold>0.35;press:START;settle:1500|until:lower_black>0.4`; launches when needed; returns the frame stats at each step and a screenshot |
+| `xenia_trace_frame` | record the next GPU frame on the device as an .xtr, pull it, render it on the PC with `xenia-gpu-vulkan-trace-dump` (the offscreen presenter fix); the PC render of the device's command stream |
+| `xenia_trace_replay` | replay a device trace ON THE DEVICE through the trace viewer's dump mode and pull the PNG: the GPU fix loop with no game boot |
+| `xenia_launch_cvars` | diagnostic cvars for the next launch (debug builds), typed by syntax; after the profile and the toggles; clear when done |
+| `xenia_backtrace` | now from inside the app: every thread's native frames (a realtime signal, `_Unwind_Backtrace`), symbolized on the PC with `llvm-symbolizer` against the unstripped .so. The hang picture: which host wait each guest thread sits in |
 | `xenia_patches`, `xenia_patch_set` | the game patch files on the device: list and toggle one `[[patch]]` by name, as the Game Patches screen does |
 | `xenia_guest_dump`, `xenia_disasm` | dump guest memory of a title to `scratch/mcp/` (diagnostic cvars, restored after), and disassemble PowerPC from a dump |
 | `xenia_stall` | the stall picture in one call from inside the app: the last spin-lock stall record, the hottest threads over one second with wait channel, the badge history, the GPU counters, the stall and crash lines of the log ring, and a verdict. `xenia_probe` calls it by itself after two intervals without a frame |
@@ -453,6 +472,18 @@ trap tool closed it: `docs/research/20260921-banjo-dirty-disc-font-cache.md`.
 5. **A compatibility hack has a date and a reason; re-test it when the reason is gone.** The
    font-cache redirect fixed a white screen on 2026-06-26 that later kernel fixes also fixed.
    The hack stayed in the profile and became the bug.
+6. **Reach screens by the panel, not by the clock (2026-09-21).** A timed START landed on the
+   static puzzle one run in three; `xenia_goto` waits for the screen's own statistics. It also
+   found the real title screen (Spiral Mountain, "A START") that the timed route had never
+   reached: START during the puzzle animation goes there, START on the stalled puzzle does not.
+7. **A stalled frame is not a rendering bug until the swap count says the game still swaps.**
+   The Banjo "lower half unlit/black" frames were the last frame of a game whose bundle thread
+   had crashed (an unhandled fault storm parks the thread; every other thread then waits on its
+   semaphore). `frame_stats` reports swaps; `xenia_backtrace` and `xenia_crash` name the thread
+   and the fault. The PC replay of the same frame's trace renders it whole.
+8. **`--skip-preflight` is for one short run, not a series.** Ten runs in an hour with the gate
+   off took the junction to 92 C: 8 fps at the title screen and buzzing audio (the pump starves).
+   Between runs let the case fall under 41 C; measure nothing while it is above.
 
 ### Debug loop rules (2026-09-20)
 
@@ -489,6 +520,15 @@ than the fixes.
 
 - Build scripts: `tools\thor\thor_build.ps1` with `-Mode NativeCore`, `ApkShell`, or `FullDeploy
   -DeviceSerial c3ca0370`. Debug: `tools\thor\thor_xenia_debug.ps1 -Mode Capture`.
+- **The native loop is 10 to 20 s (2026-09-21).** `NativeCore` runs ndk-build directly into
+  Gradle's object tree and copies the .so to the tree the APK shell reads; Gradle's
+  `externalNativeBuild` task took 2 m 43 s for a build with no change (its metadata step dry-runs
+  every module). The Android Release configuration links with ThinLTO and a cache
+  (`build/thinlto-cache`, premake5.lua); full LTO re-optimized the whole program on every link,
+  110 s of a 127 s one-file rebuild. A no-op build is 4 s, a one-file change 10 to 20 s, then
+  `ApkShellDeploy` 4 s. `NativeGradle` is the old path. The direct build uses the NDK named by
+  `ndkVersion` in `app/build.gradle` (25); a newer NDK's clang fails the tree with new `-Werror`
+  warnings. The first ThinLTO build after the switch recompiles everything (about 4 min).
 - Windows does not compile the a64 backend. Syntax-check ARM64 edits with NDK clang:
   `clang++ --target=aarch64-linux-android29 -fsyntax-only <file> -I src -I . -I third_party
   -I third_party/xbyak_aarch64/xbyak_aarch64 -I third_party/fmt/include -I build/version -DFMT_HEADER_ONLY`.

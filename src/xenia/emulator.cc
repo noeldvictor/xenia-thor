@@ -1014,7 +1014,7 @@ X_STATUS Emulator::Setup(
   result = graphics_system_->Setup(
       processor_.get(), kernel_state_.get(),
       display_window_ ? &display_window_->app_context() : nullptr,
-      display_window_ != nullptr);
+      display_window_ != nullptr || offscreen_presentation_);
   if (result) {
     return result;
   }

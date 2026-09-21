@@ -197,6 +197,23 @@ filter("platforms:Android-*")
     "log",
   })
 
+-- ThinLTO with a cache for the device build (2026-09-21). The Release
+-- configuration's LinkTimeOptimization emits -flto (full LTO): every link
+-- re-optimized the whole program, 110 s of a 127 s one-file rebuild. ThinLTO
+-- keeps the cross-module inlining, and with the cache the link redoes only the
+-- modules a change touched and the modules that import from them. The later
+-- -flto=thin wins over -flto on the clang command line.
+filter({"platforms:Android-*", "configurations:Release"})
+  buildoptions({
+    "-flto=thin",
+  })
+  linkoptions({
+    "-flto=thin",
+    "-Wl,--thinlto-cache-dir=" .. path.getabsolute("build/thinlto-cache"),
+    "-Wl,--thinlto-cache-policy,cache_size_bytes=6g",
+  })
+filter({})
+
 -- The AYN Thor (the ONE target) is a Snapdragon 8 Gen 2 = ARMv9.0-A with LSE
 -- atomics (the `atomics` HWCAP). The NDK default (-moutline-atomics) routes
 -- every C/C++ atomic through the __aarch64_casN_*/__aarch64_swpN_* outline

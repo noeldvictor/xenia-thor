@@ -247,6 +247,13 @@ class Emulator {
   void Resume();
   bool is_paused() const { return paused_; }
 
+  // A presenter without a window, for capturing the guest output offscreen:
+  // the trace dump tool renders a frame and saves it (2026-09-21; without
+  // this the tool had no presenter and never wrote its PNG).
+  void set_offscreen_presentation(bool enabled) {
+    offscreen_presentation_ = enabled;
+  }
+
   bool SaveToFile(const std::filesystem::path& path);
   bool RestoreFromFile(const std::filesystem::path& path);
 
@@ -350,6 +357,7 @@ class Emulator {
   std::string title_version_;
 
   ui::Window* display_window_ = nullptr;
+  bool offscreen_presentation_ = false;
   ui::ImGuiDrawer* imgui_drawer_ = nullptr;
 
   std::unique_ptr<Memory> memory_;

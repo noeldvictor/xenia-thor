@@ -1,6 +1,6 @@
 ﻿param(
     [string]$RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path,
-    [ValidateSet("FullApk", "ApkShell", "NativeCore", "Install", "FullDeploy", "ApkShellDeploy")]
+    [ValidateSet("FullApk", "ApkShell", "NativeCore", "NativeGradle", "Install", "FullDeploy", "ApkShellDeploy")]
     [string]$Mode = "FullApk",
     [string]$Variant = "GithubDebug",
     [string]$DeviceSerial = "",
@@ -46,6 +46,95 @@ function Get-VariantDirectoryName {
 function Get-ApkShellNativeSourceRoot {
     $variantDir = Get-VariantDirectoryName
     return Join-Path $RepoRoot "android\android_studio_project\app\build\intermediates\ndkBuild\$variantDir\obj\local"
+}
+
+# NativeCore runs ndk-build directly (2026-09-21). Gradle's externalNativeBuild
+# task took 2 m 43 s for a build with NO change (its metadata generation dry-runs
+# every module of the workspace); ndk-build itself answers "nothing to be done"
+# in 1 s and links a one-file change in well under a minute. The objects live
+# where Gradle put them (intermediates\cxx\<type>\<hash>\obj), so the two
+# paths share one object tree; the result is copied to the ndkBuild\<variant>
+# tree the ApkShell staging reads. NativeGradle is the old path.
+function Get-CxxObjRoot {
+    $parts = Get-VariantParts $Variant
+    $typeDir = $parts.BuildType.Substring(0, 1).ToUpperInvariant() + $parts.BuildType.Substring(1)
+    $cxxRoot = Join-Path $RepoRoot "android\android_studio_project\app\build\intermediates\cxx\$typeDir"
+    if (!(Test-Path $cxxRoot)) {
+        return $null
+    }
+    # One hashed directory per configuration; take the one that has objects.
+    foreach ($dir in (Get-ChildItem -LiteralPath $cxxRoot -Directory | Sort-Object LastWriteTime -Descending)) {
+        if (Test-Path (Join-Path $dir.FullName "obj\local\arm64-v8a")) {
+            return $dir.FullName
+        }
+    }
+    return $null
+}
+
+function Invoke-NdkBuildDirect {
+    $objRoot = Get-CxxObjRoot
+    if (!$objRoot) {
+        Write-Host "no Gradle object tree yet; running the Gradle native build once"
+        Invoke-Gradle @($nativeTask)
+        return
+    }
+    # The NDK Gradle uses (ndkVersion in app/build.gradle): a newer NDK's clang
+    # has new -Werror warnings the tree does not pass (ANDROID_NDK_HOME was 28).
+    $gradleFile = Join-Path $RepoRoot "android\android_studio_project\app\build.gradle"
+    $ndkVersion = (Select-String -Path $gradleFile -Pattern "ndkVersion\s+'([^']+)'").Matches[0].Groups[1].Value
+    $sdkRoot = $env:ANDROID_SDK_ROOT
+    if (!$sdkRoot) { $sdkRoot = $env:ANDROID_HOME }
+    if (!$sdkRoot) { $sdkRoot = Join-Path $env:LOCALAPPDATA "Android\Sdk" }
+    $ndkRoot = Join-Path $sdkRoot "ndk\$ndkVersion"
+    $ndkBuild = Join-Path $ndkRoot "ndk-build.cmd"
+    if (!(Test-Path $ndkBuild)) {
+        throw "ndk-build not found at $ndkBuild (set ANDROID_NDK_HOME)"
+    }
+    $jobs = [Environment]::ProcessorCount
+    $appDir = Join-Path $RepoRoot "android\android_studio_project\app"
+    $wks = Join-Path $RepoRoot "build\xenia.wks.Android.mk"
+    Push-Location $appDir
+    try {
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        # Start-Process with redirected streams: PowerShell 5.1 turns every
+        # stderr line of a native command into an error record, and clang
+        # notes are stderr.
+        $logDir = Join-Path $RepoRoot "scratch\mcp"
+        New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+        $outLog = Join-Path $logDir "ndk-build-last.log"
+        $errLog = Join-Path $logDir "ndk-build-last.err"
+        $ndkArgs = @(
+            "NDK_PROJECT_PATH=null", "APP_BUILD_SCRIPT=$wks", "APP_ABI=arm64-v8a", "NDK_ALL_ABIS=arm64-v8a",
+            "NDK_DEBUG=1", "APP_PLATFORM=android-26", "NDK_OUT=$objRoot/obj", "NDK_LIBS_OUT=$objRoot/lib",
+            "NDK_APPLICATION_MK:=../../../build/xenia.Application.mk", "PREMAKE_ANDROIDNDK_PLATFORMS:=Android-ARM64",
+            "-j$jobs", "--output-sync=none", "PREMAKE_ANDROIDNDK_CONFIGURATIONS:=Release",
+            "xenia-app", "main_hook", "hook_impl")
+        $proc = Start-Process -FilePath $ndkBuild -ArgumentList $ndkArgs -WorkingDirectory $appDir `
+            -RedirectStandardOutput $outLog -RedirectStandardError $errLog -NoNewWindow -Wait -PassThru
+        $code = $proc.ExitCode
+        foreach ($file in @($outLog, $errLog)) {
+            if (Test-Path $file) {
+                Get-Content -LiteralPath $file | Where-Object {
+                    $_ -notmatch "non-system libraries in linker flags|This is likely to result|or LOCAL_SHARED_LIBRARIES|current module|^Android NDK:\s*$"
+                } | ForEach-Object { Write-Host $_ }
+            }
+        }
+        if ($code -ne 0) {
+            throw "ndk-build failed with exit code $code"
+        }
+        Write-Host ("ndk-build: {0:N0} s" -f $sw.Elapsed.TotalSeconds)
+    } finally {
+        Pop-Location
+    }
+    # Publish to the tree the ApkShell staging reads.
+    $stageRoot = Join-Path (Get-ApkShellNativeSourceRoot) "arm64-v8a"
+    New-Item -ItemType Directory -Force -Path $stageRoot | Out-Null
+    foreach ($name in @("libxenia-app.so", "libmain_hook.so", "libhook_impl.so")) {
+        $built = Join-Path $objRoot "obj\local\arm64-v8a\$name"
+        if (Test-Path $built) {
+            Copy-Item -LiteralPath $built -Destination (Join-Path $stageRoot $name) -Force
+        }
+    }
 }
 
 function Get-JniLibsRoot {
@@ -247,6 +336,9 @@ switch ($Mode) {
         Invoke-ApkShellGradle
     }
     "NativeCore" {
+        Invoke-NdkBuildDirect
+    }
+    "NativeGradle" {
         Invoke-Gradle @($nativeTask)
     }
     "Install" {

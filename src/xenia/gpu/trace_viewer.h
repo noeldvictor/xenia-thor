@@ -101,6 +101,7 @@ class TraceViewer : public xe::ui::WindowedApp {
   static constexpr float kWindowBgAlpha = 0.6f;
 
   bool Load(const std::string_view trace_file_path);
+  void DumpFrameAndQuit();
 
   void DrawUI();
   void DrawControllerUI();
@@ -132,6 +133,8 @@ class TraceViewer : public xe::ui::WindowedApp {
   Memory* memory_ = nullptr;
   GraphicsSystem* graphics_system_ = nullptr;
   std::unique_ptr<TracePlayer> player_;
+  // trace_viewer_dump_png: renders one frame, saves it, quits (2026-09-21).
+  std::thread dump_thread_;
 
   std::unique_ptr<xe::ui::ImmediateDrawer> immediate_drawer_;
   std::unique_ptr<xe::ui::ImGuiDrawer> imgui_drawer_;

@@ -56,8 +56,16 @@ import org.json.JSONObject;
  * GET  /cvar        ?name=                a cvar's value
  * POST /cvar        ?name=&value=         set a cvar now (diagnosis only)
  * POST /toggle      ?key=&enabled=1       set a menu toggle (next launch)
+ * GET  /backtrace                         native frames of every thread (module+offset)
+ * POST /trace_frame                       record the next GPU frame to files/traces (.xtr)
+ * POST /trace_stream ?on=1|0              stream every frame to one .xtr until off
+ * GET  /trace_frame                       the trace files present
+ * GET  /launch_cvars                      diagnostic cvars for the next launch
+ * POST /launch_cvars ?name=&value= | ?clear=1  set, remove, or clear them
  * POST /press       ?button=A&hold_ms=120 one gamepad button
  * POST /route       ?seq=START:150,wait:800,A   a button sequence
+ * GET  /frame_stats                       luma, black and hue fractions of the panel
+ * POST /goto        ?screen=menu | ?steps=  drive the title to a screen by the panel
  * POST /pause       ?on=1                 pause or resume the emulator
  * POST /stop        end the emulator process
  */
@@ -83,6 +91,9 @@ public final class DebugServer {
     private static native String nativeCvarGet(String name);
     private static native boolean nativeCvarSet(String name, String value);
     private static native String nativeTrapSet(String name, boolean pause, int lr, String dump);
+    private static native String nativeTraceFrame(String dir);
+    private static native String nativeHostBacktraces();
+    private static native String nativeTraceStream(String dir, boolean on);
     private static native String nativeTrapReport();
     private static native void nativeTrapRelease();
     private static native void nativeTrapClear();
@@ -343,6 +354,38 @@ public final class DebugServer {
                         + jsonEscape(nativeCvarGet(q.get("name"))) + "\"}";
             case "/toggle":
                 return setToggle(q.get("key"), "1".equals(q.get("enabled")) || "true".equals(q.get("enabled")));
+            case "/launch_cvars":
+                return launchCvars(method, q);
+            case "/backtrace":
+                return nativeHostBacktraces();
+            case "/trace_stream": {
+                final java.io.File dir = new java.io.File(mActivity.getFilesDir(), "traces");
+                final boolean on = "1".equals(q.get("on")) || "true".equals(q.get("on"));
+                return nativeTraceStream(dir.getAbsolutePath(), on);
+            }
+            case "/trace_frame": {
+                final java.io.File dir = new java.io.File(mActivity.getFilesDir(), "traces");
+                if ("POST".equals(method)) {
+                    return nativeTraceFrame(dir.getAbsolutePath());
+                }
+                // GET: the trace files present, newest last.
+                final java.io.File[] files = dir.listFiles();
+                final StringBuilder sb = new StringBuilder("{\"dir\":\"")
+                        .append(jsonEscape(dir.getAbsolutePath())).append("\",\"files\":[");
+                if (files != null) {
+                    java.util.Arrays.sort(files, (a, b) -> Long.compare(a.lastModified(), b.lastModified()));
+                    boolean first = true;
+                    for (final java.io.File f : files) {
+                        if (!first) {
+                            sb.append(',');
+                        }
+                        first = false;
+                        sb.append("{\"name\":\"").append(jsonEscape(f.getName()))
+                                .append("\",\"bytes\":").append(f.length()).append('}');
+                    }
+                }
+                return sb.append("]}").toString();
+            }
             case "/trap":
                 if ("POST".equals(method) && q.containsKey("name")) {
                     return nativeTrapSet(q.get("name"),
@@ -360,6 +403,10 @@ public final class DebugServer {
                 return press(q.get("button"), intParam(q, "hold_ms", 120));
             case "/route":
                 return routeSequence(q.get("seq"));
+            case "/frame_stats":
+                return frameStats();
+            case "/goto":
+                return gotoScreen(q);
             case "/pause": {
                 final boolean on = "1".equals(q.get("on")) || "true".equals(q.get("on"));
                 mMainHandler.post(() -> mActivity.debugSetPaused(on));
@@ -548,6 +595,50 @@ public final class DebugServer {
         return "{\"ok\":false,\"reason\":\"" + jsonEscape(key) + " is not an app toggle\"}";
     }
 
+    // Diagnostic cvars for the next launch (debug builds): the properties
+    // file EmulatorActivity applies last. GET lists; POST name+value sets one,
+    // clear=1 removes all, or name with an empty value removes one.
+    private String launchCvars(final String method, final Map<String, String> q) {
+        final java.io.File file = new java.io.File(mActivity.getFilesDir(),
+                EmulatorActivity.DEBUG_LAUNCH_CVARS_FILE);
+        final java.util.Properties props = new java.util.Properties();
+        if (file.isFile()) {
+            try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+                props.load(in);
+            } catch (java.io.IOException ignored) {
+            }
+        }
+        if ("POST".equals(method)) {
+            if ("1".equals(q.get("clear")) || "true".equals(q.get("clear"))) {
+                props.clear();
+            } else if (q.containsKey("name")) {
+                final String value = q.get("value");
+                if (value == null || value.isEmpty()) {
+                    props.remove(q.get("name"));
+                } else {
+                    props.setProperty(q.get("name"), value);
+                }
+            }
+            try (java.io.FileOutputStream out = new java.io.FileOutputStream(file)) {
+                props.store(out, "diagnostic cvars for the next launch (debug server)");
+            } catch (java.io.IOException e) {
+                return "{\"error\":\"" + jsonEscape(String.valueOf(e)) + "\"}";
+            }
+        }
+        final StringBuilder sb = new StringBuilder("{\"file\":\"").append(jsonEscape(file.getAbsolutePath()))
+                .append("\",\"debug_build\":").append(BuildConfig.DEBUG).append(",\"cvars\":{");
+        boolean first = true;
+        for (final String name : new java.util.TreeSet<>(props.stringPropertyNames())) {
+            if (!first) {
+                sb.append(',');
+            }
+            first = false;
+            sb.append('"').append(jsonEscape(name)).append("\":\"")
+                    .append(jsonEscape(props.getProperty(name))).append('"');
+        }
+        return sb.append("},\"note\":\"applies at the next launch, after the profile and the toggles\"}").toString();
+    }
+
     private static final Map<String, Integer> BUTTONS = new HashMap<>();
 
     static {
@@ -617,6 +708,140 @@ public final class DebugServer {
         return "{\"ok\":true,\"done\":" + done + "]}";
     }
 
+    /** The game surface as a bitmap (PixelCopy on the main thread), or null. */
+    private Bitmap captureBitmap() {
+        final SurfaceView view = mActivity.debugSurfaceView();
+        if (view == null || view.getWidth() == 0 || view.getHeight() == 0) {
+            return null;
+        }
+        final Bitmap bitmap = Bitmap.createBitmap(view.getWidth(), view.getHeight(), Bitmap.Config.ARGB_8888);
+        final CountDownLatch latch = new CountDownLatch(1);
+        final int[] result = {-1};
+        mMainHandler.post(() -> {
+            try {
+                PixelCopy.request(view, bitmap, r -> {
+                    result[0] = r;
+                    latch.countDown();
+                }, mMainHandler);
+            } catch (Throwable t) {
+                latch.countDown();
+            }
+        });
+        try {
+            latch.await(5, TimeUnit.SECONDS);
+        } catch (InterruptedException ignored) {
+        }
+        if (result[0] != PixelCopy.SUCCESS) {
+            Log.w(TAG, "PixelCopy result " + result[0]);
+            return null;
+        }
+        return bitmap;
+    }
+
+    private long swapCount() {
+        try {
+            return new JSONObject(nativeGpu()).optLong("swap_count", 0);
+        } catch (JSONException e) {
+            return 0;
+        }
+    }
+
+    private ScreenRoutes.Stats currentStats() {
+        final Bitmap bitmap = captureBitmap();
+        if (bitmap == null) {
+            return null;
+        }
+        return ScreenRoutes.compute(bitmap, swapCount());
+    }
+
+    /** GET /frame_stats: what is on the panel as numbers a predicate can use. */
+    private String frameStats() {
+        final ScreenRoutes.Stats stats = currentStats();
+        return stats == null ? "{\"error\":\"no surface or copy failed\"}" : stats.toJson();
+    }
+
+    /**
+     * POST /goto: drive the title to a screen by what is on the panel.
+     * screen=<preset of the running title> or steps=<raw steps>; runs on this
+     * client thread and answers when the last predicate holds or a step
+     * times out: {ok, reached, step, seconds, stats, log[]}.
+     */
+    private String gotoScreen(final Map<String, String> q) {
+        String steps = q.get("steps");
+        if (steps == null || steps.isEmpty()) {
+            // A preset needs the title id; right after a launch it is still 0
+            // while the module loads, so wait for it.
+            String titleId = "";
+            final long waitStart = System.currentTimeMillis();
+            while (System.currentTimeMillis() - waitStart < 90000) {
+                try {
+                    titleId = new JSONObject(nativeStatus()).optString("title_id", "");
+                } catch (JSONException ignored) {
+                }
+                if (!titleId.isEmpty() && !"00000000".equals(titleId)) {
+                    break;
+                }
+                try {
+                    Thread.sleep(1000);
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+            steps = ScreenRoutes.preset(titleId, q.get("screen"));
+            if (steps == null) {
+                return "{\"ok\":false,\"reason\":\"no preset " + jsonEscape(String.valueOf(q.get("screen")))
+                        + " for title " + jsonEscape(titleId) + "; pass steps=\"}";
+            }
+        }
+        final java.util.List<ScreenRoutes.Step> route = ScreenRoutes.parse(steps);
+        if (route.isEmpty()) {
+            return "{\"ok\":false,\"reason\":\"no steps\"}";
+        }
+        final long t0 = System.currentTimeMillis();
+        final StringBuilder log = new StringBuilder("[");
+        ScreenRoutes.Stats stats = null;
+        int index = 0;
+        for (final ScreenRoutes.Step step : route) {
+            final long stepStart = System.currentTimeMillis();
+            boolean holds = false;
+            while (System.currentTimeMillis() - stepStart < step.timeoutS * 1000L) {
+                stats = currentStats();
+                if (stats != null && ScreenRoutes.eval(step.until, stats)) {
+                    holds = true;
+                    break;
+                }
+                try {
+                    Thread.sleep(700);
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+            if (log.length() > 1) {
+                log.append(',');
+            }
+            log.append(String.format(Locale.US, "{\"step\":%d,\"name\":\"%s\",\"holds\":%b,\"at_s\":%.1f,\"stats\":%s}",
+                    index, jsonEscape(step.name), holds, (System.currentTimeMillis() - t0) / 1000.0,
+                    stats == null ? "null" : stats.toJson()));
+            if (!holds) {
+                return "{\"ok\":false,\"reached\":false,\"step\":" + index + ",\"reason\":\"timeout waiting for "
+                        + jsonEscape(step.until) + "\",\"seconds\":" + (System.currentTimeMillis() - t0) / 1000
+                        + ",\"stats\":" + (stats == null ? "null" : stats.toJson()) + ",\"log\":" + log + "]}";
+            }
+            if (!step.press.isEmpty()) {
+                press(step.press, step.holdMs);
+                try {
+                    Thread.sleep(step.settleMs);
+                } catch (InterruptedException e) {
+                    break;
+                }
+            }
+            ++index;
+        }
+        return "{\"ok\":true,\"reached\":true,\"step\":" + (index - 1) + ",\"seconds\":"
+                + (System.currentTimeMillis() - t0) / 1000 + ",\"stats\":" + (stats == null ? "null" : stats.toJson())
+                + ",\"log\":" + log + "]}";
+    }
+
     private byte[] screenshotPng() {
         final SurfaceView view = mActivity.debugSurfaceView();
         if (view == null || view.getWidth() == 0 || view.getHeight() == 0) {
@@ -668,6 +893,14 @@ public final class DebugServer {
             {"toggle_set", "Set a menu toggle exactly as tapping it; applies at the next launch. key, enabled.",
                     "{\"key\":{\"type\":\"string\"},\"enabled\":{\"type\":\"boolean\"}}"},
             {"cvar_get", "Read a cvar's current value. name.", "{\"name\":{\"type\":\"string\"}}"},
+            {"backtrace", "Host (native) backtrace of every thread from inside the process: module+offset frames per thread with its wchan. The PC symbolizes them (xenia_backtrace). The hang picture: which host lock or wait each guest thread sits in.", "{}"},
+            {"trace_frame", "Record the next GPU frame as an .xtr trace in files/traces (POST); GET lists the files. The PC replays a trace with xenia-gpu-vulkan-trace-dump: a device-only glitch splits into the command stream and the device's execution of it.", "{}"},
+            {"trace_stream", "Stream every GPU frame to one .xtr in files/traces while on (on=true), stop with on=false. For the last frame before a title stops swapping; the PC dumps any frame of it with --trace_dump_frame.", "{\"on\":{\"type\":\"boolean\"}}"},
+            {"frame_stats", "What is on the panel as numbers: mean luma of the frame and each half, black fractions, saturated-hue fractions (red yellow green cyan blue magenta), gold, swaps. The keys a goto predicate uses.", "{}"},
+            {"goto", "Drive the running title to a screen by what is on the panel, not by a clock. screen: a preset of the title (Banjo: title, menu, world), or steps: 'until:gold>0.35;press:START;settle:1500|until:lower_black>0.4'. Answers when the last predicate holds: {ok, reached, step, seconds, stats, log}.",
+                    "{\"screen\":{\"type\":\"string\"},\"steps\":{\"type\":\"string\"}}"},
+            {"launch_cvars", "Diagnostic cvars applied at the NEXT launch, after the profile and the toggles (debug builds; init-time cvars such as render_target_path_vulkan or a GPU trace). No arguments: list. name+value: set one; empty value: remove one; clear=1: remove all.",
+                    "{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"},\"clear\":{\"type\":\"boolean\"}}"},
             {"cvar_set", "Set a cvar in the running process (diagnosis only; toggles are the control surface). name, value.",
                     "{\"name\":{\"type\":\"string\"},\"value\":{\"type\":\"string\"}}"},
             {"press", "Press one gamepad button: A B X Y DPAD_UP DPAD_DOWN DPAD_LEFT DPAD_RIGHT START BACK LB RB LT RT LS RS GUIDE. hold_ms default 120.",
@@ -778,6 +1011,12 @@ public final class DebugServer {
         TOOL_PATHS.put("toggles", "/toggles");
         TOOL_PATHS.put("toggle_set", "/toggle");
         TOOL_PATHS.put("cvar_get", "/cvar");
+        TOOL_PATHS.put("launch_cvars", "/launch_cvars");
+        TOOL_PATHS.put("frame_stats", "/frame_stats");
+        TOOL_PATHS.put("goto", "/goto");
+        TOOL_PATHS.put("trace_frame", "/trace_frame");
+        TOOL_PATHS.put("backtrace", "/backtrace");
+        TOOL_PATHS.put("trace_stream", "/trace_stream");
         TOOL_PATHS.put("cvar_set", "/cvar");
         TOOL_PATHS.put("press", "/press");
         TOOL_PATHS.put("route", "/route");
@@ -816,7 +1055,7 @@ public final class DebugServer {
             final String k = keys.next();
             q.put(k, String.valueOf(args.get(k)));
         }
-        final String method = "cvar_get".equals(name) ? "GET" : "POST";
+        final String method = "cvar_get".equals(name) || "frame_stats".equals(name) || "backtrace".equals(name) ? "GET" : "POST";
         final String text = route(method, path, q);
         content.put(new JSONObject().put("type", "text").put("text", text));
         result.put("content", content);

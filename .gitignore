@@ -175,3 +175,4 @@ xenia_perf.map
 # switched on to every checkout.
 .claude/thor-loop-active
 B13EBABEBABEBABE/
+build/thinlto-cache/
