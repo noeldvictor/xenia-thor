@@ -209,3 +209,29 @@ Next, in this order:
 
 The device trap and the PC oracle are in place, so each of these steps is minutes, not a
 device run.
+
+## 2026-09-21 03:00: the PC bisect names the x64 NaN helper
+
+`git bisect run tools/pc/bisect_banjo.sh` over the 1,152 commits since June 26 (nine builds of
+the Windows app in `../xenia-thor-bisect`, 70 s of Banjo each, 55 minutes in all):
+
+| verdict | commit | date |
+|---|---|---|
+| good | `0a428a74f9` | 2026-07-31 |
+| good | `a9883e3f4d` | 2026-08-14 (after the Edge kernel port) |
+| good | `f30e89ce7d`, `61eda233cd`, `131521989b`, `2c4996cfc1` | 2026-08-18 |
+| **bad** | **`2edd685258` Give x64 the PPC positive default QNaN for generated NaNs** | 2026-08-18 |
+| bad | `6db6a91364`, `b5e604c01a`, `6935b6cdff` | later |
+
+The helper `EmitScalarFpWithPpcDefaultNan` used `xmm0` and `xmm1` as scratch for the ordered
+mask before the op. `EmitCommutativeBinaryXmmOp` and `EmitAssociativeBinaryXmmOp` stage a
+constant operand in `xmm0`, so every scalar `x op constant` on x64 computed `x op mask`. The
+PPC corpus uses register operands and reported zero regressions. Fixed in `943c14d15f`: scratch
+`xmm1/xmm2`, and a 32-bit mask test for single precision (`vcmpordss` leaves bits 32 to 127 as
+`src1`'s). Two PC runs after the fix: no dialog, the game continues past the bundle opens.
+
+So the June note was half right: it is shared code in the sense that the same game path fails,
+but the PC cause is x64-only. The device (a64 and LLVM) fails at a later point (after the full
+read of `undlefǯc4b`, not after the header) and only some of the time, so it has its own
+cause. The PC is now a passing oracle with the same kernel, which makes the device diff a
+backend question, not a kernel one.
