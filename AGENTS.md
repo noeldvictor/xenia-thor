@@ -413,7 +413,11 @@ than the fixes.
 ## 12. Where things live
 
 - Research notes: `docs/research/YYYYMMDD-topic.md`. The experiment ledger:
-  `docs/research/experiment-ledger.md`.
+  `docs/research/experiments.db` (`tools/exp_ledger.py`).
+- The game ledger (user, 2026-09-20): `docs/research/games.db` through `tools/game_ledger.py`, one
+  row per title (status, fps, build, blockers) and one event per finding, fix, patch, or
+  measurement, exported to `docs/games/STATUS.md`. Update it and re-export in every commit that
+  changes a title's state.
 - Worklogs: `docs/worklogs/YYYYMMDD.md`.
 - Archive of the former CLAUDE.md to 2026-09-18: `docs/research/20260918-claude-md-archive.md` and its index.
 - Route capture skill: `xenia-blue-dragon-route-capture` under `.agents/skills/`.
