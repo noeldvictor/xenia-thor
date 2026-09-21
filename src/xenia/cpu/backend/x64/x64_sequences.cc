@@ -1260,15 +1260,22 @@ struct ADD_I64 : Sequence<ADD_I64, I<OPCODE_ADD, I64Op, I64Op, I64Op>> {
 template <bool kIsF64, typename OP>
 static void EmitScalarFpWithPpcDefaultNan(X64Emitter& e, Xmm dest, Xmm src1,
                                           Xmm src2, const OP& op) {
-  // xmm0/xmm1 are scratch: the register allocator only hands out xmm4-xmm15.
+  // xmm1/xmm2 are the scratch here (xmm0-2 are scratch, xmm3 is not free).
+  // NOT xmm0: EmitCommutativeBinaryXmmOp and EmitAssociativeBinaryXmmOp
+  // stage a CONSTANT operand in xmm0, so the
+  // first version of this helper (2026-08-18, 2edd685258) overwrote src2 with
+  // the ordered mask before the op and every `x op constant` computed
+  // `x op mask`. The PPC corpus uses register operands and stayed at zero
+  // regressions; Banjo-Kazooie's loader reached its own "Disc Read Error" on
+  // the PC every run (found by a bisect, 2026-09-21).
   if (kIsF64) {
-    e.vcmpordsd(e.xmm0, src1, src1);
+    e.vcmpordsd(e.xmm2, src1, src1);
     e.vcmpordsd(e.xmm1, src2, src2);
-    e.vandpd(e.xmm0, e.xmm0, e.xmm1);
+    e.vandpd(e.xmm2, e.xmm2, e.xmm1);
   } else {
-    e.vcmpordss(e.xmm0, src1, src1);
+    e.vcmpordss(e.xmm2, src1, src1);
     e.vcmpordss(e.xmm1, src2, src2);
-    e.vandps(e.xmm0, e.xmm0, e.xmm1);
+    e.vandps(e.xmm2, e.xmm2, e.xmm1);
   }
   op(e, dest, src1, src2);
   Xbyak::Label done;
@@ -1278,8 +1285,15 @@ static void EmitScalarFpWithPpcDefaultNan(X64Emitter& e, Xmm dest, Xmm src1,
     e.vucomiss(dest, dest);
   }
   e.jnp(done);  // result is not NaN - nothing to canonicalize
-  e.vmovq(e.rax, e.xmm0);
-  e.test(e.rax, e.rax);
+  // Only the lane the compare wrote: vcmpordss leaves bits 32..127 as src1's,
+  // so a 64-bit test read garbage above the mask.
+  if (kIsF64) {
+    e.vmovq(e.rax, e.xmm2);
+    e.test(e.rax, e.rax);
+  } else {
+    e.vmovd(e.eax, e.xmm2);
+    e.test(e.eax, e.eax);
+  }
   e.jz(done);  // an operand was NaN, so this NaN was propagated - leave it
   if (kIsF64) {
     e.mov(e.rax, 0x7FF8000000000000ull);
