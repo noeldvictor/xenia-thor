@@ -74,11 +74,12 @@ def main():
 # cost a 7 to 11 minute cold compile per title (2026-09-20). A content hash of
 # the lowering sources changes only when the lowering changes. Uncommitted
 # edits count: the hash is of the working tree bytes.
+# Only the files that hold the lowering. The memory manager, the cache wiring,
+# and the backend header do not change generated code, so they are not keyed;
+# an edit there keeps every title's cache (user, 2026-09-20).
 LOWERING_SOURCES = [
     "src/xenia/cpu/backend/llvm/llvm_assembler.cc",
     "src/xenia/cpu/backend/llvm/llvm_assembler.h",
-    "src/xenia/cpu/backend/llvm/llvm_backend.h",
-    "src/xenia/cpu/backend/llvm/llvm_object_cache.h",
 ]
 STAMP_OUT = os.path.join(ROOT, "build", "llvm_lowering_stamp.h")
 

@@ -39,6 +39,7 @@ struct PrecompileStatus {
   // governor holds workers back. The app shows these on the compile overlay.
   std::atomic<uint32_t> workers_active{0};
   std::atomic<int32_t> temp_c{-1};
+  std::atomic<int32_t> case_c{-1};
   std::atomic<uint32_t> throttled{0};
 };
 

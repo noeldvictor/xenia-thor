@@ -794,9 +794,9 @@ JNIEXPORT jstring JNICALL
 Java_jp_xenia_emulator_EmulatorActivity_nativeGetAotProgress(JNIEnv* jni_env,
                                                              jclass clazz) {
   const xe::cpu::PrecompileStatus& s = xe::cpu::GetPrecompileStatus();
-  // Fields 8 to 10 (2026-09-20): workers_active, temp_c, throttled.
+  // Fields 8 to 11 (2026-09-20): workers_active, temp_c, throttled, case_c.
   char buffer[160];
-  std::snprintf(buffer, sizeof(buffer), "%u,%u,%u,%u,%u,%llu,%llu,%u,%d,%u",
+  std::snprintf(buffer, sizeof(buffer), "%u,%u,%u,%u,%u,%llu,%llu,%u,%d,%u,%d",
                 s.state.load(std::memory_order_acquire),
                 s.done.load(std::memory_order_relaxed),
                 s.frontier.load(std::memory_order_relaxed),
@@ -808,7 +808,8 @@ Java_jp_xenia_emulator_EmulatorActivity_nativeGetAotProgress(JNIEnv* jni_env,
                     s.total_done.load(std::memory_order_relaxed)),
                 s.workers_active.load(std::memory_order_relaxed),
                 s.temp_c.load(std::memory_order_relaxed),
-                s.throttled.load(std::memory_order_relaxed));
+                s.throttled.load(std::memory_order_relaxed),
+                s.case_c.load(std::memory_order_relaxed));
   return jni_env->NewStringUTF(buffer);
 }
 

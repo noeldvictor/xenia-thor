@@ -1224,7 +1224,7 @@ public class EmulatorActivity extends WindowedAppActivity {
                     if (f.length >= 7) {
                         int state = 0, done = 0, frontier = 0, pass = 0;
                         long elapsed = 0;
-                        int workers = 0, active = 0, tempC = -1, throttled = 0;
+                        int workers = 0, active = 0, tempC = -1, throttled = 0, caseC = -1;
                         try {
                             state = Integer.parseInt(f[0]);
                             done = Integer.parseInt(f[1]);
@@ -1237,11 +1237,15 @@ public class EmulatorActivity extends WindowedAppActivity {
                                 tempC = Integer.parseInt(f[8]);
                                 throttled = Integer.parseInt(f[9]);
                             }
+                            if (f.length >= 11) {
+                                caseC = Integer.parseInt(f[10]);
+                            }
                         } catch (final NumberFormatException ignored) {
                         }
                         mAotWorkers = workers;
                         mAotWorkersActive = active;
                         mAotTempC = tempC;
+                        mAotCaseC = caseC;
                         mAotThrottled = throttled != 0;
                         final boolean newPass = pass != lastPass;
                         if (state == 1) {
@@ -1363,7 +1367,7 @@ public class EmulatorActivity extends WindowedAppActivity {
     private int mAotLastDone = -1;
     private long mAotCumulativeDone = 0;
     // Thermal governor state from the native status (fields 8 to 10).
-    private volatile int mAotWorkers, mAotWorkersActive, mAotTempC = -1;
+    private volatile int mAotWorkers, mAotWorkersActive, mAotTempC = -1, mAotCaseC = -1;
     private volatile boolean mAotThrottled;
     private TextView mAotThermalText;
 
@@ -1385,8 +1389,11 @@ public class EmulatorActivity extends WindowedAppActivity {
                             overall, mAotModuleIndex + 1));
         }
         if (mAotThermalText != null && mAotWorkers > 0) {
-            final String temp = mAotTempC >= 0
-                    ? String.format(Locale.US, "  \u00b7  %d \u00b0C", mAotTempC) : "";
+            String temp = mAotTempC >= 0
+                    ? String.format(Locale.US, "  \u00b7  chip %d \u00b0C", mAotTempC) : "";
+            if (mAotCaseC >= 0) {
+                temp += String.format(Locale.US, "  \u00b7  case %d \u00b0C", mAotCaseC);
+            }
             if (mAotThrottled) {
                 mAotThermalText.setText(String.format(Locale.US,
                         "Slowed to protect the device: %d of %d cores%s",

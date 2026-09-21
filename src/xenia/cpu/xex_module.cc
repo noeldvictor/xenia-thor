@@ -1497,12 +1497,21 @@ uint32_t XexModule::ScanPointerTablesForPrecompile() {
 
 namespace {
 
-// The hottest "cpu*" or "gpu*" thermal zone, in whole degrees C, or -1 when
-// none can be read (not Android, or no permission). The zone list is scanned
-// once; the temperatures are read per call (a few sysfs reads).
-int ReadHottestCpuGpuZoneC() {
+// Two temperatures, in whole degrees C, or -1 when unreadable (not Android,
+// or no permission): the hottest "cpu*" or "gpu*" zone (the silicon junction;
+// the big cores' sensors reach 89 C within seconds of load on this SoC, which
+// throttles itself near 95 to 100 C) and the case ("xo-therm", the sensor the
+// board uses as the skin proxy, 37 C at rest). The zone list is scanned once.
+struct PrecompileTemps {
+  int junction_c = -1;
+  int case_c = -1;
+};
+
+PrecompileTemps ReadPrecompileTemps() {
+  PrecompileTemps t;
 #if XE_PLATFORM_ANDROID
-  static std::vector<int> zones;
+  static std::vector<int> junction_zones;
+  static int case_zone = -1;
   static bool scanned = false;
   if (!scanned) {
     scanned = true;
@@ -1516,49 +1525,62 @@ int ReadHottestCpuGpuZoneC() {
       char buf[64] = {0};
       if (std::fgets(buf, sizeof(buf), f)) {
         if (!std::strncmp(buf, "cpu", 3) || !std::strncmp(buf, "gpu", 3)) {
-          zones.push_back(i);
+          junction_zones.push_back(i);
+        } else if (!std::strncmp(buf, "xo-therm", 8)) {
+          case_zone = i;
         }
       }
       std::fclose(f);
     }
   }
-  int hottest = -1;
-  for (int z : zones) {
+  auto read_zone = [](int z) -> int {
     std::string temp_path =
         "/sys/class/thermal/thermal_zone" + std::to_string(z) + "/temp";
     std::FILE* f = std::fopen(temp_path.c_str(), "r");
     if (!f) {
-      continue;
+      return -1;
     }
-    long millideg = 0;
-    if (std::fscanf(f, "%ld", &millideg) == 1) {
-      int c = static_cast<int>(millideg / 1000);
-      if (c > hottest) {
-        hottest = c;
-      }
+    long millideg = -1000;
+    if (std::fscanf(f, "%ld", &millideg) != 1) {
+      millideg = -1000;
     }
     std::fclose(f);
+    return static_cast<int>(millideg / 1000);
+  };
+  for (int z : junction_zones) {
+    t.junction_c = std::max(t.junction_c, read_zone(z));
   }
-  return hottest;
-#else
-  return -1;
+  if (case_zone >= 0) {
+    t.case_c = read_zone(case_zone);
+  }
 #endif
+  return t;
 }
 
-// How many precompile workers may run at this temperature. The compile is the
-// hottest thing the app does (six cores at full load); the user asked for
-// fast, but not so fast that it burns the device (2026-09-20). Whole degrees.
-uint32_t WorkersForTemperature(uint32_t worker_count, int temp_c) {
-  if (temp_c < 0 || temp_c < 70) {
-    return worker_count;
+// How many precompile workers may run at these temperatures. The compile is
+// the hottest thing the app does (six cores at full load); the user asked for
+// fast, but not so fast that it burns the device (2026-09-20). The junction
+// tiers sit just under the SoC's own throttle; the case tiers keep the shell
+// comfortable to hold. The stricter of the two wins.
+uint32_t WorkersForTemperature(uint32_t worker_count, PrecompileTemps t) {
+  // The SoC throttles its own clocks near 95 to 100 C; these tiers only stop
+  // the load from piling on top of that. First run with tiers at 85/92/97 and
+  // 42/45 C held the compile at one worker for nine minutes (2026-09-20).
+  uint32_t by_junction = worker_count;
+  if (t.junction_c >= 105) {
+    by_junction = 0;
+  } else if (t.junction_c >= 100) {
+    by_junction = 1;
+  } else if (t.junction_c >= 96) {
+    by_junction = std::max<uint32_t>(1, worker_count / 2);
   }
-  if (temp_c < 80) {
-    return std::max<uint32_t>(1, worker_count / 2);
+  uint32_t by_case = worker_count;
+  if (t.case_c >= 50) {
+    by_case = 1;
+  } else if (t.case_c >= 47) {
+    by_case = std::max<uint32_t>(1, worker_count / 2);
   }
-  if (temp_c < 88) {
-    return 1;
-  }
-  return 0;  // pause until it cools
+  return std::min(by_junction, by_case);
 }
 
 }  // namespace
@@ -1681,7 +1703,7 @@ void XexModule::PrecompileGuestFunctions() {
   // while their index is at or above it. Status fields feed the overlay.
   std::atomic<uint32_t> active_limit{worker_count};
   status.workers_active.store(worker_count, std::memory_order_relaxed);
-  status.temp_c.store(ReadHottestCpuGpuZoneC(), std::memory_order_relaxed);
+  status.temp_c.store(ReadPrecompileTemps().junction_c, std::memory_order_relaxed);
   status.throttled.store(0, std::memory_order_relaxed);
   // In-flight compiles across workers: a worker must not conclude the frontier
   // is drained while another worker is still mid-compile (that compile can
@@ -1705,8 +1727,9 @@ void XexModule::PrecompileGuestFunctions() {
           auto now = std::chrono::steady_clock::now();
           if (now - last_sample >= std::chrono::seconds(2)) {
             last_sample = now;
-            int temp_c = ReadHottestCpuGpuZoneC();
-            uint32_t allowed = WorkersForTemperature(worker_count, temp_c);
+            PrecompileTemps temps = ReadPrecompileTemps();
+            int temp_c = temps.junction_c;
+            uint32_t allowed = WorkersForTemperature(worker_count, temps);
             // A full pause lasts at most 60 s in a row: one worker then runs
             // on, so a zone that never cools cannot hold the load forever.
             if (allowed == 0) {
@@ -1720,12 +1743,15 @@ void XexModule::PrecompileGuestFunctions() {
             }
             uint32_t before = active_limit.exchange(allowed);
             status.temp_c.store(temp_c, std::memory_order_relaxed);
+            status.case_c.store(temps.case_c, std::memory_order_relaxed);
             status.workers_active.store(allowed, std::memory_order_relaxed);
             status.throttled.store(allowed < worker_count ? 1 : 0,
                                    std::memory_order_relaxed);
             if (allowed != before) {
-              XELOGI("cpu_precompile: thermal governor {} C -> {} of {} workers",
-                     temp_c, allowed, worker_count);
+              XELOGI(
+                  "cpu_precompile: thermal governor junction {} C case {} C -> "
+                  "{} of {} workers",
+                  temp_c, temps.case_c, allowed, worker_count);
             }
           }
         }
@@ -1807,6 +1833,10 @@ void XexModule::PrecompileGuestFunctions() {
           xe::threading::Sleep(std::chrono::milliseconds(1));
         }
       }
+      // Leaving: release every worker the governor holds back, so they can
+      // see the drained queue and exit too. Without this the join never
+      // returned once worker 0 had left (first run, 2026-09-20).
+      active_limit.store(worker_count, std::memory_order_relaxed);
     });
   }
 
