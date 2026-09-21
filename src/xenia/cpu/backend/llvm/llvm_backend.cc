@@ -39,6 +39,7 @@
 
 #if XE_LLVM_BACKEND_ENABLED
 #include <filesystem>
+#include <thread>
 
 #include "llvm/ExecutionEngine/Orc/Core.h"
 #include "llvm/ExecutionEngine/Orc/ExecutorProcessControl.h"
@@ -848,6 +849,54 @@ bool LLVMBackend::IsAvailable() {
 #endif
 }
 
+
+#if XE_LLVM_BACKEND_ENABLED
+// Make the guest-call runtime helpers resolvable by name from the JIT'd code.
+// Called once per JIT unit.
+static void DefineRuntimeHelpers(llvm::orc::LLJIT& jit) {
+  auto& jd = jit.getMainJITDylib();
+  auto define_helper = [&](const char* nm, void* fp) {
+    auto n = jit.mangleAndIntern(nm);
+    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
+        {n, llvm::orc::ExecutorSymbolDef(
+                llvm::orc::ExecutorAddr::fromPtr(fp),
+                llvm::JITSymbolFlags::Exported |
+                    llvm::JITSymbolFlags::Callable)}})));
+  };
+  define_helper("xe_llvm_guest_call",
+                reinterpret_cast<void*>(&xe_llvm_guest_call));
+  define_helper("xe_llvm_resolve_function",
+                reinterpret_cast<void*>(&xe_llvm_resolve_function));
+  define_helper("xe_llvm_call_extern",
+                reinterpret_cast<void*>(&xe_llvm_call_extern));
+  define_helper("xe_llvm_trace_entry",
+                reinterpret_cast<void*>(&xe_llvm_trace_entry));
+  define_helper("xe_llvm_trap", reinterpret_cast<void*>(&xe_llvm_trap));
+  define_helper("xe_llvm_preempt_yield",
+                reinterpret_cast<void*>(&xe_llvm_preempt_yield));
+  // PPC vector-math runtime helpers (estimate tables / libm), called per-lane
+  // from the lowered RSQRT / LOG2 / POW2.
+  define_helper("xe_llvm_vrsqrte_lane",
+                reinterpret_cast<void*>(&xe_llvm_vrsqrte_lane));
+  define_helper("xe_llvm_frsqrte", reinterpret_cast<void*>(&xe_llvm_frsqrte));
+  define_helper("xe_llvm_log2_lane",
+                reinterpret_cast<void*>(&xe_llvm_log2_lane));
+  define_helper("xe_llvm_exp2_lane",
+                reinterpret_cast<void*>(&xe_llvm_exp2_lane));
+  define_helper("xe_llvm_vrsqrte_vec",
+                reinterpret_cast<void*>(&xe_llvm_vrsqrte_vec));
+  define_helper("xe_llvm_log2_vec",
+                reinterpret_cast<void*>(&xe_llvm_log2_vec));
+  define_helper("xe_llvm_exp2_vec",
+                reinterpret_cast<void*>(&xe_llvm_exp2_vec));
+  define_helper("xe_llvm_unpack", reinterpret_cast<void*>(&xe_llvm_unpack));
+  define_helper("xe_llvm_pack", reinterpret_cast<void*>(&xe_llvm_pack));
+  define_helper("xe_llvm_pack2", reinterpret_cast<void*>(&xe_llvm_pack2));
+  define_helper("xe_llvm_load_clock",
+                reinterpret_cast<void*>(&xe_llvm_load_clock));
+}
+#endif  // XE_LLVM_BACKEND_ENABLED
+
 bool LLVMBackend::Initialize(Processor* processor) {
 #if XE_LLVM_BACKEND_ENABLED
   // Init LLVM + create the LLJIT BEFORE A64Backend::Initialize installs its
@@ -890,16 +939,12 @@ bool LLVMBackend::Initialize(Processor* processor) {
 
   llvm::InitializeNativeTarget();
   llvm::InitializeNativeTargetAsmPrinter();
-  llvm::orc::LLJITBuilder builder;
-
-  // JIT code memory in rwx slabs: one VMA per 64 MB instead of two per guest
-  // function (the vm.max_map_count crash on large titles, 2026-09-20).
-  WireSlabJitMemory(builder);
 
   // AOT object cache (cpu_llvm_object_cache): persist each compiled function's
   // .o + reuse it next launch / on re-entry, skipping codegen. The cache subclass
   // + SimpleCompiler wiring live in the -fno-rtti llvm_object_cache.cc (see that
   // header for the typeinfo-link reason); we only build the per-version dir here.
+  // One cache is shared by every JIT unit; each unit gets its own compiler.
   std::unique_ptr<llvm::ObjectCache> object_cache;
   if (cvars::cpu_llvm_object_cache &&
       !cvars::cpu_llvm_object_cache_path.empty()) {
@@ -908,91 +953,44 @@ bool LLVMBackend::Initialize(Processor* processor) {
         ("objcache_v" + std::to_string(kLlvmObjectCacheVersion) + "_opt" +
          std::to_string(cvars::cpu_backend_llvm_opt) + "_b" +
          LlvmLoweringStampTag());
-    object_cache = CreateAndWireObjectCache(builder, dir.string());
+    object_cache = CreateObjectCache(dir.string());
     XELOGI("LLVMBackend: AOT object cache enabled at '{}'", dir.string());
   }
 
-  auto jit_or = builder.create();
-  if (!jit_or) {
-    std::string msg = llvm::toString(jit_or.takeError());
-    XELOGE("LLVMBackend: LLJIT creation failed: {}", msg);
-    return false;
+  // One JIT unit per precompile worker (the same count as
+  // XexModule::PrecompileGuestFunctions: hardware threads minus two, at most
+  // six, at least one). A unit costs a few MB; the parallel compile is the
+  // point (see LlvmJitUnit).
+  unsigned hw = std::thread::hardware_concurrency();
+  uint32_t unit_count = hw > 3 ? hw - 2 : 1;
+  if (unit_count > 6) {
+    unit_count = 6;
   }
   jit_ = std::make_unique<LlvmJitContext>();
-  // The cache must outlive the LLJIT (its compiler holds a raw pointer to it);
-  // LlvmJitContext destroys `jit` before `object_cache` (declaration order).
   jit_->object_cache = std::move(object_cache);
-  jit_->jit = std::move(*jit_or);
-  jit_->initialized = true;
-
-  // Make the guest-call runtime helper resolvable by name from the JIT'd code.
-  {
-    auto& jd = jit_->jit->getMainJITDylib();
-    auto name = jit_->jit->mangleAndIntern("xe_llvm_guest_call");
-    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
-        {name, llvm::orc::ExecutorSymbolDef(
-                   llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_guest_call),
-                   llvm::JITSymbolFlags::Exported |
-                       llvm::JITSymbolFlags::Callable)}})));
-    auto rname = jit_->jit->mangleAndIntern("xe_llvm_resolve_function");
-    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
-        {rname, llvm::orc::ExecutorSymbolDef(
-                    llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_resolve_function),
-                    llvm::JITSymbolFlags::Exported |
-                        llvm::JITSymbolFlags::Callable)}})));
-    auto ename = jit_->jit->mangleAndIntern("xe_llvm_call_extern");
-    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
-        {ename, llvm::orc::ExecutorSymbolDef(
-                    llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_call_extern),
-                    llvm::JITSymbolFlags::Exported |
-                        llvm::JITSymbolFlags::Callable)}})));
-    auto tname = jit_->jit->mangleAndIntern("xe_llvm_trace_entry");
-    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
-        {tname, llvm::orc::ExecutorSymbolDef(
-                    llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_trace_entry),
-                    llvm::JITSymbolFlags::Exported |
-                        llvm::JITSymbolFlags::Callable)}})));
-    auto trname = jit_->jit->mangleAndIntern("xe_llvm_trap");
-    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
-        {trname, llvm::orc::ExecutorSymbolDef(
-                     llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_trap),
-                     llvm::JITSymbolFlags::Exported |
-                         llvm::JITSymbolFlags::Callable)}})));
-    // PPC vector-math runtime helpers (estimate tables / libm), called per-lane
-    // from the lowered RSQRT / LOG2 / POW2.
-    auto pyname = jit_->jit->mangleAndIntern("xe_llvm_preempt_yield");
-    llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
-        {pyname, llvm::orc::ExecutorSymbolDef(
-                     llvm::orc::ExecutorAddr::fromPtr(&xe_llvm_preempt_yield),
-                     llvm::JITSymbolFlags::Exported |
-                         llvm::JITSymbolFlags::Callable)}})));
-    auto define_helper = [&](const char* nm, void* fp) {
-      auto n = jit_->jit->mangleAndIntern(nm);
-      llvm::cantFail(jd.define(llvm::orc::absoluteSymbols(llvm::orc::SymbolMap{
-          {n, llvm::orc::ExecutorSymbolDef(
-                  llvm::orc::ExecutorAddr::fromPtr(fp),
-                  llvm::JITSymbolFlags::Exported |
-                      llvm::JITSymbolFlags::Callable)}})));
-    };
-    define_helper("xe_llvm_vrsqrte_lane",
-                  reinterpret_cast<void*>(&xe_llvm_vrsqrte_lane));
-    define_helper("xe_llvm_frsqrte", reinterpret_cast<void*>(&xe_llvm_frsqrte));
-    define_helper("xe_llvm_log2_lane",
-                  reinterpret_cast<void*>(&xe_llvm_log2_lane));
-    define_helper("xe_llvm_exp2_lane",
-                  reinterpret_cast<void*>(&xe_llvm_exp2_lane));
-    define_helper("xe_llvm_vrsqrte_vec",
-                  reinterpret_cast<void*>(&xe_llvm_vrsqrte_vec));
-    define_helper("xe_llvm_log2_vec",
-                  reinterpret_cast<void*>(&xe_llvm_log2_vec));
-    define_helper("xe_llvm_exp2_vec",
-                  reinterpret_cast<void*>(&xe_llvm_exp2_vec));
-    define_helper("xe_llvm_unpack", reinterpret_cast<void*>(&xe_llvm_unpack));
-    define_helper("xe_llvm_pack", reinterpret_cast<void*>(&xe_llvm_pack));
-    define_helper("xe_llvm_pack2", reinterpret_cast<void*>(&xe_llvm_pack2));
-    define_helper("xe_llvm_load_clock",
-                  reinterpret_cast<void*>(&xe_llvm_load_clock));
+  for (uint32_t u = 0; u < unit_count; ++u) {
+    llvm::orc::LLJITBuilder builder;
+    // JIT code memory in rwx slabs: one VMA per 64 MB instead of two per guest
+    // function (the vm.max_map_count crash on large titles, 2026-09-20).
+    WireSlabJitMemory(builder);
+    if (jit_->object_cache) {
+      WireObjectCache(builder, jit_->object_cache.get());
+    }
+    auto jit_or = builder.create();
+    if (!jit_or) {
+      std::string msg = llvm::toString(jit_or.takeError());
+      XELOGE("LLVMBackend: LLJIT creation failed (unit {}): {}", u, msg);
+      jit_.reset();
+      return false;
+    }
+    auto unit = std::make_unique<LlvmJitUnit>();
+    unit->jit = std::move(*jit_or);
+    DefineRuntimeHelpers(*unit->jit);
+    jit_->units.push_back(std::move(unit));
   }
+  jit_->jit = jit_->units[0]->jit.get();
+  jit_->initialized = true;
+  XELOGI("LLVMBackend: {} LLJIT unit(s) for parallel compilation", unit_count);
 #endif
 
   // Bring up the a64 base: host<->guest thunks, code cache + indirection table,

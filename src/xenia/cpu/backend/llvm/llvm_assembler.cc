@@ -34,6 +34,7 @@
 
 #if XE_LLVM_BACKEND_ENABLED
 #include <atomic>
+#include <thread>
 #include <chrono>
 #include <cstddef>
 #include <cstdio>
@@ -3268,8 +3269,7 @@ bool Lowerer::LowerInstr(Instr* i) {
 
 bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   auto* jit_holder = llvm_backend_->jit();
-  if (!jit_holder || !jit_holder->jit) return false;
-  auto& jit = *jit_holder->jit;
+  if (!jit_holder || jit_holder->units.empty()) return false;
 
   // Serialize ALL LLVM compilation across guest threads. Each guest thread has
   // its own LLVMAssembler, but they share ONE LLJIT; BD starts several guest
@@ -3293,12 +3293,28 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   if (xe::ExceptionHandler::GetUnhandledFaultCount() != 0) {
     return false;
   }
-  static std::timed_mutex s_llvm_compile_mutex;
+  // Pick a free JIT unit (try_lock across the pool), else wait on one chosen
+  // by thread. The lock is per unit, so units compile in parallel; within a
+  // unit the compile stays fully serialized (the heap-corruption rule).
+  LlvmJitUnit* unit = nullptr;
   auto acquire_compile_lock =
       [&](std::unique_lock<std::timed_mutex>& guard) -> bool {
-    guard = std::unique_lock<std::timed_mutex>(s_llvm_compile_mutex,
-                                               std::chrono::seconds(10));
+    for (auto& u : jit_holder->units) {
+      if (u->mutex.try_lock()) {
+        unit = u.get();
+        guard = std::unique_lock<std::timed_mutex>(u->mutex, std::adopt_lock);
+        break;
+      }
+    }
+    if (!unit) {
+      size_t pick = std::hash<std::thread::id>()(std::this_thread::get_id()) %
+                    jit_holder->units.size();
+      unit = jit_holder->units[pick].get();
+      guard = std::unique_lock<std::timed_mutex>(unit->mutex,
+                                                 std::chrono::seconds(10));
+    }
     if (!guard.owns_lock()) {
+      unit = nullptr;
       XELOGW(
           "LLVMAssembler: compile lock timed out (a prior compile is stuck / "
           "storming) - falling back to a64 for 0x{:08X}",
@@ -3335,8 +3351,8 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
   // to its cache KEY after lowering (the key must reflect whether lowering baked
   // a non-portable host pointer, only known post-Run). See below, pre-addIRModule.
   auto mod = std::make_unique<llvm::Module>("guest", ctx);
-  mod->setDataLayout(jit.getDataLayout());
-  mod->setTargetTriple(jit.getTargetTriple().str());
+  mod->setDataLayout(jit_holder->jit->getDataLayout());
+  mod->setTargetTriple(jit_holder->jit->getTargetTriple().str());
 
   std::string name = "guest_" + std::to_string(function->address());
 
@@ -3438,7 +3454,8 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
             opath.filename().string(), sample, opath.parent_path().string());
       }
     }
-    if (std::filesystem::exists(opath, fs_ec)) {
+    if (unit && std::filesystem::exists(opath, fs_ec)) {
+      auto& jit = *unit->jit;
       auto buf = llvm::MemoryBuffer::getFile(opath.string());
       if (buf) {
         if (auto err = jit.addObjectFile(std::move(*buf))) {
@@ -3641,6 +3658,7 @@ bool LLVMAssembler::LowerAndJit(GuestFunction* function, HIRBuilder* builder) {
     }
   }
   XELOGI("LLVMbegin guest=0x{:08X}", function->address());
+  auto& jit = *unit->jit;
   if (auto err = jit.addIRModule(
           llvm::orc::ThreadSafeModule(std::move(mod), std::move(ctx_owner)))) {
     XELOGE("LLVMAssembler: addIRModule failed: {}",

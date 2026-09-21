@@ -1224,14 +1224,25 @@ public class EmulatorActivity extends WindowedAppActivity {
                     if (f.length >= 7) {
                         int state = 0, done = 0, frontier = 0, pass = 0;
                         long elapsed = 0;
+                        int workers = 0, active = 0, tempC = -1, throttled = 0;
                         try {
                             state = Integer.parseInt(f[0]);
                             done = Integer.parseInt(f[1]);
                             frontier = Integer.parseInt(f[2]);
+                            workers = Integer.parseInt(f[3]);
                             pass = Integer.parseInt(f[4]);
                             elapsed = Long.parseLong(f[5]);
+                            if (f.length >= 10) {
+                                active = Integer.parseInt(f[7]);
+                                tempC = Integer.parseInt(f[8]);
+                                throttled = Integer.parseInt(f[9]);
+                            }
                         } catch (final NumberFormatException ignored) {
                         }
+                        mAotWorkers = workers;
+                        mAotWorkersActive = active;
+                        mAotTempC = tempC;
+                        mAotThrottled = throttled != 0;
                         final boolean newPass = pass != lastPass;
                         if (state == 1) {
                             if (newPass || state != lastState) {
@@ -1308,12 +1319,24 @@ public class EmulatorActivity extends WindowedAppActivity {
         textParams.topMargin = dpToPx(10);
         overlay.addView(mAotProgressText, textParams);
 
+        mAotThermalText = new TextView(this);
+        mAotThermalText.setText("");
+        mAotThermalText.setTextColor(0xFF7C8894);
+        mAotThermalText.setTextSize(13);
+        mAotThermalText.setGravity(android.view.Gravity.CENTER);
+        final android.widget.LinearLayout.LayoutParams thermalParams =
+                new android.widget.LinearLayout.LayoutParams(
+                        android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        thermalParams.topMargin = dpToPx(6);
+        overlay.addView(mAotThermalText, thermalParams);
+
         final TextView note = new TextView(this);
         note.setText("Compiling the whole game ahead of time so gameplay "
-                + "doesn't stutter. This runs once per launch and the game "
-                + "starts automatically when it finishes." + "\n\n"
-                + "Android may show \"Xenia isn't responding\" while this "
-                + "runs — that is expected. Choose WAIT, not Close.");
+                + "doesn't stutter. This runs once per app update per game; "
+                + "the next launch loads the compiled code in seconds." + "\n\n"
+                + "The compile slows itself down when the device gets hot, "
+                + "so the device is never damaged. That is expected.");
         note.setTextColor(0xFF7C8894);
         note.setTextSize(12);
         note.setGravity(android.view.Gravity.CENTER);
@@ -1339,6 +1362,10 @@ public class EmulatorActivity extends WindowedAppActivity {
     private int mAotModuleIndex = 0;
     private int mAotLastDone = -1;
     private long mAotCumulativeDone = 0;
+    // Thermal governor state from the native status (fields 8 to 10).
+    private volatile int mAotWorkers, mAotWorkersActive, mAotTempC = -1;
+    private volatile boolean mAotThrottled;
+    private TextView mAotThermalText;
 
     private void updateAotOverlay(final int done, final int total) {
         if (mAotOverlay == null) {
@@ -1356,6 +1383,20 @@ public class EmulatorActivity extends WindowedAppActivity {
                     ? String.format(Locale.US, "%,d functions compiled", overall)
                     : String.format(Locale.US, "%,d functions compiled  (module %d)",
                             overall, mAotModuleIndex + 1));
+        }
+        if (mAotThermalText != null && mAotWorkers > 0) {
+            final String temp = mAotTempC >= 0
+                    ? String.format(Locale.US, "  \u00b7  %d \u00b0C", mAotTempC) : "";
+            if (mAotThrottled) {
+                mAotThermalText.setText(String.format(Locale.US,
+                        "Slowed to protect the device: %d of %d cores%s",
+                        mAotWorkersActive, mAotWorkers, temp));
+                mAotThermalText.setTextColor(0xFFF0B429);
+            } else {
+                mAotThermalText.setText(String.format(Locale.US,
+                        "Compiling on %d cores%s", mAotWorkers, temp));
+                mAotThermalText.setTextColor(0xFF7C8894);
+            }
         }
         if (mAotProgressBar != null) {
             // Within-module percentage only, and never allowed to regress
@@ -1378,6 +1419,7 @@ public class EmulatorActivity extends WindowedAppActivity {
         mAotOverlay = null;
         mAotProgressBar = null;
         mAotProgressText = null;
+        mAotThermalText = null;
         mAotLastDone = -1;
         final android.view.ViewGroup parent =
                 (android.view.ViewGroup) overlay.getParent();
@@ -1402,6 +1444,7 @@ public class EmulatorActivity extends WindowedAppActivity {
             mAotOverlay = null;
             mAotProgressBar = null;
             mAotProgressText = null;
+            mAotThermalText = null;
             overlay.postDelayed(() -> {
                 final android.view.ViewGroup parent =
                         (android.view.ViewGroup) overlay.getParent();

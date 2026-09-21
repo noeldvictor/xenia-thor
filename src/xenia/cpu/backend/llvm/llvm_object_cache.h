@@ -75,6 +75,11 @@ const char* LlvmLoweringBuildStamp();
 std::unique_ptr<llvm::ObjectCache> CreateAndWireObjectCache(
     llvm::orc::LLJITBuilder& builder, const std::string& dir);
 
+// The same in two steps, for a pool of LLJITs sharing one cache: create the
+// cache once, then wire every builder to it (each gets its own TargetMachine).
+std::unique_ptr<llvm::ObjectCache> CreateObjectCache(const std::string& dir);
+void WireObjectCache(llvm::orc::LLJITBuilder& builder, llvm::ObjectCache* cache);
+
 // Routes JIT code memory through 64 MB rwx slabs (one VMA per slab) instead of
 // one mmap plus mprotect per linked object (two VMAs per guest function, which
 // hits vm.max_map_count on titles above about 32,000 functions). See the

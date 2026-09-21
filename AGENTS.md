@@ -149,6 +149,13 @@ Each directive has a date. The archive holds the full text and the evidence.
     goes through `tools/mcp/xenia_thor_mcp.py`. When a debugging step needs a tool the MCP lacks, add
     the tool first, then use it. A run must return the complete evidence packet in one pass. All work
     lands on `master`; no feature branches; push after each commit.
+19. **No A/B campaigns (user, 2026-09-20).** Xbox 360 emulation on the Snapdragon 8 Gen 2 is new
+    ground; nobody has the answers, and matched-pair comparisons cost more time than they return.
+    Research online first (recompilers, other emulators, driver work), pick the best-known approach,
+    implement it, verify it on the device with one run (screenshot, log, fps), record the number in
+    the ledger, move on. Section 6 stays as the standard for a number that is quoted as a result; run a
+    comparison only when the user asks for one.
+
 ## 5. Device safety and hygiene
 
 - Device serial `c3ca0370`. Wifi adb `192.168.1.33:5555`. Package `jp.xenia.emulator.github.debug`.
@@ -169,6 +176,9 @@ Each directive has a date. The archive holds the full text and the evidence.
 - Run `--vulkan_validation=true` on device when a driver crash is suspected. The layer is bundled.
 
 ## 6. Measurement rules
+
+These define what a quoted number must be. They do not require a comparison for every change
+(directive 19).
 
 1. Never fabricate. Every number comes from device output in this turn. Unmeasured means say so.
    Cross-run means say "confounded". Read the screenshot before you assert a visual.

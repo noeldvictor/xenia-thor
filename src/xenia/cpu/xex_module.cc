@@ -1495,6 +1495,74 @@ uint32_t XexModule::ScanPointerTablesForPrecompile() {
   return seeded;
 }
 
+namespace {
+
+// The hottest "cpu*" or "gpu*" thermal zone, in whole degrees C, or -1 when
+// none can be read (not Android, or no permission). The zone list is scanned
+// once; the temperatures are read per call (a few sysfs reads).
+int ReadHottestCpuGpuZoneC() {
+#if XE_PLATFORM_ANDROID
+  static std::vector<int> zones;
+  static bool scanned = false;
+  if (!scanned) {
+    scanned = true;
+    for (int i = 0; i < 96; ++i) {
+      std::string type_path =
+          "/sys/class/thermal/thermal_zone" + std::to_string(i) + "/type";
+      std::FILE* f = std::fopen(type_path.c_str(), "r");
+      if (!f) {
+        continue;
+      }
+      char buf[64] = {0};
+      if (std::fgets(buf, sizeof(buf), f)) {
+        if (!std::strncmp(buf, "cpu", 3) || !std::strncmp(buf, "gpu", 3)) {
+          zones.push_back(i);
+        }
+      }
+      std::fclose(f);
+    }
+  }
+  int hottest = -1;
+  for (int z : zones) {
+    std::string temp_path =
+        "/sys/class/thermal/thermal_zone" + std::to_string(z) + "/temp";
+    std::FILE* f = std::fopen(temp_path.c_str(), "r");
+    if (!f) {
+      continue;
+    }
+    long millideg = 0;
+    if (std::fscanf(f, "%ld", &millideg) == 1) {
+      int c = static_cast<int>(millideg / 1000);
+      if (c > hottest) {
+        hottest = c;
+      }
+    }
+    std::fclose(f);
+  }
+  return hottest;
+#else
+  return -1;
+#endif
+}
+
+// How many precompile workers may run at this temperature. The compile is the
+// hottest thing the app does (six cores at full load); the user asked for
+// fast, but not so fast that it burns the device (2026-09-20). Whole degrees.
+uint32_t WorkersForTemperature(uint32_t worker_count, int temp_c) {
+  if (temp_c < 0 || temp_c < 70) {
+    return worker_count;
+  }
+  if (temp_c < 80) {
+    return std::max<uint32_t>(1, worker_count / 2);
+  }
+  if (temp_c < 88) {
+    return 1;
+  }
+  return 0;  // pause until it cools
+}
+
+}  // namespace
+
 void XexModule::PrecompileGuestFunctions() {
   if (!cvars::cpu_precompile_guest_functions && !cvars::cpu_aot_maximize) {
     return;
@@ -1608,19 +1676,67 @@ void XexModule::PrecompileGuestFunctions() {
   status.state.store(PrecompileStatus::kRunning, std::memory_order_release);
 
   std::atomic<uint32_t> compiled{0};
+  // Thermal governor: the number of workers allowed to run. Worker 0 samples
+  // the hottest cpu/gpu zone every two seconds and sets it; the others wait
+  // while their index is at or above it. Status fields feed the overlay.
+  std::atomic<uint32_t> active_limit{worker_count};
+  status.workers_active.store(worker_count, std::memory_order_relaxed);
+  status.temp_c.store(ReadHottestCpuGpuZoneC(), std::memory_order_relaxed);
+  status.throttled.store(0, std::memory_order_relaxed);
   // In-flight compiles across workers: a worker must not conclude the frontier
   // is drained while another worker is still mid-compile (that compile can
   // declare new reachable functions), which would drop coverage.
   std::atomic<uint32_t> active{0};
   for (uint32_t t = 0; t < worker_count; ++t) {
     precompile_threads_.emplace_back([this, deadline, start, &compiled, &active,
-                                      &status]() {
+                                      &status, &active_limit, t,
+                                      worker_count]() {
       xe::threading::set_name("PrecompileJIT");
       ApplyPrecompileWorkerCorePolicy();
       int empty_rounds = 0;
+      auto last_sample = std::chrono::steady_clock::now();
+      auto paused_since = std::chrono::steady_clock::time_point::min();
       while (!precompile_stop_.load(std::memory_order_relaxed)) {
         if (std::chrono::steady_clock::now() >= deadline) {
           break;  // load-time budget elapsed
+        }
+        // Governor: worker 0 samples; every worker obeys the limit.
+        if (t == 0) {
+          auto now = std::chrono::steady_clock::now();
+          if (now - last_sample >= std::chrono::seconds(2)) {
+            last_sample = now;
+            int temp_c = ReadHottestCpuGpuZoneC();
+            uint32_t allowed = WorkersForTemperature(worker_count, temp_c);
+            // A full pause lasts at most 60 s in a row: one worker then runs
+            // on, so a zone that never cools cannot hold the load forever.
+            if (allowed == 0) {
+              if (paused_since == std::chrono::steady_clock::time_point::min()) {
+                paused_since = now;
+              } else if (now - paused_since > std::chrono::seconds(60)) {
+                allowed = 1;
+              }
+            } else {
+              paused_since = std::chrono::steady_clock::time_point::min();
+            }
+            uint32_t before = active_limit.exchange(allowed);
+            status.temp_c.store(temp_c, std::memory_order_relaxed);
+            status.workers_active.store(allowed, std::memory_order_relaxed);
+            status.throttled.store(allowed < worker_count ? 1 : 0,
+                                   std::memory_order_relaxed);
+            if (allowed != before) {
+              XELOGI("cpu_precompile: thermal governor {} C -> {} of {} workers",
+                     temp_c, allowed, worker_count);
+            }
+          }
+        }
+        if (t >= active_limit.load(std::memory_order_relaxed)) {
+          // Held back by the governor (worker 0 pauses too at the top tier,
+          // but keeps sampling so it can resume everyone).
+          if (t == 0) {
+            last_sample = std::chrono::steady_clock::time_point::min();
+          }
+          xe::threading::Sleep(std::chrono::milliseconds(250));
+          continue;
         }
         uint32_t addr = 0;
         bool have = false;

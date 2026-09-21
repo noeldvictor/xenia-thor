@@ -34,6 +34,12 @@ struct PrecompileStatus {
   std::atomic<uint64_t> elapsed_ms{0};
   // Functions compiled by all passes so far.
   std::atomic<uint64_t> total_done{0};
+  // Thermal governor (2026-09-20): workers allowed to run right now, the
+  // hottest CPU or GPU thermal zone in whole degrees C, and 1 while the
+  // governor holds workers back. The app shows these on the compile overlay.
+  std::atomic<uint32_t> workers_active{0};
+  std::atomic<int32_t> temp_c{-1};
+  std::atomic<uint32_t> throttled{0};
 };
 
 inline PrecompileStatus& GetPrecompileStatus() {

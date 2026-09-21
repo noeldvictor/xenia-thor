@@ -226,6 +226,25 @@ class XeLlvmObjectCache : public llvm::ObjectCache {
 
 }  // namespace
 
+std::unique_ptr<llvm::ObjectCache> CreateObjectCache(const std::string& dir) {
+  return std::make_unique<XeLlvmObjectCache>(std::filesystem::path(dir));
+}
+
+void WireObjectCache(llvm::orc::LLJITBuilder& builder,
+                     llvm::ObjectCache* cache_raw) {
+  builder.setCompileFunctionCreator(
+      [cache_raw](llvm::orc::JITTargetMachineBuilder jtmb)
+          -> llvm::Expected<
+              std::unique_ptr<llvm::orc::IRCompileLayer::IRCompiler>> {
+        auto tm = jtmb.createTargetMachine();
+        if (!tm) {
+          return tm.takeError();
+        }
+        return std::make_unique<llvm::orc::TMOwningSimpleCompiler>(
+            std::move(*tm), cache_raw);
+      });
+}
+
 std::unique_ptr<llvm::ObjectCache> CreateAndWireObjectCache(
     llvm::orc::LLJITBuilder& builder, const std::string& dir) {
   auto cache = std::make_unique<XeLlvmObjectCache>(std::filesystem::path(dir));

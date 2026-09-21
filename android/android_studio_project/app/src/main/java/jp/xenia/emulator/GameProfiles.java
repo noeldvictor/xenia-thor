@@ -350,7 +350,13 @@ public final class GameProfiles {
                         + "did not consume it, leaving its content table empty. Forcing "
                         + "synchronous completion (return the real success status, "
                         + "matching canary) routes Banjo to its working sync-consume "
-                        + "path."));
+                        + "path.")
+                .add("protect_zero", Boolean.FALSE,
+                        "LOADING-SCREEN FIX (2026-09-20): guest function 0x82364250 "
+                        + "reads 36(r31) after it set r31 = 0 for an empty table slot "
+                        + "(0x823642C4 then 0x823642D8). On the console the zero page "
+                        + "is readable; with protect_zero the read faults at guest 0x24, "
+                        + "the thread is parked, and the loading screen never ends."));
     }
 
     private static String normalize(final String titleId) {

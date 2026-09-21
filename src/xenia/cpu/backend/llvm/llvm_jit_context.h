@@ -29,15 +29,37 @@ namespace cpu {
 namespace backend {
 namespace llvm_backend {
 
-// One ORCv2 LLJIT for the whole process; each guest function is lowered into
-// its own Module, addIRModule'd, then looked up for its native code pointer.
+#include <mutex>
+#include <vector>
+
+// A pool of ORCv2 LLJITs. Each guest function is lowered into its own Module,
+// addIRModule'd into one unit, then looked up for its native code pointer.
+//
+// Until 2026-09-20 there was one LLJIT and one global compile lock, because
+// concurrent codegen through one LLJIT corrupted the heap (SIGBUS in
+// MCAssembler, device-found). The six precompile workers queued on that lock
+// and the compile ran on one core: about 20 ms per function, Blue Dragon
+// 19,884 functions in 414 s, Banjo 38,104 in 693 s. Each unit here owns its
+// own LLJIT (TargetMachine, contexts, linking layer, slab memory) and its own
+// lock, so units compile in parallel. Guest calls go through xenia's own
+// dispatch, not LLVM symbol resolution, so the units need no shared symbols
+// except the runtime helpers, which every unit defines.
+struct LlvmJitUnit {
+#if XE_LLVM_BACKEND_ENABLED
+  std::unique_ptr<llvm::orc::LLJIT> jit;
+#endif
+  std::timed_mutex mutex;
+};
+
 struct LlvmJitContext {
 #if XE_LLVM_BACKEND_ENABLED
-  // Declared BEFORE `jit`: members are destroyed in reverse order, so `jit`
-  // (whose compile layer holds a raw ObjectCache*) is torn down before the cache
-  // it points at. Null unless cpu_llvm_object_cache is enabled.
+  // Declared BEFORE the units: members are destroyed in reverse order, so every
+  // unit (whose compile layer holds a raw ObjectCache*) is torn down before the
+  // cache it points at. Null unless cpu_llvm_object_cache is enabled.
   std::unique_ptr<llvm::ObjectCache> object_cache;
-  std::unique_ptr<llvm::orc::LLJIT> jit;
+  std::vector<std::unique_ptr<LlvmJitUnit>> units;
+  // Unit 0, kept for the callers that only need a data layout or a triple.
+  llvm::orc::LLJIT* jit = nullptr;
 #endif
   bool initialized = false;
 };
