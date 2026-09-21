@@ -175,3 +175,37 @@ Two findings from the run at 23:31, the first with Banjo's game profile active:
 
 The dirty-disc dialog came twice in two runs with the redirect active and unmounted cache, and
 once in four without the profile. The run after both fixes is the test.
+
+## 2026-09-21 01:45: the dialog, what is known and what is next
+
+Known, with evidence:
+
+- The dialog is the game's reaction to a failed resource lookup, not to a read error. The
+  provider search `0x826EFC20` (a critical section around a vector of six provider objects,
+  types 00, 01, 02, 03, 81, 83) returns no provider for a request whose type string is
+  "texture" (request `+0x3C` -> "texture", `+0x20` = 00030006). The completion callback
+  `0x82273078` reads status 2 at `request+0xC`, finds `context+0x138 == 0` (no fallback), and
+  calls `XamShowDirtyDiscErrorUI`. The status 2 is set at `0x826F6A34` in the op's method
+  `0x826F69F8` when the provider Open (vtable+0x14) left `op+0x1C` and `op+0x20` at 0.
+  Trap data: `trap RtlEnterCriticalSection lr=826EFC54` on the device.
+- It reproduces on the PC (x64, Windows) in every run; the canary oracle passes. The loader
+  thread's kernel call sequence matches canary's through the header read of
+  `undle(85374` (open, XctdCompression query, close, reopen, NetworkOpenInformation,
+  two reads with a notification event, PENDING both times). The bytes read are the image's
+  bytes (FNV hash equal to `tools/pc/gdfx_read.py`). The eight frontend fast-path cvars off,
+  the handle cache off, and the cache mount off do not change it. The suppression cvar leads
+  to the game's own exit (`cc45b9efc3` said so in June).
+- On the device the dialog was rare (1 in 4) before the profile applied and certain after.
+  The difference is timing (30 fps cap) or the font-cache redirect; not resolved.
+
+Next, in this order:
+
+1. Finish the PC bisect between `db92dc6327` and now in `../xenia-thor-bisect`. The June
+   tree needs two premake fixes (done: the demo exclusions) and one more link fix
+   (`GetWindowedAppCreator` in the app). Each step is a Windows build (3 to 10 min) and a
+   60 s run; the failing commit names the subsystem.
+2. If the bisect points at the CPU frontend, run the PPC corpus on that commit.
+3. If it points at the kernel, diff that file against edge and port the fix.
+
+The device trap and the PC oracle are in place, so each of these steps is minutes, not a
+device run.
