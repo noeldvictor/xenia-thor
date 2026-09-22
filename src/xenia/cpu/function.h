@@ -139,8 +139,20 @@ class GuestFunction : public Function {
   // this precondition always holds there - and Call()'s self-time was almost
   // entirely that per-call TLS Get() (~3% of BD CPU, device-profiled).
   bool CallOnCurrentThread(ThreadState* thread_state, uint32_t return_address) {
+    if (behavior_ == Behavior::kExtern && extern_handler_) {
+      return CallExternHandler(thread_state);
+    }
     return CallImpl(thread_state, return_address);
   }
+
+  // An extern function (a kernel import thunk, or a guest function replaced
+  // by a host handler: guest_crt_hooks.cc) runs its handler and returns;
+  // the translated guest body is never entered. Every dynamic call path
+  // (the LLVM guest-call helper, cross-thread Call) must take this branch,
+  // or a call from LLVM-compiled code lands in the guest body while a call
+  // from a64-compiled code (which checks the behavior at emit time) takes
+  // the handler - two heaps at once in Banjo-Kazooie (2026-09-22).
+  bool CallExternHandler(ThreadState* thread_state);
 
  protected:
   virtual bool CallImpl(ThreadState* thread_state, uint32_t return_address) = 0;

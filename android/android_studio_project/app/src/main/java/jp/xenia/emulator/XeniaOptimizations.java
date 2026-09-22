@@ -191,8 +191,12 @@ public final class XeniaOptimizations {
                         + "threads corrupted its free list, and RtlpDeCommitFreeBlock read at "
                         + "null - 8: the puzzle-transition stall. One thread-safe host "
                         + "allocator inside guest memory replaces it, and every copy runs as "
-                        + "NEON. Titles without a table are unchanged. Cvar cpu_guest_crt_hooks.",
-                CATEGORY_CPU, true, true,
+                        + "NEON. Titles without a table are unchanged. Cvar cpu_guest_crt_hooks. "
+                        + "OFF by default (2026-09-22): with every call routed to the host heap "
+                        + "the boot deadlocks on the PC and the device (all guest threads wait on "
+                        + "events); under study with cpu_guest_crt_hooks_heap/_mem, "
+                        + "cpu_guest_crt_heap_zero_all and cpu_guest_crt_heap_no_recycle.",
+                CATEGORY_CPU, false, false,
                 new BoolCvar[]{new BoolCvar("cpu_guest_crt_hooks")}, null));
 
         list.add(new Optimization(

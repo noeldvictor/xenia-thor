@@ -23,13 +23,28 @@
 #include "xenia/memory.h"
 
 DEFINE_bool(
-    cpu_guest_crt_hooks, true,
+    cpu_guest_crt_hooks, false,
     "Replace a title's statically linked C runtime (its own heap, memcpy, "
     "memset) with host code at the guest addresses the title's static "
     "recompilation names (reNut for Banjo-Kazooie: Nuts & Bolts). The heap "
     "becomes one thread-safe host allocator inside guest memory; the copies "
     "run as host NEON/SSE. A title without a table is unchanged.",
     "CPU");
+
+DEFINE_bool(cpu_guest_crt_hooks_heap, true,
+            "With cpu_guest_crt_hooks: hook the heap functions (A/B lever).",
+            "CPU");
+DEFINE_bool(cpu_guest_crt_hooks_mem, true,
+            "With cpu_guest_crt_hooks: hook memcpy/memset (A/B lever).", "CPU");
+DEFINE_bool(cpu_guest_crt_heap_zero_all, false,
+            "Guest CRT heap: zero every block on allocation, as fresh pages "
+            "from the title's own heap were (A/B lever for titles that read "
+            "uninitialized heap memory).",
+            "CPU");
+DEFINE_bool(cpu_guest_crt_heap_no_recycle, false,
+            "Guest CRT heap: never reuse a freed block (every allocation is "
+            "fresh, zeroed memory; leaks). A/B lever.",
+            "CPU");
 
 namespace xe {
 namespace cpu {
@@ -51,6 +66,10 @@ class GuestSmallHeap {
 
   uint32_t Alloc(Memory* memory, uint32_t size, bool zero) {
     memory_ = memory;
+    if (size > 0x7FFFF000u) {
+      // size + header would wrap; the title's own heap fails such sizes.
+      return 0;
+    }
     uint32_t class_index = ClassFor(size);
     if (class_index == kLargeClass) {
       uint32_t total = xe::round_up(size + kHeaderSize, 4096u);
@@ -66,9 +85,10 @@ class GuestSmallHeap {
     }
     uint32_t block_size = ClassSize(class_index);
     uint32_t header;
+    zero = zero || cvars::cpu_guest_crt_heap_zero_all;
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      header = PopFree(class_index);
+      header = cvars::cpu_guest_crt_heap_no_recycle ? 0 : PopFree(class_index);
       bool recycled = header != 0;
       if (!header) {
         header = Carve(kHeaderSize + block_size);
@@ -108,7 +128,9 @@ class GuestSmallHeap {
       return true;
     }
     std::lock_guard<std::mutex> lock(mutex_);
-    PushFree(class_index, header);
+    if (!cvars::cpu_guest_crt_heap_no_recycle) {
+      PushFree(class_index, header);
+    }
     ++stats_freed_;
     return true;
   }
@@ -238,6 +260,17 @@ class GuestSmallHeap {
 
 GuestSmallHeap g_heap;
 std::atomic<uint32_t> g_log_budget{16};
+// The first calls of each entry point, for the boot picture of a title.
+std::atomic<uint32_t> g_trace_budget{48};
+
+void TraceCall(const char* what, ppc::PPCContext* ctx, uint32_t a, uint32_t b,
+               uint32_t c, uint32_t result) {
+  if (g_trace_budget.load() > 0) {
+    g_trace_budget.fetch_sub(1);
+    XELOGI("guest CRT heap trace: {}({:08X}, {:08X}, {:08X}) = {:08X} lr={:08X}",
+           what, a, b, c, result, uint32_t(ctx->lr));
+  }
+}
 
 // NT heap flags the titles use.
 constexpr uint32_t kHeapZeroMemory = 0x00000008;
@@ -249,10 +282,11 @@ void HookRtlAllocateHeap(ppc::PPCContext* ctx, kernel::KernelState*) {
   uint32_t size = uint32_t(ctx->r[5]);
   Memory* memory = ctx->processor->memory();
   uint32_t block = g_heap.Alloc(memory, size, (flags & kHeapZeroMemory) != 0);
-  if (!block && g_log_budget.load() > 0) {
-    g_log_budget.fetch_sub(1);
-    XELOGE("guest CRT heap: RtlAllocateHeap({}) failed", size);
+  if (!block) {
+    XELOGE("guest CRT heap: RtlAllocateHeap(flags {:X}, size {}) = 0 lr={:08X}",
+           flags, size, uint32_t(ctx->lr));
   }
+  TraceCall("RtlAllocateHeap", ctx, uint32_t(ctx->r[3]), flags, size, block);
   ctx->r[3] = block;
 }
 
@@ -273,7 +307,13 @@ void HookRtlFreeHeap(ppc::PPCContext* ctx, kernel::KernelState*) {
 // SIZE_T RtlSizeHeap(HANDLE heap, ULONG flags, PVOID block)
 void HookRtlSizeHeap(ppc::PPCContext* ctx, kernel::KernelState*) {
   uint32_t block = uint32_t(ctx->r[5]);
-  ctx->r[3] = g_heap.Size(block);
+  uint32_t size = g_heap.Size(block);
+  if (size == UINT32_MAX && block && g_log_budget.load() > 0) {
+    g_log_budget.fetch_sub(1);
+    XELOGW("guest CRT heap: RtlSizeHeap({:08X}) unknown block lr={:08X}", block,
+           uint32_t(ctx->lr));
+  }
+  ctx->r[3] = size;
 }
 
 // PVOID RtlReAllocateHeap(HANDLE heap, ULONG flags, PVOID block, SIZE_T size)
@@ -288,11 +328,9 @@ void HookRtlReAllocateHeap(ppc::PPCContext* ctx, kernel::KernelState*) {
   }
   uint32_t old_size = g_heap.Size(block);
   if (old_size == UINT32_MAX) {
-    if (g_log_budget.load() > 0) {
-      g_log_budget.fetch_sub(1);
-      XELOGW("guest CRT heap: RtlReAllocateHeap({:08X}) of a foreign block",
-             block);
-    }
+    XELOGW("guest CRT heap: RtlReAllocateHeap({:08X}, {}) of a foreign block "
+           "= 0 lr={:08X}",
+           block, size, uint32_t(ctx->lr));
     ctx->r[3] = 0;
     return;
   }
@@ -310,14 +348,21 @@ void HookRtlReAllocateHeap(ppc::PPCContext* ctx, kernel::KernelState*) {
     return;
   }
   if (flags & kHeapReallocInPlaceOnly) {
+    XELOGW("guest CRT heap: RtlReAllocateHeap({:08X}, {}) in place only, "
+           "capacity {} = 0 lr={:08X}",
+           block, size, capacity, uint32_t(ctx->lr));
     ctx->r[3] = 0;
     return;
   }
   uint32_t fresh = g_heap.Alloc(memory, size, (flags & kHeapZeroMemory) != 0);
   if (!fresh) {
+    XELOGE("guest CRT heap: RtlReAllocateHeap({:08X}, {}) alloc failed = 0 "
+           "lr={:08X}",
+           block, size, uint32_t(ctx->lr));
     ctx->r[3] = 0;
     return;
   }
+  TraceCall("RtlReAllocateHeap", ctx, flags, block, size, fresh);
   std::memcpy(memory->TranslateVirtual(fresh), memory->TranslateVirtual(block),
               std::min(old_size, size));
   g_heap.Free(memory, block);
@@ -395,9 +440,16 @@ const GuestCrtHook* LookupGuestCrtHook(uint64_t code_hash, uint32_t address) {
       continue;
     }
     for (size_t i = 0; i < table.count; ++i) {
-      if (table.hooks[i].address == address) {
-        return &table.hooks[i];
+      if (table.hooks[i].address != address) {
+        continue;
       }
+      const bool is_mem = table.hooks[i].handler == HookMemcpy ||
+                          table.hooks[i].handler == HookMemset;
+      if (is_mem ? !cvars::cpu_guest_crt_hooks_mem
+                 : !cvars::cpu_guest_crt_hooks_heap) {
+        return nullptr;
+      }
+      return &table.hooks[i];
     }
   }
   return nullptr;

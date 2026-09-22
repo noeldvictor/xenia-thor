@@ -10,6 +10,7 @@
 #include "xenia/cpu/function.h"
 
 #include "xenia/base/logging.h"
+#include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/symbol.h"
 #include "xenia/cpu/thread_state.h"
 
@@ -121,6 +122,12 @@ uint32_t GuestFunction::MapMachineCodeToGuestAddress(
   return entry ? entry->guest_address : address();
 }
 
+bool GuestFunction::CallExternHandler(ThreadState* thread_state) {
+  ppc::PPCContext* context = thread_state->context();
+  extern_handler_(context, context->kernel_state);
+  return true;
+}
+
 bool GuestFunction::Call(ThreadState* thread_state, uint32_t return_address) {
   // SCOPE_profile_cpu_f("cpu");
 
@@ -129,7 +136,9 @@ bool GuestFunction::Call(ThreadState* thread_state, uint32_t return_address) {
     ThreadState::Bind(thread_state);
   }
 
-  bool result = CallImpl(thread_state, return_address);
+  bool result = (behavior_ == Behavior::kExtern && extern_handler_)
+                    ? CallExternHandler(thread_state)
+                    : CallImpl(thread_state, return_address);
 
   if (original_thread_state != thread_state) {
     ThreadState::Bind(original_thread_state);
