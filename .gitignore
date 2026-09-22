@@ -180,3 +180,4 @@ tools/renderdoc/rd_out.txt
 tools/renderdoc/rd_in.txt
 tools/renderdoc/rd_*.png
 tools/renderdoc/rd_shader_*.txt
+.claude/retro-*.done
