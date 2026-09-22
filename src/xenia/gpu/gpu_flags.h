@@ -12,6 +12,7 @@
 #include "xenia/base/cvar.h"
 
 DECLARE_path(trace_gpu_prefix);
+DECLARE_path(trace_gpu_request_file);
 DECLARE_bool(trace_gpu_stream);
 
 DECLARE_path(dump_shaders);

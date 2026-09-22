@@ -620,6 +620,18 @@ Port rules:
   device trace with those settings (`tools/pc/trace_ab.py --from-snapshot`) -> the
   device only to confirm. The user's Thor use: no emulator run without approval for the
   rest of 2026-09-22.
+  PC parity, Gears of War 1 (19:30-20:05, PC only, `tools/pc/pc_run.py` with the device
+  snapshot): boots, menus, loads, reaches gameplay ("Exit the cell area.") in 290 s with
+  the device's settings; no stall on the PC. `trace_gpu_request_file` (new cvar) plus
+  `pc_run.py --trace-at` trace the frame on screen of a parked window; `trace_ab.py` on
+  that frame: every device setting is neutral (cull, merges, VRS 0.0-0.3) EXCEPT
+  `gpu_fp16_shaders`: image diff 2.2, the lit floor darkens (lower-half luma 12.8 ->
+  9.4), a lamp bands. Shipped per-title override: Gears (4D5307D5) runs with FP16 off.
+  THE DEVICE'S GLOBAL TOGGLES ARE EXPERIMENT LEFTOVERS: cull, both draw merges, fp16 and
+  VRS are on in the saved global settings although each defaults off - every title on the
+  device runs with them. The cull and merges are correct now (topology fix) and faster;
+  fp16 is lossy per title. Next device step (with the user's approval): reset the global
+  experimental toggles, then enable per title only what the PC trace A/B shows neutral.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays

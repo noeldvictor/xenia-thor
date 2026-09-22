@@ -12,6 +12,14 @@
 DEFINE_path(trace_gpu_prefix, "scratch/gpu/",
             "Prefix path for GPU trace files.", "GPU");
 DEFINE_bool(trace_gpu_stream, false, "Trace all GPU packets.", "GPU");
+DEFINE_path(
+    trace_gpu_request_file, "",
+    "When set, the command processor checks this file once per guest swap; "
+    "when it exists it is deleted and the next frame is traced to "
+    "trace_gpu_prefix (the same as the frame-trace hotkey). A harness that "
+    "cannot press a key on a parked window requests a trace of the frame on "
+    "screen (tools/pc/pc_run.py --trace-at).",
+    "GPU");
 
 DEFINE_path(
     dump_shaders, "",

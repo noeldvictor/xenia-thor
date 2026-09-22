@@ -2360,6 +2360,19 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
 #endif  // XE_PLATFORM_ANDROID
 
   ++counter_;
+  // trace_gpu_request_file: a file-based frame-trace request, polled once per
+  // swap (every 8th swap, a stat call is cheap but not free).
+  if (!cvars::trace_gpu_request_file.empty() && (counter_ & 7u) == 0) {
+    std::error_code trace_request_error;
+    if (std::filesystem::exists(cvars::trace_gpu_request_file,
+                                trace_request_error)) {
+      std::filesystem::remove(cvars::trace_gpu_request_file,
+                              trace_request_error);
+      XELOGI("trace_gpu_request_file: tracing the next frame to {}",
+             cvars::trace_gpu_prefix.string());
+      RequestFrameTrace(cvars::trace_gpu_prefix);
+    }
+  }
   if (ShouldTraceGpuInterruptPacket()) {
     XELOGI(
         "GPU interrupt trace: XE_SWAP complete frontbuffer={:08X} size={}x{} "

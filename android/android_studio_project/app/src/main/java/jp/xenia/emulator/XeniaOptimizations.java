@@ -1238,6 +1238,13 @@ public final class XeniaOptimizations {
         final java.util.Map<String, Integer> banjo = new java.util.HashMap<>();
         banjo.put("opt_llvm_backend", OVERRIDE_OFF);
         SHIPPED_TITLE_OVERRIDES.put("4D5307ED", banjo);
+        // Gears of War (4D5307D5): FP16 pixel shaders darken the lit floor and
+        // band the lamps (PC replay of a gameplay frame, tools/pc/trace_ab.py:
+        // image diff 2.2, lower-half luma 12.8 -> 9.4; 2026-09-22). Off for
+        // this title even when the global toggle is on.
+        final java.util.Map<String, Integer> gears = new java.util.HashMap<>();
+        gears.put("opt_fp16_pixel", OVERRIDE_OFF);
+        SHIPPED_TITLE_OVERRIDES.put("4D5307D5", gears);
     }
 
     /** The shipped default override for (title, optimization), or DEFAULT. */
