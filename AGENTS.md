@@ -481,7 +481,9 @@ Port rules:
   points at the 09-18 sync's shader and sampling changes (trilinear `min_linear`/`mip_linear`
   sampler filters `75b13003fb`, extended-range float16 pack and unpack `2ece4a1456`, 21-bit
   approximation rounding `2233a13b05`), each testable as a reverse-applied commit on master
-  with a NativeCore build (fast) and one route.
+  with a NativeCore build (fast) and one route. The sampler revert: 78.5 to 79 ms (not it).
+  A route right after an install with no warm-up rendered nothing for 150 s (VOID): warm the
+  cache first, every time, even when the LLVM stamp did not change.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
