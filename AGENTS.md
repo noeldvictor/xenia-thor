@@ -484,6 +484,13 @@ Port rules:
   with a NativeCore build (fast) and one route. The sampler revert: 78.5 to 79 ms (not it).
   A route right after an install with no warm-up rendered nothing for 150 s (VOID): warm the
   cache first, every time, even when the LLVM stamp did not change.
+  The extended-range float16 revert: 79 ms (not it). The shading-rate recording change is
+  out on inspection: VRS is emitted only for foliage-classified draws and Blue Dragon's field
+  has none (vrs_base=0 in both builds). Windows Defender holds a freshly written .so open;
+  `thor_build.ps1` now deletes the staged copy before writing it (3cd7195530). Remaining
+  candidates in the 09-18 sync: the 21-bit rounding (running), the GPU register reset
+  defaults `195b6bf721`, the MIN/MAX blend-factor emulation `12e754437d`, the vertex-fetch
+  clamp `dec32502ed`; each reverse-applies cleanly.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
