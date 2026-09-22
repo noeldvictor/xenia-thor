@@ -422,6 +422,12 @@ Port rules:
   (it said `cpu_backend_llvm=true` while LLVM was off; read the "LLVMBackend" line instead
   until the getter is fixed); and one `emit_ab.py` baseline printed 30.3 fps with 0 draws
   (no trace lines: not a scene measurement, ignore rows with draws=0).
+  Confirmed (06:30 to 07:00): eight play-path launches with the shipped default, 0 frozen,
+  all eight past the freeze point (20 of 20 tonight on the a64 path). The cvar getter now
+  returns the live value (6d07a9db4f). Still open: the null-heap free (`meInternalFree` ->
+  `RtlFreeHeap(0)`, about 1 in 4 once the classic freeze is gone - none seen in these
+  eight), Blue Dragon's own LLVM-on versus a64 measurement on `bd_gameplay_route.sh`, and
+  gameplay-scene fps for Banjo beyond the title (the title now sits near its 30 cap).
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
