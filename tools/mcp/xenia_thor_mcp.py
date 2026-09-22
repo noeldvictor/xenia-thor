@@ -837,7 +837,8 @@ def xenia_backtrace(pid: Optional[int] = None, only: str = 'XThread,Emulator,or.
     names = _symbolize_app_offsets(offsets)
     so = _APP_SO
     filters = [x.strip() for x in only.split(',') if x.strip()]
-    out = [f"pid {data.get('pid')}: {len(data['threads'])} threads; symbols from {os.path.basename(so)}"]
+    out = [f"pid {data.get('pid')}: {len(data['threads'])} threads; symbols from {os.path.basename(so)}: "
+           f"{_symbols_status()}"]
     for t in data['threads']:
         comm = t.get('comm', '')
         if filters and not any(f in comm for f in filters):
@@ -859,6 +860,76 @@ _APP_SO = os.path.join(REPO, 'android', 'android_studio_project', 'app', 'build'
                        'ndkBuild', 'githubDebug', 'obj', 'local', 'arm64-v8a', 'libxenia-app.so')
 _NDK_SYMBOLIZER = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk', 'ndk', '25.0.8775105',
                                'toolchains', 'llvm', 'prebuilt', 'windows-x86_64', 'bin', 'llvm-symbolizer.exe')
+
+
+def _elf_build_id(data: bytes) -> str:
+    """The GNU build id of an ELF64 image from its first bytes ('' if none)."""
+    import struct
+    if len(data) < 64 or data[:4] != b'\x7fELF' or data[4] != 2:
+        return ''
+    phoff, = struct.unpack_from('<Q', data, 0x20)
+    phentsize, phnum = struct.unpack_from('<HH', data, 0x36)
+    for i in range(phnum):
+        o = phoff + i * phentsize
+        if o + 56 > len(data):
+            break
+        if struct.unpack_from('<I', data, o)[0] != 4:  # PT_NOTE
+            continue
+        off, = struct.unpack_from('<Q', data, o + 8)
+        size, = struct.unpack_from('<Q', data, o + 0x20)
+        j = off
+        while j + 12 <= min(off + size, len(data)):
+            nsz, dsz, typ = struct.unpack_from('<III', data, j)
+            d0 = j + 12 + ((nsz + 3) & ~3)
+            if typ == 3 and data[j + 12:j + 12 + nsz].rstrip(b'\0') == b'GNU':
+                return data[d0:d0 + dsz].hex()
+            j = d0 + ((dsz + 3) & ~3)
+    return ''
+
+
+def _local_app_build_id() -> str:
+    try:
+        with open(_APP_SO, 'rb') as f:
+            return _elf_build_id(f.read(65536))
+    except OSError:
+        return ''
+
+
+_INSTALLED_ID_FILE = os.path.join(SCRATCH, 'installed_build_id.txt')
+
+
+def _installed_app_build_id() -> str:
+    """The build id of the libxenia-app.so installed on the device: its
+    first 64 KB read over adb (read-only), else the id recorded by the last
+    xenia_install."""
+    try:
+        apk = _shell(f'pm path {PKG}').strip().splitlines()[0].replace('package:', '')
+        lib = apk.rsplit('/', 1)[0] + '/lib/arm64/libxenia-app.so'
+        data = subprocess.run(['adb', '-s', SERIAL, 'exec-out', f'dd if={lib} bs=65536 count=1 2>/dev/null'],
+                              capture_output=True, timeout=30).stdout
+        bid = _elf_build_id(data)
+        if bid:
+            return bid
+    except Exception:
+        pass
+    try:
+        with open(_INSTALLED_ID_FILE, encoding='utf-8') as f:
+            return f.read().strip()
+    except OSError:
+        return ''
+
+
+def _symbols_status() -> str:
+    """'match', or a MISMATCH line: frames named against a library of another
+    build are wrong without any sign (2026-09-22: the device ran 9712...,
+    the local library was c699... after a rebuild)."""
+    local, dev = _local_app_build_id(), _installed_app_build_id()
+    if not local or not dev:
+        return f'unknown (local {local[:12] or "?"}, device {dev[:12] or "?"})'
+    if local == dev:
+        return 'match'
+    return (f'MISMATCH: device build {dev[:12]}, local build {local[:12]}; the frame names are '
+            f'from another build. Install the local build or rebuild the installed commit')
 
 
 def _symbolize_app_offsets(offsets, inlining: bool = False) -> dict:
@@ -983,6 +1054,7 @@ def xenia_stall(pid: Optional[int] = None, hot_threads: int = 3) -> str:
                 ft = _host_fault_threads()
                 if ft:
                     st['host_fault_threads'] = ft[:4]
+                    st['symbols'] = _symbols_status()
                     top = ft[0]
                     first = next((f for f in top['frames'] if 'libxenia-app.so' in f
                                   and 'ExceptionHandler' not in f and 'ExceptionCallback' not in f
@@ -992,6 +1064,8 @@ def xenia_stall(pid: Optional[int] = None, hot_threads: int = 3) -> str:
                                      f"{' with the kernel table lock held' if table_locked else ''}: "
                                      f"{first[:200]}. host_fault_threads has the frames; xenia-fault lines "
                                      f"in logcat have the first fault's pc")
+                    if st['symbols'] != 'match':
+                        st['verdict'] = 'SYMBOLS ' + st['symbols'] + ' | ' + st['verdict']
             except Exception as e:
                 st['host_fault_threads_error'] = str(e)[:200]
         # Trim the long lists instead of cutting the JSON (a cut at 12000
@@ -1262,6 +1336,13 @@ def xenia_install(verify: bool = True) -> str:
     result['sha256_local'] = local
     result['sha256_device'] = dev
     result['match'] = local == dev
+    if result['match']:
+        try:
+            os.makedirs(SCRATCH, exist_ok=True)
+            with open(_INSTALLED_ID_FILE, 'w', encoding='utf-8') as f:
+                f.write(_local_app_build_id())
+        except OSError:
+            pass
     return json.dumps(result, indent=2)
 
 
