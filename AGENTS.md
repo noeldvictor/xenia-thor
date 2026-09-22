@@ -315,7 +315,28 @@ Port rules:
   family with native code; xenia now does the same at the same guest addresses
   (`src/xenia/cpu/guest_crt_hooks.cc`, cvar `cpu_guest_crt_hooks`, launcher toggle "Run the
   game's C runtime as host code"): a thread-safe small-block heap inside guest memory, host
-  memmove/memset. PC: the title route scores GOOD with all eight hooks live. Device: under test.
+  memmove/memset. Two lessons from the first device build (2026-09-22): (a) the hooks planted
+  nowhere because the lazy code hash was computed after the game patches changed code bytes -
+  the kernel's pristine hash (UserModule::CalculateHash) now feeds XexModule::code_hash, and the
+  plant happens in XexModule::DeclareFunction; (b) with the hooks planted, only a64-compiled
+  callers reached the host heap: the LLVM guest-call helper and GuestFunction::Call entered the
+  translated body of a kExtern function. Both now dispatch to the handler. With every call
+  routed the device booted to the puzzle on the host heap (48 traced calls, no fault), but the
+  PC deadlocked once at boot with the hooks on (every thread waiting on events), so
+  `cpu_guest_crt_hooks` defaults OFF with the A/B levers `cpu_guest_crt_hooks_heap`,
+  `cpu_guest_crt_hooks_mem`, `cpu_guest_crt_heap_zero_all`, `cpu_guest_crt_heap_no_recycle`;
+  a PC series (four rounds of on / on-without-mem / off) and a device series are the next data.
+  The offline tools that made this a 40-minute diagnosis instead of a night: the PC code dump
+  (`--dump_guest_mem_*` on the Windows build, 15 s) + `guest_disasm_offline.py` with reNut's
+  names (meInternalAlloc, the trailer 0x9876+index at block end, RtlSizeHeap as the heap-of-
+  pointer probe), and the heap's own boot trace.
+
+  Retro 2026-09-21 (the stop ritual): slow = one device launch per cvar, 50 launches for four
+  facts, 40% of them lost to the stall and the rest to heat; the tool that would have made it
+  fast = live `cvar_set` A/B inside one launch with a per-frame metric, RenderDoc headless on the
+  PC, the offline code dump with the recomp's names; exists now = yes for all three
+  (`atlas_ab.py`, `pc_goto.py --renderdoc` + `tools/renderdoc/*`, `guest_disasm_offline.py`),
+  and the missing one, a device-side RenderDoc capture, is the next tool to build.
   Open (2026-09-21 evening): the puzzle transition crashes a guest thread in two runs of three,
   and the game then stalls with a half-lit puzzle on the panel (every thread waits on the crashed
   thread's semaphore). Two fault shapes so far: a halfword load at guest 0xFFFFFFF8 (null minus 8)
