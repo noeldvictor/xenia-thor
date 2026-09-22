@@ -433,7 +433,15 @@ Port rules:
   vertices per frame, 0 faults) against the documented ~17.5 fps with LLVM on the 2026-08-09
   build. The opposite of Banjo: the LLVM backend earns its place on Blue Dragon, so the
   global default stays ON and the per-title override is the right shape. The same-build LLVM
-  arm follows after a BD cache warm-up.
+  arm (07:40, cache warmed, gpu 44 C at start): 11.3 fps in the same scene (gate OK, 1,208
+  draws, 263,257 vertices, 0 faults). CORRECTION: on today's build the LLVM backend is
+  NEUTRAL for Blue Dragon (11.3 against 11.7) and four times worse for Banjo. And Blue
+  Dragon's gameplay scene itself fell from the documented ~17.5 fps (2026-08-09 build) to
+  ~11.5 on both backends: a regression of about a third somewhere in the six weeks of
+  commits, on the same route and the same scene gate. That is now the largest open
+  performance item; it needs a build bisection with `bd_gameplay_route.sh` as the metric
+  (one run per cooldown, about 6 minutes each). The global LLVM default stays ON until one
+  more title is measured both ways; Banjo's per-title OFF ships.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
