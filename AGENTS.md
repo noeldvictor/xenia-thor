@@ -399,6 +399,12 @@ Port rules:
   swings 0 to 4 of 4 between batches of four); then `llvm_bisect.py --runs 4` (the window
   bisection, one frozen run keeps a half); then a write trap on the container's array
   (`sub_82CE6A38`'s r28+0x18) to name the writer. Tools for all three exist.
+  The a64-only arm ran (05:25 to 05:55): 0 of 8 froze, all eight past the freeze point
+  (12 of 12 tonight), against ten-plus freezes across the LLVM batches. The freeze needs the
+  LLVM backend. Interim for the player: `cpu_backend_llvm=false` (the launcher toggle
+  "opt_llvm_backend" off) removes it; the title-scene cost of a64-only is the next A/B
+  (`emit_ab.py --launch "cpu_backend_llvm=false"`), and in the stall records the a64 runs
+  advanced the swap counter about twice as fast during the watch window.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
