@@ -362,11 +362,13 @@ Port rules:
   swap 836 to 838 (the same frame every time; the fourth stayed alive); with a64 only, 0 of 4
   froze and all four ran past swap 1045 (the title-colour check missed on the slower backend, so
   the study now counts only frozen swaps as a stall and reports "alive" separately). The stall
-  is an LLVM-backend code-generation defect until shown otherwise. Next arms, in order: the
-  residency options off (`cpu_backend_llvm_context_residency=false,
-  cpu_backend_llvm_residency_writeback=false`), then `cpu_backend_llvm_range_lo/hi` bisection
-  of the address range, then `cpu_backend_llvm_skip_addrs` on the functions the chains name
-  (`sub_82CE6A38`, `sub_82951B78`, `sub_829441A8`, `sub_8296C870`).
+  is an LLVM-backend code-generation defect until shown otherwise. Two arms cleared suspects:
+  the residency options off froze 2 of 3; LLVM without the object cache (fresh compiles,
+  `cpu_llvm_object_cache=false,cpu_llvm_no_runtime_compiles=false`) froze 3 of 3, so it is not
+  a stale cache. `llvm_bisect.py` (running from 03:15) halves the `cpu_backend_llvm_range_lo/hi`
+  window, two launches per half, one frozen run keeps a half; the log is
+  `scratch/banjo/rd/llvm_bisect.log`. The perf A/B of `cpu_global_lock_mutex=false` waits for
+  it: a measurement needs the transition to pass, and it passes 1 launch in 4 with LLVM on.
 
   Retro 2026-09-21 (the stop ritual): slow = one device launch per cvar, 50 launches for four
   facts, 40% of them lost to the stall and the rest to heat; the tool that would have made it
