@@ -386,6 +386,13 @@ Port rules:
   words: an a64 guest entry reads its backend context through x19 and LLVM code was free to
   use x19. The multi-axis lesson: two backends, one ABI contract, written down nowhere both
   could see it.
+  `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
+  the main thread and one worker at 100% each - the livelock the original mtmsr comment
+  predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
+  off and the kernel-time attack needs another shape (a cheaper lock, fewer enter/leave
+  pairs, or the per-section analysis of what the guest does under mtmsr). Harness lesson of
+  the same hour: `xenia_install` refuses while the app runs and the chain read its answer as
+  a dict without `exit` - force-stop first, and check `match` before trusting a device run.
   The swap-307/308 freeze is the SECOND bug, now with its chain: the main thread faults in
   `RtlpInsertFreeBlock+8` <- `RtlFreeHeap+1CC` <- `meInternalFree+BC` <- `sub_82364BB8+54`
   with ctr = `DoWork_CStreamingWaveBank_XACT`: `sub_82240178` matched no heap's trailer tag,
