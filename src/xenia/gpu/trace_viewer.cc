@@ -141,7 +141,13 @@ void TraceViewer::DumpFrameAndQuit() {
   frame = std::max(0, std::min(frame, frame_count - 1));
   XELOGI("Trace viewer dump: frame {} of {} to {}", frame, frame_count,
          png_path);
+  // As trace_dump does: SeekFrame returns without playing when the frame is
+  // already current (frame 0 of a one-frame trace is, at start), and the wait
+  // then never ended (2026-09-22). SeekCommand to the last command plays the
+  // frame from its start when SeekFrame did not.
   player_->SeekFrame(frame);
+  player_->SeekCommand(
+      static_cast<int>(player_->current_frame()->commands.size() - 1));
   player_->WaitOnPlayback();
   bool written = false;
   ui::Presenter* presenter = graphics_system_->presenter();

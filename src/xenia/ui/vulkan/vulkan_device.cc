@@ -9,6 +9,8 @@
 
 #include "xenia/ui/vulkan/vulkan_device.h"
 
+#include "xenia/base/cvar.h"
+
 #include "xenia/base/assert.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/platform.h"
@@ -18,6 +20,12 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+DEFINE_bool(vulkan_disable_shader_stencil_export, false,
+            "DIAGNOSTIC: do not enable VK_EXT_shader_stencil_export even when "
+            "the device has it (the depth ownership transfers then use the "
+            "stencil-bit path of devices without it).",
+            "Vulkan");
 
 namespace xe {
 namespace ui {
@@ -181,8 +189,12 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
                                           2)
     // #70. Must be enabled for VK_KHR_sampler_ycbcr_conversion.
     XE_UI_VULKAN_LOCAL_PROMOTED_EXTENSION(KHR_maintenance1, 1, 1)
-    // #141.
-    XE_UI_VULKAN_STRUCT_EXTENSION(EXT_shader_stencil_export)
+    // #141. vulkan_disable_shader_stencil_export (DIAGNOSTIC, 2026-09-22):
+    // take the path of a device without it (the PC's NVIDIA) on the Thor, to
+    // split Banjo's device-only dark lower tile.
+    if (!cvars::vulkan_disable_shader_stencil_export) {
+      XE_UI_VULKAN_STRUCT_EXTENSION(EXT_shader_stencil_export)
+    }
     // #148.
     XE_UI_VULKAN_STRUCT_PROMOTED_EXTENSION(KHR_image_format_list, 1, 2)
     if (get_physical_device_properties2_supported) {

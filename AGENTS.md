@@ -530,6 +530,27 @@ Port rules:
   now starts, but a 79 MB trace did not finish in 300 s. Next: finish the device replay
   (the fast loop), then the tile-B path on the device: the window-offset handling and the
   EDRAM ownership of tile B's range.
+  Later the same afternoon (device over wireless adb, 192.168.1.5; the MCP now finds it):
+  tile B's resolved block is near black on the device (byte-lane means about 0/8/8/4) with
+  ~1,000 distinct values, and with `gpu_debug_offset_tile_no_depth` (no depth for offset
+  draws inside a tile pass) its geometry shows up faintly: depth rejects tile B's draws on
+  the device. Both tiles use reversed depth (`zfunc` 6, greater-or-equal); the frame order
+  is tile A -> clear depth rows 0-384 to 0.0 (far) -> tile B -> clear rows 0-336 to 0.5
+  (guest 1.0) -> final pass, IDENTICAL on the device and in the PC replay of the device
+  trace (clear values, viewports, NDC transforms). Not the cause, each measured or read:
+  the render-target path (both "fbo"), `VK_EXT_depth_range_unrestricted` (no code uses it),
+  `VK_EXT_shader_stencil_export` (hidden with `vulkan_disable_shader_stencil_export`: 24/30
+  still dark), the depth-store-NONE and retro variants (off by default), the BD depth handoff
+  (in-pass transfers off). The PC trace tool builds again (premake vs2022, then MSBuild on
+  `build/xenia-gpu-vulkan-trace-dump.vcxproj` with Configuration "Release Windows",
+  Platform x64). The device trace viewer's dump mode never played a one-frame trace
+  (`SeekFrame` returns when the frame is current; fixed with a `SeekCommand` as trace_dump
+  does); its first real replays died - once to a system-wide low-memory kill, once
+  unexplained - while the user was using the device for other work, so the replay result
+  is still open. Next: the device replay of `4D5307ED_3060.xtr` on an idle device (dark ->
+  the device's GPU execution; clean -> a live-only race), then the depth EDRAM contents
+  entering tile B (the 640-pitch 4xMSAA pass also writes depth base 0 inside both tiles).
+  Device etiquette (user, 2026-09-22): ask before driving the device; the user works on it.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
