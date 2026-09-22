@@ -378,8 +378,14 @@ Port rules:
   classic freezes (one run froze at swap 308). Baseline the same night: 3 of 4. Each arm ran on
   a FRESHLY BUILT object cache, the baseline on the old one, and the cache stamp hashes only
   `llvm_assembler.cc/.h` (`tools/build/gen_version_h.py`), not `ppc_context.h`, the helpers'
-  signatures or the a64 thunks - so a stale cache is the third candidate, and the control
-  (no x19, cache v5, `stall_study.py --runs 4 ""`) decides between "fix" and "fresh cache".
+  signatures or the a64 thunks - so a stale cache was the third candidate. The control (no
+  x19, cache v5, 04:25) froze 2 of 2 at the classic point (swaps 843 and 858, one with
+  ctr = 0): a fresh cache is not the fix. VERDICT: reserving x19 in the LLVM backend removes
+  the classic freeze (0 of 4; commit 8490ce9efb, default on). The clobber barrier removes it
+  too (0 of 4) but constrains the allocator; it stays off. The mechanism in the tree's own
+  words: an a64 guest entry reads its backend context through x19 and LLVM code was free to
+  use x19. The multi-axis lesson: two backends, one ABI contract, written down nowhere both
+  could see it.
   The swap-307/308 freeze is the SECOND bug, now with its chain: the main thread faults in
   `RtlpInsertFreeBlock+8` <- `RtlFreeHeap+1CC` <- `meInternalFree+BC` <- `sub_82364BB8+54`
   with ctr = `DoWork_CStreamingWaveBank_XACT`: `sub_82240178` matched no heap's trailer tag,
