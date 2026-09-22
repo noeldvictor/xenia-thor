@@ -331,6 +331,18 @@ Port rules:
   names (meInternalAlloc, the trailer 0x9876+index at block end, RtlSizeHeap as the heap-of-
   pointer probe), and the heap's own boot trace.
 
+  Performance, first hard number (2026-09-22, `frame_outcomes.py` at the Spiral Mountain title,
+  device, No-MSAA patch on, cool): 7.9 fps, 2,484 draws per frame, `cpu_issuedraw_us` 27,079
+  median (50,005 p90), of which `cpu_emit_us` 21,013: the title is CPU-bound in the command
+  processor's emit phase (vertex-buffer RequestRange, render-pass entry, the draw-merge rewrite
+  that copies index data per draw; 8.5 us per draw), not on the GPU. Next, in ONE launch with live
+  `cvar_set`: `vulkan_merge_draws_rewrite=false`, `vulkan_cache_vertex_residency=true`,
+  `vulkan_hoist_request_range_lock` off/on, reading `cpu_emit_us` per setting. The route's
+  Spiral Mountain check (`green>0.03&gold<0.2`) missed twice tonight; make the title preset
+  detect the logo (red+blue in the middle band, as `grass_score.py` does on the PC) first.
+  The host-heap stall study ended at 3 of 4 clean boots on the PC with freed blocks kept intact;
+  the residual stall is the XCTD read queue (the wait chains name it); default off.
+
   Retro 2026-09-21 (the stop ritual): slow = one device launch per cvar, 50 launches for four
   facts, 40% of them lost to the stall and the rest to heat; the tool that would have made it
   fast = live `cvar_set` A/B inside one launch with a per-frame metric, RenderDoc headless on the
