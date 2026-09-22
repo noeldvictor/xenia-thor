@@ -405,6 +405,13 @@ Port rules:
   "opt_llvm_backend" off) removes it; the title-scene cost of a64-only is the next A/B
   (`emit_ab.py --launch "cpu_backend_llvm=false"`), and in the stall records the a64 runs
   advanced the swap counter about twice as fast during the watch window.
+  THE NUMBER (06:05, `emit_ab.py --launch`, the title after the puzzle, case 40.8 C): LLVM on
+  6.3 fps (2,303 draws, IssueDraw 23.0 ms, GPU 3.8 ms; the game's workers at 64% and 59%);
+  **a64 only 26.7 fps** (2,233 draws, IssueDraw 14.6 ms, GPU 9.4 ms; the command processor
+  thread at 63%, the main thread 55%). Same scene, same draw count, four times the frame
+  rate, and no freeze in 12 of 12 launches. The LLVM backend is the title's bottleneck AND the
+  freeze's precondition. Ship `cpu_backend_llvm=false` for Banjo; measure Blue Dragon both
+  ways before touching its default (the backend was built for it).
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
