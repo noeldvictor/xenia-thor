@@ -913,7 +913,16 @@ def xenia_stall(pid: Optional[int] = None, hot_threads: int = 3) -> str:
                                  for r in rows if r.get('guest') and r.get('state') == 5][:16]
         except Exception:
             pass
-        return json.dumps(st, indent=1)[:12000]
+        # Trim the long lists instead of cutting the JSON (a cut at 12000
+        # characters made the stall records unreadable, 2026-09-22).
+        if isinstance(st.get('fps'), list):
+            st['fps'] = st['fps'][-20:]
+        if isinstance(st.get('markers'), list):
+            st['markers'] = [str(x)[:300] for x in st['markers'][-12:]]
+        if 'fault' in st and isinstance(st['fault'].get('mem'), dict):
+            st['fault']['mem'] = {k: {'at': v.get('at'), 'words': (v.get('words') or [])[:8]}
+                                  for k, v in st['fault']['mem'].items() if isinstance(v, dict)}
+        return json.dumps(st, indent=1)
     except RuntimeError:
         pass
     log = _shell(f'logcat -d --pid={pid} -s xenia', timeout=120)

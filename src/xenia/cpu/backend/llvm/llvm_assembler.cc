@@ -516,7 +516,11 @@ namespace {
 const std::string& GetLlvmTargetFeatures() {
   static const std::string features = []() -> std::string {
     std::string out =
-        "+reserve-x20,+reserve-x21,-sve,-sve2,-sve2-bitperm,-sme,-sme2";
+        // x19 joins x20/x21 (2026-09-22): an a64 guest entry reached raw by a
+        // musttail jump reads its backend context through x19, so LLVM code
+        // must leave it exactly as the thunk set it. The object cache version
+        // moved to 4 with this change (the features attribute lives in the IR).
+        "+reserve-x19,+reserve-x20,+reserve-x21,-sve,-sve2,-sve2-bitperm,-sme,-sme2";
     if (!cvars::cpu_llvm_target_features_native) {
       return out;
     }

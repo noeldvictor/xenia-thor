@@ -44,7 +44,7 @@ namespace llvm_backend {
 //   fresh or bypassed cache -> guest runs normally, vctx=31,000+, 838 frames
 // Exactly the "wild execution" this comment warned about, except it presents
 // as a silent hang rather than a crash, which is why it was misread for days.
-constexpr uint32_t kLlvmObjectCacheVersion = 3;
+constexpr uint32_t kLlvmObjectCacheVersion = 4;
 
 // Compile-time stamp of the translation unit that owns EVERY LLVM lowering
 // (llvm_assembler.cc), folded into the cache directory name.
