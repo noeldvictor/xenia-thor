@@ -67,12 +67,17 @@ def one_launch(cvars, tag):
     time.sleep(8)
     s1 = swaps()
     running = s0 is not None and s1 is not None and s1 > s0
-    verdict = 'OK' if (title and running) else ('STALL' if not running else 'NO_TITLE')
+    # ALIVE: the title colours were not seen but the swaps advance (the a64
+    # backend is slower and the check timed out four times on 2026-09-22 while
+    # every run had passed the freeze point); only STALL counts as a stall.
+    verdict = 'OK' if (title and running) else ('STALL' if not running else 'ALIVE')
     if verdict != 'OK':
         rec = {'cvars': cvars, 'verdict': verdict, 'swaps': [s0, s1], 'steps': steps}
         try:
             rec['stall'] = json.loads(m.xenia_stall())
             rec['crash'] = json.loads(m.xenia_crash())
+            # The parked thread's registers and chain (the fault record).
+            rec['trap'] = m._api('/trap')
         except Exception as e:
             rec['error'] = repr(e)
         path = os.path.join(ROOT, 'scratch', 'mcp', 'stall-%s.json' % tag)
@@ -96,9 +101,11 @@ def main():
             v, secs = one_launch(cv, '%s-%d' % (time.strftime('%H%M%S'), i))
             results.append((v, secs))
             print('  %s run %d: %s in %d s' % (cv or 'baseline', i + 1, v, secs), flush=True)
-        stalls = sum(1 for v, _ in results if v != 'OK')
-        print('%s: %d/%d stalled; ok seconds %s' % (cv or 'baseline', stalls, args.runs,
-                                                   [s for v, s in results if v == 'OK']), flush=True)
+        stalls = sum(1 for v, _ in results if v == 'STALL')
+        alive = sum(1 for v, _ in results if v == 'ALIVE')
+        print('%s: %d/%d stalled, %d alive without the title; ok seconds %s' % (
+            cv or 'baseline', stalls, args.runs, alive,
+            [s for v, s in results if v == 'OK']), flush=True)
     m.xenia_launch_cvars(clear=True)
 
 

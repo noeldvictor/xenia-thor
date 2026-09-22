@@ -357,8 +357,16 @@ Port rules:
   129ff78e14). The "Null critical section" is `RtlFreeHeap(heap = 0)`: the game's
   `sub_82240178` matches a block's trailer tag against its three "me" heaps (40100000, 40300000,
   40500000; all serialized, locks intact) and returned -1. It did not precede instance 2, so it
-  is a second symptom, not the cause. Open: game memory corruption or a code-generation bug;
-  `stall_study.py --runs 4 "" "cpu_backend_llvm=false"` is the discriminator (running).
+  is a second symptom, not the cause. The discriminator ran (`stall_study.py --runs 4 ""
+  "cpu_backend_llvm=false"`, 02:26 to 02:45): with the LLVM backend, 3 of 4 launches froze at
+  swap 836 to 838 (the same frame every time; the fourth stayed alive); with a64 only, 0 of 4
+  froze and all four ran past swap 1045 (the title-colour check missed on the slower backend, so
+  the study now counts only frozen swaps as a stall and reports "alive" separately). The stall
+  is an LLVM-backend code-generation defect until shown otherwise. Next arms, in order: the
+  residency options off (`cpu_backend_llvm_context_residency=false,
+  cpu_backend_llvm_residency_writeback=false`), then `cpu_backend_llvm_range_lo/hi` bisection
+  of the address range, then `cpu_backend_llvm_skip_addrs` on the functions the chains name
+  (`sub_82CE6A38`, `sub_82951B78`, `sub_829441A8`, `sub_8296C870`).
 
   Retro 2026-09-21 (the stop ritual): slow = one device launch per cvar, 50 launches for four
   facts, 40% of them lost to the stall and the rest to heat; the tool that would have made it
