@@ -1,6 +1,6 @@
 """One launch, the two open Banjo questions answered together:
 
-  python tools/thor/title_probe.py [seconds] [--callgraph]
+  python tools/thor/title_probe.py [seconds] [--callgraph] [--cvar=name=value ...]
 
 1. Where the guest CPU goes in the scene after the puzzle: a simpleperf
    sample (xenia_profile) with the hottest guest functions named from the
@@ -49,6 +49,8 @@ def name(addr, names, starts):
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith('--')]
     callgraph = '--callgraph' in sys.argv
+    # --cvar name=value: a launch cvar for this run (a STARTUP lever A/B).
+    extra_cvars = [a[len('--cvar='):] for a in sys.argv[1:] if a.startswith('--cvar=')]
     seconds = int(args[0]) if args else 15
     names, starts = g.load_names()
     m.xenia_force_stop()
@@ -56,6 +58,9 @@ def main():
     m.xenia_launch_cvars(clear=True)
     # The JITSYM host->guest map lines for the LLVM-compiled functions.
     m.xenia_launch_cvars(set='cpu_emit_jit_perf_map=true')
+    for c in extra_cvars:
+        m.xenia_launch_cvars(set=c)
+        print('launch cvar:', c, flush=True)
     r = json.loads(m.xenia_launch('banjo', skip_preflight=True))
     if not r.get('launched'):
         print('launch failed', r)

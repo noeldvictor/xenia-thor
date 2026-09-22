@@ -21,6 +21,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/mutex.h"
 #include "xenia/base/xxhash.h"
+#include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/ppc/ppc_context.h"
 #include "xenia/cpu/ppc/ppc_emit.h"
 #include "xenia/cpu/ppc/ppc_opcode_info.h"
@@ -277,7 +278,9 @@ void CheckGlobalLock(PPCContext* ppc_context, void* arg0, void* arg1) {
     int32_t count = global_lock_owner_count.load(std::memory_order_acquire);
     uint32_t owner =
         global_lock_owner_thread_id.load(std::memory_order_acquire);
-    bool in_critical_section = count != 0 && owner == ppc_context->thread_id;
+    bool in_critical_section =
+        ppc_context->msr_lock_depth != 0 ||
+        (count != 0 && owner == ppc_context->thread_id);
     ppc_context->scratch = in_critical_section ? 0 : 0x8000;
     return;
   }
@@ -287,8 +290,20 @@ void CheckGlobalLock(PPCContext* ppc_context, void* arg0, void* arg1) {
   ppc_context->scratch = *global_lock_count ? 0 : 0x8000;
 }
 
+// Whether the guest's interrupt-disabled sections take the process-wide
+// mutex (cpu_global_lock_mutex). Read once: a live flip would unbalance a
+// section that entered under one mode and leaves under the other.
+static bool UseGlobalLockMutex() {
+  static const bool use_mutex = cvars::cpu_global_lock_mutex;
+  return use_mutex;
+}
+
 // Enters the global lock. Safe to recursion.
 void EnterGlobalLock(PPCContext* ppc_context, void* arg0, void* arg1) {
+  if (!UseGlobalLockMutex()) {
+    ++ppc_context->msr_lock_depth;
+    return;
+  }
   auto global_mutex = reinterpret_cast<std::recursive_mutex*>(arg0);
   auto global_lock_count = reinterpret_cast<int32_t*>(arg1);
   global_mutex->lock();
@@ -298,6 +313,12 @@ void EnterGlobalLock(PPCContext* ppc_context, void* arg0, void* arg1) {
 
 // Leaves the global lock. Safe to recursion.
 void LeaveGlobalLock(PPCContext* ppc_context, void* arg0, void* arg1) {
+  if (!UseGlobalLockMutex()) {
+    if (ppc_context->msr_lock_depth) {
+      --ppc_context->msr_lock_depth;
+    }
+    return;
+  }
   auto global_mutex = reinterpret_cast<std::recursive_mutex*>(arg0);
   auto global_lock_count = reinterpret_cast<int32_t*>(arg1);
   auto new_lock_count = xe::atomic_dec(global_lock_count);

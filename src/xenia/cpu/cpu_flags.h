@@ -26,6 +26,7 @@ DECLARE_bool(trace_function_data);
 DECLARE_string(cpu_perf_map_path);
 
 DECLARE_bool(disable_global_lock);
+DECLARE_bool(cpu_global_lock_mutex);
 
 DECLARE_bool(validate_hir);
 

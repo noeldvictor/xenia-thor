@@ -41,6 +41,20 @@ DEFINE_bool(
     "Disables global lock usage in guest code. Does not affect host code.",
     "CPU");
 
+DEFINE_bool(
+    cpu_global_lock_mutex, true,
+    "Thor (OS axis, 2026-09-22): the guest's interrupt-disabled sections "
+    "(mtmsrd from r13, inside every 360 spin lock) take xenia's process-wide "
+    "recursive mutex - the same mutex the kernel exports take - so three busy "
+    "guest threads serialize on one lock (the Banjo title profile: 21% of the "
+    "CPU in the kernel, 3% in bionic's mutex slow path). On the console the "
+    "instruction only masks interrupts on its own hardware thread; the spin "
+    "lock word is what excludes the others. Off: the enter/leave builtins "
+    "keep a per-thread depth for the mfmsr check and take no mutex. Read once "
+    "at the first section; STARTUP cvar. Works with cached LLVM objects (the "
+    "builtins are called either way).",
+    "CPU");
+
 DEFINE_bool(validate_hir, false,
             "Perform validation checks on the HIR during compilation.", "CPU");
 

@@ -433,7 +433,13 @@ typedef struct PPCContext_s {
   // Optional host-side pointers used by guarded A64 kernel fastpaths.
   volatile uint32_t* a64_apc_pending_count;
   volatile int32_t* a64_apc_disable_count;
-  uint64_t a64_fastpath_reserved[5];
+  uint64_t a64_fastpath_reserved[4];
+  // The nesting depth of this thread's interrupt-disabled sections (mtmsrd
+  // from r13) when cpu_global_lock_mutex is off: mfmsr reads it instead of
+  // the process-wide owner. Carved (with its pad) out of one reserved slot so
+  // sizeof(PPCContext) and every existing member offset are unchanged.
+  uint32_t msr_lock_depth;
+  uint32_t msr_lock_pad_;
 
   // Nonzero asks the running fiber to yield at its next JIT safepoint (guest
   // scheduler stage 2; stage 1 raises it but nothing tests it yet -
