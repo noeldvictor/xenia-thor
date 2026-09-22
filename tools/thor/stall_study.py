@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.join(ROOT, 'tools', 'mcp'))
 import xenia_thor_mcp as m  # noqa: E402
 
 DELAY_MS = 0
-ROUTE = 'name:puzzle;until:gold>0.35;settle:%d;press:START;settle:4000|name:spiral;until:green>0.03&gold<0.2;timeout:60'
+ROUTE = 'name:puzzle;until:gold>0.35;%spress:START;settle:4000|name:spiral;until:green>0.03&gold<0.2;timeout:60'
 
 
 def wait_cool(max_case_c=41.0, max_wait_s=1500):
@@ -56,7 +56,11 @@ def one_launch(cvars, tag):
         return 'LAUNCH_FAIL', 0
     while time.time() - t0 < 60 and not m._api_up():
         time.sleep(1)
-    g = json.loads(m.xenia_goto(steps=ROUTE % DELAY_MS, launch=False, screenshot=False)).get('goto') or {}
+    # A settle:0 step returns no steps at all; omit it without a delay.
+    route = ROUTE % ('settle:%d;' % DELAY_MS if DELAY_MS else '')
+    g = json.loads(m.xenia_goto(steps=route, launch=False, screenshot=False)).get('goto') or {}
+    if not g.get('steps'):
+        print('  goto returned no steps: %s' % json.dumps(g)[:300], flush=True)
     steps = g.get('steps', [])
     title = bool(steps) and all(s.get('holds') for s in steps)
     s0 = swaps()
