@@ -554,9 +554,21 @@ Port rules:
   NOT A RACE (16:32): with `vulkan_debug_wait_each_submission` (the CPU waits for every GPU
   submission) the lower half is dark in 20 of 20 frames, and the Single Player main menu
   shows it in every frame - a static, deterministic repro. The device executes the same
-  commands wrong; the replay viewer is not needed to prove it. Next: Turnip debug flags
-  (`gpu_vulkan_driver_debug` = noubwc, nolrz, syncdraw, flushall) on the menu, then the
-  depth image's contents entering tile B.
+  commands wrong; the replay viewer is not needed to prove it. Turnip debug flags noubwc,
+  nolrz, syncdraw, flushall: 13 to 15 of 20 dark each (no change). Same-frame diff (trace
+  4D5307ED_3146, device log tagged by swap counter vs the PC replay): tile B's draw-state
+  sequence is IDENTICAL (depth, viewport, NDC, scissor). A forced depth clear to far before
+  tile B (`gpu_debug_offset_tile_clear_depth`, 1,906 clears): still 14/20 dark - depth is
+  not the root cause. The "No shadows" patch: 14/20 dark, but the first three frames were
+  bright - something builds up over the first seconds. THE MEASUREMENT: both of tile B's
+  color outputs are about ten times darker on the device than in the PC replay of the same
+  frame (resolve checksum lane means: color 1 at 1E8E4000 PC 2/79/90/50 vs device 0/7/8/4;
+  color 2 at 1E1B4000 PC 80/121/124/32 vs device 12/17/13/0). Tile B's pixel shaders
+  produce dark output on the device. Next: per-draw visibility on the device - the
+  first draw of tile B whose output is dark (a render-target readback after each draw of
+  one tile pass, or a device RenderDoc capture), then that draw's inputs (textures sampled
+  by screen position through the window offset are the first suspect: they would read the
+  wrong rows only in the offset tile).
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
