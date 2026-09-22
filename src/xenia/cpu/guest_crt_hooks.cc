@@ -213,19 +213,32 @@ class GuestSmallHeap {
     return *class_index == kLargeClass || *class_index < kClassCount;
   }
 
-  // Free lists are threaded through the first dword of the block body.
+  // Free lists are threaded through the header's spare dword (+12), never
+  // through the body: Banjo-Kazooie frees an XCTD read entry while another
+  // thread still waits on the event inside it, and the console's heap left
+  // that memory intact (2026-09-22). FIFO per class (a tail pointer) so a
+  // freed block is the last of its class to be handed out again.
   uint32_t PopFree(uint32_t class_index) {
     uint32_t header = free_heads_[class_index];
     if (header) {
-      free_heads_[class_index] = xe::load_and_swap<uint32_t>(
-          memory_->TranslateVirtual(header + kHeaderSize));
+      uint32_t next =
+          xe::load_and_swap<uint32_t>(memory_->TranslateVirtual(header + 12));
+      free_heads_[class_index] = next;
+      if (!next) {
+        free_tails_[class_index] = 0;
+      }
     }
     return header;
   }
   void PushFree(uint32_t class_index, uint32_t header) {
-    xe::store_and_swap<uint32_t>(memory_->TranslateVirtual(header + kHeaderSize),
-                                 free_heads_[class_index]);
-    free_heads_[class_index] = header;
+    xe::store_and_swap<uint32_t>(memory_->TranslateVirtual(header + 12), 0);
+    uint32_t tail = free_tails_[class_index];
+    if (tail) {
+      xe::store_and_swap<uint32_t>(memory_->TranslateVirtual(tail + 12), header);
+    } else {
+      free_heads_[class_index] = header;
+    }
+    free_tails_[class_index] = header;
   }
 
   // Bump allocation from the current chunk; a new chunk when it runs out.
@@ -249,6 +262,7 @@ class GuestSmallHeap {
   Memory* memory_ = nullptr;
   std::mutex mutex_;
   uint32_t free_heads_[kClassCount] = {};
+  uint32_t free_tails_[kClassCount] = {};
   uint32_t chunk_cursor_ = 0;
   uint32_t chunk_end_ = 0;
   uint32_t chunks_ = 0;
