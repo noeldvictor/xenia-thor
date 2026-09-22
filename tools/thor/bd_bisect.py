@@ -86,8 +86,22 @@ def warm_and_cool(m, warm_s):
     except Exception:
         pass
     r = json.loads(m.xenia_launch('bd', skip_preflight=True))
-    log('  warm-up launched %s, %d s' % (r.get('launched'), warm_s))
-    time.sleep(warm_s)
+    # Until the first guest frames (the AOT window is over) plus 90 s for the
+    # runtime-phase compiles, at most warm_s + 600 s. A fixed wait left two
+    # commits with a partly warm cache and a void route (2026-09-22 09:34).
+    t0 = time.time()
+    swaps = None
+    while time.time() - t0 < warm_s + 600:
+        time.sleep(10)
+        try:
+            if m._api_up():
+                swaps = json.loads(m.xenia_api('/frame_stats')).get('swaps')
+        except Exception:
+            pass
+        if swaps:
+            break
+    log('  warm-up launched %s: first frames after %d s (swaps=%s)' % (r.get('launched'), time.time() - t0, swaps))
+    time.sleep(90)
     m.xenia_force_stop()
     t = {}
     for _ in range(45):
@@ -139,6 +153,12 @@ def main():
             if build_and_install():
                 warm_and_cool(m, args.warm)
                 fps = run_route(head)
+                if fps is None:
+                    # The scene gate failed (a cold cache fires the presses into
+                    # the loading screen): warm once more, then one retry.
+                    log('  gate failed; warming again and retrying the route once')
+                    warm_and_cool(m, args.warm)
+                    fps = run_route(head + '-retry')
                 if fps is None:
                     verdict = 'skip'
                 elif fps >= args.threshold_good:
