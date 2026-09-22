@@ -491,6 +491,20 @@ Port rules:
   candidates in the 09-18 sync: the 21-bit rounding (running), the GPU register reset
   defaults `195b6bf721`, the MIN/MAX blend-factor emulation `12e754437d`, the vertex-fetch
   clamp `dec32502ed`; each reverse-applies cleanly.
+  FOUND (13:55): the 21-bit rounding of scalar approximations (`2233a13b05`, `ReduceFloat
+  Precision` after every exp, log, rcp, rsq and sqrt: about ten integer ops each) reverted
+  gives `gpu_frame_us` 64.5 to 65 ms (58.4 to 59 in passes) - the 09-18 build's number to the
+  millisecond - and 15.0 fps on the route against 11.4. The Xenos precision emulation is
+  correct for Ace Combat 6's ground and costs a quarter of Blue Dragon's GPU frame on Adreno.
+  Shipped as `gpu_round_scalar_approximations` (off on Android, on elsewhere; the launcher
+  toggle "Xenos 21-bit scalar approximations" turns it on per title), gated inside the one
+  helper; the CPU shader interpreter always rounds. About the old builds' "20 fps": the route
+  counts draw-outcome lines per 10 s, and a frame with a mid-frame submission logs twice,
+  so the honest comparator across builds is `gpu_frame_us`, not that column.
+  Shipped form confirmed (the cvar at its Android default, the getter reads false): 64.5 to
+  65 ms of GPU, the route at 14.6 to 15.0 fps. At 64 ms the field cannot pass about 15.6
+  presented frames, so the next Blue Dragon lever is GPU work (the pass timestamps name
+  the passes), not CPU.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays

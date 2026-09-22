@@ -208,6 +208,7 @@ DECLARE_bool(vulkan_merge_draws_indirect);
 DECLARE_bool(vulkan_trace_pass_timestamps);
 DECLARE_bool(vulkan_hoist_request_range_lock);
 DECLARE_bool(vulkan_cache_vertex_residency);
+DECLARE_bool(gpu_round_scalar_approximations);
 DECLARE_bool(vulkan_gate_rt_update);
 DECLARE_bool(gpu_trace_cullable_tris);
 DECLARE_bool(gpu_cull_compaction);

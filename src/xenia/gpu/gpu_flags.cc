@@ -1645,6 +1645,17 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_round_scalar_approximations, XE_ANDROID_DEFAULT(false, true),
+    "Round the scalar approximation results (exp, log, rcp, rsq, sqrt) to the "
+    "Xenos 21 mantissa bits in translated shaders. Correct for titles that "
+    "derive indices or texture coordinates from rcp/rsq (Ace Combat 6 ground), "
+    "and about ten integer ops after every such instruction: on the Thor's "
+    "Adreno it cost a quarter of Blue Dragon's GPU frame (79 ms against 64, "
+    "2026-09-22). Off by default on Android (the launcher toggle turns it on "
+    "per title), on elsewhere. The CPU shader interpreter always rounds.",
+    "GPU");
+
+DEFINE_bool(
     vulkan_cache_vertex_residency, false,
     "Thor CPU lever (high-draw CPU-bound titles, e.g. Burnout in-race ~3442 "
     "draws): cache vertex-buffer residency ACROSS draws WITHIN a frame so the "

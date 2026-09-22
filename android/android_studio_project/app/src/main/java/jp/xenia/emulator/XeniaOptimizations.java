@@ -797,6 +797,21 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("vulkan_merge_draws_rewrite")}, null));
 
         list.add(new Optimization(
+                "opt_scalar_approx_rounding",
+                "Xenos 21-bit scalar approximations",
+                "Rounds exp, log, rcp, rsq and sqrt results to the console's 21 "
+                        + "mantissa bits in shaders.",
+                "Some titles derive vertex indices or texture coordinates from "
+                        + "rcp/rsq and read the wrong element when the host keeps "
+                        + "full float32 precision (Ace Combat 6 ground). The rounding "
+                        + "is about ten integer ops after every such instruction: on "
+                        + "the Thor it cost a quarter of Blue Dragon's GPU frame (79 ms "
+                        + "against 64, 2026-09-22). Off by default; turn it on per "
+                        + "title when a texture or mesh reads wrong.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("gpu_round_scalar_approximations")}, null));
+
+        list.add(new Optimization(
                 "opt_mdi_batch",
                 "Multi-draw indirect batching",
                 "Submits many small same-state draws as one indirect command.",

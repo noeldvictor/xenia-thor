@@ -117,3 +117,12 @@ which axis it crosses before touching code.
 - Memory manager, one instrument: an unhandled guest fault now fills the kernel trap record
   (`/trap`, `xenia_stall`), so a parked thread's registers, chain and the memory behind
   r24-r31 come in one call. The two freezes of the night were named that way in minutes.
+- Host SIMD and GPU architecture, a precision-emulation row: an upstream fix rounds every
+  scalar approximation result (exp, log, rcp, rsq, sqrt) to the Xenos 21 mantissa bits with a
+  bit-manipulation sequence in the translated shader. On a desktop GPU that is noise; on the
+  Thor's Adreno it was a quarter of Blue Dragon's GPU frame (79 ms against 64), found by a
+  build bisection and a per-commit revert with `vulkan_trace_pass_timestamps` as the metric.
+  The desktop assumption: ALU is free next to bandwidth. On a tiler at 720p with a quarter
+  million vertices per frame it is not. Rule: an accuracy emulation that touches every pixel
+  or vertex ships as a lever with a mobile default, and the pass timestamps decide, not the
+  fps column.

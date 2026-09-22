@@ -9,6 +9,8 @@
 
 #include "xenia/gpu/spirv_shader_translator.h"
 
+#include "xenia/gpu/gpu_flags.h"
+
 #include <cfloat>
 #include <cmath>
 #include <cstdint>
@@ -930,6 +932,11 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
 
 spv::Id SpirvShaderTranslator::ReduceFloatPrecision(spv::Id value,
                                                     uint32_t mantissa_bits) {
+  // Thor (2026-09-22): the rounding sequence costs a quarter of Blue Dragon's
+  // GPU frame on Adreno; gpu_round_scalar_approximations keeps it a lever.
+  if (!cvars::gpu_round_scalar_approximations) {
+    return value;
+  }
   // Round to nearest, with halfway values away from zero. We don't know the
   // actual midpoint behavior, this is the one 4E4D07D1 needs. Signed zero stays
   // signed. Denormals still follow the host float controls.
