@@ -373,8 +373,19 @@ Port rules:
   reads its backend context through x19, which LLVM did not reserve (fix: `+reserve-x19`,
   object cache version 4), and LLVM callers keeping values in x22-x28/q8-q15 across a call
   into a64 code (`cpu_llvm_guest_call_clobber_barrier`, a cache-key letter, so a warm-up
-  launch rebuilds the cache first). Both are under test by `stall_study.py --runs 4`. The
-  perf A/B of `cpu_global_lock_mutex=false` waits for a transition that passes.
+  launch rebuilds the cache first). Results (04:00 to 04:15): the barrier arm 0 of 4 classic
+  freezes (one run froze at swap 307 instead); the x19 arm (`+reserve-x19`, cache v4) 0 of 4
+  classic freezes (one run froze at swap 308). Baseline the same night: 3 of 4. Each arm ran on
+  a FRESHLY BUILT object cache, the baseline on the old one, and the cache stamp hashes only
+  `llvm_assembler.cc/.h` (`tools/build/gen_version_h.py`), not `ppc_context.h`, the helpers'
+  signatures or the a64 thunks - so a stale cache is the third candidate, and the control
+  (no x19, cache v5, `stall_study.py --runs 4 ""`) decides between "fix" and "fresh cache".
+  The swap-307/308 freeze is the SECOND bug, now with its chain: the main thread faults in
+  `RtlpInsertFreeBlock+8` <- `RtlFreeHeap+1CC` <- `meInternalFree+BC` <- `sub_82364BB8+54`
+  with ctr = `DoWork_CStreamingWaveBank_XACT`: `sub_82240178` matched no heap's trailer tag,
+  returned -1, and the free ran on heap 0 (the "Null critical section" lines). About 1 launch
+  in 4 once the classic freeze is gone. Next for it: the trap dump of the block at the
+  null-CS hit (`title_probe.py` arms it) and `RtlSizeHeap`'s answer for that block.
 
   Retro 2026-09-21 (the stop ritual): slow = one device launch per cvar, 50 launches for four
   facts, 40% of them lost to the stall and the rest to heat; the tool that would have made it
