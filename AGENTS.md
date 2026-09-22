@@ -459,8 +459,20 @@ Port rules:
   worker's kernel time is 94% syscall - 69% `pthread_cond_broadcast` from `KeSetEvent` ->
   `XEvent::Set` and from `XmaDecoder::WriteRegister`, 17% mutex wakes, `pthread_cond_timedwait`
   under `KeWaitForSingleObject`, `EnterGlobalLock` on the recursive mutex - the game's event
-  traffic paid in futex syscalls. Running: the a64 emitter part of `3dacdffe09` (the inline
-  spin-lock and IRQL protocol change) reverse-applied on master, one route.
+  traffic paid in futex syscalls. The a64 emitter revert 11.4, the leftover "Field dynamic-res
+  cap 640" patch disabled 11.5, the present cap off (IMMEDIATE mode) 11.4, the residency cache
+  11.4: seven levers, one number. THE NUMBER IS THE GPU (12:40, `vulkan_trace_pass_timestamps`):
+  `gpu_frame_us` 78 to 79 ms per frame, 72.5 ms inside passes, 25 render-target transfer calls
+  and 45 transfers per frame. The command processor's `vfres_us` 78 ms was the CPU waiting on
+  the GPU inside the UMA-direct upload's serialize-before-write; with UMA direct off the same
+  wait moved to `setup_us`. Blue Dragon's field is GPU-bound on today's build, so no CPU or
+  present lever could move it, and the 09-18 sync is where the GPU work grew: 20 GPU commits,
+  one with a switch, `gamma_render_target_as_unorm16` (default true; the Vulkan cache never
+  used UNORM16 before `32f998e1ba`; the cvar's own text warns of render-target copies when a
+  title switches gamma views). Harness trap of the hour: the route's EXTRA is an intent extra,
+  and `EmulatorActivity` copies only whitelisted names - an unlisted cvar is ignored without a
+  word (the first UNORM16 arm was void). Any cvar goes through `xenia_launch_cvars` (the
+  launch-cvar file, read at startup on every path); the whitelist is for the app's own levers.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
