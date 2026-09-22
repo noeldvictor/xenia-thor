@@ -309,6 +309,13 @@ Port rules:
   renderdoccmd APK, the in-app trigger cvar), or the device .xtr replayed on the PC with
   `--vulkan_trace_resolve_checksum`. The puzzle-transition stall hit 5 of 14 launches during
   the A/B; it blocks measurement and needs the r3 trap next.
+  The stall's fault site is named (2026-09-21 night): `821E3080` is `RtlpDeCommitFreeBlock` in
+  the game's own statically linked heap (reNut's function table), the heap whose critical
+  section pointer is null under the emulator. The recomp replaces that heap and the memcpy/memset
+  family with native code; xenia now does the same at the same guest addresses
+  (`src/xenia/cpu/guest_crt_hooks.cc`, cvar `cpu_guest_crt_hooks`, launcher toggle "Run the
+  game's C runtime as host code"): a thread-safe small-block heap inside guest memory, host
+  memmove/memset. PC: the title route scores GOOD with all eight hooks live. Device: under test.
   Open (2026-09-21 evening): the puzzle transition crashes a guest thread in two runs of three,
   and the game then stalls with a half-lit puzzle on the panel (every thread waits on the crashed
   thread's semaphore). Two fault shapes so far: a halfword load at guest 0xFFFFFFF8 (null minus 8)
@@ -476,6 +483,31 @@ wrong: guess, rebuild (2 min), wait for the device to cool, run (3 min), read. T
    a check at +21 s in the capped intro runs at 52 C.
 6. **Do the next step while the device or the build runs.** A build is 2 min, a probe 3 min;
    write the next patch, the note, or the tool in that time.
+
+### The faster loop (user, 2026-09-21 night: "plan a better faster strategy")
+
+Fifty device launches in one evening gave four facts; one RenderDoc capture on the PC gave the
+descriptor bug in an hour. The order of tools, fastest first:
+
+1. **PC first when the bug shows on the PC.** `pc_goto.py` reaches the title in 45 s, never
+   stalls, has no thermals, and the window stays off-screen. RenderDoc headless answers "what did
+   the GPU get" in one capture. The device is for device-only questions.
+2. **One device launch, many answers.** The device MCP has `cvar_set` (live). A cvar that is
+   read live (most `vulkan_*` and `gpu_*` levers) is A/B'd inside one run with a per-frame
+   metric (the resolve checksum trace, `frame_stats`), not with one launch per value. A launch
+   costs 90 s plus 3 to 5 min of cooling; a live toggle costs 5 s.
+3. **The recomp tables are the map.** `reference/reNut/config/renut_funcs.toml` names 4,894 of
+   Banjo's functions, `renut_crt.toml` the C runtime, `renut_gpu_funcs.toml` the D3D layer,
+   `renut_hooks.toml` the render levers. A fault address is named in seconds; a game-side lever
+   is a patch, not an emulator hack; the C runtime runs as host code (`guest_crt_hooks.cc`).
+4. **A stall run collects everything once.** The harness keeps the logcat, `xenia_stall`,
+   `xenia_crash` and the crash diag in `scratch/mcp/stall-*.json`; nothing is relaunched "to see
+   it again". `stall_study.py` counts the stall per cvar set; `atlas_ab.py` measures the atlas.
+5. **The Thor needs air.** At the title screen (8 fps, full load) the case passes 41 C in 60 s;
+   the harness gates on it and waits. A fan under the device is the cheapest 3x of the whole loop.
+6. **Build then install, and check.** `-Mode NativeCore` builds the .so only; `ApkShellDeploy`
+   assembles and installs. Read `lastUpdateTime` and the new log line before trusting a device
+   result (two verifications today ran the old library).
 
 ### Device-only rules (user, 2026-09-21: "take a step back, figure out why we are stuck in a loop")
 
