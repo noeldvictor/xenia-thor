@@ -508,6 +508,10 @@ Port rules:
   In presented frames (the badge's swap count, the number the player sees): about 10 fps
   before (badge windows 9.9 to 11.9) and 12.7 after. The route's column (15.0) overcounts;
   `bd_gameplay_route.sh` now prints the badge rate and the median `gpu_frame_us` itself.
+  Where the 64 ms go (`gpu_trace_resolve_timing`): 97 passes; geometry 52 ms in 18 passes, of
+  which the top two take 25 and 22 ms; EDRAM transfers 3.7 ms in 35; composite 2.7; resolve
+  copies 1.6; gaps 4.2. The next Blue Dragon lever is inside those two scene passes (paused:
+  the user put Banjo first, 2026-09-22 afternoon).
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
