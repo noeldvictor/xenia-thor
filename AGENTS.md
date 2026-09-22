@@ -386,10 +386,19 @@ Port rules:
   barrier is shown to fix it; the freeze rate moves between 0 and 4 of 4 across batches of
   four, and four launches cannot separate a fix from a lucky batch. The x19 reservation stays
   (it costs one register and the a64 contract does need it) but is not a verdict. Rule 7
-  applied to myself: a 0-of-4 is a claim about the batch first. Next: `cpu_backend_llvm_
-  skip_addrs=82CE6A38 82951B78` (the two faulting callers on a64; running), then the LLVM asm
-  of `sub_82CE6A38` around its `bctrl` (which host register holds r28 across the call), and
-  eight launches per arm from now on.
+  applied to myself: a 0-of-4 is a claim about the batch first. The skip arm
+  (`cpu_backend_llvm_skip_addrs=82CE6A38 82951B78`, 05:02) froze 1 of 4, at swap 858 with NO
+  fault record (a freeze without a parked thread: a third shape, or a missed /trap read).
+  The asm dump launch then showed `LLVMfallback fn=0x82CE6A38 opcode=is_false -> a64`:
+  the instance-1 crash site is an a64 function in every build, so the garbage object pointer
+  in its array is DATA corrupted by other code, not that function's code generation. State
+  at 05:15: the freeze needs the LLVM backend (a64-only 4 of 4 alive, one batch), it is a
+  call through a garbage pointer read from game data, and no single lever tested tonight
+  (residency off, x19, barrier, the two callers on a64) is shown to remove it. Next, in this
+  order: an 8-launch a64-only arm and an 8-launch LLVM arm on the same evening (the rate
+  swings 0 to 4 of 4 between batches of four); then `llvm_bisect.py --runs 4` (the window
+  bisection, one frozen run keeps a half); then a write trap on the container's array
+  (`sub_82CE6A38`'s r28+0x18) to name the writer. Tools for all three exist.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
