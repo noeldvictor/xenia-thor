@@ -505,6 +505,9 @@ Port rules:
   65 ms of GPU, the route at 14.6 to 15.0 fps. At 64 ms the field cannot pass about 15.6
   presented frames, so the next Blue Dragon lever is GPU work (the pass timestamps name
   the passes), not CPU.
+  In presented frames (the badge's swap count, the number the player sees): about 10 fps
+  before (badge windows 9.9 to 11.9) and 12.7 after. The route's column (15.0) overcounts;
+  `bd_gameplay_route.sh` now prints the badge rate and the median `gpu_frame_us` itself.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays

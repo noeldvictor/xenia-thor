@@ -181,3 +181,12 @@ if [ "${verts:-0}" -lt 50000 ]; then
   exit 1
 fi
 echo "OK: gameplay-tier scene confirmed (${verts} vertices/frame)"
+# The comparators that survive a build change (2026-09-22). The fps column above
+# counts draw-outcome LINES; a frame with a mid-frame submission logs more than
+# one, so the 2026-09-18 build read "20 fps" at 64 ms of GPU per frame. The
+# badge's swap count is presented frames; gpu_frame_us needs
+# EXTRA='--ez vulkan_trace_pass_timestamps true'. A regression hunt compares these.
+badge=$("$ADB" -s "$DEV" logcat -d -s xenia-fps:* 2>/dev/null | grep -oE 'swaps=[0-9]+ window_ms=[0-9]+' | tail -60 | awk -F'[= ]' '{s+=$2; w+=$4} END {if (w>0) printf "%.1f", 1000*s/w; else print "n/a"}')
+echo "presented fps (badge swaps, last ~30 s): ${badge}"
+gpu=$("$ADB" -s "$DEV" logcat -d -s xenia:* 2>/dev/null | grep -oE 'gpu_frame_us=[0-9]+' | tail -60 | grep -oE '[0-9]+' | sort -n | awk '{a[NR]=$1} END {if (NR>0) print a[int((NR+1)/2)]; else print "n/a (add --ez vulkan_trace_pass_timestamps true)"}')
+echo "median gpu_frame_us (last 60 frames): ${gpu}"
