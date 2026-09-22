@@ -498,7 +498,17 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
 
   // Populate the per-thread cache under the lock (the generation is stable while
   // the lock is held). The cache keeps its own reference to the object.
-  if (use_cache && object) {
+  // Only dispatcher objects (event, mutant, semaphore, thread, timer) go in
+  // the cache. The cache reference keeps an object alive after the guest
+  // closes its handle, until this thread evicts the entry. For a file that
+  // is a use after free: the guest closes the file, then the content
+  // package, which deletes the file's vfs entry; the late eviction then
+  // runs ~XFile -> HostPathFile::Destroy on the deleted entry, faults in
+  // host code with the global lock held, and every guest thread stops
+  // (2026-09-22, Banjo, the "Start New Game / Resume Saved Game" panel).
+  // Waits resolve dispatcher handles, so the hot path keeps the cache.
+  XObject* evicted = nullptr;
+  if (use_cache && object && XObject::HasDispatcherHeader(object->type())) {
     // One-time confirmation that the cache is active (so logcat can verify the
     // cvar took effect during A/B measurement).
     static std::atomic<bool> logged_active{false};
@@ -509,9 +519,9 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
     }
     HandleCacheEntry& ce =
         t_handle_cache.entries[slot & (kHandleCacheSize - 1)];
-    if (ce.object) {
-      ce.object->Release();
-    }
+    // The evicted object is released after the unlock: its destructor
+    // must not run with the global lock held.
+    evicted = ce.object;
     object->Retain();
     ce.table = this;
     ce.handle = handle;
@@ -521,6 +531,9 @@ XObject* ObjectTable::LookupObject(X_HANDLE handle, bool already_locked) {
 
   if (!already_locked) {
     global_critical_region_.mutex().unlock();
+  }
+  if (evicted) {
+    evicted->Release();
   }
 
   return object;

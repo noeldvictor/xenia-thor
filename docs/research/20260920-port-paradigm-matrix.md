@@ -126,3 +126,12 @@ which axis it crosses before touching code.
   million vertices per frame it is not. Rule: an accuracy emulation that touches every pixel
   or vertex ships as a lever with a mobile default, and the pass timestamps decide, not the
   fps column.
+- OS and memory manager, object lifetime: a mobile-only fast path (the per-thread handle
+  cache, on for Android only) kept a reference to every looked-up object. The desktop
+  assumption: an object dies when the guest closes its last handle, in the guest's order.
+  With the cache a closed file lived on until the cache slot was reused, after the game
+  closed its content package; its destructor then deleted a freed vfs entry in host code,
+  with the global lock held, and the whole game stopped on the Banjo menu. Rule: a cache
+  that holds references changes destruction order; it may hold only objects whose
+  destructor has no outside effect (the dispatcher objects), and it releases outside the
+  lock.

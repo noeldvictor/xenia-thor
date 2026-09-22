@@ -829,29 +829,13 @@ def xenia_backtrace(pid: Optional[int] = None, only: str = 'XThread,Emulator,or.
         return f'in-app backtrace unavailable: {e}'
     if not isinstance(data, dict) or 'threads' not in data:
         return json.dumps(data)[:2000]
-    # Symbolize every libxenia-app.so offset in one llvm-symbolizer run.
-    so = os.path.join(REPO, 'android', 'android_studio_project', 'app', 'build', 'intermediates',
-                      'ndkBuild', 'githubDebug', 'obj', 'local', 'arm64-v8a', 'libxenia-app.so')
-    ndk = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk', 'ndk', '25.0.8775105',
-                       'toolchains', 'llvm', 'prebuilt', 'windows-x86_64', 'bin', 'llvm-symbolizer.exe')
     offsets = []
     for t in data['threads']:
         for f in t.get('frames', []):
             if f.get('module') == 'libxenia-app.so':
                 offsets.append(f['offset'])
-    names = {}
-    if offsets and os.path.exists(so) and os.path.exists(ndk):
-        uniq = sorted(set(offsets))
-        proc = subprocess.run([ndk, '--obj=' + so, '--functions=short', '--inlining=false',
-                               '--demangle', '--basenames'] + ['0x' + o for o in uniq],
-                              capture_output=True, text=True, timeout=300)
-        blocks = proc.stdout.strip().split('\n\n')
-        for o, block in zip(uniq, blocks):
-            lines = block.strip().split('\n')
-            if len(lines) >= 2:
-                names[o] = f'{lines[0]} ({lines[1]})'
-            elif lines:
-                names[o] = lines[0]
+    names = _symbolize_app_offsets(offsets)
+    so = _APP_SO
     filters = [x.strip() for x in only.split(',') if x.strip()]
     out = [f"pid {data.get('pid')}: {len(data['threads'])} threads; symbols from {os.path.basename(so)}"]
     for t in data['threads']:
@@ -868,6 +852,61 @@ def xenia_backtrace(pid: Optional[int] = None, only: str = 'XThread,Emulator,or.
     with open(path, 'w', encoding='utf-8') as f:
         f.write(text)
     return f'saved {path}\n' + text[:12000]
+
+
+# The unstripped app library of the last build and the NDK symbolizer.
+_APP_SO = os.path.join(REPO, 'android', 'android_studio_project', 'app', 'build', 'intermediates',
+                       'ndkBuild', 'githubDebug', 'obj', 'local', 'arm64-v8a', 'libxenia-app.so')
+_NDK_SYMBOLIZER = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'Android', 'Sdk', 'ndk', '25.0.8775105',
+                               'toolchains', 'llvm', 'prebuilt', 'windows-x86_64', 'bin', 'llvm-symbolizer.exe')
+
+
+def _symbolize_app_offsets(offsets, inlining: bool = False) -> dict:
+    """Hex offsets in libxenia-app.so -> 'function (file:line)', one
+    llvm-symbolizer run. With inlining the innermost inlined frame comes
+    first and the rest follow with ' <- '."""
+    names = {}
+    uniq = sorted(set(o for o in offsets if o))
+    if not uniq or not os.path.exists(_APP_SO) or not os.path.exists(_NDK_SYMBOLIZER):
+        return names
+    proc = subprocess.run([_NDK_SYMBOLIZER, '--obj=' + _APP_SO, '--functions=short',
+                           '--inlining=' + ('true' if inlining else 'false'),
+                           '--demangle', '--basenames'] + ['0x' + o for o in uniq],
+                          capture_output=True, text=True, timeout=300)
+    blocks = proc.stdout.strip().split('\n\n')
+    for o, block in zip(uniq, blocks):
+        lines = [l for l in block.strip().split('\n') if l]
+        pairs = [f'{lines[i]} ({lines[i + 1]})' for i in range(0, len(lines) - 1, 2)]
+        names[o] = ' <- '.join(pairs) if pairs else (lines[0] if lines else '')
+    return names
+
+
+def _host_fault_threads(max_frames: int = 24) -> list:
+    """The threads that sit inside a fault handler, from the in-app
+    backtrace, with symbolized frames (inlined frames expanded). A thread
+    that faulted in host code with the global lock held stops every guest
+    thread; the kernel table walk then times out and the stall looks like
+    "every thread waits" with no fault record (2026-09-22, Banjo menu:
+    ~XFile after the content package was closed). Each row: tid, comm,
+    wchan, signal_frames (2 = the fault handler itself faulted), frames."""
+    data = _api('/backtrace', timeout=60)
+    rows = []
+    for t in (data or {}).get('threads', []):
+        frames = t.get('frames', [])
+        # Frames 0-1 are the backtrace signal itself; a fault adds its own
+        # libsigchain frame below them.
+        sig = sum(1 for f in frames[2:] if f.get('module') == 'libsigchain.so')
+        if sig:
+            rows.append({'tid': t.get('tid'), 'comm': t.get('comm'), 'wchan': t.get('wchan'),
+                         'signal_frames': sig, 'frames': frames[2:max_frames]})
+    names = _symbolize_app_offsets([f['offset'] for r in rows for f in r['frames']
+                                    if f.get('module') == 'libxenia-app.so'], inlining=True)
+    for r in rows:
+        r['frames'] = ['%s+0x%s %s' % (f.get('module', '?'), f.get('offset'),
+                                       names.get(f.get('offset'), '') if f.get('module') == 'libxenia-app.so'
+                                       else f.get('symbol', ''))[:260] for f in r['frames']]
+    rows.sort(key=lambda r: -r['signal_frames'])
+    return rows
 
 
 STALL_MARKERS = ('SPINLOCK STALL', 'A64 CRASH DIAG', 'guest crash', 'Fatal',
@@ -926,14 +965,35 @@ def xenia_stall(pid: Optional[int] = None, hot_threads: int = 3) -> str:
         except Exception:
             pass
         # The waiting guest threads with their chains: who waits on whom.
+        table_locked = False
         try:
             rows = _api('/threads', timeout=15)
             if isinstance(rows, list):
+                table_locked = bool(rows) and 'kernel table locked' in str(rows[0].get('note', ''))
                 st['waiting'] = [{'tid': r.get('tid'), 'name': r.get('name'), 'lr': r.get('lr'),
                                   'chain': (r.get('chain') or [])[:6]}
                                  for r in rows if r.get('guest') and r.get('state') == 5][:16]
         except Exception:
             pass
+        # A host-code fault with the global lock held: the kernel table walk
+        # times out, no guest thread shows, the fault record can be empty.
+        # The in-app backtrace names the faulting thread and its frames.
+        if table_locked or (not st.get('fault') and last_fps == 0.0):
+            try:
+                ft = _host_fault_threads()
+                if ft:
+                    st['host_fault_threads'] = ft[:4]
+                    top = ft[0]
+                    first = next((f for f in top['frames'] if 'libxenia-app.so' in f
+                                  and 'ExceptionHandler' not in f and 'ExceptionCallback' not in f
+                                  and 'Backtrace' not in f), '')
+                    st['verdict'] = (f"thread {top['tid']} {top['comm']} faulted in host code"
+                                     f"{' (and again in the fault handler)' if top['signal_frames'] > 1 else ''}"
+                                     f"{' with the kernel table lock held' if table_locked else ''}: "
+                                     f"{first[:200]}. host_fault_threads has the frames; xenia-fault lines "
+                                     f"in logcat have the first fault's pc")
+            except Exception as e:
+                st['host_fault_threads_error'] = str(e)[:200]
         # Trim the long lists instead of cutting the JSON (a cut at 12000
         # characters made the stall records unreadable, 2026-09-22).
         if isinstance(st.get('fps'), list):

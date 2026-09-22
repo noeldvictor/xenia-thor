@@ -3917,12 +3917,19 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
           }
         }
       }
-      // x20 holds the PPCContext in both backends (LLVM reserves x20/x21).
-      auto* ppc = reinterpret_cast<ppc::PPCContext*>(hc->x[20]);
+      // The guest context is the thread's own one. x20 holds it only inside
+      // generated code; in host code x20 is any value, and reading through
+      // it faulted inside this handler (2026-09-22: a fault in
+      // HostPathFile::Destroy became a fault storm at the read below and
+      // hid the first fault). The thread state is a thread local.
+      auto* ts = cpu::ThreadState::Get();
+      auto* ppc = ts ? ts->context() : nullptr;
+      const bool in_generated_code =
+          ppc && uintptr_t(hc->x[20]) == uintptr_t(ppc);
       uint64_t g_lr = 0, g_r1 = 0, g_r3 = 0, g_r4 = 0, g_r5 = 0, g_r6 = 0;
       uint64_t g_ctr = 0;
       std::string chain;
-      if (ppc && ppc->virtual_membase == reinterpret_cast<uint8_t*>(hc->x[21])) {
+      if (ppc) {
         g_lr = ppc->lr;
         g_ctr = ppc->ctr;
         g_r1 = ppc->r[1];
@@ -3964,25 +3971,28 @@ bool A64Backend::ExceptionCallback(Exception* ex) {
           "guest_pc={:08X} nearest_fn={:08X}+{:X} host_pc={:016X} "
           "fault_addr={:016X} x21_membase={:016X} x25={:016X} lr={:016X} "
           "lr_fn={:08X} lr_guest_pc={:08X} guest_lr={:08X} ctr={:08X} "
-          "r1={:08X} r3={:08X} r4={:08X} r5={:08X} r6={:08X} chain:{}",
+          "r1={:08X} r3={:08X} r4={:08X} r5={:08X} r6={:08X} host_code={} "
+          "chain:{}",
           uint32_t(ex->code()), guest_fn, guest_pc, nearest_fn,
           nearest_fn ? nearest_delta : uintptr_t(0), ex->pc(),
           ex->fault_address(), hc->x[21], hc->x[25], hc->x[30], lr_fn,
           lr_guest_pc, uint32_t(g_lr), uint32_t(g_ctr), uint32_t(g_r1),
           uint32_t(g_r3), uint32_t(g_r4), uint32_t(g_r5), uint32_t(g_r6),
-          chain);
+          in_generated_code ? 0 : 1, chain);
       // The full picture (every register, the stack, the chain, the memory
       // behind r24-r31) goes to the kernel's trap record: one /trap call
       // after the thread is parked, instead of one log line that the ring
       // cuts. A guest call to address 0 lands here as host pc 0x200000000
       // (the indirection table's own base) with code 2.
-      if (ppc && ppc->virtual_membase == reinterpret_cast<uint8_t*>(hc->x[21]) &&
-          processor()->unhandled_fault_hook()) {
+      // A fault in host code (a kernel export, a destructor) fills the
+      // record too: the guest registers are the ones at the export call.
+      if (ppc && processor()->unhandled_fault_hook()) {
         processor()->unhandled_fault_hook()(
             ppc, fmt::format("unhandled fault code={} host_pc={:016X} "
-                             "fault_addr={:016X} lr_fn={:08X}",
+                             "fault_addr={:016X} lr_fn={:08X} host_code={}",
                              uint32_t(ex->code()), ex->pc(),
-                             ex->fault_address(), lr_fn));
+                             ex->fault_address(), lr_fn,
+                             in_generated_code ? 0 : 1));
       }
     }
   }

@@ -582,6 +582,22 @@ Port rules:
   and pixel shader outputs of tile B's draws on the Adreno. The tool that answers it is a
   device-side GPU capture (RenderDoc's Android layer in the app, triggered by the existing
   `renderdoc_trigger_capture` cvar) or a per-draw render-target readback.
+  The Banjo menu freeze (17:10, device only): A on "Start New Game / Resume Saved Game"
+  stopped every guest thread with no fault record. The in-app backtrace gave the cause in
+  one call: `NtReadFile` looks up its event handle, the per-thread handle cache
+  (`kernel_object_handle_cache`, on for Android only) evicts an old entry and releases the
+  last reference to a closed file. `~XFile` then runs `HostPathFile::Destroy`, which deletes
+  a delete-on-close vfs entry whose content package the game already closed. The fault is
+  in host code with the global lock held, so the thread parks and all other threads wait
+  on the lock. The a64 crash diagnostic then faulted too: it read the guest context
+  through x20, which is not the context in host code, and this hid the first fault. Fixes:
+  the cache holds only dispatcher objects (event, mutant, semaphore, thread, timer) and
+  releases an evicted object after the unlock; the diagnostic reads the thread's own
+  context and records host-code faults in the trap record (`host_code=1`). Harness:
+  `xenia_stall` now detects a locked kernel table or a zero-fps stall with no fault
+  record and returns the symbolized frames of each thread in a fault handler
+  (`host_fault_threads`, inlined frames expanded) with a verdict line. Axis: OS and
+  memory manager - a desktop build (the cache off) never keeps a closed file alive.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
@@ -727,7 +743,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_backtrace` | now from inside the app: every thread's native frames (a realtime signal, `_Unwind_Backtrace`), symbolized on the PC with `llvm-symbolizer` against the unstripped .so. The hang picture: which host wait each guest thread sits in |
 | `xenia_patches`, `xenia_patch_set` | the game patch files on the device: list and toggle one `[[patch]]` by name, as the Game Patches screen does |
 | `xenia_guest_dump`, `xenia_disasm` | dump guest memory of a title to `scratch/mcp/` (diagnostic cvars, restored after), and disassemble PowerPC from a dump |
-| `xenia_stall` | the stall picture in one call from inside the app: the last spin-lock stall record, the hottest threads over one second with wait channel, the badge history, the GPU counters, the stall and crash lines of the log ring, and a verdict. `xenia_probe` calls it by itself after two intervals without a frame |
+| `xenia_stall` | the stall picture in one call from inside the app: the last spin-lock stall record, the hottest threads over one second with wait channel, the badge history, the GPU counters, the stall and crash lines of the log ring, and a verdict. `xenia_probe` calls it by itself after two intervals without a frame. When the kernel table is locked or no frame comes and no fault record exists, it adds `host_fault_threads`: the symbolized frames of each thread inside a fault handler (a host-code fault with the global lock held) |
 | `xenia_api`, `xenia_log`, `xenia_shader_cache` | any endpoint of the in-app server; the in-process log ring with a filter; the pipeline creation lines and the cache files on the device |
 
 Rules that stay in force with the MCP: force-stop after every run, never use `adb shell input keyevent`,
@@ -776,6 +792,29 @@ wrong: guess, rebuild (2 min), wait for the device to cool, run (3 min), read. T
    a check at +21 s in the capped intro runs at 52 C.
 6. **Do the next step while the device or the build runs.** A build is 2 min, a probe 3 min;
    write the next patch, the note, or the tool in that time.
+
+### Outcome rules (user, 2026-09-22 evening: "it took way too long and we don't have much to show")
+
+The 24 hours to 2026-09-22 17:20 gave 61 commits and four results: the Blue Dragon black
+grass, Banjo at 26.5 fps with LLVM off, the Blue Dragon GPU frame 79 -> 64.5 ms, and the
+cause of the Banjo menu freeze. 25 commits were notes. The time went to theories before the
+split that decided each case, and to one issue with no timebox. The rules:
+
+1. **Split the axes in the first launch, before a theory.** Device vs PC, a64 vs LLVM, CPU vs
+   GPU (the pass timestamps), Android defaults vs desktop defaults. The Banjo freeze took
+   3.5 h to reach the a64/LLVM split; the Blue Dragon regression took 6 h to reach the GPU
+   pass split. Each split was one launch.
+2. **Our own changes first.** For a bug or a slowdown the desktop build does not have, read
+   our Android-only defaults and our merges since the last good build first. Both large bugs
+   of 2026-09-22 were ours: the 09-18 merge (the 21-bit rounding) and the Android-only
+   handle cache (the menu freeze).
+3. **Timebox: 90 minutes per issue without a fix or a measured gain.** Then write one line
+   (what is known, the next tool) and take the next item. The Banjo dark tile took 3.5 h
+   and 8 commits with no fix.
+4. **One scoreboard, before and after each install:** the same routes and numbers each time.
+   Each cycle reports its row: fixed, faster, or nothing.
+5. **Notes in one commit per cycle,** not one per finding.
+6. **Build a tool only for a second use.** Extend the MCP tools before a new one-off script.
 
 ### The faster loop (user, 2026-09-21 night: "plan a better faster strategy")
 
