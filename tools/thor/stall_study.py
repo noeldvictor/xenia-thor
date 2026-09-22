@@ -71,6 +71,11 @@ def one_launch(cvars, tag):
     # backend is slower and the check timed out four times on 2026-09-22 while
     # every run had passed the freeze point); only STALL counts as a stall.
     verdict = 'OK' if (title and running) else ('STALL' if not running else 'ALIVE')
+    if not s1:
+        # No frame at all inside the window: a boot that did not finish (an
+        # LLVM cache being rebuilt takes minutes), not a stall. Six "stalls"
+        # of 2026-09-22 were this.
+        verdict = 'NO_BOOT'
     if verdict != 'OK':
         rec = {'cvars': cvars, 'verdict': verdict, 'swaps': [s0, s1], 'steps': steps}
         try:
@@ -103,8 +108,9 @@ def main():
             print('  %s run %d: %s in %d s' % (cv or 'baseline', i + 1, v, secs), flush=True)
         stalls = sum(1 for v, _ in results if v == 'STALL')
         alive = sum(1 for v, _ in results if v == 'ALIVE')
-        print('%s: %d/%d stalled, %d alive without the title; ok seconds %s' % (
-            cv or 'baseline', stalls, args.runs, alive,
+        noboot = sum(1 for v, _ in results if v == 'NO_BOOT')
+        print('%s: %d/%d stalled, %d alive without the title, %d did not boot in the window; ok seconds %s' % (
+            cv or 'baseline', stalls, args.runs, alive, noboot,
             [s for v, s in results if v == 'OK']), flush=True)
     m.xenia_launch_cvars(clear=True)
 

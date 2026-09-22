@@ -362,13 +362,19 @@ Port rules:
   swap 836 to 838 (the same frame every time; the fourth stayed alive); with a64 only, 0 of 4
   froze and all four ran past swap 1045 (the title-colour check missed on the slower backend, so
   the study now counts only frozen swaps as a stall and reports "alive" separately). The stall
-  is an LLVM-backend code-generation defect until shown otherwise. Two arms cleared suspects:
-  the residency options off froze 2 of 3; LLVM without the object cache (fresh compiles,
-  `cpu_llvm_object_cache=false,cpu_llvm_no_runtime_compiles=false`) froze 3 of 3, so it is not
-  a stale cache. `llvm_bisect.py` (running from 03:15) halves the `cpu_backend_llvm_range_lo/hi`
-  window, two launches per half, one frozen run keeps a half; the log is
-  `scratch/banjo/rd/llvm_bisect.log`. The perf A/B of `cpu_global_lock_mutex=false` waits for
-  it: a measurement needs the transition to pass, and it passes 1 launch in 4 with LLVM on.
+  is an LLVM-backend code-generation defect until shown otherwise. Arms so far: the residency
+  options off froze 1 of 2 valid runs; every run without the object cache showed swaps 0 (LLVM
+  compiles the title at boot for longer than the harness window), so the "fresh LLVM freezes
+  3 of 3" and the first barrier arm were VOID, not stalls (the study now says NO_BOOT for
+  swaps 0). `llvm_bisect.py` kept [82000000,82400000) (one freeze) and then found neither
+  quarter freezing in 2 runs each, which points at a pair (an LLVM caller and an a64 callee)
+  rather than one function; stopped. The two candidate mechanisms are in the tree's own
+  comments (llvm_assembler.cc ~805-870): an a64 guest entry reached raw by a musttail jump
+  reads its backend context through x19, which LLVM did not reserve (fix: `+reserve-x19`,
+  object cache version 4), and LLVM callers keeping values in x22-x28/q8-q15 across a call
+  into a64 code (`cpu_llvm_guest_call_clobber_barrier`, a cache-key letter, so a warm-up
+  launch rebuilds the cache first). Both are under test by `stall_study.py --runs 4`. The
+  perf A/B of `cpu_global_lock_mutex=false` waits for a transition that passes.
 
   Retro 2026-09-21 (the stop ritual): slow = one device launch per cvar, 50 launches for four
   facts, 40% of them lost to the stall and the rest to heat; the tool that would have made it
