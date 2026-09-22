@@ -448,6 +448,19 @@ Port rules:
   130 s (gate OK, 263,325 vertices) against today's 11.3 flat. `bd_bisect.py` (git bisect,
   build, warm-up, cool, route, good >= 15.5 / bad <= 13) runs from 08:10; the log is
   `scratch/banjo/rd/bd_bisect.log`.
+  The bisection (07:27 to 10:50): 2026-08-17 good (18.5), 2026-09-18 good (18.4), 2026-09-20
+  `69b6f4f42c` good (15.6), 2026-09-21 `a062a5aecc` bad (11.15), `333c124907` bad (11.2); the
+  commits of 2026-09-21 02:48 to 12:50 could not be measured (the route's button timings fire
+  into the loading screen on those builds; two skips, then the driver was stopped). Direct
+  tests on master, each one route with the scene gate: full LTO instead of ThinLTO 11.3 (not
+  it); `threading_per_object_condvar=true` 11.7 (not it, and no hang, so the flag is safe);
+  the cached page count 11.4 (not it; kept, it removes a page-table walk per
+  MmQueryStatistics). The gameplay callgraph (`perf-27136-20260922-112125.data`): the guest
+  worker's kernel time is 94% syscall - 69% `pthread_cond_broadcast` from `KeSetEvent` ->
+  `XEvent::Set` and from `XmaDecoder::WriteRegister`, 17% mutex wakes, `pthread_cond_timedwait`
+  under `KeWaitForSingleObject`, `EnterGlobalLock` on the recursive mutex - the game's event
+  traffic paid in futex syscalls. Running: the a64 emitter part of `3dacdffe09` (the inline
+  spin-lock and IRQL protocol change) reverse-applied on master, one route.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
