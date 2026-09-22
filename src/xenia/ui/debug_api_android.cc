@@ -537,7 +537,9 @@ JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeCvarGet(
   if (it == cvar::ConfigVars->end()) {
     return ToJava(env, "");
   }
-  return ToJava(env, it->second->config_value());
+  // The live value: config_value() is the config file's (it said
+  // cpu_backend_llvm=true while a launch override had it off, 2026-09-22).
+  return ToJava(env, it->second->current_value_string());
 }
 
 JNIEXPORT jboolean JNICALL Java_jp_xenia_emulator_DebugServer_nativeCvarSet(

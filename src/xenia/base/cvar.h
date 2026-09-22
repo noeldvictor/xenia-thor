@@ -86,6 +86,9 @@ class ICommandVar {
   virtual bool SetValueFromString(const std::string& value) = 0;
   virtual void AddToLaunchOptions(cxxopts::Options* options) = 0;
   virtual void LoadFromLaunchOptions(cxxopts::ParseResult* result) = 0;
+  // The live value as text (a launch override or a live set, not the
+  // config file's value): the debug server's cvar getter reads this.
+  virtual std::string current_value_string() const = 0;
 };
 
 class IConfigVar : virtual public ICommandVar {
@@ -109,6 +112,9 @@ class CommandVar : virtual public ICommandVar {
   void SetCommandLineValue(T val);
   bool SetValueFromString(const std::string& value) override;
   T* current_value() { return current_value_; }
+  std::string current_value_string() const override {
+    return ToString(*current_value_);
+  }
 
  protected:
   std::string name_;
