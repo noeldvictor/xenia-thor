@@ -1,203 +1,123 @@
-#!/usr/bin/env python3
-"""Probe a title on the device: launch through the play-button path, wait for
-the load, then take a screenshot timeline while pressing an optional button
-route. Reports the presented fps per interval and any crash. For a title with
-no documented route yet (2026-09-20: Banjo-Kazooie).
+"""One launch, the two open Banjo questions answered together:
 
-Abort conditions: preflight fails, GPU above 70 C, process dies, time limit.
-Force-stop at the end.
+  python tools/thor/title_probe.py [seconds] [--callgraph]
 
-Usage:
-  python tools/thor/title_probe.py --title banjo --seconds 240 \
-      --route "60:START 75:A 90:A 105:A 120:START 135:A"
-  route items are "<seconds after load>:<BUTTON>[:hold_ms]".
+1. Where the guest CPU goes in the scene after the puzzle: a simpleperf
+   sample (xenia_profile) with the hottest guest functions named from the
+   recomp's table, since the hottest host threads are the game's own
+   worker XThreads (2026-09-22: 62% + 59% + 29% of a core at 6.7 fps while
+   the GPU takes 1-13 ms and IssueDraw 14-23 ms per frame).
+2. Who allocates on the null heap: the export trap on RtlEnterCriticalSection
+   with r3 == 0 is armed before the route, and the last hit's registers and
+   guest chain are printed with the recomp's names (the "Null critical
+   section" lines appear on the main thread even in runs that do not stall;
+   the stall's garbage object pointer is the downstream symptom).
+
+The device cools first. The app is force-stopped at the end.
 """
-import argparse
-import importlib.util
 import json
+import subprocess
 import os
-import re
 import sys
 import time
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-MCP_PATH = os.path.join(REPO, 'tools', 'mcp', 'xenia_thor_mcp.py')
-TITLES = {
-    'bd': ('/storage/2664-21DE/Roms/xbox360/Blue Dragon.m3u/'
-           'Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso'),
-    'banjo': ('/storage/2664-21DE/Roms/xbox360/Banjo-Kazooie - Nuts & Bolts (USA) '
-              '(En,Ja,Fr,De,Es,It,Nl,Sv,No,Zh,Ko,Pl,Ru,Cs).iso'),
-}
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.insert(0, ROOT + '/tools/mcp')
+sys.path.insert(0, ROOT + '/tools/thor')
+import xenia_thor_mcp as m  # noqa: E402
+import guest_disasm_offline as g  # noqa: E402
+
+ROUTE = 'name:puzzle;until:gold>0.35;press:START;settle:3000|name:after;until:gold<0.2;timeout:60'
 
 
-def load_mcp():
-    spec = importlib.util.spec_from_file_location('xenia_thor_mcp', MCP_PATH)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+def wait_cool(max_case_c=41.0):
+    for _ in range(50):
+        t = json.loads(m.xenia_preflight()).get('temps', {})
+        if t.get('case_c', 0) < max_case_c:
+            return t
+        time.sleep(30)
+    return t
 
 
-def gpu_c(m):
-    t = m._shell('cat /sys/class/kgsl/kgsl-3d0/temp').strip()
-    return int(t) / 1000.0 if t.isdigit() else 999.0
-
-
-def fps_recent(m, seconds):
-    # The badge history from the MCP inside the emulator (60 windows); the
-    # logcat line stays as the fallback when the app is not reachable.
-    vals = []
+def name(addr, names, starts):
     try:
-        for row in m._api('/fps', timeout=20):
-            vals.append((float(row['fps']), int(row['window_ms'])))
-    except RuntimeError:
-        rows = m._adb('logcat', '-d', '-s', 'xenia-fps:*', timeout=60).splitlines()
-        for l in rows:
-            mm = re.search(r'fps=([0-9.]+) swaps=(\d+) window_ms=(\d+)', l)
-            if mm:
-                vals.append((float(mm.group(1)), int(mm.group(3))))
-    acc, out = 0, []
-    for v, w in reversed(vals):
-        out.append(v)
-        acc += w
-        if acc >= seconds * 1000:
-            break
-    return sorted(out)
+        return g.name_of(int(addr, 16) if isinstance(addr, str) else addr, names, starts)
+    except Exception:
+        return '?'
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument('--title', default='banjo')
-    ap.add_argument('--seconds', type=int, default=240, help='probe length after the load')
-    ap.add_argument('--shot-every', type=int, default=20)
-    ap.add_argument('--route', default='')
-    ap.add_argument('--load-limit', type=int, default=900)
-    ap.add_argument('--profile-at', type=int, default=0,
-                    help='seconds after the load to run xenia_profile (0 = never)')
-    ap.add_argument('--profile-seconds', type=int, default=15)
-    args = ap.parse_args()
-    m = load_mcp()
-    title = TITLES.get(args.title, args.title)
-    route = []
-    for item in args.route.split():
-        parts = item.split(':')
-        route.append((int(parts[0]), parts[1], int(parts[2]) if len(parts) > 2 else 150))
-    route.sort()
-
-    pre = json.loads(m.xenia_preflight())
-    print('preflight:', pre['ok'], pre['reasons'], pre['temps'], pre['battery'])
-    if not pre['ok']:
-        return 2
-    m.xenia_logcat_clear()
-    launch = json.loads(m.xenia_launch(title))
-    pid = launch.get('pid')
-    print('launch:', launch.get('launched'), 'pid', pid, 'battery', launch['battery'])
-    if not pid:
-        return 2
-    result = 'time limit'
+    args = [a for a in sys.argv[1:] if not a.startswith('--')]
+    callgraph = '--callgraph' in sys.argv
+    seconds = int(args[0]) if args else 15
+    names, starts = g.load_names()
+    m.xenia_force_stop()
+    t = wait_cool()
+    m.xenia_launch_cvars(clear=True)
+    # The JITSYM host->guest map lines for the LLVM-compiled functions.
+    m.xenia_launch_cvars(set='cpu_emit_jit_perf_map=true')
+    r = json.loads(m.xenia_launch('banjo', skip_preflight=True))
+    if not r.get('launched'):
+        print('launch failed', r)
+        return 1
+    t0 = time.time()
+    while time.time() - t0 < 60 and not m._api_up():
+        time.sleep(1)
+    # r5 is the block RtlFreeHeap was given (r3 = the null heap): 32 bytes
+    # before it (the heap entry and the me header) and 160 after.
+    armed = m._api('/trap?name=RtlEnterCriticalSection&r3=0&pause=0&dump=r5-32:192', 'POST')
+    print('trap armed:', json.dumps(armed)[:200], flush=True)
+    goto = json.loads(m.xenia_goto(steps=ROUTE, launch=False, screenshot=False)).get('goto') or {}
+    print('route: reached=%s seconds=%s start_case=%.1fC' % (
+        goto.get('reached'), goto.get('seconds'), t.get('case_c', 0)), flush=True)
+    if goto.get('reached'):
+        time.sleep(5)
+        prof = json.loads(m.xenia_profile(seconds=seconds, callgraph=callgraph))
+        print('== profile: presented', prof.get('presented_fps'))
+        if callgraph and prof.get('perf_data'):
+            # Who takes the mutex and who enters the kernel: the callee
+            # graphs, written next to the data for reading with head/grep.
+            for sym in ('pthread_mutex_lock', 'syscall', '__aarch64_cas2_acq', 'xe_llvm_resolve_cached'):
+                out = prof['perf_data'] + '.callee-' + sym + '.txt'
+                subprocess.call([m.HOST_SIMPLEPERF, 'report', '-i', prof['perf_data'], '-g', 'callee',
+                                 '--symbols', sym, '-n'], stdout=open(out, 'w'), stderr=subprocess.DEVNULL)
+                print('  callee graph:', out)
+            out = prof['perf_data'] + '.kernel-callers.txt'
+            subprocess.call([m.HOST_SIMPLEPERF, 'report', '-i', prof['perf_data'], '-g', 'callee',
+                             '--dsos', '[kernel.kallsyms]', '-n'], stdout=open(out, 'w'), stderr=subprocess.DEVNULL)
+            print('  kernel callers:', out)
+        for row in prof.get('by_dso') or []:
+            print('  dso', row.strip()[:120])
+        for row in (prof.get('top') or [])[:18]:
+            print('  top', row.strip()[:140])
+        for row in (prof.get('guest_hot') or [])[:20]:
+            if 'guest' in row:
+                row = dict(row)
+                row['name'] = name(row['guest'], names, starts) if row['guest'] != 'a64 or unmapped' else ''
+            print('  guest', json.dumps(row)[:160])
+        if prof.get('symbolize'):
+            print('  symbolize:', prof['symbolize'])
+    trap = m._api('/trap')
+    print('== trap: hits=%s export=%s tid=%s lr=%s (%s) ctr=%s' % (
+        trap.get('hits'), trap.get('export'), trap.get('tid'), trap.get('lr'),
+        name(trap.get('lr') or '0', names, starts), trap.get('ctr')))
+    regs = trap.get('r') or []
+    if regs:
+        print('  r1=%s r3=%s r4=%s r5=%s r6=%s r7=%s' % tuple(x[-8:] for x in (regs[1], regs[3], regs[4], regs[5], regs[6], regs[7])))
+        print('  r28=%s r29=%s r30=%s r31=%s' % tuple(x[-8:] for x in regs[28:32]))
+    for a in trap.get('chain') or []:
+        print('  chain %s %s' % (a, name(a, names, starts)))
+    for k, v in (trap.get('mem') or {}).items():
+        print('  mem %s: %s' % (k, json.dumps(v)[:200]))
+    # The dump ranges of the arm call go to the app log as hex lines.
     try:
-        t0 = time.time()
-        while time.time() - t0 < args.load_limit:
-            time.sleep(5)
-            if m._pid(m.PKG) != pid:
-                result = 'died during load'; break
-            # The load is done when the in-app log ring holds the pre-warm
-            # line (the precompile pass ended); the title comes from /status.
-            try:
-                pw = m._api('/log?lines=4&grep=pre-warmed', timeout=30)
-            except RuntimeError:
-                pw = []
-            if pw:
-                print(f'+{time.time() - t0:.0f}s loaded:', pw[0][pw[0].find('pre-warmed'):].strip()[:80])
-                st = m._api('/status', timeout=20)
-                print(f'    title {st.get("title_id")} {st.get("title_name")}')
-                for l in m._api('/log?lines=6&grep=patch', timeout=20) or []:
-                    print('   ', l[:150])
-                break
-        else:
-            result = 'load timeout'
-        if result == 'time limit':
-            l0 = time.time()
-            next_shot = l0 + args.shot_every
-            ri = 0
-            saw_frames = False
-            zero_shots = 0
-            stall_reported = False
-            profiled = False
-            while time.time() - l0 < args.seconds:
-                time.sleep(1)
-                now = time.time() - l0
-                if m._pid(m.PKG) != pid:
-                    result = f'died at +{now:.0f}s'; break
-                temp = gpu_c(m)
-                if temp > 70:
-                    result = f'ABORT: GPU {temp} C'; break
-                if args.profile_at and not profiled and now >= args.profile_at:
-                    profiled = True
-                    print(f'+{now:4.0f}s profile {args.profile_seconds} s ...')
-                    pr = json.loads(m.xenia_profile(args.profile_seconds, True, True))
-                    print('    presented fps:', pr.get('presented_fps'), 'perf:', pr.get('perf_data'))
-                    for l in pr.get('by_dso', [])[:6]:
-                        print('    dso:', l[:150])
-                    for l in pr.get('top', [])[:14]:
-                        print('    top:', l[:170])
-                    gh = pr.get('guest_hot')
-                    if isinstance(gh, list):
-                        for r in gh[:16]:
-                            print('    guest:', r)
-                    else:
-                        print('    guest:', gh)
-                while ri < len(route) and route[ri][0] <= now:
-                    _, button, hold = route[ri]; ri += 1
-                    print(f'+{now:4.0f}s press {button}: {m.xenia_press(button, hold)}')
-                if time.time() >= next_shot:
-                    next_shot = time.time() + args.shot_every
-                    shot = json.loads(m.xenia_screenshot(f'probe-{args.title}-{int(now)}s'))
-                    f = fps_recent(m, args.shot_every)
-                    med = f[len(f) // 2] if f else None
-                    print(f'+{now:4.0f}s shot {os.path.basename(shot["path"])} fps median {med} '
-                          f'(n={len(f)}) GPU {temp:.0f} C')
-                    # The stall reflex: frames seen, then two intervals without
-                    # a frame, means one stall picture (markers, hot threads,
-                    # wait channels) printed here instead of found by hand.
-                    if med:
-                        saw_frames = True
-                        zero_shots = 0
-                    else:
-                        zero_shots += 1
-                    if saw_frames and zero_shots >= 2 and not stall_reported:
-                        stall_reported = True
-                        st = json.loads(m.xenia_stall(pid))
-                        print(f'+{now:4.0f}s STALL: {st["verdict"]}; badge {st["fps_badge"]}; '
-                              f'GPU busy {st["gpu_busy"]}')
-                        for l in st['markers'][-6:]:
-                            print('    marker:', l[:200])
-                        for r in st['hot_threads']:
-                            print(f'    thread {r["tid"]} {r["cpu_pct"]}%: '
-                                  f'{r["comm_state_uticks_sticks_wchan"]}')
-        print('result:', result)
-        if result.startswith('died'):
-            print(m._shell('logcat -b crash -d -t 60')[-3000:])
-        log = m._shell(f'logcat -d --pid={pid} -s xenia', timeout=120)
-        bad = [l for l in log.splitlines() if any(k in l for k in
-               ('guest crash', 'Fatal', 'unimplemented', 'GPU is hung', 'Failed to', 'DbgPrint'))]
-        print(f'log lines of interest ({len(bad)}):')
-        for l in bad[-15:]:
-            print('   ', l[l.find('xenia'):].strip()[:170])
-    finally:
-        # The in-process log ring dies with the process: save it first. It
-        # holds the file-system trace lines that logcat never shows.
-        try:
-            rows = m._api('/log?lines=8192', timeout=60)
-            path = os.path.join(m.SCRATCH, f'ring-{args.title}-{time.strftime("%Y%m%d-%H%M%S")}.txt')
-            with open(path, 'w', encoding='utf-8') as f:
-                f.write(chr(10).join(rows))
-            errs = [l for l in rows if 'DirtyDisc' in l or 'CRASH DIAG' in l or 'SPINLOCK' in l]
-            print(f'ring: {len(rows)} lines saved to {path}; {len(errs)} marker line(s)')
-            for l in errs[:5]:
-                print('   ', l[:200])
-        except Exception as e:
-            print('ring: not saved:', e)
-        print('stop:', m.xenia_force_stop())
+        rows = m._api('/log?lines=6000&grep=trap')
+        rows = rows.get('lines', rows) if isinstance(rows, dict) else rows
+        for l in [str(x) for x in rows if x][-6:]:
+            print('  log', l[:700])
+    except Exception as e:
+        print('  log unavailable:', e)
+    m.xenia_force_stop()
     return 0
 
 

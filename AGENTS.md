@@ -331,17 +331,34 @@ Port rules:
   names (meInternalAlloc, the trailer 0x9876+index at block end, RtlSizeHeap as the heap-of-
   pointer probe), and the heap's own boot trace.
 
-  Performance, first hard number (2026-09-22, `frame_outcomes.py` at the Spiral Mountain title,
-  device, No-MSAA patch on, cool): 7.9 fps, 2,484 draws per frame, `cpu_issuedraw_us` 27,079
-  median (50,005 p90), of which `cpu_emit_us` 21,013: the title is CPU-bound in the command
-  processor's emit phase (vertex-buffer RequestRange, render-pass entry, the draw-merge rewrite
-  that copies index data per draw; 8.5 us per draw), not on the GPU. Next, in ONE launch with live
-  `cvar_set`: `vulkan_merge_draws_rewrite=false`, `vulkan_cache_vertex_residency=true`,
-  `vulkan_hoist_request_range_lock` off/on, reading `cpu_emit_us` per setting. The route's
-  Spiral Mountain check (`green>0.03&gold<0.2`) missed twice tonight; make the title preset
-  detect the logo (red+blue in the middle band, as `grass_score.py` does on the PC) first.
+  Performance, corrected (2026-09-22 night, `emit_ab.py` and `title_probe.py` at the title
+  after the puzzle, device, cool): 6.7 fps. The GPU takes 1 to 13 ms per frame and IssueDraw
+  14 to 23 ms, so the emit phase is NOT the bound; the earlier "CPU-bound in emit" reading came
+  from six no-op levers (both merge cvars were already off; the attract camera moved between
+  the windows). The hottest host threads are two of the game's own worker XThreads (62% and
+  59% of a core) and a third at 29%; the main thread and the command processor sit below them.
+  simpleperf over 15 s: 48% in JIT'd guest code spread over many functions (the top one,
+  `sub_82942B90`, 3.2%), 22% in libxenia (4% `xe_llvm_resolve_cached` and
+  `xe_llvm_resolve_function`, the indirect-call resolution; 3% bionic mutex slow paths,
+  `NonPI::MutexLockWithTimeout` and the 16-bit CAS), 21% in the kernel in one unnamed symbol
+  (the mutex and futex signature), 6% libc. Next: the callgraph run (`title_probe.py
+  --callgraph`) names the mutex and the syscall callers; the levers are the lock it names, an
+  inline cache for the indirect calls, and `__emutls_get_address` (0.5%, emulated TLS).
   The host-heap stall study ended at 3 of 4 clean boots on the PC with freed blocks kept intact;
   the residual stall is the XCTD read queue (the wait chains name it); default off.
+
+  The puzzle-transition stall, named (2026-09-22 night): a guest call through a garbage
+  function pointer. Instance 1: the main thread in `sub_82CE6A38+B0` (a per-tick virtual-call
+  loop under `appMainTickPreDraw`) with r3 = 0x361580, an unmapped address; the vtable read
+  returns 0 from the readable zero page, and the call to guest 0 loads the indirection table's
+  own base (host 0x200000000, code 2). Instance 2: worker thread B in `sub_82951B78+2EC` with
+  ctr = 0x3F92C642, a float. The fault handler parks the thread, every other guest thread waits
+  forever, the swaps stop. `/trap` now holds the parked thread's full record (the fault hook,
+  129ff78e14). The "Null critical section" is `RtlFreeHeap(heap = 0)`: the game's
+  `sub_82240178` matches a block's trailer tag against its three "me" heaps (40100000, 40300000,
+  40500000; all serialized, locks intact) and returned -1. It did not precede instance 2, so it
+  is a second symptom, not the cause. Open: game memory corruption or a code-generation bug;
+  `stall_study.py --runs 4 "" "cpu_backend_llvm=false"` is the discriminator (running).
 
   Retro 2026-09-21 (the stop ritual): slow = one device launch per cvar, 50 launches for four
   facts, 40% of them lost to the stall and the rest to heat; the tool that would have made it
@@ -349,6 +366,13 @@ Port rules:
   PC, the offline code dump with the recomp's names; exists now = yes for all three
   (`atlas_ab.py`, `pc_goto.py --renderdoc` + `tools/renderdoc/*`, `guest_disasm_offline.py`),
   and the missing one, a device-side RenderDoc capture, is the next tool to build.
+
+  Retro 2026-09-22 (the stop ritual): slow = a per-frame metric read across live cvar windows
+  without the lever's current value (six no-ops read as six wins), and a fault whose one diag
+  line the log ring cut and the harness cleared; the tool that would have made it fast = the
+  harness refusing a no-op lever, and the fault filling the trap record; exists now = yes for
+  both (`emit_ab.py`, `KernelTrapRecordFault`), plus `title_probe.py` (profile and trap in one
+  launch) and the offline disassembler decoding past VMX128 words.
   Open (2026-09-21 evening): the puzzle transition crashes a guest thread in two runs of three,
   and the game then stalls with a half-lit puzzle on the panel (every thread waits on the crashed
   thread's semaphore). Two fault shapes so far: a halfword load at guest 0xFFFFFFF8 (null minus 8)
@@ -547,6 +571,9 @@ descriptor bug in an hour. The order of tools, fastest first:
    `live.png` mean (196, white) said so; the game was fine. `pc_goto` now parks a 24-pixel
    sliver at the screen edge. Before reading a TIMEOUT as a stall, look at the capture and at
    the log's wait lines with their chains.
+8. **A lever already at its target is a no-op, not a result.** Read the cvar first; `emit_ab.py`
+   prints `SKIPPED: already false`. A parked thread's picture is one `/trap` call (the fault
+   record), not a log line; the harness keeps the CRASH DIAG lines before it clears the log.
 
 ### Device-only rules (user, 2026-09-21: "take a step back, figure out why we are stuck in a loop")
 
