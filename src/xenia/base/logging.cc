@@ -221,7 +221,7 @@ void AndroidLogSink::WriteLineBuffer() {
 // SPINLOCK STALL line twice. 8,192 lines of up to 255 bytes, 2 MB, one mutex.
 namespace {
 constexpr size_t kLogRingLines = 8192;
-constexpr size_t kLogRingLineBytes = 256;
+constexpr size_t kLogRingLineBytes = 512;
 struct LogRing {
   std::mutex mutex;
   std::vector<char> lines = std::vector<char>(kLogRingLines * kLogRingLineBytes);

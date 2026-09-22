@@ -12,6 +12,7 @@
 
 #include <array>
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 #include <string>
@@ -96,6 +97,22 @@ class Processor {
   void set_debug_listener_request_handler(
       std::function<DebugListener*(Processor*)> handler) {
     debug_listener_handler_ = std::move(handler);
+  }
+
+  // Called from the fault handler for a fault no backend could resolve, with
+  // the guest context of the faulting thread and a one-line description.
+  // The kernel fills its trap record with it, so the debug server's /trap
+  // shows the faulting thread's registers, stack and chain after the thread
+  // is parked (2026-09-22: the Banjo puzzle stall was a virtual call
+  // through a null slot on the main thread; the one log line that carried
+  // the picture was cut at the log ring's line cap).
+  void set_unhandled_fault_hook(
+      std::function<void(ppc::PPCContext*, const std::string&)> hook) {
+    unhandled_fault_hook_ = std::move(hook);
+  }
+  const std::function<void(ppc::PPCContext*, const std::string&)>&
+  unhandled_fault_hook() const {
+    return unhandled_fault_hook_;
   }
 
   void set_debug_info_flags(uint32_t debug_info_flags) {
@@ -309,6 +326,8 @@ class Processor {
   std::unique_ptr<StackWalker> stack_walker_;
 
   std::function<DebugListener*(Processor*)> debug_listener_handler_;
+  std::function<void(ppc::PPCContext*, const std::string&)>
+      unhandled_fault_hook_;
   DebugListener* debug_listener_ = nullptr;
 
   // Which debug features are enabled in generated code.

@@ -676,6 +676,10 @@ X_RESULT KernelState::FinishLoadingUserModule(
   // never appeared on the device, while it appears on the PC for the same
   // disc. This line says whether the pointer exists at this point.
   KernelTrapArmFromCvars();
+  processor_->set_unhandled_fault_hook(
+      [](cpu::ppc::PPCContext* ctx, const std::string& description) {
+        KernelTrapRecordFault(ctx, description);
+      });
   XELOGI("FinishLoadingUserModule: title {:08X}, patcher {}",
          module->title_id(), emulator_->patcher() ? "present" : "NULL");
   // Apply any matching game patches now that the module is loaded and its build

@@ -44,6 +44,11 @@ void KernelTrapSetR3Filter(bool enabled, uint32_t value);
 
 // Called by the shim trampoline when its key matches.
 void KernelTrapHit(cpu::Export* export_entry, cpu::ppc::PPCContext* ctx);
+// Called by the fault handler for a fault no backend resolved: fills the
+// same record (export "fault: <description>") so /trap shows the faulting
+// thread's registers, stack and chain after the thread is parked.
+void KernelTrapRecordFault(cpu::ppc::PPCContext* ctx,
+                           const std::string& description);
 
 // Arms a trap on the export with this name (searched in xboxkrnl and xam).
 // pause holds the calling guest thread at the hit until KernelTrapRelease.

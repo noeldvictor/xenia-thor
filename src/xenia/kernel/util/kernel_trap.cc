@@ -100,6 +100,46 @@ const char* kModuleNames[] = {"xboxkrnl.exe", "xam.xex", "xbdm.xex"};
 
 }  // namespace
 
+// The record's register and stack picture from a guest context; the
+// caller holds rec.mutex.
+static void FillRecordLocked(TrapRecord& rec, std::string name,
+                             cpu::ppc::PPCContext* ctx) {
+  rec.export_name = std::move(name);
+  auto* thread = XThread::GetCurrentThread();
+  rec.thread_id = thread ? thread->thread_id() : 0;
+  for (int i = 0; i < 32; ++i) {
+    rec.r[i] = ctx->r[i];
+  }
+  rec.lr = ctx->lr;
+  rec.ctr = ctx->ctr;
+  rec.when_ms = xe::Clock::QueryHostUptimeMillis();
+  uint32_t r1 = static_cast<uint32_t>(ctx->r[1]);
+  rec.stack_base = r1;
+  rec.stack_count = 0;
+  auto* memory = ctx->kernel_state->memory();
+  for (size_t i = 0; i < kStackWords; ++i) {
+    uint32_t addr = r1 + static_cast<uint32_t>(i * 4);
+    auto* heap = memory->LookupHeap(addr);
+    if (!heap || heap->QueryRangeAccess(addr, addr + 3) ==
+                     xe::memory::PageAccess::kNoAccess) {
+      break;
+    }
+    rec.stack[i] = xe::load_and_swap<uint32_t>(memory->TranslateVirtual(addr));
+    rec.stack_count = i + 1;
+  }
+}
+
+void KernelTrapRecordFault(cpu::ppc::PPCContext* ctx,
+                           const std::string& description) {
+  if (!ctx || !ctx->kernel_state) {
+    return;
+  }
+  TrapRecord& rec = record();
+  std::lock_guard<std::mutex> lock(rec.mutex);
+  FillRecordLocked(rec, "fault: " + description, ctx);
+  rec.hits.fetch_add(1, std::memory_order_relaxed);
+}
+
 void KernelTrapHit(cpu::Export* export_entry, cpu::ppc::PPCContext* ctx) {
   uint32_t lr_filter = g_kernel_trap_lr.load(std::memory_order_relaxed);
   if (lr_filter && static_cast<uint32_t>(ctx->lr) != lr_filter) {
@@ -113,30 +153,7 @@ void KernelTrapHit(cpu::Export* export_entry, cpu::ppc::PPCContext* ctx) {
   TrapRecord& rec = record();
   {
     std::lock_guard<std::mutex> lock(rec.mutex);
-    rec.export_name = export_entry ? export_entry->name : "";
-    auto* thread = XThread::GetCurrentThread();
-    rec.thread_id = thread ? thread->thread_id() : 0;
-    for (int i = 0; i < 32; ++i) {
-      rec.r[i] = ctx->r[i];
-    }
-    rec.lr = ctx->lr;
-    rec.ctr = ctx->ctr;
-    rec.when_ms = xe::Clock::QueryHostUptimeMillis();
-    uint32_t r1 = static_cast<uint32_t>(ctx->r[1]);
-    rec.stack_base = r1;
-    rec.stack_count = 0;
-    auto* memory = ctx->kernel_state->memory();
-    for (size_t i = 0; i < kStackWords; ++i) {
-      uint32_t addr = r1 + static_cast<uint32_t>(i * 4);
-      auto* heap = memory->LookupHeap(addr);
-      if (!heap || heap->QueryRangeAccess(addr, addr + 3) ==
-                       xe::memory::PageAccess::kNoAccess) {
-        break;
-      }
-      rec.stack[i] =
-          xe::load_and_swap<uint32_t>(memory->TranslateVirtual(addr));
-      rec.stack_count = i + 1;
-    }
+    FillRecordLocked(rec, export_entry ? export_entry->name : "", ctx);
   }
   uint32_t hit = rec.hits.fetch_add(1, std::memory_order_relaxed) + 1;
   XELOGE(

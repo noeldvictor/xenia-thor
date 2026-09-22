@@ -3269,6 +3269,17 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_outcomes_wholecull_draws_, draw_outcomes_wholecull_elig_,
         draw_outcomes_wholecull_verts_, draw_outcomes_cull_whole_skip_,
         draw_outcomes_cull_whole_skip_verts_);
+    // The CPU phases again on a SHORT line: they sit near the end of the
+    // line above, past the app log ring's line cap and near logcat's, so a
+    // harness that reads them from either got nothing on the heavy frames
+    // (2026-09-22, the same lesson as the GPU pass timing line below).
+    XELOGI(
+        "GPU draw cpu/frame: draws={} issuedraw_us={} emit_us={} "
+        "setup_us={} bind_us={} process_us={} vfres_us={} breaks={}",
+        draw_outcomes_rendered_, draw_cpu_total_ns_ / 1000,
+        draw_cpu_emit_ns_ / 1000, draw_cpu_setup_ns_ / 1000,
+        draw_cpu_bindings_ns_ / 1000, draw_cpu_process_ns_ / 1000,
+        draw_cpu_vfresidency_ns_ / 1000, rt_pass_break_barrier_);
 
     // ⚠⚠ THE LINE ABOVE IS TRUNCATED BY LOGCAT AT ~1066 CHARACTERS, and
     // gpu_frame_us / gpu_pass_us sit near its END. A HEAVY frame carries

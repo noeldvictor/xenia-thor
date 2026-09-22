@@ -858,7 +858,13 @@ class PosixCondition<Thread> : public PosixConditionBase {
   }
 #endif
 
-  uint32_t system_id() const { return static_cast<uint32_t>(thread_); }
+  // The Linux tid (the /proc/<pid>/task entry, what ps and the debug
+  // server's host rows use), captured at thread start. pthread_t is a
+  // pointer, and its low 32 bits matched nothing (2026-09-22).
+  uint32_t system_id() const {
+    return tid_ > 0 ? static_cast<uint32_t>(tid_)
+                    : static_cast<uint32_t>(thread_);
+  }
 
   uint64_t affinity_mask() {
     WaitStarted();
