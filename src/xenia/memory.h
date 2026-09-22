@@ -234,6 +234,12 @@ class BaseHeap {
   uint32_t host_address_offset_;
   xe::global_critical_region global_critical_region_;
   std::vector<PageEntry> page_table_;
+  // GetUnreservedPageCount() walks page_table_ under the global lock; the
+  // guest's MmQueryStatistics calls it per heap, and Blue Dragon calls that
+  // often enough for the walk to show in a gameplay profile (2026-09-22).
+  // Every mutator marks the count dirty; the walk runs once per change.
+  bool unreserved_count_dirty_ = true;
+  uint32_t unreserved_count_cache_ = 0;
 };
 
 // Normal heap allowing allocations from guest virtual address ranges.

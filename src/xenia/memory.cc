@@ -739,6 +739,7 @@ BaseHeap::~BaseHeap() = default;
 void BaseHeap::Initialize(Memory* memory, uint8_t* membase, HeapType heap_type,
                           uint32_t heap_base, uint32_t heap_size,
                           uint32_t page_size, uint32_t host_address_offset) {
+  unreserved_count_dirty_ = true;
   memory_ = memory;
   membase_ = membase;
   heap_type_ = heap_type;
@@ -750,6 +751,7 @@ void BaseHeap::Initialize(Memory* memory, uint8_t* membase, HeapType heap_type,
 }
 
 void BaseHeap::Dispose() {
+  unreserved_count_dirty_ = true;
   // Walk table and release all regions.
   for (uint32_t page_number = 0; page_number < page_table_.size();
        ++page_number) {
@@ -818,6 +820,9 @@ uint32_t BaseHeap::GetTotalPageCount() { return uint32_t(page_table_.size()); }
 
 uint32_t BaseHeap::GetUnreservedPageCount() {
   auto global_lock = global_critical_region_.Acquire();
+  if (!unreserved_count_dirty_) {
+    return unreserved_count_cache_;
+  }
   uint32_t count = 0;
   bool is_empty_span = false;
   uint32_t empty_span_start = 0;
@@ -840,6 +845,8 @@ uint32_t BaseHeap::GetUnreservedPageCount() {
   if (is_empty_span) {
     count += size - empty_span_start;
   }
+  unreserved_count_cache_ = count;
+  unreserved_count_dirty_ = false;
   return count;
 }
 
@@ -872,6 +879,7 @@ bool BaseHeap::Save(ByteStream* stream) {
 }
 
 bool BaseHeap::Restore(ByteStream* stream) {
+  unreserved_count_dirty_ = true;
   XELOGD("Heap {:08X}-{:08X}", heap_base_, heap_base_ + (heap_size_ - 1));
 
   for (size_t i = 0; i < page_table_.size(); i++) {
@@ -916,6 +924,7 @@ bool BaseHeap::Restore(ByteStream* stream) {
 }
 
 void BaseHeap::Reset() {
+  unreserved_count_dirty_ = true;
   // TODO(DrChat): protect pages.
   std::memset(page_table_.data(), 0, sizeof(PageEntry) * page_table_.size());
   // TODO(Triang3l): Remove access callbacks from pages if this is a physical
@@ -937,6 +946,7 @@ bool BaseHeap::Alloc(uint32_t size, uint32_t alignment,
 bool BaseHeap::AllocFixed(uint32_t base_address, uint32_t size,
                           uint32_t alignment, uint32_t allocation_type,
                           uint32_t protect) {
+  unreserved_count_dirty_ = true;
   alignment = xe::round_up(alignment, page_size_);
   size = xe::align(size, alignment);
   assert_true(base_address % alignment == 0);
@@ -1026,6 +1036,7 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
                           uint32_t allocation_type, uint32_t protect,
                           bool top_down, uint32_t* out_address,
                           uint32_t alignment_phase) {
+  unreserved_count_dirty_ = true;
   *out_address = 0;
 
   alignment = xe::round_up(alignment, page_size_);
@@ -1241,6 +1252,7 @@ bool BaseHeap::AllocRange(uint32_t low_address, uint32_t high_address,
 }
 
 bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
+  unreserved_count_dirty_ = true;
   uint32_t page_count = get_page_count(size, page_size_);
   uint32_t start_page_number = (address - heap_base_) / page_size_;
   uint32_t end_page_number = start_page_number + page_count - 1;
@@ -1272,6 +1284,7 @@ bool BaseHeap::Decommit(uint32_t address, uint32_t size) {
 }
 
 bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
+  unreserved_count_dirty_ = true;
   auto global_lock = global_critical_region_.Acquire();
 
   // Given address must be a region base address.
@@ -1345,6 +1358,7 @@ bool BaseHeap::Release(uint32_t base_address, uint32_t* out_region_size) {
 
 bool BaseHeap::Protect(uint32_t address, uint32_t size, uint32_t protect,
                        uint32_t* old_protect) {
+  unreserved_count_dirty_ = true;
   if (!size) {
     XELOGE("BaseHeap::Protect failed due to zero size");
     return false;
