@@ -52,6 +52,14 @@ def find_window(pid, title_contains=None):
     return found[0] if found else None
 
 
+def park_offscreen(hwnd):
+    """Move a window far off the visible desktop without activating it.
+    PrintWindow renders an off-screen window; a minimized one it does not."""
+    user32 = ctypes.windll.user32
+    SWP_NOSIZE, SWP_NOACTIVATE, SWP_NOZORDER = 0x0001, 0x0010, 0x0004
+    user32.SetWindowPos(hwnd, 0, -4000, -4000, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER)
+
+
 def capture(hwnd, path):
     # PrintWindow with PW_RENDERFULLCONTENT captures the window's own
     # surface without bringing it to the front (the earlier ImageGrab stole

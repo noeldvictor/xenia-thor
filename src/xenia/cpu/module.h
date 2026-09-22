@@ -35,6 +35,9 @@ class Module {
 
   virtual const std::string& name() const = 0;
   virtual bool is_executable() const = 0;
+  // XXH3 of the module's code section, the hash the game-patch files match
+  // (Module Hash in the log); 0 for modules without one.
+  virtual uint64_t code_hash() { return 0; }
 
   virtual bool ContainsAddress(uint32_t address);
 

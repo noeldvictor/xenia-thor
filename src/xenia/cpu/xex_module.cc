@@ -26,6 +26,7 @@
 #include "xenia/cpu/export_resolver.h"
 #include "xenia/cpu/lzx.h"
 #include "xenia/cpu/precompile_status.h"
+#include "xenia/base/xxhash.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xmodule.h"
@@ -1584,6 +1585,47 @@ uint32_t WorkersForTemperature(uint32_t worker_count, PrecompileTemps t) {
 }
 
 }  // namespace
+
+uint64_t XexModule::code_hash() {
+  std::lock_guard<std::mutex> lock(code_hash_mutex_);
+  if (code_hash_computed_) {
+    return code_hash_;
+  }
+  code_hash_computed_ = true;
+  const SecurityInfoContext* security_info = xex_security_info();
+  if (!security_info || !base_address_) {
+    return 0;
+  }
+  const BaseHeap* module_heap = memory()->LookupHeap(base_address_);
+  if (!module_heap) {
+    return 0;
+  }
+  const uint32_t page_size = module_heap->page_size();
+  uint32_t first_page = UINT32_MAX, last_page = UINT32_MAX;
+  for (uint32_t i = 0; i < security_info->page_descriptor_count; ++i) {
+    xex2_page_descriptor page_descriptor;
+    page_descriptor.value =
+        xe::byte_swap(security_info->page_descriptors[i].value);
+    if (page_descriptor.info != XEX_SECTION_CODE) {
+      continue;
+    }
+    if (first_page == UINT32_MAX) {
+      first_page = i;
+    }
+    last_page = i;
+  }
+  if (first_page == UINT32_MAX) {
+    return 0;
+  }
+  const uint32_t start_address = base_address_ + first_page * page_size;
+  const uint32_t end_address = base_address_ + (last_page + 1) * page_size;
+  XXH3_state_t hash_state;
+  XXH3_64bits_reset(&hash_state);
+  XXH3_64bits_update(&hash_state, memory()->TranslateVirtual(start_address),
+                     end_address - start_address);
+  code_hash_ = XXH3_64bits_digest(&hash_state);
+  return code_hash_;
+}
 
 void XexModule::PrecompileGuestFunctions() {
   if (!cvars::cpu_precompile_guest_functions && !cvars::cpu_aot_maximize) {

@@ -177,6 +177,25 @@ public final class XeniaOptimizations {
                                new BoolCvar("cpu_backend_llvm_residency_writeback")}, null));
 
         list.add(new Optimization(
+                "opt_guest_crt_hooks",
+                "Run the game's C runtime as host code",
+                "The game's own heap, memcpy and memset run as native code at the "
+                        + "addresses the title's recompilation names, instead of translated "
+                        + "PowerPC.",
+                "Banjo-Kazooie: Nuts & Bolts (2026-09-21): the recomp reNut replaces the "
+                        + "game's statically linked RtlAllocateHeap/RtlFreeHeap/RtlSizeHeap/"
+                        + "RtlReAllocateHeap, XMemCpy, memcpy, XMemSet and memset with native "
+                        + "ones; xenia now plants host handlers on the same guest addresses. "
+                        + "The game's heap ran with a null critical section here (the "
+                        + "'Null critical section in RtlEnterCriticalSection' log line), two "
+                        + "threads corrupted its free list, and RtlpDeCommitFreeBlock read at "
+                        + "null - 8: the puzzle-transition stall. One thread-safe host "
+                        + "allocator inside guest memory replaces it, and every copy runs as "
+                        + "NEON. Titles without a table are unchanged. Cvar cpu_guest_crt_hooks.",
+                CATEGORY_CPU, true, true,
+                new BoolCvar[]{new BoolCvar("cpu_guest_crt_hooks")}, null));
+
+        list.add(new Optimization(
                 "opt_llvm_cpu_features",
                 "Let LLVM use this CPU's instructions",
                 "Tells LLVM which ARM features the Snapdragon actually has, instead of"

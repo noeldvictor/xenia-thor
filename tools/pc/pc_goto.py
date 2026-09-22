@@ -75,10 +75,17 @@ def main():
             f.write('%s:%d\n' % (buttons, args.hold))
         print('+%.0f s press %s' % (time.time() - t0, buttons), flush=True)
 
+    parked = set()
+
     def grab():
         hwnd = pc_screens.find_window(proc.pid, 'Xenia' if args.renderdoc else None)
         if not hwnd:
             return None
+        if hwnd not in parked:
+            # Park the window off-screen, without activating it: the user
+            # keeps the desktop, PrintWindow still captures the content.
+            pc_screens.park_offscreen(hwnd)
+            parked.add(hwnd)
         path = os.path.join(args.storage, 'live.png')
         return pc_screens.capture(hwnd, path)
 

@@ -187,6 +187,8 @@ class XexModule : public xe::cpu::Module {
   bool ContainsAddress(uint32_t address) override;
 
   const std::string& name() const override { return name_; }
+  uint64_t code_hash() override;
+
   bool is_executable() const override {
     return (xex_header()->module_flags & XEX_MODULE_TITLE) != 0;
   }
@@ -228,6 +230,10 @@ class XexModule : public xe::cpu::Module {
   bool FindSaveRest();
 
   Processor* processor_ = nullptr;
+  // code_hash(): computed once from the code section pages.
+  std::mutex code_hash_mutex_;
+  uint64_t code_hash_ = 0;
+  bool code_hash_computed_ = false;
   kernel::KernelState* kernel_state_ = nullptr;
   std::string name_;
   std::string path_;
