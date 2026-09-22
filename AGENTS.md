@@ -512,6 +512,24 @@ Port rules:
   which the top two take 25 and 22 ms; EDRAM transfers 3.7 ms in 35; composite 2.7; resolve
   copies 1.6; gaps 4.2. The next Blue Dragon lever is inside those two scene passes (paused:
   the user put Banjo first, 2026-09-22 afternoon).
+  Banjo's dark lower half, measured (2026-09-22 afternoon, `banjo_split_ab.py`, 30 attract
+  frames per launch, lower band 56-95% of the height): dark in 22 to 25 of 30 frames at
+  baseline. Not MSAA (the No-MSAA patch 22/30), not mid-frame submission (30/30 with it off),
+  not the Android GPU defaults (all eleven back to desktop values 30/30), not Turnip's tile
+  binning (`gpu_vulkan_driver_debug=sysmem` 19/30), not `gpu_fp16_shaders`. The frame is
+  two predicated EDRAM tiles (`gpu_trace_bin_select`): tile A (select 80000003, ~396
+  packets, rows 0-384) and tile B (select 0C, ~2,558 packets, window offset y=-384, scissor
+  from row 384, 1280-pitch 2xMSAA); row 384 of 720 is exactly the 53.3% cut. The PC renders
+  the frame whole, and the PC replay of a DEVICE trace (`4D5307ED_3060.xtr`, captured on a
+  dark frame) renders the lower half too: the command stream is right, the device loses
+  tile B when it executes it. The old "PC GOOD (lower_black 0.000)" did not prove this: the
+  dark layer is luma ~30, above the near-black threshold. Tool fixes of the hour: the driver
+  selection was written with `apply()` and lost on the harness's force-stop (`commit()`
+  now; the Qualcomm driver then loads, and the app dies silently on it); the device trace
+  viewer aborted on a `filesystem_error` from the profile directory (no storage root) and
+  now starts, but a 79 MB trace did not finish in 300 s. Next: finish the device replay
+  (the fast loop), then the tile-B path on the device: the window-offset handling and the
+  EDRAM ownership of tile B's range.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays

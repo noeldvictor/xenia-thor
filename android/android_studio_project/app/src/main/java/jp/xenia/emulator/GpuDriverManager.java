@@ -201,7 +201,10 @@ public final class GpuDriverManager {
                 .putString(
                         XeniaAndroidSettings.KEY_GPU_DRIVER_PACKAGE,
                         id != null ? id : SYSTEM_ID)
-                .apply();
+                // commit, not apply: the debug server's driver tool selects and
+                // the harness force-stops the app a moment later; an async apply
+                // was lost and the next launch still loaded Turnip (2026-09-22).
+                .commit();
     }
 
     /** The selected package, or null when the system driver is selected/invalid. */

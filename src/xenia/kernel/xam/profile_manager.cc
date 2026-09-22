@@ -583,7 +583,13 @@ bool ProfileManager::CreateProfile(const std::string gamertag, bool autologin,
                                    bool default_xuid) {
   const auto xuid = !default_xuid ? GenerateXuid() : 0xB13EBABEBABEBABE;
 
-  if (!std::filesystem::create_directories(GetProfilePath(xuid))) {
+  // The error_code form: a read-only root (the trace viewer has no storage
+  // root) threw filesystem_error and aborted the process (2026-09-22).
+  std::error_code ec;
+  std::filesystem::create_directories(GetProfilePath(xuid), ec);
+  if (ec || !std::filesystem::is_directory(GetProfilePath(xuid), ec)) {
+    XELOGW("ProfileManager: cannot create the profile directory {}: {}",
+           xe::path_to_utf8(GetProfilePath(xuid)), ec.message());
     return false;
   }
 
@@ -604,7 +610,13 @@ bool ProfileManager::CreateProfile(const X_XAMACCOUNTINFO* account_info,
     xuid = GenerateXuid();
   }
 
-  if (!std::filesystem::create_directories(GetProfilePath(xuid))) {
+  // The error_code form: a read-only root (the trace viewer has no storage
+  // root) threw filesystem_error and aborted the process (2026-09-22).
+  std::error_code ec;
+  std::filesystem::create_directories(GetProfilePath(xuid), ec);
+  if (ec || !std::filesystem::is_directory(GetProfilePath(xuid), ec)) {
+    XELOGW("ProfileManager: cannot create the profile directory {}: {}",
+           xe::path_to_utf8(GetProfilePath(xuid)), ec.message());
     return false;
   }
 

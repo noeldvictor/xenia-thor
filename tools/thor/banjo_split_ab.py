@@ -87,6 +87,16 @@ def run_arm(label, patches, cvars, shots):
     t = wait_cool()
     g = json.loads(m.xenia_goto(steps=ROUTE, title='banjo', launch=True, screenshot=False)).get('goto') or {}
     dark, rows = 0, []
+    # The live values: a launch-order override would void the arm silently.
+    live = []
+    for c in cvars:
+        name = c.split('=', 1)[0]
+        try:
+            live.append('%s=%s' % (name, m._api('/cvar?name=%s' % name).get('value')))
+        except Exception:
+            live.append('%s=?' % name)
+    if live:
+        print('  %s live: %s' % (label, ' '.join(live)), flush=True)
     if g.get('reached'):
         for i in range(shots):
             path = json.loads(m.xenia_screenshot('split-%s-%02d' % (label, i))).get('path')
