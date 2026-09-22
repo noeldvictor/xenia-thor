@@ -88,3 +88,32 @@ which axis it crosses before touching code.
 - OS and scheduling: fourteen device launches in ninety minutes for an A/B series took the
   junction to 92 C and the title screen to 6 fps. The A/B harness must gate on the case
   temperature between runs (directive 8), or its numbers measure the throttle.
+
+## Where the axes met on 2026-09-22
+
+- CPU ISA, a new row inside it - two backends, one ABI: the a64 backend and the LLVM backend
+  call each other's machine code raw (`blr x9` through the indirection table one way, a
+  `musttail` jump through `xe_llvm_resolve_function` the other). The a64 code holds its
+  backend context in x19, treats x22-x28 and the full q8-q15 as scratch, and expects x0 to
+  carry the guest return address; LLVM code follows AAPCS64, which preserves x19-x28 and only
+  the low halves of v8-v15. The contract was written in comments on one side only. The
+  puzzle-transition freeze (a call through a garbage pointer, main thread or a worker) needs
+  the LLVM backend and is not removed by reserving x19 or by the clobber barrier alone (each
+  showed a 0-of-4 that a later batch contradicted). Open; `stall_study.py` and
+  `llvm_bisect.py` are the instruments, eight launches per arm.
+- OS and scheduling: the guest's interrupt-disabled sections (`mtmsrd` from r13, inside every
+  360 spin lock) take xenia's process-wide recursive mutex, the one the kernel exports take.
+  On the console the instruction masks interrupts on one hardware thread. The Banjo title
+  profile: 21% of the CPU in the kernel, 3% in bionic's mutex slow path, the game's worker
+  threads at 60% of a core each and the main thread and command processor below them; the
+  GPU takes 1 to 13 ms of a 150 ms frame. Dropping the mutex for a per-thread depth
+  (`cpu_global_lock_mutex=false`) livelocked two guest threads at 100%: the mutex was also
+  what parked a waiter so the holder could run. Next: the same lever with the core router
+  off (pinned threads sharing a core), and a spin-then-park mutex in place of the futex one.
+- Measurement, all axes: a per-frame metric read across live cvar windows must first read the
+  lever's current value (six no-ops read as six wins), a presented-fps badge quantized to
+  swaps per half second hides a 20% gain, and a batch of four launches cannot separate a fix
+  from luck on an intermittent freeze whose rate moved between 0 and 4 of 4 in one night.
+- Memory manager, one instrument: an unhandled guest fault now fills the kernel trap record
+  (`/trap`, `xenia_stall`), so a parked thread's registers, chain and the memory behind
+  r24-r31 come in one call. The two freezes of the night were named that way in minutes.
