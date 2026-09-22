@@ -889,6 +889,30 @@ def xenia_stall(pid: Optional[int] = None, hot_threads: int = 3) -> str:
             st['verdict'] = 'no frames and no hot thread: every guest thread waits; /threads shows lr and wait_reason'
         else:
             st['verdict'] = f'frames flow at {last_fps} fps'
+        # A parked thread (an unhandled guest fault) is the stall that looks
+        # like "every thread waits": the fault fills the trap record, so its
+        # registers, chain and the memory behind r24-r31 come with the picture
+        # (2026-09-22: two Banjo stalls were calls through garbage pointers).
+        try:
+            trap = _api('/trap', timeout=15)
+            if trap.get('hits') and str(trap.get('export', '')).startswith('fault:'):
+                st['fault'] = {k: trap.get(k) for k in ('export', 'tid', 'lr', 'ctr', 'chain', 'mem')}
+                st['fault']['r'] = trap.get('r')
+                st['verdict'] = (f"thread {trap.get('tid')} parked after an unhandled fault "
+                                 f"(lr {trap.get('lr')}, ctr {trap.get('ctr')}); every other guest "
+                                 f"thread waits on it. Name the chain with guest_disasm_offline.py "
+                                 f"--name; the memory behind r24-r31 is in fault.mem")
+        except Exception:
+            pass
+        # The waiting guest threads with their chains: who waits on whom.
+        try:
+            rows = _api('/threads', timeout=15)
+            if isinstance(rows, list):
+                st['waiting'] = [{'tid': r.get('tid'), 'name': r.get('name'), 'lr': r.get('lr'),
+                                  'chain': (r.get('chain') or [])[:6]}
+                                 for r in rows if r.get('guest') and r.get('state') == 5][:16]
+        except Exception:
+            pass
         return json.dumps(st, indent=1)[:12000]
     except RuntimeError:
         pass

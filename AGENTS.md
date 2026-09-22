@@ -574,6 +574,11 @@ descriptor bug in an hour. The order of tools, fastest first:
 8. **A lever already at its target is a no-op, not a result.** Read the cvar first; `emit_ab.py`
    prints `SKIPPED: already false`. A parked thread's picture is one `/trap` call (the fault
    record), not a log line; the harness keeps the CRASH DIAG lines before it clears the log.
+9. **Every retro leads to a change in the MCP or the process (user, 2026-09-22).** The three
+   retro lines name a tool or a reflex, and the same day's commits carry it: a new or changed
+   file under `tools/mcp`, `tools/thor`, `tools/pc`, the in-app debug server, the trap record,
+   or the hooks. The stop hook (`.claude/hooks/thor_retro.py`) refuses a retro day whose commits
+   touch none of these. A paragraph that only describes the slowness is not a retro.
 
 ### Device-only rules (user, 2026-09-21: "take a step back, figure out why we are stuck in a loop")
 
