@@ -380,12 +380,16 @@ Port rules:
   `llvm_assembler.cc/.h` (`tools/build/gen_version_h.py`), not `ppc_context.h`, the helpers'
   signatures or the a64 thunks - so a stale cache was the third candidate. The control (no
   x19, cache v5, 04:25) froze 2 of 2 at the classic point (swaps 843 and 858, one with
-  ctr = 0): a fresh cache is not the fix. VERDICT: reserving x19 in the LLVM backend removes
-  the classic freeze (0 of 4; commit 8490ce9efb, default on). The clobber barrier removes it
-  too (0 of 4) but constrains the allocator; it stays off. The mechanism in the tree's own
-  words: an a64 guest entry reads its backend context through x19 and LLVM code was free to
-  use x19. The multi-axis lesson: two backends, one ABI contract, written down nowhere both
-  could see it.
+  ctr = 0): a fresh cache is not the fix. RETRACTED at 05:00: the shipped x19 build (rebuilt,
+  cache v4 rebuilt) froze 2 of 2 at swaps 838 and 839 with the instance-1 signature
+  (`sub_82CE6A38+B0`, ctr = 0). So neither the x19 reservation nor (by the same doubt) the
+  barrier is shown to fix it; the freeze rate moves between 0 and 4 of 4 across batches of
+  four, and four launches cannot separate a fix from a lucky batch. The x19 reservation stays
+  (it costs one register and the a64 contract does need it) but is not a verdict. Rule 7
+  applied to myself: a 0-of-4 is a claim about the batch first. Next: `cpu_backend_llvm_
+  skip_addrs=82CE6A38 82951B78` (the two faulting callers on a64; running), then the LLVM asm
+  of `sub_82CE6A38` around its `bctrl` (which host register holds r28 across the call), and
+  eight launches per arm from now on.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
