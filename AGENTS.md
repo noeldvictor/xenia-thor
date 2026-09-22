@@ -412,6 +412,16 @@ Port rules:
   rate, and no freeze in 12 of 12 launches. The LLVM backend is the title's bottleneck AND the
   freeze's precondition. Ship `cpu_backend_llvm=false` for Banjo; measure Blue Dragon both
   ways before touching its default (the backend was built for it).
+  SHIPPED (06:20): `XeniaOptimizations.SHIPPED_TITLE_OVERRIDES` gives 4D5307ED the
+  "opt_llvm_backend" toggle OFF unless the user chose otherwise on the per-game screen (the
+  menu shows it, directive 17). Verified through the play path: the launcher resolved
+  4D5307ED, no "LLVMBackend" line in the log (LLVM never initialized), 26.5 fps at the title
+  with the a64 thread signature (command processor 65%, main thread 57%). The title is
+  30fps-native and the profile caps it at 30, so the title scene now runs near its ceiling.
+  Two harness notes: `/cvar?name=` returns the config value, not a launch-Bundle override
+  (it said `cpu_backend_llvm=true` while LLVM was off; read the "LLVMBackend" line instead
+  until the getter is fixed); and one `emit_ab.py` baseline printed 30.3 fps with 0 draws
+  (no trace lines: not a scene measurement, ignore rows with draws=0).
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays

@@ -1207,6 +1207,38 @@ public final class XeniaOptimizations {
         return "game_opt::" + normalizeTitleId(titleId) + "::" + prefKey;
     }
 
+    /**
+     * Per-title defaults that ship with the app: the override a title gets
+     * when the user has not chosen one on its per-game screen. A user's
+     * ON/OFF still wins. Banjo-Kazooie: Nuts & Bolts (4D5307ED) runs the
+     * title scene at 26.7 fps on the ARM64 JIT against 6.3 fps with the LLVM
+     * backend, same scene and draw count, and the LLVM backend is the
+     * precondition of its puzzle-transition freeze (0 of 12 launches froze
+     * without it, ten-plus with it; 2026-09-22). Key: title id, then the
+     * optimization's pref key; value: OVERRIDE_ON or OVERRIDE_OFF.
+     */
+    private static final java.util.Map<String, java.util.Map<String, Integer>>
+            SHIPPED_TITLE_OVERRIDES = new java.util.HashMap<>();
+    static {
+        final java.util.Map<String, Integer> banjo = new java.util.HashMap<>();
+        banjo.put("opt_llvm_backend", OVERRIDE_OFF);
+        SHIPPED_TITLE_OVERRIDES.put("4D5307ED", banjo);
+    }
+
+    /** The shipped default override for (title, optimization), or DEFAULT. */
+    public static int getShippedOverride(final String titleId, final String prefKey) {
+        if (titleId == null || titleId.isEmpty()) {
+            return OVERRIDE_DEFAULT;
+        }
+        final java.util.Map<String, Integer> byKey =
+                SHIPPED_TITLE_OVERRIDES.get(normalizeTitleId(titleId));
+        if (byKey == null) {
+            return OVERRIDE_DEFAULT;
+        }
+        final Integer state = byKey.get(prefKey);
+        return state == null ? OVERRIDE_DEFAULT : state;
+    }
+
     /** Current override for (title, optimization): DEFAULT / ON / OFF. */
     public static int getOverride(
             final SharedPreferences prefs,
@@ -1222,7 +1254,8 @@ public final class XeniaOptimizations {
         if ("off".equals(value)) {
             return OVERRIDE_OFF;
         }
-        return OVERRIDE_DEFAULT;
+        // No choice on the per-game screen: the shipped per-title default.
+        return getShippedOverride(titleId, prefKey);
     }
 
     /** Set (or clear, for DEFAULT) a title's override for one optimization. */
