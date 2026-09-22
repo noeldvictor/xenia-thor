@@ -75,20 +75,23 @@ def main():
             continue
         print('== %08X (%s)' % (addr, name_of(addr, names, starts)))
         code = data[off:off + count * 4]
-        seen = 0
-        for insn in md.disasm(code, addr):
+        # One word at a time: capstone stops at the first word it cannot
+        # decode (the VMX128 forms), and a whole-block decode then showed
+        # every later instruction as raw data (2026-09-22).
+        for i in range(count):
+            word_addr = addr + i * 4
+            insns = list(md.disasm(code[i * 4:i * 4 + 4], word_addr))
+            if not insns:
+                word = struct.unpack_from('>I', code, i * 4)[0]
+                print('  %08X: %08X  .long   (vmx128?)' % (word_addr, word))
+                continue
+            insn = insns[0]
             ops = insn.op_str
             m = re.search(r'0x([0-9a-fA-F]{8})', ops)
             note = ''
             if m and insn.mnemonic.startswith('b'):
                 note = '   ; ' + name_of(int(m.group(1), 16), names, starts)
             print('  %08X: %s  %-8s %s%s' % (insn.address, insn.bytes.hex().upper(), insn.mnemonic, ops, note))
-            seen += 1
-        if seen < count:
-            # Capstone stops at a word it cannot decode; show the rest raw.
-            for i in range(seen, count):
-                word = struct.unpack_from('>I', code, i * 4)[0]
-                print('  %08X: %08X  .long' % (addr + i * 4, word))
     return 0
 
 
