@@ -473,6 +473,15 @@ Port rules:
   and `EmulatorActivity` copies only whitelisted names - an unlisted cvar is ignored without a
   word (the first UNORM16 arm was void). Any cvar goes through `xenia_launch_cvars` (the
   launch-cvar file, read at startup on every path); the whitelist is for the app's own levers.
+  UNORM16 off (through the launch-cvar file) 79 ms; `aliased_depth_read_only=false` 79 ms.
+  THE COMPARISON (13:10, the 09-18 commit `9154c42ad9` rebuilt and routed with pass
+  timestamps): `gpu_frame_us` 64 ms (58 ms in passes, 6 between) against today's 79 (72.5 in
+  passes), with the SAME 25 transfer calls, 45 transfers and 263k vertices per frame, and the
+  route at 20 fps. The transfers did not grow; the work inside the passes grew a quarter. That
+  points at the 09-18 sync's shader and sampling changes (trilinear `min_linear`/`mip_linear`
+  sampler filters `75b13003fb`, extended-range float16 pack and unpack `2ece4a1456`, 21-bit
+  approximation rounding `2233a13b05`), each testable as a reverse-applied commit on master
+  with a NativeCore build (fast) and one route.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
