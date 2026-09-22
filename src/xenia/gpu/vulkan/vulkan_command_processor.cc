@@ -2348,6 +2348,16 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
           }
           distinct_words = uint32_t(seen.size());
         }
+        // Per-byte-lane means (2026-09-22): whether a resolved color block is
+        // dark, whatever the byte order (Banjo's lower tile).
+        uint64_t lane_sum[4] = {};
+        uint64_t lane_n = 0;
+        for (size_t i = 0; i + 4 <= length; i += 4 * 17) {
+          for (int k = 0; k < 4; ++k) {
+            lane_sum[k] += bytes[i + k];
+          }
+          ++lane_n;
+        }
         uint32_t first_words[8] = {};
         uint32_t first_word_count =
             uint32_t(std::min<size_t>(xe::countof(first_words), length / 4));
@@ -2362,7 +2372,7 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
             "first_sample_matches={} checksum={:016X} "
             "first_nonzero={} first_nonzero_value={:08X} "
             "first={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X} "
-            "not_far24={} distinct={} swap={}",
+            "not_far24={} distinct={} lanes=[{} {} {} {}] swap={}",
             label, address, length, kSampleStride, samples, nonzero_samples,
             varying_samples, score, clear_like, low_variation,
             first_sample_value,
@@ -2371,7 +2381,9 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
                                                : int64_t(first_nonzero_offset),
             first_nonzero_value, first_words[0], first_words[1],
             first_words[2], first_words[3], first_words[4], first_words[5],
-            first_words[6], first_words[7], not_far24, distinct_words,
+            first_words[6], first_words[7], not_far24, distinct_words, lane_n ? lane_sum[0] / lane_n : 0,
+            lane_n ? lane_sum[1] / lane_n : 0, lane_n ? lane_sum[2] / lane_n : 0,
+            lane_n ? lane_sum[3] / lane_n : 0,
             bd_swap_total_);
       }
       if (copy_to_guest) {
@@ -6806,6 +6818,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // Set up the render targets - this may perform dispatches and draws.
   reg::RB_DEPTHCONTROL normalized_depth_control =
       draw_util::GetNormalizedDepthControl(regs);
+  // gpu_debug_offset_tile_no_depth (DIAGNOSTIC, 2026-09-22): no depth test or
+  // write for draws with a nonzero PA_SC_WINDOW_OFFSET (Banjo's lower tile).
+  // If the dark lower half then shows geometry, the tile's depth is the cause.
+  if (cvars::gpu_debug_offset_tile_no_depth &&
+      regs[XE_GPU_REG_PA_SC_WINDOW_OFFSET] != 0 &&
+      (bin_select_ & 0xFFFFFFFFull) != 0xFFFFFFFFull && bin_select_ != 0) {
+    normalized_depth_control.z_enable = 0;
+    normalized_depth_control.z_write_enable = 0;
+  }
   // Lever A (gpu_foliage_lrz_force_depth): force the overdraw-heavy alpha-test
   // foliage to depth-TEST (z<, write-OFF) against the opaque depth field (best
   // when primed by gpu_opaque_depth_prepass) so foliage behind opaque geometry
@@ -7267,6 +7288,48 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       previous_viewport_info_key_ = viewport_key;
       previous_viewport_info_ = viewport_info;
       previous_viewport_info_valid_ = true;
+    }
+  }
+
+  // vulkan_trace_tile_viewport (2026-09-22, Banjo's dark lower tile): one line
+  // when PA_SC_WINDOW_OFFSET changes between draws - the first draw of each
+  // predicated tile - with the host viewport, NDC transform and scissor.
+  if (cvars::vulkan_trace_tile_viewport) {
+    static uint32_t last_window_offset = 0xFFFFFFFFu;
+    static int32_t lines_left = 400;
+    static uint32_t last_depth_control = 0xFFFFFFFFu;
+    const uint32_t window_offset = regs[XE_GPU_REG_PA_SC_WINDOW_OFFSET];
+    const uint32_t depth_control = normalized_depth_control.value;
+    const bool in_tile_pass =
+        (bin_select_ & 0xFFFFFFFFull) != 0xFFFFFFFFull && bin_select_ != 0;
+    if (in_tile_pass &&
+        (window_offset != last_window_offset ||
+         depth_control != last_depth_control) &&
+        lines_left > 0) {
+      --lines_left;
+      last_window_offset = window_offset;
+      last_depth_control = depth_control;
+      draw_util::Scissor tile_scissor;
+      draw_util::GetScissor(regs, tile_scissor);
+      XELOGI(
+          "TILE VP: win_off={:08X} surf={:08X} vp=({},{} {}x{}) "
+          "ndc_scale=({:.4f},{:.4f}) ndc_offset=({:.4f},{:.4f}) "
+          "scissor=({},{} {}x{}) vtx_win_off_en={} window_offset_disable={} "
+          "z_enable={} z_write={} zfunc={} raw_depthcontrol={:08X} "
+          "bin_select={:08X}",
+          window_offset, regs[XE_GPU_REG_RB_SURFACE_INFO],
+          viewport_info.xy_offset[0], viewport_info.xy_offset[1],
+          viewport_info.xy_extent[0], viewport_info.xy_extent[1],
+          viewport_info.ndc_scale[0], viewport_info.ndc_scale[1],
+          viewport_info.ndc_offset[0], viewport_info.ndc_offset[1],
+          tile_scissor.offset[0], tile_scissor.offset[1],
+          tile_scissor.extent[0], tile_scissor.extent[1],
+          uint32_t(regs.Get<reg::PA_SU_SC_MODE_CNTL>().vtx_window_offset_enable),
+          uint32_t(regs.Get<reg::PA_SC_WINDOW_SCISSOR_TL>().window_offset_disable),
+          uint32_t(normalized_depth_control.z_enable),
+          uint32_t(normalized_depth_control.z_write_enable),
+          uint32_t(normalized_depth_control.zfunc),
+          regs[XE_GPU_REG_RB_DEPTHCONTROL], uint32_t(bin_select_));
     }
   }
 

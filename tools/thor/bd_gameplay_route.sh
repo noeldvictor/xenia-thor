@@ -48,7 +48,7 @@
 # experiment.
 set -u
 ADB="${ADB:-C:/Users/leanerdesigner/AppData/Local/Android/Sdk/platform-tools/adb.exe}"
-DEV="${DEV:-c3ca0370}"
+DEV="${DEV:-$(adb devices -l | awk '/model:AYN_Thor/ && $2=="device" {print $1; exit}')}"; DEV="${DEV:-c3ca0370}"
 PKG=jp.xenia.emulator.github.debug
 GAME='/storage/2664-21DE/Roms/xbox360/Blue Dragon.m3u/Blue Dragon (USA, Europe) (En,Fr) (Disc 1).iso'
 SEQ='start@20000:1500;a@28000:1500;a@34000:1500;a@40000:1500;start@46000:1500;a@52000:1500;a@58000:1500;start@64000:1500;a@70000:1500;a@76000:1500;a@82000:1500;start@88000:1500;a@94000:1500;a@100000:1500;a@106000:1500;start@112000:1500;a@118000:1500;a@124000:1500'

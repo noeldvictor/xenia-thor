@@ -805,6 +805,16 @@ DEFINE_bool(gpu_trace_swap_render_targets, false,
             "GPU");
 DEFINE_int32(gpu_trace_swap_render_targets_budget, 24,
              "Maximum active render-target swap trace groups.", "GPU");
+DEFINE_bool(gpu_debug_offset_tile_no_depth, false,
+            "DIAGNOSTIC: disable the depth test and write for draws with a "
+            "nonzero PA_SC_WINDOW_OFFSET (a predicated tile other than the "
+            "first). Banjo's dark lower tile, 2026-09-22.",
+            "GPU");
+DEFINE_bool(vulkan_trace_tile_viewport, false,
+            "Log the host viewport, NDC transform and scissor at the first draw "
+            "of each predicated tile (when PA_SC_WINDOW_OFFSET changes). "
+            "400 lines. Banjo's dark lower tile, 2026-09-22.",
+            "GPU");
 DEFINE_bool(vulkan_trace_resolve, false,
             "Trace Vulkan render target resolve/copy destinations. "
             "Research-only Android black-screen probe.",

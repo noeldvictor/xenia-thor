@@ -11849,6 +11849,22 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
           } break;
         }
       }
+      if (cvars::gpu_trace_resolve_clears) {
+        static std::atomic<int32_t> clear_rt_lines{0};
+        if (clear_rt_lines.fetch_add(1, std::memory_order_relaxed) < 600) {
+          XELOGI(
+              "ResolveClear RT: depth={} base={} pitchT={} msaa={} fmt={} "
+              "rect=({},{} {}x{}) depth_value={:.6f} raw={:016X}",
+              uint32_t(dest_rt_key.is_depth), dest_rt_key.base_tiles,
+              dest_rt_key.GetPitchTiles(), uint32_t(dest_rt_key.msaa_samples),
+              dest_rt_key.resource_format, resolve_clear_rect.rect.offset.x,
+              resolve_clear_rect.rect.offset.y,
+              resolve_clear_rect.rect.extent.width,
+              resolve_clear_rect.rect.extent.height,
+              resolve_clear_attachment.clearValue.depthStencil.depth,
+              clear_value);
+        }
+      }
       command_buffer.CmdVkClearAttachments(1, &resolve_clear_attachment, 1,
                                            &resolve_clear_rect);
     }

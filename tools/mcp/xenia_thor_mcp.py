@@ -25,7 +25,28 @@ from typing import Optional
 from mcp.server.fastmcp import FastMCP
 
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-SERIAL = os.environ.get('XE_THOR_SERIAL', 'c3ca0370')
+def _detect_serial() -> str:
+    """The Thor's adb serial: XE_THOR_SERIAL when set, else the connected
+    device that reports model AYN_Thor (USB or wireless debugging, e.g.
+    192.168.1.5:36587 while the USB port charges; 2026-09-22), else the USB
+    serial."""
+    env = os.environ.get('XE_THOR_SERIAL')
+    if env:
+        return env
+    try:
+        out = subprocess.run(['adb', 'devices', '-l'], capture_output=True, text=True,
+                             timeout=10).stdout
+        thors = [l.split()[0] for l in out.splitlines()
+                 if ' device ' in l + ' ' and 'model:AYN_Thor' in l]
+        usb = [t for t in thors if ':' not in t]
+        if usb or thors:
+            return (usb or thors)[0]
+    except Exception:
+        pass
+    return 'c3ca0370'
+
+
+SERIAL = _detect_serial()
 PKG = 'jp.xenia.emulator.github.debug'
 LAUNCHER = f'{PKG}/jp.xenia.emulator.LauncherActivity'
 OTHER_EMULATORS = ['net.rpcsx.easy', 'org.azahar_emu.azahar.debug', 'org.azahar_emu.azahar']
