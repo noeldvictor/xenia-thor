@@ -10570,6 +10570,12 @@ bool VulkanCommandProcessor::EndSubmission(bool is_swap) {
 
     submission_open_ = false;
     draws_since_submission_ = 0;
+    // vulkan_debug_wait_each_submission (DIAGNOSTIC, 2026-09-22): the CPU
+    // waits for every submission to finish on the GPU before it continues -
+    // removes CPU/GPU overlap to split a race from a GPU execution defect.
+    if (cvars::vulkan_debug_wait_each_submission) {
+      AwaitSubmissionCompletion(submission_index);
+    }
   }
 
   if (is_closing_frame) {

@@ -551,6 +551,12 @@ Port rules:
   the device's GPU execution; clean -> a live-only race), then the depth EDRAM contents
   entering tile B (the 640-pitch 4xMSAA pass also writes depth base 0 inside both tiles).
   Device etiquette (user, 2026-09-22): ask before driving the device; the user works on it.
+  NOT A RACE (16:32): with `vulkan_debug_wait_each_submission` (the CPU waits for every GPU
+  submission) the lower half is dark in 20 of 20 frames, and the Single Player main menu
+  shows it in every frame - a static, deterministic repro. The device executes the same
+  commands wrong; the replay viewer is not needed to prove it. Next: Turnip debug flags
+  (`gpu_vulkan_driver_debug` = noubwc, nolrz, syncdraw, flushall) on the menu, then the
+  depth image's contents entering tile B.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays

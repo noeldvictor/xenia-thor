@@ -805,6 +805,10 @@ DEFINE_bool(gpu_trace_swap_render_targets, false,
             "GPU");
 DEFINE_int32(gpu_trace_swap_render_targets_budget, 24,
              "Maximum active render-target swap trace groups.", "GPU");
+DEFINE_bool(vulkan_debug_wait_each_submission, false,
+            "DIAGNOSTIC: wait for every GPU submission to complete before the "
+            "command processor continues (no CPU/GPU overlap). Slow.",
+            "GPU");
 DEFINE_bool(gpu_debug_offset_tile_no_depth, false,
             "DIAGNOSTIC: disable the depth test and write for draws with a "
             "nonzero PA_SC_WINDOW_OFFSET (a predicated tile other than the "
