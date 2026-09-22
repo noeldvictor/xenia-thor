@@ -132,7 +132,23 @@ function Invoke-NdkBuildDirect {
     foreach ($name in @("libxenia-app.so", "libmain_hook.so", "libhook_impl.so")) {
         $built = Join-Path $objRoot "obj\local\arm64-v8a\$name"
         if (Test-Path $built) {
-            Copy-Item -LiteralPath $built -Destination (Join-Path $stageRoot $name) -Force
+            # Windows Defender holds a freshly written .so open for scanning:
+            # an overwrite fails ("used by another process") while a delete is
+            # allowed (2026-09-22: five NativeCore builds failed on this copy
+            # alone, each on the next file). Delete, then copy, with a retry.
+            $dest = Join-Path $stageRoot $name
+            $copied = $false
+            for ($attempt = 1; $attempt -le 6 -and -not $copied; $attempt++) {
+                try {
+                    Remove-Item -LiteralPath $dest -Force -ErrorAction SilentlyContinue
+                    Copy-Item -LiteralPath $built -Destination $dest -Force -ErrorAction Stop
+                    $copied = $true
+                } catch {
+                    if ($attempt -eq 6) { throw }
+                    Write-Host ("copy of {0} blocked (attempt {1}); waiting 3 s" -f $name, $attempt)
+                    Start-Sleep -Seconds 3
+                }
+            }
         }
     }
 }
