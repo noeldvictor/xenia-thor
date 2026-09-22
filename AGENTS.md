@@ -428,6 +428,12 @@ Port rules:
   `RtlFreeHeap(0)`, about 1 in 4 once the classic freeze is gone - none seen in these
   eight), Blue Dragon's own LLVM-on versus a64 measurement on `bd_gameplay_route.sh`, and
   gameplay-scene fps for Banjo beyond the title (the title now sits near its 30 cap).
+  Blue Dragon, a64 only (07:10, `bd_gameplay_route.sh`, EXTRA='--ez cpu_backend_llvm
+  false'): the gameplay scene at 11.7 fps stable for 90 s (gate OK, 1,190 draws, 263,199
+  vertices per frame, 0 faults) against the documented ~17.5 fps with LLVM on the 2026-08-09
+  build. The opposite of Banjo: the LLVM backend earns its place on Blue Dragon, so the
+  global default stays ON and the per-title override is the right shape. The same-build LLVM
+  arm follows after a BD cache warm-up.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
