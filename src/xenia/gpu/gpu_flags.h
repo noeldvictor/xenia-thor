@@ -213,6 +213,8 @@ DECLARE_bool(vulkan_trace_tile_viewport);
 DECLARE_bool(gpu_debug_offset_tile_no_depth);
 DECLARE_bool(vulkan_debug_wait_each_submission);
 DECLARE_bool(gpu_debug_offset_tile_clear_depth);
+DECLARE_bool(gpu_debug_offset_tile_no_stencil);
+DECLARE_int32(gpu_debug_offset_tile_draw_limit);
 DECLARE_bool(vulkan_gate_rt_update);
 DECLARE_bool(gpu_trace_cullable_tris);
 DECLARE_bool(gpu_cull_compaction);

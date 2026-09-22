@@ -6827,6 +6827,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     normalized_depth_control.z_enable = 0;
     normalized_depth_control.z_write_enable = 0;
   }
+  // gpu_debug_offset_tile_no_stencil (DIAGNOSTIC): the same, for stencil only.
+  if (cvars::gpu_debug_offset_tile_no_stencil &&
+      regs[XE_GPU_REG_PA_SC_WINDOW_OFFSET] != 0 &&
+      (bin_select_ & 0xFFFFFFFFull) != 0xFFFFFFFFull && bin_select_ != 0) {
+    normalized_depth_control.stencil_enable = 0;
+  }
   // Lever A (gpu_foliage_lrz_force_depth): force the overdraw-heavy alpha-test
   // foliage to depth-TEST (z<, write-OFF) against the opaque depth field (best
   // when primed by gpu_opaque_depth_prepass) so foliage behind opaque geometry
@@ -8069,10 +8075,40 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // Measurement/perf lever: optionally skip the GPU draw command for tiny draws
   // (all state setup already done above). Sizes the GPU cost of the ~1200 tiny
   // draws/frame and acts as a crude accuracy-for-speed lever.
+  // gpu_debug_offset_tile_draw_limit (DIAGNOSTIC, 2026-09-22, read live):
+  // >= 0 draws only the first N draws of each predicated tile pass that carry
+  // a window offset (Banjo's lower tile) and skips the rest - a live bisection
+  // of the draw that turns the tile dark. The count per pass is logged.
+  bool skip_offset_tile_draw = false;
+  {
+    static uint64_t offset_tile_pass_id = UINT64_MAX;
+    static int32_t offset_tile_draw_index = 0;
+    static uint32_t offset_tile_count_logs = 0;
+    const bool tile_pass =
+        (bin_select_ & 0xFFFFFFFFull) != 0xFFFFFFFFull && bin_select_ != 0;
+    if (cvars::gpu_debug_offset_tile_draw_limit >= 0 && tile_pass &&
+        regs[XE_GPU_REG_PA_SC_WINDOW_OFFSET] != 0) {
+      const uint64_t pass_id = (uint64_t(counter_) << 32) | bin_select_;
+      if (pass_id != offset_tile_pass_id) {
+        if (offset_tile_pass_id != UINT64_MAX &&
+            (offset_tile_count_logs++ % 120) == 0) {
+          XELOGI("OFFSET TILE: {} offset draws in the last tile pass (limit {})",
+                 offset_tile_draw_index,
+                 int32_t(cvars::gpu_debug_offset_tile_draw_limit));
+        }
+        offset_tile_pass_id = pass_id;
+        offset_tile_draw_index = 0;
+      }
+      skip_offset_tile_draw =
+          offset_tile_draw_index >= cvars::gpu_debug_offset_tile_draw_limit;
+      ++offset_tile_draw_index;
+    }
+  }
   const bool skip_tiny_draw =
-      cvars::gpu_skip_draws_below_verts > 0 &&
-      primitive_processing_result.host_draw_vertex_count <
-          uint32_t(cvars::gpu_skip_draws_below_verts);
+      skip_offset_tile_draw ||
+      (cvars::gpu_skip_draws_below_verts > 0 &&
+       primitive_processing_result.host_draw_vertex_count <
+           uint32_t(cvars::gpu_skip_draws_below_verts));
   if (skip_tiny_draw) {
     // A skipped draw advances the guest index pointer with NO host draw, so it is
     // a HARD merge boundary (Levers 2 / 2b): flush the pending run so it is never

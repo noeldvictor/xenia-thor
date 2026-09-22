@@ -805,6 +805,14 @@ DEFINE_bool(gpu_trace_swap_render_targets, false,
             "GPU");
 DEFINE_int32(gpu_trace_swap_render_targets_budget, 24,
              "Maximum active render-target swap trace groups.", "GPU");
+DEFINE_int32(gpu_debug_offset_tile_draw_limit, -1,
+             "DIAGNOSTIC (live): >= 0 draws only the first N window-offset "
+             "draws of each predicated tile pass and skips the rest. -1 = off.",
+             "GPU");
+DEFINE_bool(gpu_debug_offset_tile_no_stencil, false,
+            "DIAGNOSTIC: disable the stencil test for window-offset draws inside "
+            "a predicated tile pass.",
+            "GPU");
 DEFINE_bool(gpu_debug_offset_tile_clear_depth, false,
             "DIAGNOSTIC: clear the bound depth to 0.0 at the first draw of a "
             "predicated tile pass that carries a window offset (Banjo's lower "

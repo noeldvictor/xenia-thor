@@ -569,6 +569,19 @@ Port rules:
   one tile pass, or a device RenderDoc capture), then that draw's inputs (textures sampled
   by screen position through the window offset are the first suspect: they would read the
   wrong rows only in the offset tile).
+  Then (17:00-17:20): `tile_draw_bisect.py` (live `gpu_debug_offset_tile_draw_limit` on the
+  Single Player menu, 137 offset draws per tile pass): the lower band is 7 with all of them
+  and 9 with none - on the device tile B's draws have NO visible effect, while the PC
+  replay of the same frame renders them. Stencil off for tile B
+  (`gpu_debug_offset_tile_no_stencil`): 16/20 dark. Depth off: faint geometry appears.
+  Depth forced to far: no change. Device and PC match on depth clamp, float24 handling
+  (no pixel-shader conversion on either), render-target path, state sequence. Ruled out so
+  far: MSAA, mid-frame submission, the Android GPU defaults, tile binning (sysmem), UBWC,
+  LRZ, driver sync flags, stencil export, fp16, the 21-bit rounding, shadows, depth
+  clears, stencil, CPU/GPU races. What is left is what the logs do not show: the vertex
+  and pixel shader outputs of tile B's draws on the Adreno. The tool that answers it is a
+  device-side GPU capture (RenderDoc's Android layer in the app, triggered by the existing
+  `renderdoc_trigger_capture` cvar) or a per-draw render-target readback.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
