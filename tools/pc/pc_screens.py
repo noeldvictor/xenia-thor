@@ -53,11 +53,19 @@ def find_window(pid, title_contains=None):
 
 
 def park_offscreen(hwnd):
-    """Move a window far off the visible desktop without activating it.
-    PrintWindow renders an off-screen window; a minimized one it does not."""
+    """Move a window to the bottom-right screen edge, leaving a 24-pixel
+    sliver visible, without activating it. A window entirely off the
+    desktop is not composed: its swapchain stops presenting and PrintWindow
+    returns a blank frame (four "TIMEOUT waiting for puzzle" verdicts on
+    2026-09-22 were this, not the game). A partly visible window is
+    composed and renders; a minimized one does not."""
     user32 = ctypes.windll.user32
     SWP_NOSIZE, SWP_NOACTIVATE, SWP_NOZORDER = 0x0001, 0x0010, 0x0004
-    user32.SetWindowPos(hwnd, 0, -4000, -4000, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER)
+    rect = wt.RECT()
+    user32.GetWindowRect(hwnd, ctypes.byref(rect))
+    w, h = rect.right - rect.left, rect.bottom - rect.top
+    sw, sh = user32.GetSystemMetrics(0), user32.GetSystemMetrics(1)
+    user32.SetWindowPos(hwnd, 0, sw - 24, sh - 24, 0, 0, SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOZORDER)
 
 
 def capture(hwnd, path):

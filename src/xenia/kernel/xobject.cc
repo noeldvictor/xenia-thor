@@ -31,6 +31,7 @@
 #include "xenia/kernel/xnotifylistener.h"
 #include "xenia/kernel/xsemaphore.h"
 #include "xenia/kernel/xsymboliclink.h"
+#include "xenia/kernel/util/kernel_trap.h"
 #include "xenia/kernel/xthread.h"
 #include "xenia/xbox.h"
 
@@ -493,16 +494,27 @@ X_STATUS XObject::Wait(uint32_t wait_reason, uint32_t processor_mode,
       // (--es disassemble_function_filter) or Ghidra.
       auto* stall_thread =
           XThread::IsInThread() ? XThread::GetCurrentThread() : nullptr;
+      // The guest back chain of the blocked thread (r1 frames, the return
+      // addresses) names the whole call path into the wait, not only the
+      // call site: with the offline disassembler's function names a stall
+      // reads as "thread X in <function> waits for <object>" (2026-09-22).
+      std::string stall_chain;
+      if (stall_thread) {
+        auto* stall_context = stall_thread->thread_state()->context();
+        stall_chain = GuestChainJson(uint32_t(stall_context->r[1]),
+                                     uint32_t(stall_context->lr), 12);
+      }
       XELOGW(
           "XObject::Wait: host thread has waited {}s on a {} "
           "(tid={:08X} handle={:08X} guest_object={:08X} origin={} name='{}' "
-          "guest_lr={:08X})",
+          "guest_lr={:08X}) chain={}",
           waited_s, static_cast<uint32_t>(type()),
           stall_thread ? stall_thread->thread_id() : 0,
           stall_handles.empty() ? 0 : stall_handles[0], guest_object(),
           creation_origin(), name(),
           stall_thread ? uint32_t(stall_thread->thread_state()->context()->lr)
-                       : 0);
+                       : 0,
+          stall_chain);
     }
   } else {
     result =

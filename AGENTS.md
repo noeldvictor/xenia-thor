@@ -529,6 +529,12 @@ descriptor bug in an hour. The order of tools, fastest first:
 6. **Build then install, and check.** `-Mode NativeCore` builds the .so only; `ApkShellDeploy`
    assembles and installs. Read `lastUpdateTime` and the new log line before trusting a device
    result (two verifications today ran the old library).
+7. **A harness verdict is a claim about the harness first.** Four PC "TIMEOUT waiting for
+   puzzle" verdicts on 2026-09-22 were the parked window: a window entirely off the desktop is
+   not composed, its swapchain stops presenting, and PrintWindow returns a blank frame. The
+   `live.png` mean (196, white) said so; the game was fine. `pc_goto` now parks a 24-pixel
+   sliver at the screen edge. Before reading a TIMEOUT as a stall, look at the capture and at
+   the log's wait lines with their chains.
 
 ### Device-only rules (user, 2026-09-21: "take a step back, figure out why we are stuck in a loop")
 
