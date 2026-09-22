@@ -7177,6 +7177,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     current_guest_graphics_pipeline_ = pipeline;
     current_external_graphics_pipeline_ = VK_NULL_HANDLE;
     ++draw_outcomes_pipeline_binds_;
+    // Only triangle list/strip pipelines without a geometry shader have a
+    // dynamic topology (vulkan_dynamic_state_topology, and gpu_cull_compaction
+    // turns it on too). Binding any other pipeline writes its static topology
+    // and restart into the command buffer state, so the tracked dynamic value
+    // is stale: the next list/strip draw must set both again. Without this a
+    // strip drew with the topology of a geometry-shader (rectangle list)
+    // pipeline bound before it - Banjo's dark lower tile, device and PC
+    // replay alike (2026-09-22).
+    dynamic_primitive_topology_update_needed_ = true;
+    dynamic_primitive_restart_enable_update_needed_ = true;
   }
   auto pipeline_layout =
       static_cast<const PipelineLayout*>(pipeline_layout_provider);
@@ -8234,6 +8244,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             draw_outcomes_replay_max_error_milli_ = e_milli;
           }
         }
+        // The cull tests the host clip position (the offset tile of a
+        // predicated frame is outside the guest's [-w, w] box).
+        cull_extent_estimator_->SetHostNdcTransform(viewport_info.ndc_scale,
+                                                    viewport_info.ndc_offset);
         bool built = cull_extent_estimator_->BuildCulledIndexList(*vertex_shader);
         // Fast-engaged vs fallback-format histogram for this draw.
         if (cull_extent_estimator_->last_used_fast_replay()) {

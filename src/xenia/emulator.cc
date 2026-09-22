@@ -855,6 +855,11 @@ X_STATUS Emulator::Setup(
   display_window_ = display_window;
   imgui_drawer_ = imgui_drawer;
 
+  // Every setting that differs from its default, from all sources (config
+  // file, title profile, app toggles, launch arguments): the PC and the
+  // device logs then diff line by line.
+  cvar::LogNonDefaultConfigVars("setup");
+
   // Initialize clock.
   // 360 uses a 50MHz clock.
   Clock::set_guest_tick_frequency(50000000);

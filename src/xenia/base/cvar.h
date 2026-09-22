@@ -89,6 +89,8 @@ class ICommandVar {
   // The live value as text (a launch override or a live set, not the
   // config file's value): the debug server's cvar getter reads this.
   virtual std::string current_value_string() const = 0;
+  // The compiled default as text (the Android value on Android builds).
+  virtual std::string default_value_string() const = 0;
 };
 
 class IConfigVar : virtual public ICommandVar {
@@ -114,6 +116,9 @@ class CommandVar : virtual public ICommandVar {
   T* current_value() { return current_value_; }
   std::string current_value_string() const override {
     return ToString(*current_value_);
+  }
+  std::string default_value_string() const override {
+    return ToString(default_value_);
   }
 
  protected:
@@ -369,6 +374,19 @@ void ParseLaunchArguments(int& argc, char**& argv,
 // if no variable with that name exists. Used by the Android live-tuning
 // broadcast to flip cvars without relaunching.
 bool SetCommandVarFromString(const std::string& name, const std::string& value);
+// Every config var whose live value differs from its compiled default, as
+// (name, live value, default) in name order. The device's toggles, title
+// profile and launch settings were in no log on 2026-09-22, so a device-only
+// bug could not be diffed against the PC; this list is that diff's input.
+struct NonDefaultConfigVar {
+  std::string name;
+  std::string value;
+  std::string default_value;
+};
+std::vector<NonDefaultConfigVar> GetNonDefaultConfigVars();
+// Writes the list to the log in lines of at most ~400 characters (the in-app
+// log ring cuts a line at 512 bytes).
+void LogNonDefaultConfigVars(const char* when);
 #if XE_PLATFORM_ANDROID
 void ParseLaunchArgumentsFromAndroidBundle(jobject bundle);
 #endif  // XE_PLATFORM_ANDROID

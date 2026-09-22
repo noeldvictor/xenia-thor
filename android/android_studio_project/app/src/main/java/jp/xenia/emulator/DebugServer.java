@@ -92,6 +92,7 @@ public final class DebugServer {
     private static native String nativeStall();
     private static native String nativeCvarGet(String name);
     private static native boolean nativeCvarSet(String name, String value);
+    private static native String nativeCvarList();
     private static native String nativeTrapSet(String name, boolean pause, int lr, String dump, String r3);
     private static native String nativeTraceFrame(String dir);
     private static native String nativeHostBacktraces();
@@ -354,6 +355,9 @@ public final class DebugServer {
                 }
                 return "{\"name\":\"" + jsonEscape(q.get("name")) + "\",\"value\":\""
                         + jsonEscape(nativeCvarGet(q.get("name"))) + "\"}";
+            case "/cvars":
+                // Every setting that differs from its default (all sources).
+                return nativeCvarList();
             case "/toggle":
                 return setToggle(q.get("key"), "1".equals(q.get("enabled")) || "true".equals(q.get("enabled")));
             case "/launch_cvars":
@@ -971,6 +975,7 @@ public final class DebugServer {
             {"toggle_set", "Set a menu toggle exactly as tapping it; applies at the next launch. key, enabled.",
                     "{\"key\":{\"type\":\"string\"},\"enabled\":{\"type\":\"boolean\"}}"},
             {"cvar_get", "Read a cvar's current value. name.", "{\"name\":{\"type\":\"string\"}}"},
+            {"cvars", "Every cvar whose live value differs from its compiled default, from all sources (config file, title profile, app toggles, launch arguments): name, value, default. The settings snapshot of this run; diff it against the PC's 'Non-default cvars' log lines.", "{}"},
             {"backtrace", "Host (native) backtrace of every thread from inside the process: module+offset frames per thread with its wchan. The PC symbolizes them (xenia_backtrace). The hang picture: which host lock or wait each guest thread sits in.", "{}"},
             {"trace_frame", "Record the next GPU frame as an .xtr trace in files/traces (POST); GET lists the files. The PC replays a trace with xenia-gpu-vulkan-trace-dump: a device-only glitch splits into the command stream and the device's execution of it.", "{}"},
             {"trace_stream", "Stream every GPU frame to one .xtr in files/traces while on (on=true), stop with on=false. For the last frame before a title stops swapping; the PC dumps any frame of it with --trace_dump_frame.", "{\"on\":{\"type\":\"boolean\"}}"},
@@ -1091,6 +1096,7 @@ public final class DebugServer {
         TOOL_PATHS.put("toggles", "/toggles");
         TOOL_PATHS.put("toggle_set", "/toggle");
         TOOL_PATHS.put("cvar_get", "/cvar");
+        TOOL_PATHS.put("cvars", "/cvars");
         TOOL_PATHS.put("launch_cvars", "/launch_cvars");
         TOOL_PATHS.put("drivers", "/drivers");
         TOOL_PATHS.put("frame_stats", "/frame_stats");
@@ -1136,7 +1142,8 @@ public final class DebugServer {
             final String k = keys.next();
             q.put(k, String.valueOf(args.get(k)));
         }
-        final String method = "cvar_get".equals(name) || "frame_stats".equals(name) || "backtrace".equals(name) ? "GET" : "POST";
+        final String method = "cvar_get".equals(name) || "cvars".equals(name) || "frame_stats".equals(name)
+                || "backtrace".equals(name) ? "GET" : "POST";
         final String text = route(method, path, q);
         content.put(new JSONObject().put("type", "text").put("text", text));
         result.put("content", content);

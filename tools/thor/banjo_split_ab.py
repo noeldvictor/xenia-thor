@@ -97,7 +97,21 @@ def run_arm(label, patches, cvars, shots):
             live.append('%s=?' % name)
     if live:
         print('  %s live: %s' % (label, ' '.join(live)), flush=True)
+    # The arm's full settings snapshot (every non-default cvar, all sources),
+    # so each result names the settings it ran with.
+    try:
+        snap = json.loads(m.xenia_cvars())
+        print('  %s settings: %s non-default, %s' % (label, snap.get('count'), snap.get('saved')), flush=True)
+    except Exception as e:
+        print('  %s settings: unavailable (%s)' % (label, e), flush=True)
+    fps = None
     if g.get('reached'):
+        # Presented fps over the shot window (the swap counter), so an arm's
+        # image result and its speed come from the same run.
+        try:
+            s0, t0 = json.loads(m.xenia_api('/frame_stats')).get('swaps'), time.time()
+        except Exception:
+            s0 = None
         for i in range(shots):
             path = json.loads(m.xenia_screenshot('split-%s-%02d' % (label, i))).get('path')
             if path and os.path.exists(path):
@@ -107,12 +121,19 @@ def run_arm(label, patches, cvars, shots):
                 if not bad:
                     os.remove(path)  # keep only the evidence frames
             time.sleep(1.0)
+        try:
+            s1 = json.loads(m.xenia_api('/frame_stats')).get('swaps')
+            if s0 is not None and s1 is not None:
+                fps = (s1 - s0) / max(0.1, time.time() - t0)
+        except Exception:
+            pass
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
     for p in patches:
         m.xenia_patch_set(TITLE_ID, p, False)
-    print('%-28s dark=%d/%d reached=%s case=%.1fC  %s' % (
-        label, dark, len(rows), g.get('reached'), t.get('case_c', 0), ' '.join(rows)), flush=True)
+    print('%-28s dark=%d/%d fps=%s reached=%s case=%.1fC  %s' % (
+        label, dark, len(rows), ('%.1f' % fps) if fps is not None else '?', g.get('reached'),
+        t.get('case_c', 0), ' '.join(rows)), flush=True)
     return dark, len(rows)
 
 

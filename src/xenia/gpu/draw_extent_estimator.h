@@ -77,6 +77,21 @@ class DrawExtentEstimator {
   // tessellated, primitive-restart, pre-divided (vtx_xy_fmt), clip_disable, or a
   // non-interpretable (texture-fetch) VS. The result is in culled_index_*().
   bool BuildCulledIndexList(const Shader& vertex_shader);
+  // The host clip transform for the next BuildCulledIndexList: the viewport
+  // info that the host vertex shader gets as ndc_scale and ndc_offset. The
+  // cull tests the position the host rasterizes. The guest clip position
+  // alone is wrong when the host viewport is not the guest viewport: a
+  // predicated tile's window offset moved Banjo's lower tile outside the
+  // guest's [-w, w] box, and the cull dropped every draw of that tile on the
+  // device (the dark, flickering lower half, 2026-09-22). Without a call the
+  // next build draws verbatim.
+  void SetHostNdcTransform(const float ndc_scale[3], const float ndc_offset[3]) {
+    host_ndc_scale_[0] = ndc_scale[0];
+    host_ndc_scale_[1] = ndc_scale[1];
+    host_ndc_offset_[0] = ndc_offset[0];
+    host_ndc_offset_[1] = ndc_offset[1];
+    host_ndc_valid_ = true;
+  }
 
   // Step 2b validation (gpu_cull_replay_validate, read-only): recover the affine
   // position matrix M (clip = M*[input_xyz,1]) from ShaderInterpreter samples of
@@ -173,6 +188,7 @@ class DrawExtentEstimator {
     kNoIndexPtr,
     kZeroDropped,       // ran the cull but dropped no triangles
     kFastSetupFail,     // fast affine replay unavailable + fast-only -> draw verbatim
+    kNoHostTransform,   // SetHostNdcTransform not called for this draw
     kCount,
   };
   CullBail culled_bail_reason() const { return cull_bail_reason_; }
@@ -241,8 +257,15 @@ class DrawExtentEstimator {
     float y;
     float z;
     float w;
+    // Host clip space: what the host rasterizes (SetHostNdcTransform).
+    float hx;
+    float hy;
+    float hw;
   };
   std::vector<CullVertex> cull_vertices_scratch_;
+  float host_ndc_scale_[2] = {1.0f, 1.0f};
+  float host_ndc_offset_[2] = {0.0f, 0.0f};
+  bool host_ndc_valid_ = false;
   // Whether the last counted draw used pre-divided (vtx_xy_fmt) positions - read
   // by C3 to decide whether to apply the perspective divide.
   bool cull_vtx_xy_fmt_ = false;

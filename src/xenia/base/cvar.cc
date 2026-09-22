@@ -28,6 +28,46 @@ std::map<std::string, ICommandVar*>* CmdVars;
 std::map<std::string, IConfigVar*>* ConfigVars;
 std::multimap<uint32_t, const IConfigVarUpdate*>* IConfigVarUpdate::updates_;
 
+std::vector<NonDefaultConfigVar> GetNonDefaultConfigVars() {
+  std::vector<NonDefaultConfigVar> out;
+  if (!ConfigVars) {
+    return out;
+  }
+  for (const auto& entry : *ConfigVars) {
+    const IConfigVar* var = entry.second;
+    if (!var) {
+      continue;
+    }
+    std::string value = var->current_value_string();
+    std::string default_value = var->default_value_string();
+    if (value != default_value) {
+      out.push_back({entry.first, std::move(value), std::move(default_value)});
+    }
+  }
+  return out;
+}
+
+void LogNonDefaultConfigVars(const char* when) {
+  std::vector<NonDefaultConfigVar> vars = GetNonDefaultConfigVars();
+  XELOGI("Non-default cvars at {}: {}", when, vars.size());
+  std::string line;
+  size_t part = 0;
+  for (const NonDefaultConfigVar& var : vars) {
+    std::string item = var.name + "=" + var.value;
+    if (!line.empty() && line.size() + item.size() + 1 > 400) {
+      XELOGI("Non-default cvars [{}]: {}", part++, line);
+      line.clear();
+    }
+    if (!line.empty()) {
+      line += ' ';
+    }
+    line += item;
+  }
+  if (!line.empty()) {
+    XELOGI("Non-default cvars [{}]: {}", part, line);
+  }
+}
+
 void ReportConfigTypeMismatch(const std::string& name, const char* reason) {
   XELOGW("Config value '{}' ignored ({}). The default is kept.", name, reason);
 }

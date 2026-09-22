@@ -49,14 +49,22 @@ One device, one architecture, measured changes.
   Game Patches screen. No cvar extras: a launch the user cannot repeat from the play button is not
   a result.
 
-## State on 2026-09-20
+## State on 2026-09-22
 
-- Blue Dragon: 9.9 fps in the village field on the play-button path; 15.8 fps with the bundled
-  "No anti-aliasing, single pass" game patch (the game's own 1x path, which also ends its
-  predicated tiling). Blue Dragon is low priority now: [re:Blue](https://github.com/zolaware/reblue)
-  is a native recompilation of it.
-- Banjo-Kazooie: Nuts & Bolts: compiles (38,104 functions) and plays the intro, then stalls on the
-  loading screen after a guest null read; under investigation.
+- Banjo-Kazooie: Nuts & Bolts: runs the title and attract scenes near its 30 fps cap (26.5 fps
+  measured at the title, up from 6.3) with the LLVM backend off for this title, a shipped
+  per-title default. Start New Game reaches the opening story; the freeze on the save panel was a
+  closed file kept alive by the Android-only handle cache, fixed. The dark, flickering lower half
+  of the screen was a stale primitive topology after a geometry-shader pipeline bind, turned on by
+  the CPU draw-cull toggle; fixed and verified on the PC replay of a device frame, device check
+  pending.
+- Blue Dragon: GPU frame 79 to 64.5 ms in the field (about 10 to 12.7 presented fps): the Xenos
+  21-bit rounding of scalar approximations is now a lever, off on Android. Blue Dragon is low
+  priority: [re:Blue](https://github.com/zolaware/reblue) is a native recompilation of it.
+- Tools: a device-only bug starts with the device's settings snapshot (`xenia_cvars`, and every
+  launch logs its non-default settings), then a PC replay of the device's own GPU trace with those
+  settings (`tools/pc/trace_ab.py`). The stall tool names a thread that faulted in host code, and
+  the MCP checks that its symbols match the installed build.
 - The AOT precompile no longer dies on large titles: JIT code lives in 64 MB slabs instead of two
   VMAs per function (`vm.max_map_count`).
 - The object cache works on the play-button path (Blue Dragon: 414 s cold, 15 s warm). Settings

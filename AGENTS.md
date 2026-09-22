@@ -598,6 +598,28 @@ Port rules:
   record and returns the symbolized frames of each thread in a fault handler
   (`host_fault_threads`, inlined frames expanded) with a verdict line. Axis: OS and
   memory manager - a desktop build (the cache off) never keeps a closed file alive.
+  THE DARK LOWER HALF IS SOLVED (18:50): it was our own CPU draw cull. The settings
+  snapshot (`xenia_cvars`, new) showed four app toggles on in the device's saved settings
+  that the PC never runs: `gpu_cull_compaction`, `gpu_whole_draw_only`,
+  `vulkan_merge_draws_indirect`, `vulkan_merge_draws_rewrite`. With the two cull toggles
+  off: 0 of 20 frames dark (baseline 8/20, draw merge off 20/20). THE CAUSE, found on the
+  PC (19:15, no device): the PC replay of the device trace `4D5307ED_3060.xtr` goes dark
+  with the device's toggles (lower-half luma 28 vs 90), and with
+  `vulkan_dynamic_state_topology=true` alone - `gpu_cull_compaction` turns dynamic
+  topology on. Only triangle list/strip pipelines without a geometry shader have a
+  dynamic topology; binding any other guest pipeline (a rectangle-list GS pipeline)
+  writes its static topology into the command buffer, and the tracker still held the old
+  value, so the next strip drew with the wrong topology. Fix: a guest pipeline change
+  marks topology and restart for re-emission. PC replay with every device toggle: 90.
+  A first theory (the cull tests the guest clip box, not the host one) was wrong as the
+  cause; the host-clip-box cull test stays as a correctness fix. Ruled out on the way:
+  hiding the tile-GPU extensions (`vulkan_hide_extensions=tiler`, new) made it worse
+  (18/20). Lessons: the earlier "not the Android GPU defaults" check reset only the
+  `XE_ANDROID_DEFAULT` cvars, never the app toggles; the order is now snapshot
+  (`xenia_cvars`; every Emulator::Setup logs "Non-default cvars") -> PC replay of the
+  device trace with those settings (`tools/pc/trace_ab.py --from-snapshot`) -> the
+  device only to confirm. The user's Thor use: no emulator run without approval for the
+  rest of 2026-09-22.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
@@ -744,6 +766,8 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_patches`, `xenia_patch_set` | the game patch files on the device: list and toggle one `[[patch]]` by name, as the Game Patches screen does |
 | `xenia_guest_dump`, `xenia_disasm` | dump guest memory of a title to `scratch/mcp/` (diagnostic cvars, restored after), and disassemble PowerPC from a dump |
 | `xenia_stall` | the stall picture in one call from inside the app: the last spin-lock stall record, the hottest threads over one second with wait channel, the badge history, the GPU counters, the stall and crash lines of the log ring, and a verdict. `xenia_probe` calls it by itself after two intervals without a frame. When the kernel table is locked or no frame comes and no fault record exists, it adds `host_fault_threads`: the symbolized frames of each thread inside a fault handler (a host-code fault with the global lock held) |
+| `xenia_cvars` | the settings snapshot: every cvar whose live value differs from its default, from all sources (config, title profile, app toggles, launch arguments), plus each Android-only build default with its desktop value; `pc_log=` diffs it against a PC log's "Non-default cvars" lines. The FIRST call for any device-only bug |
+| `tools/pc/trace_ab.py` | a device GPU trace replayed on the PC per arm of cvars (about a minute each), image diff against the first arm per half; `--from-snapshot` builds the arms from a `xenia_cvars` file (PC defaults, all device settings, each setting alone). Names the setting behind a device-only glitch without the device |
 | `xenia_api`, `xenia_log`, `xenia_shader_cache` | any endpoint of the in-app server; the in-process log ring with a filter; the pipeline creation lines and the cache files on the device |
 
 Rules that stay in force with the MCP: force-stop after every run, never use `adb shell input keyevent`,

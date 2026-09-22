@@ -980,6 +980,83 @@ def _host_fault_threads(max_frames: int = 24) -> list:
     return rows
 
 
+def _android_defaults() -> dict:
+    """name -> (android default, desktop default) for every XE_ANDROID_DEFAULT
+    cvar in the source: the settings the device changes by build, not by
+    toggle."""
+    out = {}
+    pat = re.compile(r'DEFINE_[a-z0-9_]+\(\s*([a-z0-9_]+)\s*,\s*XE_ANDROID_DEFAULT\(\s*([^,]+?)\s*,\s*([^)]+?)\s*\)')
+    for root in ('src',):
+        for dirpath, _, files in os.walk(os.path.join(REPO, root)):
+            for fn in files:
+                if not fn.endswith('.cc'):
+                    continue
+                try:
+                    text = open(os.path.join(dirpath, fn), encoding='utf-8', errors='replace').read()
+                except OSError:
+                    continue
+                if 'XE_ANDROID_DEFAULT' not in text:
+                    continue
+                for m_ in pat.finditer(text.replace('\n', ' ')):
+                    out[m_.group(1)] = (m_.group(2), m_.group(3))
+    return out
+
+
+def _pc_non_default(pc_log: str) -> dict:
+    """name -> value from the 'Non-default cvars [n]:' lines of a PC log."""
+    vals = {}
+    try:
+        for line in open(pc_log, encoding='utf-8', errors='replace'):
+            i = line.find('Non-default cvars [')
+            if i < 0:
+                continue
+            for item in line[line.find(']:', i) + 2:].split():
+                k, _, v = item.partition('=')
+                vals[k] = v
+    except OSError:
+        pass
+    return vals
+
+
+@mcp.tool()
+def xenia_cvars(pc_log: str = '') -> str:
+    """The device's settings snapshot: every cvar whose live value differs
+    from its compiled default, from all sources (config file, title
+    profile, app toggles, launch arguments), plus every Android-only build
+    default (XE_ANDROID_DEFAULT) with its desktop value. With pc_log (a PC
+    xenia log with the 'Non-default cvars' lines) it returns the diff: the
+    settings the device runs with and the PC does not. The first question
+    for any device-only bug (2026-09-22: the device's toggles were in no
+    log). Saves the full JSON to scratch/mcp/cvars-<stamp>.json."""
+    try:
+        data = _api('/cvars', timeout=30)
+    except RuntimeError as e:
+        return json.dumps({'error': str(e)})
+    device = {c['name']: c for c in (data or {}).get('cvars', [])}
+    android = _android_defaults()
+    for name, (a_val, d_val) in android.items():
+        row = device.setdefault(name, {'name': name, 'value': None, 'default': None})
+        row['desktop_default'] = d_val
+    out = {'count': (data or {}).get('count'), 'cvars': sorted(device.values(), key=lambda r: r['name'])}
+    if pc_log:
+        pc = _pc_non_default(pc_log)
+        diff = []
+        for r in out['cvars']:
+            live = r['value'] if r['value'] is not None else r.get('default')
+            pc_val = pc.get(r['name'])
+            desktop = r.get('desktop_default') if r.get('desktop_default') is not None else r.get('default')
+            pc_eff = pc_val if pc_val is not None else desktop
+            if live is not None and pc_eff is not None and str(live).lower() != str(pc_eff).lower():
+                diff.append({'name': r['name'], 'device': live, 'pc': pc_eff})
+        out['device_vs_pc'] = diff
+    os.makedirs(SCRATCH, exist_ok=True)
+    path = os.path.join(SCRATCH, f'cvars-{_stamp()}.json')
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(out, f, indent=1)
+    out['saved'] = path
+    return json.dumps(out, indent=1)[:12000]
+
+
 STALL_MARKERS = ('SPINLOCK STALL', 'A64 CRASH DIAG', 'guest crash', 'Fatal',
                  'GPU is hung', 'unimplemented', 'Unhandled', 'DbgPrint',
                  'ANR', 'watchdog')

@@ -542,6 +542,25 @@ JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeCvarGet(
   return ToJava(env, it->second->current_value_string());
 }
 
+// Every config var whose live value differs from its compiled default:
+// {"count":N,"cvars":[{"name","value","default"}...]}. The settings snapshot
+// of a device run in one call, for the diff against the PC (2026-09-22).
+JNIEXPORT jstring JNICALL Java_jp_xenia_emulator_DebugServer_nativeCvarList(
+    JNIEnv* env, jclass) {
+  std::vector<cvar::NonDefaultConfigVar> vars = cvar::GetNonDefaultConfigVars();
+  std::string json = "{\"count\":" + std::to_string(vars.size()) + ",\"cvars\":[";
+  for (size_t i = 0; i < vars.size(); ++i) {
+    if (i) {
+      json += ',';
+    }
+    json += "{\"name\":\"" + JsonEscape(vars[i].name) + "\",\"value\":\"" +
+            JsonEscape(vars[i].value) + "\",\"default\":\"" +
+            JsonEscape(vars[i].default_value) + "\"}";
+  }
+  json += "]}";
+  return ToJava(env, json);
+}
+
 JNIEXPORT jboolean JNICALL Java_jp_xenia_emulator_DebugServer_nativeCvarSet(
     JNIEnv* env, jclass, jstring name, jstring value) {
   std::string n = FromJava(env, name);

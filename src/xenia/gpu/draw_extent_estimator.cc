@@ -1536,6 +1536,31 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
   }
   shader_interpreter_.SetExportSink(nullptr);
 
+  // Host clip space, as the host vertex shader builds it
+  // (spirv_shader_translator.cc, "Apply the NDC scale and offset"): W or 1/W
+  // per VTX_W0_FMT, then the host viewport's NDC scale and offset (the window
+  // offset, the guest viewport and the cropping are in them). XY divided by W
+  // (VTX_XY_FMT) bailed out above. Every clip-plane test below uses these.
+  if (!host_ndc_valid_) {
+    cull_bail_reason_ = CullBail::kNoHostTransform;
+    return false;
+  }
+  host_ndc_valid_ = false;  // one draw per SetHostNdcTransform
+  const bool w_not_reciprocal = regs.Get<reg::PA_CL_VTE_CNTL>().vtx_w0_fmt != 0;
+  for (uint32_t i = 0; i < num_indices; ++i) {
+    CullVertex& v = cull_vertices_scratch_[i];
+    if (!v.valid) {
+      continue;
+    }
+    float hw = v.w;
+    if (!w_not_reciprocal) {
+      hw = v.w != 0.0f ? 1.0f / v.w : 0.0f;
+    }
+    v.hx = v.x * host_ndc_scale_[0] + host_ndc_offset_[0] * hw;
+    v.hy = v.y * host_ndc_scale_[1] + host_ndc_offset_[1] * hw;
+    v.hw = hw;
+  }
+
   // Whole-draw-only mode (gpu_whole_draw_only): SKIP a draw entirely when it is
   // fully off-screen, otherwise draw it VERBATIM (return false). This avoids the
   // per-triangle strip->list conversion (3x the survivor index count -> ~3x the
@@ -1553,15 +1578,15 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
         continue;
       }
       any_valid = true;
-      if (v.w > 1.0e-6f) {
+      if (v.hw > 1.0e-6f) {
         all_behind = false;
       } else {
         all_front = false;
       }
-      if (!(v.x > v.w)) all_x_hi = false;
-      if (!(v.x < -v.w)) all_x_lo = false;
-      if (!(v.y > v.w)) all_y_hi = false;
-      if (!(v.y < -v.w)) all_y_lo = false;
+      if (!(v.hx > v.hw)) all_x_hi = false;
+      if (!(v.hx < -v.hw)) all_x_lo = false;
+      if (!(v.hy > v.hw)) all_y_hi = false;
+      if (!(v.hy < -v.hw)) all_y_lo = false;
       // Early-out: these flags are monotonic (only flip true->false). Once none of
       // {behind, the 4 XY sides} can still hold, the draw can't be whole-culled, so
       // stop scanning and draw it verbatim.
@@ -1619,13 +1644,16 @@ bool DrawExtentEstimator::BuildCulledIndexList(const Shader& vertex_shader) {
     const CullVertex& b = cull_vertices_scratch_[ib];
     const CullVertex& c = cull_vertices_scratch_[ic];
     bool cull = false;
-    if (a.valid && b.valid && c.valid && a.w > 0.0f && b.w > 0.0f &&
-        c.w > 0.0f) {
-      cull = (a.x > a.w && b.x > b.w && c.x > c.w) ||
-             (a.x < -a.w && b.x < -b.w && c.x < -c.w) ||
-             (a.y > a.w && b.y > b.w && c.y > c.w) ||
-             (a.y < -a.w && b.y < -b.w && c.y < -c.w);
-      if (!cull && (cull_front || cull_back)) {
+    if (a.valid && b.valid && c.valid && a.hw > 0.0f && b.hw > 0.0f &&
+        c.hw > 0.0f) {
+      cull = (a.hx > a.hw && b.hx > b.hw && c.hx > c.hw) ||
+             (a.hx < -a.hw && b.hx < -b.hw && c.hx < -c.hw) ||
+             (a.hy > a.hw && b.hy > b.hw && c.hy > c.hw) ||
+             (a.hy < -a.hw && b.hy < -b.hw && c.hy < -c.hw);
+      // The facing test below works on the guest's homogeneous clip
+      // position; with 1/W (VTX_W0_FMT = 0) that is not homogeneous, so the
+      // triangle is kept.
+      if (!cull && w_not_reciprocal && (cull_front || cull_back)) {
         if (cull_front && cull_back) {
           cull = true;
         } else {

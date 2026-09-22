@@ -21,6 +21,19 @@
 #include <unordered_map>
 #include <vector>
 
+DEFINE_string(
+    vulkan_hide_extensions, "",
+    "DIAGNOSTIC: device extensions not to enable even when the device has "
+    "them, comma separated (with or without the VK_ prefix). \"tiler\" names "
+    "the tile-GPU set the PC's desktop GPU lacks: "
+    "rasterization_order_attachment_access, dynamic_rendering_local_read, "
+    "multisampled_render_to_single_sampled, custom_resolve, "
+    "fragment_shading_rate, fragment_density_map, extended_dynamic_state3. "
+    "Every path built on a hidden extension takes its desktop fallback, so "
+    "the device runs the code the PC runs (2026-09-22: Banjo's dark lower "
+    "tile, device only).",
+    "Vulkan");
+
 DEFINE_bool(vulkan_disable_shader_stencil_export, false,
             "DIAGNOSTIC: do not enable VK_EXT_shader_stencil_export even when "
             "the device has it (the depth ownership transfers then use the "
@@ -272,6 +285,49 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
 #undef XE_UI_VULKAN_LOCAL_EXTENSION
 #undef XE_UI_VULKAN_STRUCT_PROMOTED_EXTENSION
 #undef XE_UI_VULKAN_LOCAL_PROMOTED_EXTENSION
+
+  // vulkan_hide_extensions: never enable these, so their consumers take the
+  // path of a device without them.
+  if (!cvars::vulkan_hide_extensions.empty()) {
+    std::vector<std::string> hidden;
+    std::string list = cvars::vulkan_hide_extensions;
+    size_t start = 0;
+    while (start <= list.size()) {
+      size_t end = list.find(',', start);
+      if (end == std::string::npos) {
+        end = list.size();
+      }
+      std::string name = list.substr(start, end - start);
+      name.erase(0, name.find_first_not_of(" \t"));
+      name.erase(name.find_last_not_of(" \t") + 1);
+      if (name == "tiler") {
+        for (const char* tiler_name :
+             {"VK_EXT_rasterization_order_attachment_access",
+              "VK_KHR_dynamic_rendering_local_read",
+              "VK_EXT_multisampled_render_to_single_sampled",
+              "VK_EXT_custom_resolve", "VK_KHR_fragment_shading_rate",
+              "VK_EXT_fragment_density_map",
+              "VK_EXT_extended_dynamic_state3"}) {
+          hidden.emplace_back(tiler_name);
+        }
+      } else if (!name.empty()) {
+        hidden.push_back(name.rfind("VK_", 0) == 0 ? name : "VK_" + name);
+      }
+      start = end + 1;
+    }
+    for (const std::string& name : hidden) {
+      bool found = requested_extensions.erase(name) != 0;
+      // Promoted to the core version of this device: the flag is already
+      // set, and clearing it hides the consumers' path the same way.
+      if (name == "VK_KHR_dynamic_rendering_local_read" &&
+          device->extensions_.ext_1_4_KHR_dynamic_rendering_local_read) {
+        device->extensions_.ext_1_4_KHR_dynamic_rendering_local_read = false;
+        found = true;
+      }
+      XELOGI("vulkan_hide_extensions: {} {}", name,
+             found ? "hidden" : "not requested (no effect)");
+    }
+  }
 
   std::vector<const char*> enabled_extensions;
   {
