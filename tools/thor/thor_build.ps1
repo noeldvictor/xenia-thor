@@ -322,7 +322,13 @@ if ($LASTEXITCODE -ne 0) {
 # (debug_api_android.cc linked to nothing on 2026-09-20). Premake takes 2 s,
 # so it runs before every native build.
 if ($Mode -in @("NativeCore", "FullApk", "FullDeploy")) {
-    & (Join-Path $RepoRoot "tools\build\bin\premake5.exe") --file=premake5.lua --os=android androidndk | Select-Object -Last 1
+    # NativeCore is the dev loop: ThinLTO with a cache (10 to 20 s rebuilds).
+    # FullApk and FullDeploy are the builds that ship: full LTO (2026-09-22,
+    # the Blue Dragon gameplay regression sat in the ThinLTO switch window).
+    $premakeArgs = @("--file=premake5.lua", "--os=android")
+    if ($Mode -eq "NativeCore") { $premakeArgs += "--thinlto" }
+    $premakeArgs += "androidndk"
+    & (Join-Path $RepoRoot "tools\build\bin\premake5.exe") @premakeArgs | Select-Object -Last 1
     if ($LASTEXITCODE -ne 0) {
         throw "premake5 androidndk failed"
     }

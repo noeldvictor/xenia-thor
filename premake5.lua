@@ -203,16 +203,26 @@ filter("platforms:Android-*")
 -- keeps the cross-module inlining, and with the cache the link redoes only the
 -- modules a change touched and the modules that import from them. The later
 -- -flto=thin wins over -flto on the clang command line.
-filter({"platforms:Android-*", "configurations:Release"})
-  buildoptions({
-    "-flto=thin",
-  })
-  linkoptions({
-    "-flto=thin",
-    "-Wl,--thinlto-cache-dir=" .. path.getabsolute("build/thinlto-cache"),
-    "-Wl,--thinlto-cache-policy,cache_size_bytes=6g",
-  })
-filter({})
+-- Only the dev loop asks for it (--thinlto, NativeCore in thor_build.ps1).
+-- The build that ships keeps full LTO: the Blue Dragon gameplay scene fell
+-- from 17 to 20 fps to 11 between the commits of 2026-09-20 and 2026-09-21,
+-- and the ThinLTO switch of 154c063e4a is in that window (2026-09-22).
+newoption({
+  trigger = "thinlto",
+  description = "Android Release: ThinLTO with a cache (the 10 s dev loop) instead of full LTO",
+})
+if _OPTIONS["thinlto"] then
+  filter({"platforms:Android-*", "configurations:Release"})
+    buildoptions({
+      "-flto=thin",
+    })
+    linkoptions({
+      "-flto=thin",
+      "-Wl,--thinlto-cache-dir=" .. path.getabsolute("build/thinlto-cache"),
+      "-Wl,--thinlto-cache-policy,cache_size_bytes=6g",
+    })
+  filter({})
+end
 
 -- The AYN Thor (the ONE target) is a Snapdragon 8 Gen 2 = ARMv9.0-A with LSE
 -- atomics (the `atomics` HWCAP). The NDK default (-moutline-atomics) routes
