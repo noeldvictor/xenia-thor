@@ -59,3 +59,32 @@ which axis it crosses before touching code.
   state and encoding. `docs/research/20260920-banjo-spinlock-protocol.md`.
 - present (closed): the FPS badge counts Banjo's frames; the 0.0 was the stall.
 - host SIMD: audit the sse2neon uses on the hot paths (texture conversion, resolves, swizzles).
+
+## Where the axes met on 2026-09-21
+
+- GPU driver (closed): the fork pushed both texture sets as push descriptors. A pipeline layout
+  may hold one push descriptor set layout (VUID-VkPipelineLayoutCreateInfo-pSetLayouts-00293).
+  NVIDIA and Turnip dropped the vertex set without a word; every vertex texture fetch read zero
+  and Banjo's grass drew black (`61e192fd16`). The desktop assumption was "the driver would say
+  so": no validation layer ran on the PC, and the device layer was never switched on. A spec
+  rule without validation shows up as a silent driver difference, on both drivers. Rule: run the
+  bundled validation layer on the device for every new GPU code path once, and read its lines.
+- Xenos model and GPU architecture (open): the device's shadow atlas (a 1024x1024 k_24_8 depth
+  target resolved every frame) accumulates casters across frames; the PC clears it each frame.
+  A depth clear inside a render pass that a tiler executes per bin, or the ownership transfer of
+  a depth image between differently pitched EDRAM-shaped images, keeps old depth on Adreno.
+  Measured with `vulkan_trace_resolve_checksum` (`not_far24`): PC under 7000, device to 600274.
+  Not the launcher toggles, not `TU_DEBUG=nolrz`. Next: `TU_DEBUG=sysmem` (tiler off) and the
+  validation layer; then the render pass around the clear.
+- A new column, game side: the recompilations hook the game at fixed addresses and ship the
+  switches as options. The same addresses hold in the emulator, so a recomp's hook table is a
+  ready list of guest patches (Blue Dragon from re:Blue on 2026-09-20, Banjo from reNut on
+  2026-09-21: MSAA, motion blur, screen glow, shadows, contact shadows, LOD, particles). A guest
+  patch moves the work out of the frame; an emulator lever only makes the work cheaper. Prefer
+  the patch when the recomp shipped it as a user option. What does not port is the recomp's
+  renderer: it hooks the D3D calls (`renut_gpu_funcs.toml`) and never emulates PM4 or EDRAM;
+  that is the structural reason for its frame rate, and the BD native-HLE bricks were the fork's
+  step in that direction.
+- OS and scheduling: fourteen device launches in ninety minutes for an A/B series took the
+  junction to 92 C and the title screen to 6 fps. The A/B harness must gate on the case
+  temperature between runs (directive 8), or its numbers measure the throttle.
