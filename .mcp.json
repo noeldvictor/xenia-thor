@@ -1,8 +1,10 @@
 {
   "mcpServers": {
     "xenia-thor": {
-      "command": "python",
+      "command": "cmd",
       "args": [
+        "/c",
+        "python",
         "tools/mcp/xenia_thor_mcp.py"
       ],
       "env": {

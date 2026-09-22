@@ -434,7 +434,10 @@ Rules that stay in force with the MCP: force-stop after every run, never use `ad
 say the battery level when you launch, and stop polling when the user says stop.
 
 The MCP is the control surface for debugging, fixing, measuring, and profiling. Every device action
-goes through it. If the server fails to connect, run `python -m py_compile tools/mcp/xenia_thor_mcp.py`,
+goes through it. `.mcp.json` starts it through `cmd /c python ...` (2026-09-21): `python` on this PC is the
+Microsoft Store app-execution alias, which breaks stdio pipes when a host spawns it directly and the
+server then reports CONNECTION_CLOSED although it answers `initialize` from a shell. If the server
+still fails to connect, run `python -m py_compile tools/mcp/xenia_thor_mcp.py`,
 fix the file, and call its functions from Python (`sys.path.insert(0, 'tools/mcp'); import
 xenia_thor_mcp as m`) until the session reconnects with `/mcp`. `thor_build.ps1` runs that check
 before every build.

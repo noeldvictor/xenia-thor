@@ -26,7 +26,22 @@ TRACE = 'vulkan_trace_resolve_checksum=true,vulkan_trace_resolve_checksum_budget
 ROUTE = 'name:puzzle;until:gold>0.35;press:START;settle:4000|name:spiral;until:green>0.03&gold<0.2;timeout:90'
 
 
+def wait_cool(max_case_c=41.0, max_wait_s=1500):
+    """Directive 8: a series measures the throttle unless the case cools
+    between runs. Polls the preflight temperatures every 30 s."""
+    t0 = time.time()
+    while time.time() - t0 < max_wait_s:
+        temps = json.loads(m.xenia_preflight()).get('temps', {})
+        if temps.get('case_c', 0) < max_case_c:
+            return temps
+        print('  cooling: case %.1f C gpu %.1f C' % (temps.get('case_c', 0), temps.get('gpu_c', 0)), flush=True)
+        time.sleep(30)
+    return temps
+
+
 def run(label, cvars, hold=40):
+    m.xenia_force_stop()
+    temps = wait_cool()
     m.xenia_launch_cvars(clear=True)
     m.xenia_launch_cvars(set=TRACE + (',' + cvars if cvars else ''))
     m.xenia_force_stop()
@@ -50,9 +65,10 @@ def run(label, cvars, hold=40):
     # over the whole title stay is the accumulation measure.
     after = vals[40:]
     over = sum(1 for v in after if v > 20000)
-    return '%s: reached=%s resolves=%d max_not_far=%s over20k=%d/%d bottom_luma=%s green=%s swaps=%s shot=%s' % (
+    fps = json.loads(m.xenia_fps()).get('presented') or {}
+    return '%s: reached=%s resolves=%d max_not_far=%s over20k=%d/%d bottom_luma=%s green=%s swaps=%s fps_median=%s start_case=%.1fC shot=%s' % (
         label, reached, len(vals), max(after) if after else None, over, len(after), stats.get('bottom_luma'),
-        stats.get('green'), stats.get('swaps'), os.path.basename(shot or ''))
+        stats.get('green'), stats.get('swaps'), fps.get('median_fps'), temps.get('case_c', 0), os.path.basename(shot or ''))
 
 
 def main():
