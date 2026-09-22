@@ -449,18 +449,17 @@ def xenia_patch_set(title_id: str, name: str, enabled: bool) -> str:
 def xenia_guest_dump(title: str = 'bd', base: int = 0x82000000, size_mb: int = 8,
                      at_guest_ms: int = 3000, out_name: str = '') -> str:
     """Dump guest memory of a title to a local file: sets the diagnostic
-    dump_guest_mem cvars in the persisted config, launches through the
-    play-button path, waits for the dump line, pulls the file to
-    scratch/mcp/, restores the config, force-stops. The dump is game
-    content: it stays under scratch/. title: bd, banjo, or a device path."""
+    dump_guest_mem cvars as launch cvars (the persisted config is never read
+    on Android), launches through the play-button path, waits for the dump
+    line, pulls the file to scratch/mcp/, clears the launch cvars,
+    force-stops. The dump is game content: it stays under scratch/. title:
+    bd, banjo, or a device path. base 0x821E0000 size 12 (MB) is Banjo's
+    whole code section for tools/thor/guest_disasm_offline.py."""
     keys = {'dump_guest_mem_at_ms': str(at_guest_ms), 'dump_guest_mem_size_mb': str(size_mb),
             'dump_guest_mem_base': str(base),
-            'dump_guest_mem_path': f'"/data/data/{PKG}/files/gm.bin"'}
-    restore = {'dump_guest_mem_at_ms': '0', 'dump_guest_mem_size_mb': '64',
-               'dump_guest_mem_base': '2181038080',
-               'dump_guest_mem_path': '"/data/local/tmp/guestmem.bin"'}
-    for k, v in keys.items():
-        xenia_config_set(k, v)
+            'dump_guest_mem_path': f'/data/data/{PKG}/files/gm.bin'}
+    xenia_launch_cvars(clear=True)
+    xenia_launch_cvars(set=','.join(f'{k}={v}' for k, v in keys.items()))
     result = 'time limit'
     try:
         xenia_logcat_clear()
@@ -478,8 +477,7 @@ def xenia_guest_dump(title: str = 'bd', base: int = 0x82000000, size_mb: int = 8
                 result = 'dumped'; break
     finally:
         xenia_force_stop()
-        for k, v in restore.items():
-            xenia_config_set(k, v)
+        xenia_launch_cvars(clear=True)
     if result != 'dumped':
         return json.dumps({'result': result})
     os.makedirs(SCRATCH, exist_ok=True)
