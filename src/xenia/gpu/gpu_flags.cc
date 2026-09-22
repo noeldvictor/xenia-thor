@@ -805,6 +805,11 @@ DEFINE_bool(gpu_trace_swap_render_targets, false,
             "GPU");
 DEFINE_int32(gpu_trace_swap_render_targets_budget, 24,
              "Maximum active render-target swap trace groups.", "GPU");
+DEFINE_bool(gpu_debug_offset_tile_clear_depth, false,
+            "DIAGNOSTIC: clear the bound depth to 0.0 at the first draw of a "
+            "predicated tile pass that carries a window offset (Banjo's lower "
+            "tile, 1280x336).",
+            "GPU");
 DEFINE_bool(vulkan_debug_wait_each_submission, false,
             "DIAGNOSTIC: wait for every GPU submission to complete before the "
             "command processor continues (no CPU/GPU overlap). Slow.",

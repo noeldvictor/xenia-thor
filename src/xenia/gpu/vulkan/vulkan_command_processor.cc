@@ -7296,7 +7296,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // predicated tile - with the host viewport, NDC transform and scissor.
   if (cvars::vulkan_trace_tile_viewport) {
     static uint32_t last_window_offset = 0xFFFFFFFFu;
-    static int32_t lines_left = 400;
+    static int32_t lines_left = 1 << 30;
     static uint32_t last_depth_control = 0xFFFFFFFFu;
     const uint32_t window_offset = regs[XE_GPU_REG_PA_SC_WINDOW_OFFSET];
     const uint32_t depth_control = normalized_depth_control.value;
@@ -7316,7 +7316,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           "ndc_scale=({:.4f},{:.4f}) ndc_offset=({:.4f},{:.4f}) "
           "scissor=({},{} {}x{}) vtx_win_off_en={} window_offset_disable={} "
           "z_enable={} z_write={} zfunc={} raw_depthcontrol={:08X} "
-          "bin_select={:08X}",
+          "bin_select={:08X} swap_counter={}",
           window_offset, regs[XE_GPU_REG_RB_SURFACE_INFO],
           viewport_info.xy_offset[0], viewport_info.xy_offset[1],
           viewport_info.xy_extent[0], viewport_info.xy_extent[1],
@@ -7329,7 +7329,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           uint32_t(normalized_depth_control.z_enable),
           uint32_t(normalized_depth_control.z_write_enable),
           uint32_t(normalized_depth_control.zfunc),
-          regs[XE_GPU_REG_RB_DEPTHCONTROL], uint32_t(bin_select_));
+          regs[XE_GPU_REG_RB_DEPTHCONTROL], uint32_t(bin_select_),
+          uint64_t(counter_));
     }
   }
 
@@ -7862,6 +7863,37 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         render_target_cache_->last_update_framebuffer(),
         current_draw_is_composite_consumer_ ? GpuPassKind::kGuestComposite
                                             : GpuPassKind::kGuest);
+  }
+  // gpu_debug_offset_tile_clear_depth (DIAGNOSTIC, 2026-09-22): before the
+  // first draw of a predicated tile pass that carries a window offset, clear
+  // the bound depth to 0.0 (far in reversed depth) inside this pass. If
+  // Banjo's lower tile then renders, the resolve clear that should have done
+  // this after the upper tile does not take effect on the device.
+  {
+    static uint64_t cleared_for_bin_pass = UINT64_MAX;
+    const bool tile_pass =
+        (bin_select_ & 0xFFFFFFFFull) != 0xFFFFFFFFull && bin_select_ != 0;
+    const uint64_t bin_pass_id = (uint64_t(counter_) << 32) | bin_select_;
+    if (cvars::gpu_debug_offset_tile_clear_depth && tile_pass &&
+        regs[XE_GPU_REG_PA_SC_WINDOW_OFFSET] != 0 &&
+        cleared_for_bin_pass != bin_pass_id &&
+        (render_target_cache_->last_update_render_pass_key()
+             .depth_and_color_used & 0b1)) {
+      cleared_for_bin_pass = bin_pass_id;
+      VkClearAttachment clear_depth = {};
+      clear_depth.aspectMask =
+          VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT;
+      clear_depth.clearValue.depthStencil.depth = 0.0f;
+      clear_depth.clearValue.depthStencil.stencil = 0;
+      VkClearRect clear_rect = {};
+      clear_rect.rect.extent.width = 1280 * texture_cache_->draw_resolution_scale_x();
+      clear_rect.rect.extent.height = 336 * texture_cache_->draw_resolution_scale_y();
+      clear_rect.layerCount = 1;
+      deferred_command_buffer_.CmdVkClearAttachments(1, &clear_depth, 1,
+                                                     &clear_rect);
+      XELOGI("TILE CLEAR: depth -> 0.0 before offset tile, counter={}",
+             counter_);
+    }
   }
   // gpu_vulkan_retro_depth_none: mark depth/stencil use of THIS draw in the now-
   // open pass. Placed AFTER the pass enter so the pass-OPENING draw's use is not
