@@ -32,6 +32,7 @@
 #include "xenia/gpu/xenos.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
+#include "xenia/ui/renderdoc.h"
 
 #if XE_PLATFORM_ANDROID
 #include <dirent.h>
@@ -2348,6 +2349,9 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
 
   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height,
             display_width, display_height);
+  // RenderDoc: a capture request set live (renderdoc_trigger_capture) takes
+  // the next frame; polled once per guest swap.
+  ui::RenderDocPollTrigger();
 
 #if XE_PLATFORM_ANDROID
   // Mark end-of-frame AFTER the limiter sleep + swap so the next frame's

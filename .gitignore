@@ -176,3 +176,7 @@ xenia_perf.map
 .claude/thor-loop-active
 B13EBABEBABEBABE/
 build/thinlto-cache/
+tools/renderdoc/rd_out.txt
+tools/renderdoc/rd_in.txt
+tools/renderdoc/rd_*.png
+tools/renderdoc/rd_shader_*.txt

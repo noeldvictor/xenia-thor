@@ -708,8 +708,11 @@ class VulkanCommandProcessor : public CommandProcessor {
       const VkDescriptorImageInfo* sampler_image_info,
       VkWriteDescriptorSet* descriptor_set_writes_out);
 
-  // Like WriteTransientTextureBindings but for push descriptors: builds the
-  // write array only (no descriptor set allocation, dstSet null).
+  // The most texture or sampler bindings a stage can have: one per fetch
+  // constant. Sizes the per-binding push write arrays.
+  static constexpr uint32_t kMaxTextureSamplerBindings = 32;
+  // Like WriteTransientTextureBindings but for push descriptors: builds one
+  // write per binding (no descriptor set allocation, dstSet null).
   uint32_t WritePushTextureBindings(
       uint32_t texture_count, uint32_t sampler_count,
       const VkDescriptorImageInfo* texture_image_info,
@@ -942,12 +945,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   // disabling push descriptors globally).
   bool bd_field_capturing_this_draw_ = false;
   // Saved offsets into descriptor_write_image_info_ (valid through the draw) + counts
-  // for re-emitting the vertex/pixel pushed textures in EmitBdFieldCaptureDraw.
-  size_t bd_cap_vtex_off_ = 0, bd_cap_vsmp_off_ = 0;
+  // for re-emitting the pushed pixel textures in EmitBdFieldCaptureDraw (the
+  // vertex set is a bound transient set, re-bound with sets 0..2).
   size_t bd_cap_ptex_off_ = 0, bd_cap_psmp_off_ = 0;
-  uint32_t bd_cap_vtex_cnt_ = 0, bd_cap_vsmp_cnt_ = 0;
   uint32_t bd_cap_ptex_cnt_ = 0, bd_cap_psmp_cnt_ = 0;
-  bool bd_cap_have_vpush_ = false, bd_cap_have_ppush_ = false;
+  bool bd_cap_have_ppush_ = false;
   bool bd_cap_ppush_input_attach_ = false;
   VkPipelineLayout bd_cap_push_layout_ = VK_NULL_HANDLE;
   // REAL-HLE aux: C2 render-redirects into native surfaces, and Brick-B texture

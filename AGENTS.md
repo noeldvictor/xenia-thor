@@ -291,6 +291,24 @@ Port rules:
   persists through `logged_profile_slot_0_xuid` in the config file, which Android never reads,
   so `ProfileManager` now signs the existing profile into slot 0 at start. START reaches the
   main menu and three A presses reach the opening story in the world (2026-09-21).
+  The black and gray grass on the Spiral Mountain title screen (PC Vulkan, and the device's
+  "black glitches around trees") is closed (2026-09-21, commit of this line): the tree pushed
+  BOTH texture sets as push descriptors, and a pipeline layout may hold one push descriptor set
+  (VUID-VkPipelineLayoutCreateInfo-pSetLayouts-00293). NVIDIA and Turnip dropped the vertex set,
+  every vertex texture fetch read zero, and the grass vertex shader (color = vertex color *
+  terrain texture) output black. Found with RenderDoc: identical shader, bindings, constants
+  and textures in the good and bad captures; the post-VS color output was 0. Only the pixel set
+  is pushed now. The PC title screen scores GOOD (lower_black 0.000) in every run since.
+  Open on the device (2026-09-21 night): the shadow atlas (1024x1024 k_24_8 at 156AD000,
+  resolved every frame) ACCUMULATES casters frame after frame (`not_far24` in the resolve trace
+  climbs 599 -> 86033 -> 600274, then resets), where the PC stays under 7000. The lower half
+  of the title frame is dark and shadows flicker over objects. Not the launcher toggles
+  (gate_rt_update, ownership memo, whole-draw cull, draw merging, fp16, UMA direct, the xendroid
+  parity set, TU_DEBUG=nolrz each A/B'd with `tools/thor/atlas_ab.py`): it is in the device
+  render-target path or the driver. Next: RenderDoc on the device (the layer from the
+  renderdoccmd APK, the in-app trigger cvar), or the device .xtr replayed on the PC with
+  `--vulkan_trace_resolve_checksum`. The puzzle-transition stall hit 5 of 14 launches during
+  the A/B; it blocks measurement and needs the r3 trap next.
   Open (2026-09-21 evening): the puzzle transition crashes a guest thread in two runs of three,
   and the game then stalls with a half-lit puzzle on the panel (every thread waits on the crashed
   thread's semaphore). Two fault shapes so far: a halfword load at guest 0xFFFFFFF8 (null minus 8)
@@ -403,6 +421,8 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_trace_frame` | record the next GPU frame on the device as an .xtr, pull it, render it on the PC with `xenia-gpu-vulkan-trace-dump` (the offscreen presenter fix); the PC render of the device's command stream |
 | `xenia_trace_replay` | replay a device trace ON THE DEVICE through the trace viewer's dump mode and pull the PNG: the GPU fix loop with no game boot |
 | `xenia_launch_cvars` | diagnostic cvars for the next launch (debug builds), typed by syntax; after the profile and the toggles; clear when done |
+| `renderdoc_trigger_capture` (cvar) | in-app RenderDoc capture request, polled at every guest swap; set it live through the nop HID trigger file (`cvar:renderdoc_trigger_capture=1`) or the launch cvars. `pc_goto.py --renderdoc <path>` runs the Windows build under `renderdoccmd` and captures the frame at the screen; `tools/renderdoc/run.ps1 <script> <rdc> [args]` replays headless (`rd_bindings`, `rd_draw_detail`, `rd_draw_io`, `rd_events`, `rd_usage`, `rd_buffer_range`, `rd_image_at`, `rd_postvs_range`, `rd_shader`, `rd_stage_bindings`, `rd_tex_stats`, `rd_dispatch`, `rd_actions`). A .rdc positional argument to qrenderdoc opens the UI and runs no script: the path goes through `rd_in.txt` |
+| `vulkan_trace_resolve_checksum_length` (cvar) | with `vulkan_trace_resolve_checksum`: read back only resolves of exactly this many bytes; the line carries `not_far24` (dwords whose low 24 bits are not 0xFFFFFF) and `distinct`. `tools/thor/atlas_ab.py "<cvars>" ...` runs the device A/B on it |
 | `xenia_gpu_driver` | the Vulkan drivers installed in the app (Turnip builds, a custom fork) and the selected one; select, install from a URL (`latest://owner/repo`) or push a zip from the PC, delete. The app's `drivers` tool. A driver is a paradigm axis: name the one a measurement used |
 | `xenia_backtrace` | now from inside the app: every thread's native frames (a realtime signal, `_Unwind_Backtrace`), symbolized on the PC with `llvm-symbolizer` against the unstripped .so. The hang picture: which host wait each guest thread sits in |
 | `xenia_patches`, `xenia_patch_set` | the game patch files on the device: list and toggle one `[[patch]]` by name, as the Game Patches screen does |
@@ -493,6 +513,18 @@ trap tool closed it: `docs/research/20260921-banjo-dirty-disc-font-cache.md`.
 8. **`--skip-preflight` is for one short run, not a series.** Ten runs in an hour with the gate
    off took the junction to 92 C: 8 fps at the title screen and buzzing audio (the pump starves).
    Between runs let the case fall under 41 C; measure nothing while it is above.
+9. **A PC-reproducible GPU glitch goes to RenderDoc before any code theory (2026-09-21).** Three
+   push-descriptor "fixes" were written from reading the code; none changed the picture. One
+   capture of a bad and a good frame (`pc_goto.py --renderdoc`, `tools/renderdoc/*.py` headless)
+   showed the draw, its bindings, its constants, its textures and its vertex-shader outputs, and
+   the zero color output named the vertex texture set. Then two cvar A/Bs (push the pixel set
+   only, push the vertex set only) named the rule: one push descriptor set per pipeline layout.
+   No validation layers are installed on the PC; a spec rule with no validation shows up as a
+   silent driver difference. The Vulkan SDK's validation layer would have said it in one line.
+10. **A rendering trace metric must not depend on the camera.** The title camera pans; a
+    screenshot score at "the title" compares different moments. The resolve checksum trace
+    (`vulkan_trace_resolve_checksum` with `_length=4194304`, `not_far24` per resolve) measures
+    the shadow atlas itself, every frame, on both machines.
 
 ### Debug loop rules (2026-09-20)
 
@@ -528,7 +560,11 @@ than the fixes.
 ## 10. Build, tools, and workflow
 
 - Build scripts: `tools\thor\thor_build.ps1` with `-Mode NativeCore`, `ApkShell`, or `FullDeploy
-  -DeviceSerial c3ca0370`. Debug: `tools\thor\thor_xenia_debug.ps1 -Mode Capture`.
+  -DeviceSerial c3ca0370`. The parameter is `-Mode`; `-Step` is silently ignored under `-File`
+  and the script runs the default `FullApk` without installing (2026-09-21: the device ran the
+  old library for a whole verification). After `Install`, check `dumpsys package ... lastUpdateTime`.
+  Run it from Bash (`powershell -File ...`), not through the PowerShell tool: `2>&1` there turns
+  premake's warning into a terminating error. Debug: `tools\thor\thor_xenia_debug.ps1 -Mode Capture`.
 - **The native loop is 10 to 20 s (2026-09-21).** `NativeCore` runs ndk-build directly into
   Gradle's object tree and copies the .so to the tree the APK shell reads; Gradle's
   `externalNativeBuild` task took 2 m 43 s for a build with no change (its metadata step dry-runs

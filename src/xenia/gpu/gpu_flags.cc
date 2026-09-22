@@ -817,6 +817,11 @@ DEFINE_bool(vulkan_trace_resolve_checksum, false,
             "GPU");
 DEFINE_int32(vulkan_trace_resolve_checksum_budget, 24,
              "Maximum Vulkan resolve readback checksum trace lines.", "GPU");
+DEFINE_int32(vulkan_trace_resolve_checksum_length, 0,
+             "With vulkan_trace_resolve_checksum: only read back resolves of "
+             "exactly this many bytes (0 = all). 4194304 is a 1024x1024 32bpp "
+             "target such as Banjo-Kazooie's shadow atlas (2026-09-21).",
+             "GPU");
 DEFINE_bool(vulkan_trace_edram_checksum, false,
             "Read back the Vulkan EDRAM dump range before shared-memory "
             "resolve and log a sparse checksum. Research-only and very slow.",
@@ -1303,7 +1308,13 @@ DEFINE_bool(
     "GPU");
 DEFINE_bool(
     vulkan_push_descriptors, true,
-    "Use VK_KHR_push_descriptor (when supported) to push the per-draw texture and "
+    "Use VK_KHR_push_descriptor (when supported) to push the per-draw pixel "
+    "shader texture and sampler descriptors inline into the command buffer. "
+    "Only the pixel set is pushed: a pipeline layout may hold one push "
+    "descriptor set (VUID-VkPipelineLayoutCreateInfo-pSetLayouts-00293); "
+    "with both texture sets pushed, NVIDIA and Turnip dropped the vertex set "
+    "and vertex texture fetches read zero (Banjo-Kazooie's black grass, "
+    "2026-09-21). The vertex texture set stays on transient sets. "
     "sampler descriptors inline into the command buffer, instead of allocating a "
     "transient descriptor set, writing it with vkUpdateDescriptorSets, and binding "
     "it every draw. Large per-draw CPU win on mobile drivers (Adreno) where "

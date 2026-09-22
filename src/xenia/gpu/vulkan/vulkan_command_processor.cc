@@ -342,17 +342,25 @@ bool VulkanCommandProcessor::SetupContext() {
   const ui::vulkan::VulkanDevice::Properties& device_properties =
       vulkan_device->properties();
 
-  // Push descriptors (VK_KHR_push_descriptor) let the per-draw texture/sampler
-  // descriptors be pushed inline into the command buffer, avoiding a transient
-  // descriptor set allocation + vkUpdateDescriptorSets + vkCmdBindDescriptorSets
-  // every draw. Only used for the texture sets (small binding counts, well within
-  // maxPushDescriptors). Requires the texture set layouts to be created with the
-  // push-descriptor flag, so this must be decided before any layout creation.
+  // Push descriptors (VK_KHR_push_descriptor) let the per-draw pixel texture
+  // and sampler descriptors be pushed inline into the command buffer, avoiding
+  // a transient descriptor set allocation + vkUpdateDescriptorSets +
+  // vkCmdBindDescriptorSets every draw. Only the PIXEL texture set is pushed:
+  // a pipeline layout may contain at most one push descriptor set layout
+  // (VUID-VkPipelineLayoutCreateInfo-pSetLayouts-00293). This tree pushed the
+  // vertex set too, and without validation layers nothing flagged it - NVIDIA
+  // and Turnip silently dropped the vertex set, so every vertex texture fetch
+  // read zero (Banjo-Kazooie's grass and tree cards drew black or gray,
+  // 2026-09-21; found with RenderDoc: the post-VS color output was 0 with the
+  // right images bound). The vertex set stays on transient sets; vertex
+  // textures are rare. Requires the pixel texture set layouts to be created
+  // with the push-descriptor flag, so this must be decided before any layout
+  // creation.
   push_descriptors_active_ =
       cvars::vulkan_push_descriptors &&
       vulkan_device->extensions().ext_KHR_push_descriptor &&
       vulkan_device->functions().vkCmdPushDescriptorSetKHR != nullptr;
-  XELOGGPU("VulkanCommandProcessor: push descriptors {}",
+  XELOGGPU("VulkanCommandProcessor: push descriptors {} (pixel texture set)",
            push_descriptors_active_ ? "ENABLED" : "disabled");
 
   // GPU-side frame-time timestamp queries (Thor/Adreno bring-up diagnostic).
@@ -2319,6 +2327,27 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
           stats->checksum = checksum;
           stats->score = score;
         }
+        // Full scan: how many dwords are not the k_24_8 far depth (0xFFFFFF
+        // in the low 24 bits) and how many distinct dwords there are. A
+        // shadow atlas without casters reads not_far=0 (2026-09-21).
+        uint32_t not_far24 = 0;
+        uint32_t distinct_words = 0;
+        {
+          std::vector<uint32_t> seen;
+          const uint32_t word_count = uint32_t(length / 4);
+          for (uint32_t i = 0; i < word_count; ++i) {
+            uint32_t word;
+            std::memcpy(&word, bytes + size_t(i) * 4, sizeof(word));
+            if ((word & 0xFFFFFF) != 0xFFFFFF) {
+              ++not_far24;
+            }
+            if ((i % 61) == 0 && seen.size() < 4096 &&
+                std::find(seen.begin(), seen.end(), word) == seen.end()) {
+              seen.push_back(word);
+            }
+          }
+          distinct_words = uint32_t(seen.size());
+        }
         uint32_t first_words[8] = {};
         uint32_t first_word_count =
             uint32_t(std::min<size_t>(xe::countof(first_words), length / 4));
@@ -2332,7 +2361,8 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
             "score={} clear_like={} low_variation={} first_sample={:08X} "
             "first_sample_matches={} checksum={:016X} "
             "first_nonzero={} first_nonzero_value={:08X} "
-            "first={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X}",
+            "first={:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X},{:08X} "
+            "not_far24={} distinct={} swap={}",
             label, address, length, kSampleStride, samples, nonzero_samples,
             varying_samples, score, clear_like, low_variation,
             first_sample_value,
@@ -2341,7 +2371,8 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
                                                : int64_t(first_nonzero_offset),
             first_nonzero_value, first_words[0], first_words[1],
             first_words[2], first_words[3], first_words[4], first_words[5],
-            first_words[6], first_words[7]);
+            first_words[6], first_words[7], not_far24, distinct_words,
+            bd_swap_total_);
       }
       if (copy_to_guest) {
         std::memcpy(memory_->TranslatePhysical(address), mapping, length);
@@ -5692,11 +5723,12 @@ VkDescriptorSetLayout VulkanCommandProcessor::GetTextureDescriptorSetLayout(
   descriptor_set_layout_create_info.sType =
       VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
   descriptor_set_layout_create_info.pNext = nullptr;
-  // Texture/sampler sets are pushed inline (vkCmdPushDescriptorSetKHR) when push
-  // descriptors are active, which requires this layout flag and means the set is
-  // never allocated from a pool or bound normally.
+  // The pixel texture/sampler set is pushed inline (vkCmdPushDescriptorSetKHR)
+  // when push descriptors are active, which requires this layout flag and means
+  // the set is never allocated from a pool or bound normally. The vertex set
+  // never gets the flag: one push descriptor set per pipeline layout.
   descriptor_set_layout_create_info.flags =
-      push_descriptors_active_
+      (!is_vertex && push_descriptors_active_)
           ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR
           : 0;
   descriptor_set_layout_create_info.bindingCount = uint32_t(binding_count);
@@ -7131,6 +7163,15 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             descriptor_sets_kept,
             uint32_t(SpirvShaderTranslator::kDescriptorSetTexturesPixel));
       }
+      // Invalidate the bindings of the incompatible sets: binding a pipeline
+      // whose layout is incompatible for set N disturbs sets N and above.
+      // The 2022 code computed descriptor_sets_kept and never applied it;
+      // upstream fixed it on 2025-12-06 (xenia-canary 1a4b78e377) after this
+      // tree branched. With push descriptors the stale "bound" bit meant no
+      // re-push, and Banjo-Kazooie's foliage sampled the wrong texture for
+      // its shadow map: black grass, gray billboards (2026-09-21).
+      current_graphics_descriptor_sets_bound_up_to_date_ &=
+          (UINT32_C(1) << descriptor_sets_kept) - 1;
     } else {
       // No or unknown pipeline layout previously bound - all bindings are in an
       // indeterminate state.
@@ -7530,7 +7571,6 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             (UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel));
     }
   }
-  bd_cap_have_vpush_ = false;
   bd_cap_have_ppush_ = false;
   // Update uniform buffers and descriptor sets after binding the pipeline with
   // the new layout.
@@ -9700,7 +9740,11 @@ bool VulkanCommandProcessor::IssueCopy() {
     }
   }
 
-  bool trace_checksum = ShouldTraceVulkanResolveChecksum();
+  bool trace_checksum =
+      (!cvars::vulkan_trace_resolve_checksum_length ||
+       written_length ==
+           uint32_t(cvars::vulkan_trace_resolve_checksum_length)) &&
+      ShouldTraceVulkanResolveChecksum();
   bool scored_candidate = false;
   int32_t scored_budget = cvars::vulkan_present_scored_resolve_budget;
   int32_t required_scored_format =
@@ -10684,13 +10728,14 @@ void VulkanCommandProcessor::EmitBdFieldCaptureDraw(
   pb.CmdVkBindPipeline(VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline);
   const bool constants_present =
       constants_dynamic_descriptor_set_ != VK_NULL_HANDLE;
-  // When push descriptors are active the texture sets (2,3) are NOT ordinary bound
-  // sets (their slots in current_graphics_descriptor_sets_ are stale) - bind only
-  // the immutable sets (0=shared memory, 1=constants) and re-emit the pushed texture
-  // descriptors below. Otherwise bind all sets (the transient-set path).
+  // When push descriptors are active the pixel texture set (3) is NOT an
+  // ordinary bound set (its slot in current_graphics_descriptor_sets_ is
+  // stale) - bind sets 0..2 (shared memory, constants, vertex textures) and
+  // re-emit the pushed pixel descriptors below. Otherwise bind all sets (the
+  // transient-set path).
   uint32_t bound_set_count =
       push_descriptors_active_
-          ? uint32_t(SpirvShaderTranslator::kDescriptorSetMutableLayoutsStart)
+          ? uint32_t(SpirvShaderTranslator::kDescriptorSetTexturesPixel)
           : uint32_t(SpirvShaderTranslator::kDescriptorSetCount);
   pb.CmdVkBindDescriptorSets(
       VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline_layout, 0, bound_set_count,
@@ -10703,21 +10748,8 @@ void VulkanCommandProcessor::EmitBdFieldCaptureDraw(
   // push deep-copies them). Makes the packet self-contained with push descriptors
   // ON (no global vulkan_push_descriptors=false CPU cost).
   if (push_descriptors_active_ && bd_cap_push_layout_ != VK_NULL_HANDLE) {
-    if (bd_cap_have_vpush_) {
-      std::array<VkWriteDescriptorSet, 2> pw;
-      uint32_t n = WritePushTextureBindings(
-          bd_cap_vtex_cnt_, bd_cap_vsmp_cnt_,
-          descriptor_write_image_info_.data() + bd_cap_vtex_off_,
-          descriptor_write_image_info_.data() + bd_cap_vsmp_off_, pw.data(),
-          false);
-      if (n) {
-        pb.CmdVkPushDescriptorSetKHR(
-            VK_PIPELINE_BIND_POINT_GRAPHICS, cr_pipeline_layout,
-            SpirvShaderTranslator::kDescriptorSetTexturesVertex, n, pw.data());
-      }
-    }
     if (bd_cap_have_ppush_) {
-      std::array<VkWriteDescriptorSet, 2> pw;
+      std::array<VkWriteDescriptorSet, 2 * kMaxTextureSamplerBindings> pw;
       uint32_t n = WritePushTextureBindings(
           bd_cap_ptex_cnt_, bd_cap_psmp_cnt_,
           descriptor_write_image_info_.data() + bd_cap_ptex_off_,
@@ -12483,6 +12515,17 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
 
   current_graphics_descriptor_sets_bound_up_to_date_ &=
       current_graphics_descriptor_set_values_up_to_date_;
+  // The pushed pixel texture set has no VkDescriptorSet to rebind: when its
+  // binding was lost (a new command buffer, a spliced render pass, an
+  // incompatible pipeline layout), the values must be pushed again, so the
+  // value bit follows the bound bit for it. Without this the bind loop rebound
+  // a stale handle from the transient path (2026-09-21).
+  if (push_descriptors_active_) {
+    const uint32_t pushed_sets =
+        UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel;
+    current_graphics_descriptor_set_values_up_to_date_ &=
+        ~(pushed_sets & ~current_graphics_descriptor_sets_bound_up_to_date_);
+  }
 
   // Fill the texture and sampler write image infos.
 
@@ -12646,69 +12689,35 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
               constants_descriptor_set;
     }
   }
-  // Vertex shader textures and samplers.
+  // Vertex shader textures and samplers: always a transient set (the pixel
+  // set is the one push descriptor set of the pipeline layout).
   if (write_vertex_textures) {
-    if (push_descriptors_active_) {
-      // Push the texture/sampler descriptors inline - no transient set alloc, no
-      // separate write+bind. The push is recorded into the deferred command
-      // buffer before the draw; mark the set both value- and bound-up-to-date so
-      // the transient write/bind paths below skip it.
-      std::array<VkWriteDescriptorSet, 2> push_writes;
-      uint32_t push_write_count = WritePushTextureBindings(
-          texture_count_vertex, sampler_count_vertex,
-          descriptor_write_image_info_.data() +
-              vertex_texture_image_info_offset,
-          descriptor_write_image_info_.data() +
-              vertex_sampler_image_info_offset,
-          push_writes.data());
-      deferred_command_buffer_.CmdVkPushDescriptorSetKHR(
-          VK_PIPELINE_BIND_POINT_GRAPHICS,
-          current_guest_graphics_pipeline_layout_->GetPipelineLayout(),
-          SpirvShaderTranslator::kDescriptorSetTexturesVertex, push_write_count,
-          push_writes.data());
-      // Stage 0: remember this draw's vertex push so EmitBdFieldCaptureDraw can
-      // re-emit it into the field batch (self-contained packet, push descriptors on).
-      if (bd_field_capturing_this_draw_) {
-        bd_cap_vtex_off_ = vertex_texture_image_info_offset;
-        bd_cap_vsmp_off_ = vertex_sampler_image_info_offset;
-        bd_cap_vtex_cnt_ = texture_count_vertex;
-        bd_cap_vsmp_cnt_ = sampler_count_vertex;
-        bd_cap_push_layout_ =
-            current_guest_graphics_pipeline_layout_->GetPipelineLayout();
-        bd_cap_have_vpush_ = true;
-      }
-      current_graphics_descriptor_set_values_up_to_date_ |=
-          UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
-      current_graphics_descriptor_sets_bound_up_to_date_ |=
-          UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
-    } else {
-      VkWriteDescriptorSet* write_textures =
-          write_descriptor_sets.data() + write_descriptor_set_count;
-      uint32_t texture_descriptor_set_write_count =
-          WriteTransientTextureBindings(
-              true, texture_count_vertex, sampler_count_vertex,
-              current_guest_graphics_pipeline_layout_
-                  ->descriptor_set_layout_textures_vertex_ref(),
-              descriptor_write_image_info_.data() +
-                  vertex_texture_image_info_offset,
-              descriptor_write_image_info_.data() +
-                  vertex_sampler_image_info_offset,
-              write_textures);
-      if (!texture_descriptor_set_write_count) {
-        return false;
-      }
-      write_descriptor_set_count += texture_descriptor_set_write_count;
-      write_descriptor_set_bits |=
-          UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
-      current_graphics_descriptor_sets_
-          [SpirvShaderTranslator::kDescriptorSetTexturesVertex] =
-              write_textures[0].dstSet;
+    VkWriteDescriptorSet* write_textures =
+        write_descriptor_sets.data() + write_descriptor_set_count;
+    uint32_t texture_descriptor_set_write_count =
+        WriteTransientTextureBindings(
+            true, texture_count_vertex, sampler_count_vertex,
+            current_guest_graphics_pipeline_layout_
+                ->descriptor_set_layout_textures_vertex_ref(),
+            descriptor_write_image_info_.data() +
+                vertex_texture_image_info_offset,
+            descriptor_write_image_info_.data() +
+                vertex_sampler_image_info_offset,
+            write_textures);
+    if (!texture_descriptor_set_write_count) {
+      return false;
     }
+    write_descriptor_set_count += texture_descriptor_set_write_count;
+    write_descriptor_set_bits |=
+        UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesVertex;
+    current_graphics_descriptor_sets_
+        [SpirvShaderTranslator::kDescriptorSetTexturesVertex] =
+            write_textures[0].dstSet;
   }
   // Pixel shader textures and samplers.
   if (write_pixel_textures) {
     if (push_descriptors_active_) {
-      std::array<VkWriteDescriptorSet, 2> push_writes;
+      std::array<VkWriteDescriptorSet, 2 * kMaxTextureSamplerBindings> push_writes;
       uint32_t push_write_count = WritePushTextureBindings(
           texture_count_pixel, sampler_count_pixel,
           descriptor_write_image_info_.data() + pixel_texture_image_info_offset,
@@ -12944,36 +12953,39 @@ uint32_t VulkanCommandProcessor::WritePushTextureBindings(
     VkWriteDescriptorSet* descriptor_set_writes_out, bool input_attachment) {
   // Builds VkWriteDescriptorSet entries for vkCmdPushDescriptorSetKHR: no
   // descriptor set is allocated, dstSet is left null (ignored by push).
+  // The texture set layout has one descriptor per binding (binding i = image
+  // i, binding texture_count + j = sampler j). One write per binding, which
+  // is exact and does not rely on the consecutive-binding spill rule.
   uint32_t descriptor_set_write_count = 0;
-  if (texture_count) {
+  for (uint32_t i = 0; i < texture_count; ++i) {
     VkWriteDescriptorSet& descriptor_set_write =
         descriptor_set_writes_out[descriptor_set_write_count++];
     descriptor_set_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptor_set_write.pNext = nullptr;
     descriptor_set_write.dstSet = VK_NULL_HANDLE;
-    descriptor_set_write.dstBinding = 0;
+    descriptor_set_write.dstBinding = i;
     descriptor_set_write.dstArrayElement = 0;
-    descriptor_set_write.descriptorCount = texture_count;
+    descriptor_set_write.descriptorCount = 1;
     // BD input-attachment merge: feedback consumer's pixel textures are input
     // attachments (subpassLoad), not sampled images.
     descriptor_set_write.descriptorType =
         input_attachment ? VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT
                          : VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE;
-    descriptor_set_write.pImageInfo = texture_image_info;
+    descriptor_set_write.pImageInfo = texture_image_info + i;
     descriptor_set_write.pBufferInfo = nullptr;
     descriptor_set_write.pTexelBufferView = nullptr;
   }
-  if (sampler_count) {
+  for (uint32_t i = 0; i < sampler_count; ++i) {
     VkWriteDescriptorSet& descriptor_set_write =
         descriptor_set_writes_out[descriptor_set_write_count++];
     descriptor_set_write.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
     descriptor_set_write.pNext = nullptr;
     descriptor_set_write.dstSet = VK_NULL_HANDLE;
-    descriptor_set_write.dstBinding = texture_count;
+    descriptor_set_write.dstBinding = texture_count + i;
     descriptor_set_write.dstArrayElement = 0;
-    descriptor_set_write.descriptorCount = sampler_count;
+    descriptor_set_write.descriptorCount = 1;
     descriptor_set_write.descriptorType = VK_DESCRIPTOR_TYPE_SAMPLER;
-    descriptor_set_write.pImageInfo = sampler_image_info;
+    descriptor_set_write.pImageInfo = sampler_image_info + i;
     descriptor_set_write.pBufferInfo = nullptr;
     descriptor_set_write.pTexelBufferView = nullptr;
   }

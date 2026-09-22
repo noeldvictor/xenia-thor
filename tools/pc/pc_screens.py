@@ -23,15 +23,25 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 EXE = os.path.join(ROOT, 'build', 'bin', 'Windows', 'Release', 'xenia.exe')
 
 
-def find_window(pid):
+def find_window(pid, title_contains=None):
+    """The visible main window of the process, or, with title_contains, of
+    any process whose window title holds that text (the process started
+    under renderdoccmd is a child of the one we launched)."""
     user32 = ctypes.windll.user32
     found = []
+
+    def title_of(hwnd):
+        n = user32.GetWindowTextLengthW(hwnd)
+        buf = ctypes.create_unicode_buffer(n + 1)
+        user32.GetWindowTextW(hwnd, buf, n + 1)
+        return buf.value
 
     @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
     def cb(hwnd, lparam):
         wpid = wt.DWORD()
         user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
-        if wpid.value == pid and user32.IsWindowVisible(hwnd):
+        match = wpid.value == pid or (title_contains and title_contains in title_of(hwnd))
+        if match and user32.IsWindowVisible(hwnd):
             rect = wt.RECT()
             user32.GetWindowRect(hwnd, ctypes.byref(rect))
             if rect.right - rect.left > 300 and rect.bottom - rect.top > 200:

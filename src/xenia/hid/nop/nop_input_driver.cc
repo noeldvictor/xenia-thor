@@ -18,6 +18,7 @@
 #include <cstring>
 #include <string>
 
+#include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/hid/hid_flags.h"
 #include "xenia/ui/virtual_key.h"
@@ -198,6 +199,19 @@ uint16_t NopInputDriver::GetActiveButtons() const {
         fclose(f);
         std::remove(cvars::hid_nop_trigger_file.c_str());
         std::string entry = TrimString(line);
+        // "cvar:name=value" sets a cvar live (the PC has no debug server):
+        // a draw-state trace can be switched on when the screen is right.
+        if (entry.rfind("cvar:", 0) == 0) {
+          const size_t eq = entry.find('=');
+          if (eq != std::string::npos) {
+            std::string name = entry.substr(5, eq - 5);
+            std::string value = entry.substr(eq + 1);
+            bool applied = cvar::SetCommandVarFromString(name, value);
+            XELOGI("nop HID trigger: cvar {}={} -> {}", name, value,
+                   applied ? "applied" : "unknown");
+          }
+          return active_buttons;
+        }
         const size_t colon = entry.find(':');
         const int32_t hold_ms =
             colon == std::string::npos

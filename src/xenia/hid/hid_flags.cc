@@ -83,7 +83,8 @@ DEFINE_string(
     "exists, its first line names buttons to press (start, a, a+b, ...) with "
     "an optional :hold_ms, the press begins, and the file is deleted. A PC "
     "script presses a button when the screen shows the right frame, without "
-    "the window focus a keyboard route needs (2026-09-21).",
+    "the window focus a keyboard route needs (2026-09-21). A line "
+    "cvar:name=value sets a cvar live instead of pressing.",
     "HID");
 DEFINE_int32(
     hid_nop_buttons_delay_ms, 0,

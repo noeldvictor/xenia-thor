@@ -25,6 +25,7 @@ import pc_screens  # noqa: E402
 from PIL import Image  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+RENDERDOCCMD = os.path.join(os.environ.get("ProgramFiles", "C:/Program Files"), "RenderDoc", "renderdoccmd.exe")
 
 
 def gold(im):
@@ -43,6 +44,9 @@ def main():
     ap.add_argument('--hold', type=int, default=150)
     ap.add_argument('--timeout', type=int, default=180)
     ap.add_argument('--settle', type=float, default=4.0, help='seconds after the screen holds before scoring')
+    ap.add_argument('--at-screen', default='', help='cvar name=value pairs (comma list) set live once the screen is reached, before the settle')
+    ap.add_argument('--after', type=float, default=0.0, help='seconds to keep running after the score (a trace budget drains)')
+    ap.add_argument('--renderdoc', default='', help='run under renderdoccmd and capture one frame at the screen into this .rdc path template')
     args = ap.parse_args()
     os.makedirs(args.storage, exist_ok=True)
     trigger = os.path.abspath(os.path.join(args.storage, 'trigger.txt'))
@@ -52,6 +56,17 @@ def main():
     cmd = [args.exe, '--storage_root=' + args.storage, '--log_file=' + log, '--mount_cache=true',
            '--gpu=' + args.gpu, '--hid=nop', '--hid_nop_connected=true',
            '--hid_nop_trigger_file=' + trigger] + args.extra.split() + [args.iso]
+    if args.renderdoc:
+        # renderdoccmd starts xenia as its child; the window is then found
+        # by its title, and the capture is requested from inside xenia
+        # (renderdoc_trigger_capture) - no F12, no focus.
+        rd_dir = os.path.dirname(os.path.abspath(args.renderdoc))
+        os.makedirs(rd_dir, exist_ok=True)
+        for old in os.listdir(rd_dir):
+            if old.endswith('.rdc') and old.startswith(os.path.basename(args.renderdoc)):
+                os.remove(os.path.join(rd_dir, old))
+        cmd = [RENDERDOCCMD, 'capture', '--wait-for-exit', '--working-dir', ROOT,
+               '--capture-file', os.path.abspath(args.renderdoc)] + cmd
     proc = subprocess.Popen(cmd, cwd=ROOT)
     t0 = time.time()
 
@@ -61,7 +76,7 @@ def main():
         print('+%.0f s press %s' % (time.time() - t0, buttons), flush=True)
 
     def grab():
-        hwnd = pc_screens.find_window(proc.pid)
+        hwnd = pc_screens.find_window(proc.pid, 'Xenia' if args.renderdoc else None)
         if not hwnd:
             return None
         path = os.path.join(args.storage, 'live.png')
@@ -126,7 +141,24 @@ def main():
                 time.sleep(3)
             else:
                 last_button = ''
+        for item in [x for x in args.at_screen.split(',') if x.strip()]:
+            with open(trigger, 'w') as f:
+                f.write('cvar:%s' % item.strip() + chr(10))
+            time.sleep(0.4)
+            print('+%.0f s cvar %s' % (time.time() - t0, item.strip()), flush=True)
         time.sleep(args.settle)
+        if args.renderdoc:
+            with open(trigger, 'w') as f:
+                f.write('cvar:renderdoc_trigger_capture=1' + chr(10))
+            print('+%.0f s renderdoc capture requested' % (time.time() - t0), flush=True)
+            for _ in range(60):
+                time.sleep(1)
+                caps = [x for x in os.listdir(rd_dir) if x.endswith('.rdc')]
+                if caps:
+                    print('capture %s' % os.path.join(rd_dir, caps[0]), flush=True)
+                    break
+            else:
+                print('no capture appeared in 60 s', flush=True)
         im = grab()
         out = os.path.join(args.storage, 'goto-%s.png' % args.screen)
         im.save(out)
@@ -134,9 +166,15 @@ def main():
         bad = black > 0.15 or gray > 0.30
         verdict = 'BAD' if bad else 'GOOD'
         print('%s %s title=%s lower_black=%.3f gray=%.3f' % (verdict, out, title, black, gray))
+        if args.after > 0:
+            time.sleep(args.after)
         return 1 if bad else 0
     finally:
         proc.kill()
+        if args.renderdoc:
+            # xenia is renderdoccmd's child; killing the parent leaves it.
+            subprocess.call(['taskkill', '/IM', os.path.basename(args.exe), '/F'],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 if __name__ == '__main__':
