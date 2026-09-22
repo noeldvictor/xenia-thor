@@ -26,7 +26,7 @@
 #include "xenia/cpu/export_resolver.h"
 #include "xenia/cpu/lzx.h"
 #include "xenia/cpu/precompile_status.h"
-#include "xenia/base/xxhash.h"
+#include "xenia/cpu/guest_crt_hooks.h"
 #include "xenia/cpu/processor.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/xmodule.h"
@@ -1586,45 +1586,27 @@ uint32_t WorkersForTemperature(uint32_t worker_count, PrecompileTemps t) {
 
 }  // namespace
 
-uint64_t XexModule::code_hash() {
-  std::lock_guard<std::mutex> lock(code_hash_mutex_);
-  if (code_hash_computed_) {
-    return code_hash_;
-  }
-  code_hash_computed_ = true;
-  const SecurityInfoContext* security_info = xex_security_info();
-  if (!security_info || !base_address_) {
-    return 0;
-  }
-  const BaseHeap* module_heap = memory()->LookupHeap(base_address_);
-  if (!module_heap) {
-    return 0;
-  }
-  const uint32_t page_size = module_heap->page_size();
-  uint32_t first_page = UINT32_MAX, last_page = UINT32_MAX;
-  for (uint32_t i = 0; i < security_info->page_descriptor_count; ++i) {
-    xex2_page_descriptor page_descriptor;
-    page_descriptor.value =
-        xe::byte_swap(security_info->page_descriptors[i].value);
-    if (page_descriptor.info != XEX_SECTION_CODE) {
-      continue;
+void XexModule::set_code_hash(uint64_t code_hash) {
+  code_hash_ = code_hash;
+  XELOGI("XexModule: code hash {:016X}; guest CRT hook table {}", code_hash,
+         HasGuestCrtHookTable(code_hash) ? "armed" : "none");
+}
+
+Symbol::Status XexModule::DeclareFunction(uint32_t address,
+                                          Function** out_function) {
+  Symbol::Status status = Module::DeclareFunction(address, out_function);
+  if (status == Symbol::Status::kNew && code_hash_) {
+    if (const GuestCrtHook* hook = LookupGuestCrtHook(code_hash_, address)) {
+      Function* function = *out_function;
+      static_cast<GuestFunction*>(function)->SetupExtern(hook->handler,
+                                                         nullptr);
+      function->set_name(hook->name);
+      function->set_status(Symbol::Status::kDeclared);
+      XELOGI("guest CRT hook: {} at {:08X} runs as host code", hook->name,
+             address);
     }
-    if (first_page == UINT32_MAX) {
-      first_page = i;
-    }
-    last_page = i;
   }
-  if (first_page == UINT32_MAX) {
-    return 0;
-  }
-  const uint32_t start_address = base_address_ + first_page * page_size;
-  const uint32_t end_address = base_address_ + (last_page + 1) * page_size;
-  XXH3_state_t hash_state;
-  XXH3_64bits_reset(&hash_state);
-  XXH3_64bits_update(&hash_state, memory()->TranslateVirtual(start_address),
-                     end_address - start_address);
-  code_hash_ = XXH3_64bits_digest(&hash_state);
-  return code_hash_;
+  return status;
 }
 
 void XexModule::PrecompileGuestFunctions() {

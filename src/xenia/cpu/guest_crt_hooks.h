@@ -37,6 +37,9 @@ struct GuestCrtHook {
 // code_hash (XXH3, the same hash the game-patch files match), or nullptr.
 const GuestCrtHook* LookupGuestCrtHook(uint64_t code_hash, uint32_t address);
 
+// Whether a hook table exists for this code hash (for the load log line).
+bool HasGuestCrtHookTable(uint64_t code_hash);
+
 }  // namespace cpu
 }  // namespace xe
 

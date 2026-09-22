@@ -30,7 +30,6 @@
 #include "xenia/cpu/breakpoint.h"
 #include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/export_resolver.h"
-#include "xenia/cpu/guest_crt_hooks.h"
 #include "xenia/cpu/module.h"
 #include "xenia/cpu/ppc/ppc_decode_data.h"
 #include "xenia/cpu/ppc/ppc_frontend.h"
@@ -1384,18 +1383,12 @@ Function* Processor::LookupFunction(Module* module, uint32_t address) {
   if (symbol_status == Symbol::Status::kNew) {
     // Symbol is undeclared, so declare now.
     assert_true(function->is_guest());
-    // The title's statically linked C runtime (its heap, memcpy, memset) runs
-    // as host code: the table names the guest addresses from the title's
-    // static recompilation (guest_crt_hooks.cc). Same extern dispatch as the
-    // HLE intercepts below; the guest body is never used.
-    if (const GuestCrtHook* crt_hook =
-            LookupGuestCrtHook(module->code_hash(), address)) {
-      static_cast<GuestFunction*>(function)->SetupExtern(crt_hook->handler,
-                                                         nullptr);
-      function->set_name(crt_hook->name);
-      function->set_status(Symbol::Status::kDeclared);
-      XELOGI("guest CRT hook: {} at {:08X} runs as host code", crt_hook->name,
-             address);
+    // The title's statically linked C runtime (heap, memcpy, memset) is
+    // planted as host code in XexModule::DeclareFunction (guest_crt_hooks.cc),
+    // which every declare path passes through; a planted function arrives
+    // here already kDeclared with its extern handler.
+    if (function->behavior() == Function::Behavior::kExtern &&
+        function->status() == Symbol::Status::kDeclared) {
       return function;
     }
     // GPU D3D9-HLE: establish the host extern handler at DECLARE time (runs once

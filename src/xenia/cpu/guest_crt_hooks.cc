@@ -377,6 +377,15 @@ const TitleTable kTables[] = {
 
 }  // namespace
 
+bool HasGuestCrtHookTable(uint64_t code_hash) {
+  for (const TitleTable& table : kTables) {
+    if (table.code_hash == code_hash) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const GuestCrtHook* LookupGuestCrtHook(uint64_t code_hash, uint32_t address) {
   if (!cvars::cpu_guest_crt_hooks || !code_hash) {
     return nullptr;
