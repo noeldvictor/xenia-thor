@@ -442,6 +442,12 @@ Port rules:
   performance item; it needs a build bisection with `bd_gameplay_route.sh` as the metric
   (one run per cooldown, about 6 minutes each). The global LLVM default stays ON until one
   more title is measured both ways; Banjo's per-title OFF ships.
+  The premise held (08:05): commit 4614144aeb rebuilt today (premake regenerated for the old
+  tree first - the generated makefiles list the sources of the tree that generated them,
+  so the first attempt built nothing) runs the same scene at 14.6 rising to 19.9 fps over
+  130 s (gate OK, 263,325 vertices) against today's 11.3 flat. `bd_bisect.py` (git bisect,
+  build, warm-up, cool, route, good >= 15.5 / bad <= 13) runs from 08:10; the log is
+  `scratch/banjo/rd/bd_bisect.log`.
   `cpu_global_lock_mutex=false` (04:45, one run): the transition passed, then no frames with
   the main thread and one worker at 100% each - the livelock the original mtmsr comment
   predicted. The per-thread depth alone is not a substitute for the mutex; the lever stays
