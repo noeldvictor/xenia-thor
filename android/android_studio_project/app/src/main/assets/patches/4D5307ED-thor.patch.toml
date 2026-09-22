@@ -1,0 +1,107 @@
+# Banjo-Kazooie: Nuts & Bolts (USA), disc build C03916823ADAC91B.
+# Guest-side render levers. The hook sites come from reNut, the ReXGlue
+# recompilation of this title (masterspike52/reNut, config/renut_hooks.toml
+# and src/renut_engine/hooks.cpp); the instructions were read from the device
+# with xenia_guest_disasm on 2026-09-21 and match the recomp's build. Each
+# lever is the game's own code path: the game skips the work itself, so the
+# emulator renders less instead of rendering wrong. The recomp ships the same
+# switches as user options.
+title_name = "Banjo-Kazooie: Nuts & Bolts"
+title_id = "4D5307ED"
+hash = "C03916823ADAC91B"
+
+[[patch]]
+name = "No MSAA on the scene targets"
+desc = "Forces D3DMULTISAMPLE_NONE (r6 = 0) at both scene render-target creations in sub_823ED2A8 (color and depth). The MSAA mode global, the tile count and the surface sizes stay, so predicated tiling and every projection input are as stock (reNut: disable_msaa). Halves the EDRAM pass work on a tiler."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x823ED564   # or r6,r30,r30   -> li r6,0 (color, mode other)
+  value = 0x38C00000
+  [[patch.be32]]
+  address = 0x823ED56C   # addi r6,r0,2    -> li r6,0 (color, mode 2)
+  value = 0x38C00000
+  [[patch.be32]]
+  address = 0x823ED57C   # addi r6,r11,1   -> li r6,0 (color, mode 1)
+  value = 0x38C00000
+  [[patch.be32]]
+  address = 0x823ED6B0   # or r6,r30,r30   -> li r6,0 (depth, mode other)
+  value = 0x38C00000
+  [[patch.be32]]
+  address = 0x823ED6BC   # addi r6,r0,2    -> li r6,0 (depth, mode 2)
+  value = 0x38C00000
+  [[patch.be32]]
+  address = 0x823ED6D0   # addi r6,r11,1   -> li r6,0 (depth, mode 1)
+  value = 0x38C00000
+
+[[patch]]
+name = "No motion blur"
+desc = "Skips the full-screen blur draw of the fxMotionBlur pass (sub_8229F440): the scene is never composited with its motion-blur history; the surrounding resolves and state restore still run (reNut: disable_motion_blur)."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x8229F8A0   # bl D3DDevice_DrawVerticesUP -> nop
+  value = 0x60000000
+
+[[patch]]
+name = "No screen glow"
+desc = "Skips the glow/bloom block of the heal/damage feedback overlay (sub_82573650 -> sub_825740F0). That pass allocates a scratch surface at EDRAM tile 0, aliased onto the main framebuffer, and clears it to black; reNut ships this skip on by default because the clear blacks the whole frame for that effect's frames. A candidate for black flashes here too."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x82573A54   # addis r11,... -> b 0x82573AC8 (the game's own a34 == 0 merge point)
+  value = 0x48000074
+
+[[patch]]
+name = "No shadows"
+desc = "Skips the two shadow render calls (sub_823B0698 from the per-frame and the cached atlas paths). No shadow pass, no 1024x1024 atlas resolve, no shadow sampling darkness (reNut: disable_shadows). The device's shadow atlas accumulates casters (2026-09-21); this is the workaround while that is open."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x823B38B8   # bl 0x823B0698 -> nop
+  value = 0x60000000
+  [[patch.be32]]
+  address = 0x823B3EF4   # bl 0x823B0698 -> nop (cached atlas path)
+  value = 0x60000000
+
+[[patch]]
+name = "No contact shadows"
+desc = "Skips the dark contact patches under characters and vehicles (sub_82330388; reNut: disable_cao)."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x823302AC   # bl 0x82330388 -> nop
+  value = 0x60000000
+
+[[patch]]
+name = "No LOD switching"
+desc = "Takes the highest-detail branch of the LOD distance loop unconditionally (bgt -> b at 0x82B680F8; reNut: disable_lod). Costs vertices; for A/B of pop-in, not for speed."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x82B680F8   # bgt crf6,0x82B68110 -> b 0x82B68110
+  value = 0x48000018
+
+[[patch]]
+name = "No particles"
+desc = "Skips the particle simulation, spawn, and the four particle draw calls (reNut: disable_particles). A/B lever for the cost of the particle systems."
+author = "xenia-thor"
+is_enabled = false
+  [[patch.be32]]
+  address = 0x822297E4   # bl 0x82226BD0 (sim) -> nop
+  value = 0x60000000
+  [[patch.be32]]
+  address = 0x82229858   # bl 0x82229888 (spawn) -> nop
+  value = 0x60000000
+  [[patch.be32]]
+  address = 0x8222BCBC   # bl D3DDevice_DrawVertices -> nop
+  value = 0x60000000
+  [[patch.be32]]
+  address = 0x8222BCD8
+  value = 0x60000000
+  [[patch.be32]]
+  address = 0x8222BD44
+  value = 0x60000000
+  [[patch.be32]]
+  address = 0x8222BD60
+  value = 0x60000000
