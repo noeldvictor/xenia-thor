@@ -109,6 +109,9 @@ def main():
     ap.add_argument('--cvars', default='')
     ap.add_argument('--presses', default='', help='"seconds:button ..." through the nop HID trigger file')
     ap.add_argument('--hold', type=int, default=150)
+    ap.add_argument('--retry-every', type=float, default=5.0,
+                    help='a sticky press ("50:start+") repeats this often until the screen changes')
+    ap.add_argument('--retry-max', type=int, default=12)
     ap.add_argument('--name', default='')
     ap.add_argument('--oracle', action='store_true')
     ap.add_argument('--exe', default=pc_screens.EXE)
@@ -149,7 +152,12 @@ def main():
     presses = []
     for item in args.presses.split():
         t, _, button = item.partition(':')
-        presses.append((float(t), button))
+        # "50:start+" is sticky: pressed again every --retry-every seconds
+        # until the picture changes, and the later presses wait for it
+        # (2026-09-23: Gears ignores presses while its title loads, and the
+        # load time varies run to run, so fixed-time routes stuck on menus).
+        presses.append((float(t), button.rstrip('+'), button.endswith('+')))
+    sticky = None  # {button, scheduled, before, next, tries}
     print('run:', os.path.basename(exe), ' '.join('--' + c for c in cvars) if not args.oracle else '(oracle)',
           flush=True)
     cdb_log = os.path.join(storage, 'cdb.log')
@@ -180,11 +188,37 @@ def main():
                 trace_times.pop(0)
                 open(trace_request, 'w').close()
                 print('+%5.1f s trace requested (%s)' % (now, trace_dir), flush=True)
-            while presses and presses[0][0] <= now:
-                _, button = presses.pop(0)
+            if sticky and now >= sticky['next']:
+                hwnd = pc_screens.find_window(emulator_pid(proc, args.cdb))
+                probe = os.path.join(storage, 'probe_now.png')
+                changed = (hwnd and pc_screens.capture(hwnd, probe) and
+                           change(sticky['before'], probe) > 6.0)
+                if changed or sticky['tries'] >= args.retry_max:
+                    shift = now - sticky['scheduled'] - args.retry_every
+                    print('+%5.1f s %s %s after %d presses' % (
+                        now, sticky['button'], 'took' if changed else 'GAVE UP',
+                        sticky['tries']), flush=True)
+                    if shift > 0:
+                        presses = [(t + shift, b_, s_) for t, b_, s_ in presses]
+                    sticky = None
+                else:
+                    with open(trigger, 'w') as f:
+                        f.write('%s:%d\n' % (sticky['button'], args.hold))
+                    sticky['tries'] += 1
+                    sticky['next'] = now + args.retry_every
+                    print('+%5.1f s press %s (again)' % (now, sticky['button']), flush=True)
+            while not sticky and presses and presses[0][0] <= now:
+                scheduled, button, is_sticky = presses.pop(0)
+                if is_sticky:
+                    hwnd = pc_screens.find_window(emulator_pid(proc, args.cdb))
+                    before = os.path.join(storage, 'probe_before.png')
+                    if hwnd and pc_screens.capture(hwnd, before):
+                        sticky = {'button': button, 'scheduled': scheduled, 'before': before,
+                                  'next': now + args.retry_every, 'tries': 1}
                 with open(trigger, 'w') as f:
                     f.write('%s:%d\n' % (button, args.hold))
-                print('+%5.1f s press %s' % (now, button), flush=True)
+                print('+%5.1f s press %s%s' % (now, button, ' (sticky)' if sticky else ''),
+                      flush=True)
             if now >= next_shot:
                 next_shot += args.every
                 hwnd = pc_screens.find_window(emulator_pid(proc, args.cdb))

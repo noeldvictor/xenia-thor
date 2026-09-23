@@ -362,6 +362,13 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
     destructor now unwatches under the lock; the same route runs into gameplay. Tools that found
     it: `cdb` with `sxd -c2` on second-chance access violations (a wrapper passed to
     `pc_run --exe`), and a bisect that only counts runs that reached the crash point.
+  - **PC matrix (2026-09-23, Thor configuration):** Banjo to gameplay (jigsaw, title, story,
+    Spiral Mountain), Gears to "Exit the cell area" (sharp with direct resolve), MagnaCarta 2 to
+    its in-engine army scene - correct images, no crash. Blue Dragon stopped on its Voice Language
+    menu with timed presses (route, not a hang). `scratch/gears/gears2.iso` is 1.76 GB against
+    7.8 GB for Gears 1 - an incomplete pull; it does not mount ("Failed to read all GDFX
+    entries"). Under `--cdb` every write-watch fault is a debugger event and the run slows
+    several times over; use it on a crash, not for the whole matrix.
 - **Command-processor CPU per draw, the full split (2026-09-23).** The short `GPU draw cpu/frame`
   line now carries every bucket: `prep_us` (after Process to RequestTextures: shader
   modifications, translation lookups, samplers), `tex_us`, `rt_us`, `pipe_us`, `state_us` (after
@@ -565,6 +572,8 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_perf_probe`, `xenia_live_ab`, `xenia_scoreboard` | MCP wrappers of `tools/thor/perf_probe.py` (the CPU/GPU split of a scene in one launch, the command processor's per-frame split, a verdict), `live_ab.py` (cvars flipped live in one launch, `;`-separated arms) and `scoreboard.py`. Device tools: ask the user first |
 | `xenia_trace_ab`, `xenia_pc_run` | MCP wrappers of `tools/pc/trace_ab.py` and `tools/pc/pc_run.py` (Vulkan, the device snapshot's settings, `trace_at` for frame traces). PC only |
 | `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
+| `tools/pc/pc_matrix.py` | the PC regression matrix: Banjo, Gears, Gears 2, MagnaCarta 2, Blue Dragon one after another in the Thor configuration (`--android-defaults`), a contact sheet per title and a JSON summary in `scratch/matrix/`; a crash reruns under cdb for its stack. Run it after every change set and look at the sheets |
+| `pc_run.py` sticky presses (`"45:start+"`) | pressed again every `--retry-every` s until the picture changes; later presses wait. Titles ignore presses while they load and the load time varies - fixed-time routes stuck Gears on its main menu |
 | `pc_run.py --cdb` (MCP `xenia_pc_run(cdb=True)`) | the run under cdb: first-chance faults (the write watches) pass, a crash prints its stack at the end. A crash that leaves no log line gets named in one run (2026-09-23: the texture watch double free) |
 | `pc_run.py --android-defaults` | the PC run with the Android build defaults (GPU, kernel, caches: 10 settings; not the ARM64/LLVM CPU backends, the thermal API, or `gpu_uma_direct_shared_memory`, which cannot allocate 512 MB of host-visible VRAM on a desktop GPU and exits). Prints the pipeline compile rate and flags a cold driver cache |
 | `tools/check_tools.py` | every tool script compiles and holds no control bytes (a heredoc turned a regex escape into byte 0x08 and a perf_probe verdict never fired); the stop hook runs it |
