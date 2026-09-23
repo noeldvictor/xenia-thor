@@ -303,15 +303,23 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   submission 4.2 ms, residency 0.25 ms, 2,573 requests with 2,558 answered lock-free, 20 uploads
   of 156 KB, 5 watch hits per frame - the device's 30 ms is WAITING for the global lock the guest
   threads hold in their interrupt-disabled sections, not work. Fixes landed: the lock-free valid
-  check, and the per-draw hoisted lock only without it (device A/B owed: `live_ab.py gears1
-  "hoist:" "nohoist:vulkan_hoist_request_range_lock=false"`, then the `gpu_shared_memory_stats`
-  line). Also in its profile: kernel 33-38% (the main thread's `Sleep(0)` as `sched_yield`, the
-  critical-section handoffs as futexes), `xe_llvm_resolve_cached`. `global_lock_spin` (live,
-  default 0) tries the global mutex N times before a futex sleep; A/B owed. Zero-copy guest
-  memory (one AHardwareBuffer/dma-buf as both guest RAM and the GPU buffer; Turnip exposes the
-  import) removes copy and watch, but Gears' steady-state copy and watch are small (156 KB, 5 hits
-  per frame on the PC) - measure a title's `GPU shmem/frame` line before building it. Gears 2, 3
-  and Judgment: images on the device only, not yet run.
+  check, and the per-draw hoisted lock only without it. Also in its profile: kernel 33-38% (the
+  main thread's `Sleep(0)` as `sched_yield`, the critical-section handoffs as futexes),
+  `xe_llvm_resolve_cached`. One device live A/B (2026-09-22, cut short by heat): new 20.4 fps,
+  old 19.1, `global_lock_spin=128` 22.6/23.1, `rtl_critical_section_min_spin=256` 25.9/21.8, both
+  25.9/25.9 - confirm in a short cool run, then make the winners default. `thor_sleep0_backoff_us`
+  (live, default 0): back-to-back `Sleep(0)` sleeps instead of `sched_yield` (heat). Gears 2, 3 and
+  Judgment: images on the device only, not yet run.
+- **Unified memory, zero-copy (user: "get UMA working").** Design and stages:
+  `docs/research/20260923-uma-zero-copy-design.md`. `gpu_uma_zero_copy` (default off) makes the
+  512 MB shared GPU buffer the guest's physical memory - nothing is copied; the GPU reads and
+  writes guest RAM. WORKS ON THE PC (2026-09-23): NVIDIA imports the physical view by host
+  pointer (VK_EXT_external_memory_host, handle type 0x80); Banjo's title and Gears to gameplay
+  render the same as without it (no torn geometry from the draw-timing hazard in these scenes).
+  The Android path is next: an AHardwareBuffer backing the physical views, imported by Turnip
+  (stage 0 probe `gpu_uma_zero_copy_probe` built: allocation, import memory types, dma-buf CPU
+  map). Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
+  GPU-readback titles, plus 512 MB of RAM - the device decides.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.
 - **Blue Dragon (4D5307DF).** Low priority (re:Blue exists). GPU frame 79 -> 64.5 ms in the field
@@ -520,6 +528,16 @@ split that decided each case, and to one issue with no timebox. The rules:
    Each cycle reports its row: fixed, faster, or nothing.
 5. **Notes in one commit per cycle,** not one per finding.
 6. **Build a tool only for a second use.** Extend the MCP tools before a new one-off script.
+7. **The PC checks correctness; the Thor judges speed** (user, 2026-09-23: "if the new techniques
+   are slower on pc but faster on ayn thor thats a win"). Never reject or default-off a Thor
+   technique because a PC run is slower (zero-copy reads host memory over PCIe on the PC).
+8. **There is always code work** (user, 2026-09-23). When the device is off-limits, build and
+   PC-test the next item behind a default-off setting and queue its short device check; never
+   answer with "paused, waiting".
+9. **Heat is a hard limit** (user, 2026-09-22: "we cannot let the emulator fry the device"). Ask
+   before any device session longer than a short launch; every device tool stops mid-run above
+   its case limit (`live_ab.py` 46 C, `driver_ab.py` 44 C); cool between runs; stop the app right
+   after a measurement. The app's ThermalGuard protects players (forecast + status, caps, pause).
 
 ### The faster loop (user, 2026-09-21 night: "plan a better faster strategy")
 
