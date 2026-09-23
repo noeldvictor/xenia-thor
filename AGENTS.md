@@ -350,10 +350,14 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   16-px strip at the left edge of Banjo's PC frames is in the default configuration too and not
   in the device captures (PC window path; open, low priority).
   The same check for the other focus titles (device configuration + zero-copy): Gears reaches the
-  first in-game cutscene with a correct image; MagnaCarta 2 reaches its in-engine cutscene. One MC2
-  capture (225 s, a camera pan) has a full-width horizontal cut at y=274 - most likely a
-  PrintWindow capture tear (a zero-copy data hazard would tear geometry, not one row across the
-  frame). Confirm with `pc_run --trace-at` at that moment and a replay before calling it a bug. Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
+  first in-game cutscene with a correct image; MagnaCarta 2 reaches its in-engine cutscene.
+  **MC2 zero-copy tear (open, 2026-09-23):** in the close-up of a fur collar (about 195 s into the
+  route) both zero-copy frames caught show a full-width cut at a row that moves (y=274, y=230): the
+  part above the cut is a different frame than the part below. The one frame of that shot without
+  zero-copy is clean. Likely the design doc's timing hazard or a resolve/present race that the copy
+  path hid; not proven (a PrintWindow capture can tear too, and the sample is small). Zero-copy stays
+  default off. The device arm with zero-copy must include MC2 screenshots: the app's own capture on
+  the Thor has no PrintWindow tear. A replay cannot show it (a trace replays in order). Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
   GPU-readback titles, plus 512 MB of RAM - the device decides.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.

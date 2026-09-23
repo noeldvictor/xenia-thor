@@ -89,6 +89,11 @@ Device check (ask the user first): `driver_ab.py gears1` with an arm
 `zc:zip=...-xe2.zip,cvars=gpu_uma_zero_copy=true`. Pass: the row says `uma: ACTIVE`, the image is
 the same, fps is not lower. Then the timing hazard is the thing to watch.
 
+Seen on the PC (2026-09-23): MagnaCarta 2, one cutscene close-up, both zero-copy frames caught are
+cut across the full width at a row that moves; the copy path's frame of the same shot is clean.
+This is the first sign of the timing hazard above. If the device shows it too, stage 3 (guest
+fences on host completion) comes before any default-on.
+
 ## Stages (each: one build, one short device check)
 
 | stage | change | device check | pass |
