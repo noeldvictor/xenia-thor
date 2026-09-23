@@ -1569,15 +1569,19 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
-    vulkan_direct_host_resolve, false,
+    vulkan_direct_host_resolve, true,
     "Resolve eligible (non-format-converting and packable format-converting) "
     "host render targets directly to guest memory with compute shaders "
     "instead of first dumping the host render target back through EDRAM. "
     "Avoids a render-pass break and a DRAM round-trip on the resolve path "
     "(the ~23-resolve-pass class on BD). Ineligible cases (gamma, unsupported "
     "formats, multi-sample selects, resolution scaling) fall back to the "
-    "EDRAM dump path. Ported from XenDroid 96c0afe94; default off until "
-    "device-validated (XenDroid ships it on).",
+    "EDRAM dump path. Ported from XenDroid 96c0afe94 (XenDroid ships it on). "
+    "Default on since 2026-09-23: measured on the Thor at about 1.3% of the "
+    "frame with no faults, and it FIXES Gears of War's vertical smear on lit "
+    "surfaces and armor (the dump path's image; PC trace replay and a live "
+    "run), while 12 traces of Banjo, Blue Dragon and MagnaCarta 2 replay "
+    "pixel-identical with and without it.",
     "GPU");
 
 DEFINE_bool(

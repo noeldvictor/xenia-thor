@@ -338,6 +338,30 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   clang), the unlocked `pending_fns_` queue (an ARM memory-ordering race), zero-copy trace
   capture; added `gpu_uma_direct_upload_barrier` for a Thor A/B. The largest open CPU item: every
   LLVM guest call goes through the host-entry thunk with an `msr FPCR`.
+- **Candidates 1-4 done (2026-09-23 afternoon):**
+  - (1) `vulkan_direct_host_resolve` is now DEFAULT ON. The EDRAM dump path smeared Gears'
+    lit surfaces and armor into vertical bands (PC trace replay: the cell door; live: Dom's back
+    in the first cutscene); direct resolve is sharp. 12 traces of Banjo, Blue Dragon and MC2
+    replay pixel-identical with and without it; the Thor measured it at about 1.3% of the frame.
+  - (2) `a64_thunk_fpcr_write_if_changed` (default on): the host-to-guest and guest-to-host
+    thunks read FPCR and write it only when it differs (every LLVM guest call and every host call
+    paid a non-speculative FPCR write). Android build only; the Thor judges speed.
+  - (3) `WriteFetchFromMem`: `SwapCompareStore32` (`src/xenia/gpu/swap_compare_store.h`, NEON on
+    ARM64) swaps, compares and stores 64 registers at a time and returns a changed mask.
+    `tools/qemu/swap_compare_store_equiv.cc`: 20,000 cases against the scalar reference, ALL PASS.
+  - (4) `threading_per_object_condvar`: the ARM64 threading tests under qemu
+    (`tools/qemu/threading_test_main.cc`) pass in both modes, 30 of 30 repeats. Default change
+    waits for a Thor check.
+  - **A real race found on the way (fixed):** `TextureCache::Texture::~Texture` read its watch
+    handles without the global lock. Eviction runs on the command processor thread without that
+    lock while a guest thread's write fault fires the same watches under it; the destructor could
+    unwatch a range the callback had just freed - a double free into the watch free lists, then a
+    corrupt bucket (`FireWatches` followed a node pointer of 1). Banjo crashed on the Spiral
+    Mountain load every time with today's builds and not with yesterday's - the heap layout
+    decided where the double free landed, so the bisect pointed at unrelated commits. The
+    destructor now unwatches under the lock; the same route runs into gameplay. Tools that found
+    it: `cdb` with `sxd -c2` on second-chance access violations (a wrapper passed to
+    `pc_run --exe`), and a bisect that only counts runs that reached the crash point.
 - **Command-processor CPU per draw, the full split (2026-09-23).** The short `GPU draw cpu/frame`
   line now carries every bucket: `prep_us` (after Process to RequestTextures: shader
   modifications, translation lookups, samplers), `tex_us`, `rt_us`, `pipe_us`, `state_us` (after

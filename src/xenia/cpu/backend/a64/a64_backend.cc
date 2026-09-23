@@ -156,6 +156,17 @@ DEFINE_bool(
     "a64");
 
 DEFINE_bool(
+    a64_thunk_fpcr_write_if_changed, true,
+    "ARM64: the host-to-guest thunk (every LLVM guest call enters through it) "
+    "and the guest-to-host thunk (every host call returns through it) wrote "
+    "the guest FPCR unconditionally - the x64 thunks' MXCSR reload. On the "
+    "A710 class cores an FPCR write is non-speculative and in-order. Read FPCR "
+    "(mrs, a plain system-register read) and write only when it differs: the "
+    "architectural result is the same, since writing the value FPCR already "
+    "holds changes nothing. false = the old unconditional write.",
+    "a64");
+
+DEFINE_bool(
     a64_fpcr_single_mode, false,
     "ARM64: never switch FPCR between scalar-FP and VMX modes. A710 SWOG "
     "Table 4-3 lists an FPCR write as Non-Speculative and In-Order, and note "
@@ -1333,7 +1344,17 @@ HostToGuestThunk A64HelperEmitter::EmitHostToGuestThunk() {
   // work done before the call can't leak a stale rounding / non-IEEE mode.
   ldr(w11,
       ptr(x19, static_cast<uint32_t>(offsetof(A64BackendContext, fpcr_fpu))));
-  msr(3, 3, 4, 4, 0, x11);
+  if (cvars::a64_thunk_fpcr_write_if_changed) {
+    // x12 is scratch here (x9 takes the target below).
+    auto& fpcr_same = NewCachedLabel();
+    mrs(x12, 3, 3, 4, 4, 0);  // FPCR.
+    cmp(w11, w12);
+    b(Xbyak_aarch64::EQ, fpcr_same);
+    msr(3, 3, 4, 4, 0, x11);
+    L(fpcr_same);
+  } else {
+    msr(3, 3, 4, 4, 0, x11);
+  }
   // x0 still holds target, x2 holds return address.
   // The guest function's prolog stores x0 to GUEST_RET_ADDR on its stack
   // frame. Move the target to a scratch reg and put the guest return
@@ -1464,9 +1485,19 @@ GuestToHostThunk A64HelperEmitter::EmitGuestToHostThunk() {
   // Host callbacks may change FPCR. Restore the guest scalar FPCR before
   // resuming the JIT so later guest ops observe the cached PPC mode.
   // x19 (backend context) is callee-saved, so it survives the host call.
+  // x0/x1 hold the host function's result; x11/x12 are caller-saved scratch.
   ldr(w11,
       ptr(x19, static_cast<uint32_t>(offsetof(A64BackendContext, fpcr_fpu))));
-  msr(3, 3, 4, 4, 0, x11);
+  if (cvars::a64_thunk_fpcr_write_if_changed) {
+    auto& fpcr_same = NewCachedLabel();
+    mrs(x12, 3, 3, 4, 4, 0);  // FPCR.
+    cmp(w11, w12);
+    b(Xbyak_aarch64::EQ, fpcr_same);
+    msr(3, 3, 4, 4, 0, x11);
+    L(fpcr_same);
+  } else {
+    msr(3, 3, 4, 4, 0, x11);
+  }
 
   code_offsets.epilog = getSize();
 

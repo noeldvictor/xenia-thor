@@ -456,11 +456,26 @@ TextureCache::Texture::Texture(TextureCache& texture_cache,
 }
 
 TextureCache::Texture::~Texture() {
-  if (mips_watch_handle_) {
-    texture_cache().shared_memory().UnwatchMemoryRange(mips_watch_handle_);
-  }
-  if (base_watch_handle_) {
-    texture_cache().shared_memory().UnwatchMemoryRange(base_watch_handle_);
+  {
+    // The watch callbacks run under the global lock on whatever thread fired
+    // them - usually a guest thread's write fault - and they clear these
+    // handles, then SharedMemory unlinks and frees the range. Eviction
+    // destroys textures on the command processor thread without that lock, so
+    // a handle read here without it can be one a callback is freeing right
+    // now; unwatching it again double-frees the range and its nodes into the
+    // free lists, and a node handed out twice later corrupts a watch bucket
+    // (2026-09-23: FireWatches followed a node pointer of 1 on Banjo's Spiral
+    // Mountain load, and the crash moved with unrelated code changes). Read and
+    // unwatch under the lock.
+    auto global_lock = texture_cache_.global_critical_region_.Acquire();
+    if (mips_watch_handle_) {
+      texture_cache().shared_memory().UnwatchMemoryRange(mips_watch_handle_);
+      mips_watch_handle_ = nullptr;
+    }
+    if (base_watch_handle_) {
+      texture_cache().shared_memory().UnwatchMemoryRange(base_watch_handle_);
+      base_watch_handle_ = nullptr;
+    }
   }
 
   if (used_previous_) {

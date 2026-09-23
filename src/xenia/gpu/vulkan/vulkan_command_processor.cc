@@ -9,6 +9,8 @@
 
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
 
+#include "xenia/gpu/swap_compare_store.h"
+
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -2111,39 +2113,41 @@ void VulkanCommandProcessor::WriteFetchFromMem(uint32_t start_index,
   }
   // Per-fetch-slot value compare, same semantics as the per-register path:
   // the identical fetch constants games re-emit every draw must not dirty
-  // texture bindings or the fetch constant buffer.
-  bool any_changed = false;
-  uint32_t index = start_index;
-  uint32_t* src = base;
-  uint32_t remaining = num_registers;
-  while (remaining) {
-    uint32_t slot = (index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0) / 6;
-    uint32_t slot_end_index =
-        XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 + (slot + 1) * 6;
-    uint32_t count = std::min(remaining, slot_end_index - index);
-    bool slot_changed = false;
-    for (uint32_t i = 0; i < count; ++i) {
-      uint32_t value = xe::load_and_swap<uint32_t>(src + i);
-      slot_changed |= register_file_->values[index + i] != value;
-      register_file_->values[index + i] = value;
-    }
-    if (slot_changed) {
-      any_changed = true;
-      uint32_t slot_bit_clear = ~(UINT32_C(1) << slot);
-      current_samplers_fetch_up_to_date_vertex_ &= slot_bit_clear;
-      current_samplers_fetch_up_to_date_pixel_ &= slot_bit_clear;
-      if (texture_cache_) {
-        texture_cache_->TextureFetchConstantWritten(slot);
+  // texture bindings or the fetch constant buffer. SwapCompareStore32 (NEON
+  // on ARM64) swaps, compares and stores up to 64 registers at a time and
+  // returns which changed; the usual case - nothing changed - ends here with
+  // an empty mask.
+  const uint32_t first_register =
+      start_index - XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0;
+  uint64_t changed_slots = 0;
+  for (uint32_t done = 0; done < num_registers;) {
+    uint32_t count = std::min(num_registers - done, UINT32_C(64));
+    uint64_t changed = SwapCompareStore32(
+        &register_file_->values[start_index + done], base + done, count);
+    while (changed) {
+      uint32_t bit = xe::tzcnt(changed);
+      changed &= changed - 1;
+      uint32_t slot = (first_register + done + bit) / 6;
+      if (slot < 64) {
+        changed_slots |= uint64_t(1) << slot;
       }
     }
-    index += count;
-    src += count;
-    remaining -= count;
+    done += count;
   }
-  if (any_changed) {
-    current_constant_buffers_up_to_date_ &=
-        ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFetch);
+  if (!changed_slots) {
+    return;
   }
+  for (uint64_t slots = changed_slots; slots; slots &= slots - 1) {
+    uint32_t slot = xe::tzcnt(slots);
+    uint32_t slot_bit_clear = ~(UINT32_C(1) << (slot & 31));
+    current_samplers_fetch_up_to_date_vertex_ &= slot_bit_clear;
+    current_samplers_fetch_up_to_date_pixel_ &= slot_bit_clear;
+    if (texture_cache_) {
+      texture_cache_->TextureFetchConstantWritten(slot);
+    }
+  }
+  current_constant_buffers_up_to_date_ &=
+      ~(UINT32_C(1) << SpirvShaderTranslator::kConstantBufferFetch);
 }
 
 void VulkanCommandProcessor::WriteBoolLoopFromMem(uint32_t start_index,
