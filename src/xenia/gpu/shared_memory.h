@@ -40,6 +40,7 @@ class SharedMemory {
     uint64_t protect_ns = 0;       // re-arming the write watch
     uint64_t lock_ns = 0;          // waiting for the global lock in RequestRange
     uint64_t invalidations = 0;    // write-watch hits (any thread)
+    uint64_t request_zero_copy = 0;  // buffer requests with nothing to do
   };
   Stats TakeStats() {
     Stats s = stats_;
@@ -113,6 +114,14 @@ class SharedMemory {
   // ensures the host GPU memory backing the range are resident. Returns true if
   // the range has been fully updated and is usable.
   bool RequestRange(uint32_t start, uint32_t length);
+  // For a range the GPU only reads as a buffer (vertex fetch, guest indices).
+  // With unified-memory zero-copy the GPU buffer is the guest memory and is
+  // always current: no residency bookkeeping, no lock and no write watch, so
+  // the next CPU write to the page does not fault
+  // (gpu_uma_skip_buffer_watches). Otherwise the same as RequestRange.
+  bool RequestBufferRange(uint32_t start, uint32_t length);
+  // True when the GPU buffer is the guest's physical memory (gpu_uma_zero_copy).
+  bool is_zero_copy() const { return zero_copy_; }
   // Returns whether every page in the range is currently valid in the host GPU
   // memory copy. Hold the global critical region if relying on this for state
   // transitions such as watch installation.
@@ -136,6 +145,9 @@ class SharedMemory {
 
  protected:
   SharedMemory(Memory& memory);
+  // Set by the implementation when its GPU buffer is bound to the guest's
+  // physical memory itself (gpu_uma_zero_copy): an upload copies nothing.
+  bool zero_copy_ = false;
   // Call in implementation-specific initialization.
   bool InitializeCommon();
   void InitializeSparseHostGpuMemory(uint32_t granularity_log2);

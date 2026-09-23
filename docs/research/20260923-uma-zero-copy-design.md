@@ -97,7 +97,7 @@ the same, fps is not lower. Then the timing hazard is the thing to watch.
 | 1 | back the physical views with the AHB dma-buf (`gpu_uma_zero_copy=1`), keep the separate GPU buffer and the copies | boot a title to its first scene, scoreboard row | same fps and image as off |
 | 2 | import the AHB as the GPU buffer, copy nothing, keep all watches | scoreboard rows, `GPU shmem/frame` (upload_kb near 0), trace A/B of one frame on the PC for the reference image | same image; upload time gone |
 | 3 | guest fences on host completion, only if stage 2 shows corrupted geometry | the same rows | the image is correct |
-| 4 | no watch for buffer-only pages | `invalidations` near 0 | same image |
+| 4 | no watch for buffer-only pages (built 2026-09-23: `RequestBufferRange`, `gpu_uma_skip_buffer_watches`; PC Gears 0 uploads, 0 invalidations, same image) | `invalidations` near 0 | same image |
 
 Start with the title whose `GPU shmem/frame` shows the most upload KB; run stage 0 and 1 in one
 device session.

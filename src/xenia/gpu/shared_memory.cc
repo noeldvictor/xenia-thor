@@ -38,6 +38,17 @@ DEFINE_bool(
     "false restores the locked check. Read per call (live).",
     "GPU");
 
+DEFINE_bool(
+    gpu_uma_skip_buffer_watches, true,
+    "With unified-memory zero-copy active (gpu_uma_zero_copy), vertex and "
+    "guest index buffer requests do nothing: the GPU buffer is the guest "
+    "memory, so there is no copy to keep current, and no write watch is armed "
+    "for them - the next CPU write to such a page takes no page fault, no "
+    "global lock and no mprotect. Texture, resolve and memexport requests keep "
+    "the watch (the texture cache needs it). No effect without zero-copy. "
+    "Read per call (live).",
+    "GPU");
+
 namespace xe {
 namespace gpu {
 
@@ -528,6 +539,20 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
                                    std::chrono::steady_clock::now() - upload_t0)
                                    .count());
   return uploaded;
+}
+
+bool SharedMemory::RequestBufferRange(uint32_t start, uint32_t length) {
+  if (zero_copy_ && cvars::gpu_uma_skip_buffer_watches) {
+    if (start > kBufferSize || (kBufferSize - start) < length) {
+      return false;
+    }
+    if (cvars::gpu_shared_memory_stats) {
+      ++stats_.request_calls;
+      ++stats_.request_zero_copy;
+    }
+    return true;
+  }
+  return RequestRange(start, length);
 }
 
 bool SharedMemory::IsRangeValid(uint32_t start, uint32_t length) const {

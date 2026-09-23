@@ -3296,10 +3296,10 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     if (SharedMemory::StatsEnabled() && shared_memory_) {
       SharedMemory::Stats sm = shared_memory_->TakeStats();
       XELOGI(
-          "GPU shmem/frame: requests={} fast={} uploads={} upload_kb={} "
-          "upload_us={} protect_us={} lock_us={} invalidations={}",
-          sm.request_calls, sm.request_fast, sm.upload_calls,
-          (sm.upload_pages << 12) >> 10, sm.upload_ns / 1000,
+          "GPU shmem/frame: requests={} fast={} zero_copy={} uploads={} "
+          "upload_kb={} upload_us={} protect_us={} lock_us={} invalidations={}",
+          sm.request_calls, sm.request_fast, sm.request_zero_copy,
+          sm.upload_calls, (sm.upload_pages << 12) >> 10, sm.upload_ns / 1000,
           sm.protect_ns / 1000, sm.lock_ns / 1000, sm.invalidations);
     }
 
@@ -7768,7 +7768,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                                                       << (vfetch_index & 63);
         continue;
       }
-      if (!shared_memory_->RequestRange(vf_address, vf_size)) {
+      if (!shared_memory_->RequestBufferRange(vf_address, vf_size)) {
         XELOGE(
             "Failed to request vertex buffer at 0x{:08X} (size {}) in the "
             "shared memory",
@@ -7780,7 +7780,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                                                     << (vfetch_index & 63);
       continue;
     }
-    if (!shared_memory_->RequestRange(vf_address, vf_size)) {
+    if (!shared_memory_->RequestBufferRange(vf_address, vf_size)) {
       XELOGE(
           "Failed to request vertex buffer at 0x{:08X} (size {}) in the shared "
           "memory",
