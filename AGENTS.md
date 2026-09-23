@@ -368,7 +368,17 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   buffer page 0x1F9A0000 is the same in both games (maybe a system structure, not game data).
   "possible" is inflated: with lazy completion polls the completed submission is stale. Next:
   name the pages (which guest allocation), exclude system pages, then stage 3 or a per-title
-  zero-copy list. Zero-copy stays default off. Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
+  zero-copy list. Zero-copy stays default off.
+  **Per-game control (2026-09-23):** the app toggle `opt_uma_zero_copy` ("Unified-memory
+  zero-copy", GPU category, default off) sets `gpu_uma_zero_copy`; the per-game override
+  (DEFAULT/ON/OFF in the game's settings, or `XeniaOptimizations.SHIPPED_TITLE_OVERRIDES`)
+  turns it on or off for one title. MagnaCarta 2 (4E4D080B) ships OFF. Rule: a title gets ON
+  only after a PC `pc_run --android-defaults --cvars "gpu_uma_zero_copy=true
+  gpu_uma_hazard_check=true ..."` says SAFE and the Thor shows it faster with the same image.
+  Not built yet: a hazard guard (a CPU write to a page an in-flight submission reads waits for
+  that submission). The write fault runs with the global lock held and only the command
+  processor knows GPU completion, so the guard needs a timeline semaphore any thread can wait
+  on; build it only if the Thor shows zero-copy faster. Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
   GPU-readback titles, plus 512 MB of RAM - the device decides.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.

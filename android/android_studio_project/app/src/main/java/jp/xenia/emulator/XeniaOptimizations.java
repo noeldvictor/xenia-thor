@@ -696,6 +696,25 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("vulkan_persistent_pipeline_cache")}, null));
 
         list.add(new Optimization(
+                "opt_uma_zero_copy",
+                "Unified-memory zero-copy (experimental)",
+                "The GPU reads the game's RAM directly: no copy of game data into a "
+                        + "GPU buffer, no page faults for vertex data.",
+                "The Thor's CPU and GPU share one RAM, but the emulator was built for "
+                        + "a desktop GPU with its own memory: it copies game data into a "
+                        + "GPU buffer and watches every page for changes. With this on, "
+                        + "the GPU buffer is the game's own memory, so nothing is copied "
+                        + "and vertex and index buffers need no page watch (no page fault, "
+                        + "no lock, no mprotect when the game writes them). Needs the "
+                        + "custom Turnip driver (patch 0001, VK_EXT_external_memory_host); "
+                        + "with another driver it stays off by itself. Per game: a title "
+                        + "that changes data while the GPU still reads it can tear "
+                        + "(MagnaCarta 2 does; it is off for that game). Check a title "
+                        + "on the PC with gpu_uma_hazard_check before turning it on.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("gpu_uma_zero_copy")}, null));
+
+        list.add(new Optimization(
                 "opt_fp16_pixel",
                 "FP16 pixel shaders (experimental)",
                 "Runs pixel-shader math at half precision on the Adreno's native FP16.",
@@ -1254,6 +1273,16 @@ public final class XeniaOptimizations {
         gears.put("opt_whole_draw_cull", OVERRIDE_OFF);
         gears.put("opt_vrs_balanced", OVERRIDE_OFF);
         SHIPPED_TITLE_OVERRIDES.put("4D5307D5", gears);
+        // MagnaCarta 2 (4E4D080B): with unified-memory zero-copy the game's CPU
+        // changes texture and buffer pages while the GPU still reads them
+        // (gpu_uma_hazard_check on the PC: hazards in 3,283 of 6,276 frames),
+        // and a cutscene frame tears across its full width at a moving row.
+        // The copy path takes a snapshot when the draw is recorded, so it is
+        // clean. Off for this title even when the global toggle is on
+        // (2026-09-23).
+        final java.util.Map<String, Integer> mc2 = new java.util.HashMap<>();
+        mc2.put("opt_uma_zero_copy", OVERRIDE_OFF);
+        SHIPPED_TITLE_OVERRIDES.put("4E4D080B", mc2);
     }
 
     /** The shipped default override for (title, optimization), or DEFAULT. */
