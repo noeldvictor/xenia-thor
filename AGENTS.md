@@ -368,7 +368,16 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
     `scratch/matrix/summary-20260923-163812.json`) all four run: Blue Dragon past its Voice
     Language menu into the village opening, MagnaCarta 2 through its opening (skipped) into
     village gameplay ("You brought it on yourself"), Gears into the cell, Banjo into Spiral
-    Mountain. `scratch/gears/gears2.iso` is 1.76 GB against
+    Mountain.
+  - **Zero-copy hazard matrix (`pc_matrix.py --cvars "gpu_uma_zero_copy=true
+    gpu_uma_hazard_check=true ..."`, `summary-20260923-165815.json`):** all four run, all four
+    read UNSAFE - but the kind is almost only "buffer, definite", median 1 page per frame (Banjo
+    5): a CPU write to a page a draw of the not-yet-submitted submission reads. The check is
+    page-granular; a dynamic vertex ring that appends into the rest of a page a draw already
+    uses reads as a hazard although the bytes do not overlap (the same page, 0x1F9A0000, in
+    several titles points at a shared system ring). Texture/other hazards are now median 0 for
+    MC2 (6 per frame before direct resolve became the default). Next: record the exact fault
+    address and the requested byte range per page, and count only overlapping writes. `scratch/gears/gears2.iso` is 1.76 GB against
     7.8 GB for Gears 1 - an incomplete pull; it does not mount ("Failed to read all GDFX
     entries"). Under `--cdb` every write-watch fault is a debugger event and the run slows
     several times over; use it on a crash, not for the whole matrix.
