@@ -113,6 +113,11 @@ class VulkanSharedMemory : public SharedMemory {
   bool buffer_host_visible_ = false;
   bool buffer_host_coherent_ = false;
   void* buffer_host_mapping_ = nullptr;
+  // Unified-memory zero-copy (gpu_uma_zero_copy): buffer_ is bound to the
+  // guest's physical memory itself; an upload copies nothing and only marks
+  // the pages valid (the write watch stays for texture invalidation).
+  bool zero_copy_ = false;
+  bool TryCreateZeroCopyBuffer(const VkBufferCreateInfo& base_create_info);
 
   // Double-buffer (gpu_shared_memory_double_buffer): two host-visible versions
   // of the buffer. version 0 is the existing buffer_ / buffer_host_mapping_;

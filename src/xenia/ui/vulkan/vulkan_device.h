@@ -264,6 +264,9 @@ class VulkanDevice {
     // design.md): import an AHardwareBuffer as the shared-memory buffer.
     // Requested only with gpu_uma_zero_copy_probe.
     bool ext_ANDROID_external_memory_android_hardware_buffer = false;
+    // Unified-memory zero-copy on a desktop driver (gpu_uma_zero_copy): import
+    // the guest's physical memory by host pointer as the shared-memory buffer.
+    bool ext_EXT_external_memory_host = false;
     bool ext_EXT_queue_family_foreign = false;
     // VK_KHR_fragment_shading_rate: for each coarse rate, indexed 1x1, 2x1,
     // 2x2, 4x2, 4x4, the VkSampleCountFlags the device supports it at, from

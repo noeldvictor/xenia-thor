@@ -116,6 +116,7 @@ DEFINE_bool(
     "Vulkan");
 
 DECLARE_bool(gpu_uma_zero_copy_probe);
+DECLARE_bool(gpu_uma_zero_copy);
 
 #if XE_PLATFORM_ANDROID
 #include <android/hardware_buffer.h>
@@ -312,7 +313,14 @@ bool VulkanSharedMemory::Initialize() {
   // Thor, and this is the spec-robust path that works on every driver.
   const bool driver_is_mesa_turnip =
       vulkan_device->properties().driverID == VK_DRIVER_ID_MESA_TURNIP;
-  if (cvars::vulkan_sparse_shared_memory &&
+  // Unified-memory zero-copy first: when the guest's physical memory can be
+  // imported as the buffer's memory, nothing below runs.
+  if (cvars::gpu_uma_zero_copy) {
+    VkBufferCreateInfo zero_copy_create_info = buffer_create_info;
+    zero_copy_create_info.flags &= ~sparse_flags;
+    TryCreateZeroCopyBuffer(zero_copy_create_info);
+  }
+  if (buffer_ == VK_NULL_HANDLE && cvars::vulkan_sparse_shared_memory &&
       !cvars::gpu_uma_direct_shared_memory && !driver_is_mesa_turnip &&
       vulkan_device->properties().sparseResidencyBuffer) {
     if (dfn.vkCreateBuffer(device, &buffer_create_info, nullptr, &buffer_) ==
@@ -832,9 +840,135 @@ bool VulkanSharedMemory::AllocateSparseHostGpuMemoryRange(
   return true;
 }
 
+bool VulkanSharedMemory::TryCreateZeroCopyBuffer(
+    const VkBufferCreateInfo& base_create_info) {
+  const ui::vulkan::VulkanDevice* const vulkan_device =
+      command_processor_.GetVulkanDevice();
+  const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
+  const VkDevice device = vulkan_device->device();
+  if (!vulkan_device->extensions().ext_EXT_external_memory_host) {
+    XELOGW(
+        "Shared memory: gpu_uma_zero_copy: VK_EXT_external_memory_host is not "
+        "available; using the normal buffer");
+    return false;
+  }
+  const auto& ifn = vulkan_device->vulkan_instance()->functions();
+  auto get_host_pointer_properties =
+      reinterpret_cast<PFN_vkGetMemoryHostPointerPropertiesEXT>(
+          ifn.vkGetDeviceProcAddr(device, "vkGetMemoryHostPointerPropertiesEXT"));
+  if (!get_host_pointer_properties) {
+    XELOGW("Shared memory: gpu_uma_zero_copy: no vkGetMemoryHostPointerPropertiesEXT");
+    return false;
+  }
+  void* host_pointer = memory().TranslatePhysical<void*>(0);
+#if XE_PLATFORM_WIN32
+  // The guest memory section is reserved, not committed; the driver pins
+  // committed pages only. Commit the whole physical view (all views share the
+  // section's pages).
+  if (!xe::memory::AllocFixed(host_pointer, kBufferSize,
+                              xe::memory::AllocationType::kCommit,
+                              xe::memory::PageAccess::kReadWrite)) {
+    XELOGW("Shared memory: gpu_uma_zero_copy: could not commit the physical view");
+    return false;
+  }
+#endif  // XE_PLATFORM_WIN32
+  VkExternalMemoryHandleTypeFlagBits handle_type =
+      VkExternalMemoryHandleTypeFlagBits(0);
+  uint32_t host_memory_type_bits = 0;
+  for (VkExternalMemoryHandleTypeFlagBits candidate :
+       {VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_ALLOCATION_BIT_EXT,
+        VK_EXTERNAL_MEMORY_HANDLE_TYPE_HOST_MAPPED_FOREIGN_MEMORY_BIT_EXT}) {
+    VkMemoryHostPointerPropertiesEXT properties = {};
+    properties.sType = VK_STRUCTURE_TYPE_MEMORY_HOST_POINTER_PROPERTIES_EXT;
+    VkResult result = get_host_pointer_properties(device, candidate,
+                                                  host_pointer, &properties);
+    XELOGI(
+        "Shared memory: gpu_uma_zero_copy: host pointer properties for handle "
+        "type {:X}: result {} memory type bits {:08X}",
+        uint32_t(candidate), int(result), properties.memoryTypeBits);
+    if (result == VK_SUCCESS && properties.memoryTypeBits) {
+      handle_type = candidate;
+      host_memory_type_bits = properties.memoryTypeBits;
+      break;
+    }
+  }
+  if (!host_memory_type_bits) {
+    return false;
+  }
+  VkExternalMemoryBufferCreateInfo external_create_info = {};
+  external_create_info.sType =
+      VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_BUFFER_CREATE_INFO;
+  external_create_info.handleTypes = handle_type;
+  VkBufferCreateInfo create_info = base_create_info;
+  create_info.pNext = &external_create_info;
+  if (dfn.vkCreateBuffer(device, &create_info, nullptr, &buffer_) !=
+      VK_SUCCESS) {
+    XELOGW("Shared memory: gpu_uma_zero_copy: vkCreateBuffer failed");
+    buffer_ = VK_NULL_HANDLE;
+    return false;
+  }
+  VkMemoryRequirements requirements;
+  dfn.vkGetBufferMemoryRequirements(device, buffer_, &requirements);
+  uint32_t memory_type;
+  if (!xe::bit_scan_forward(requirements.memoryTypeBits & host_memory_type_bits,
+                            &memory_type)) {
+    XELOGW(
+        "Shared memory: gpu_uma_zero_copy: no memory type both the buffer "
+        "({:08X}) and the host pointer ({:08X}) accept",
+        requirements.memoryTypeBits, host_memory_type_bits);
+    dfn.vkDestroyBuffer(device, buffer_, nullptr);
+    buffer_ = VK_NULL_HANDLE;
+    return false;
+  }
+  VkImportMemoryHostPointerInfoEXT import_info = {};
+  import_info.sType = VK_STRUCTURE_TYPE_IMPORT_MEMORY_HOST_POINTER_INFO_EXT;
+  import_info.handleType = handle_type;
+  import_info.pHostPointer = host_pointer;
+  VkMemoryAllocateInfo allocate_info = {};
+  allocate_info.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+  allocate_info.pNext = &import_info;
+  allocate_info.allocationSize = kBufferSize;
+  allocate_info.memoryTypeIndex = memory_type;
+  VkDeviceMemory memory_handle;
+  VkResult allocate_result =
+      dfn.vkAllocateMemory(device, &allocate_info, nullptr, &memory_handle);
+  if (allocate_result != VK_SUCCESS) {
+    XELOGW("Shared memory: gpu_uma_zero_copy: importing the host pointer failed ({})",
+           int(allocate_result));
+    dfn.vkDestroyBuffer(device, buffer_, nullptr);
+    buffer_ = VK_NULL_HANDLE;
+    return false;
+  }
+  if (dfn.vkBindBufferMemory(device, buffer_, memory_handle, 0) != VK_SUCCESS) {
+    XELOGW("Shared memory: gpu_uma_zero_copy: binding the imported memory failed");
+    dfn.vkFreeMemory(device, memory_handle, nullptr);
+    dfn.vkDestroyBuffer(device, buffer_, nullptr);
+    buffer_ = VK_NULL_HANDLE;
+    return false;
+  }
+  buffer_memory_.push_back(memory_handle);
+  buffer_memory_type_ = memory_type;
+  zero_copy_ = true;
+  XELOGI(
+      "Shared memory: gpu_uma_zero_copy ACTIVE - the {} MB GPU buffer is the "
+      "guest's physical memory (handle type {:X}, memory type {})",
+      kBufferSize >> 20, uint32_t(handle_type), memory_type);
+  return true;
+}
+
 bool VulkanSharedMemory::UploadRanges(
     const std::vector<std::pair<uint32_t, uint32_t>>& upload_page_ranges) {
   if (upload_page_ranges.empty()) {
+    return true;
+  }
+  if (zero_copy_) {
+    // The GPU buffer is guest memory: nothing to copy. Mark the pages valid
+    // and keep the write watch (the texture cache relies on it).
+    const uint32_t page_size_log2_local = page_size_log2();
+    for (const auto& range : upload_page_ranges) {
+      MakeRangeValid(range.first << page_size_log2_local,
+                     range.second << page_size_log2_local, false);
+    }
     return true;
   }
   if (buffer_host_visible_) {

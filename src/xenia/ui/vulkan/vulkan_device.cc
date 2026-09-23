@@ -45,6 +45,17 @@ DEFINE_bool(
     "only; default off.",
     "Vulkan");
 
+DEFINE_bool(
+    gpu_uma_zero_copy, false,
+    "Unified-memory zero-copy (docs/research/20260923-uma-zero-copy-design.md): "
+    "the shared-memory GPU buffer IS the guest's physical memory - no copy of "
+    "guest pages into a GPU buffer; the GPU reads and writes guest RAM. Desktop "
+    "(Windows) path: VK_EXT_external_memory_host imports the 512 MB physical "
+    "view by host pointer; the Android path (an AHardwareBuffer backing the "
+    "physical views) is the next stage. Falls back to the normal buffer when "
+    "the import is not possible. Default off.",
+    "Vulkan");
+
 DEFINE_bool(vulkan_disable_shader_stencil_export, false,
             "DIAGNOSTIC: do not enable VK_EXT_shader_stencil_export even when "
             "the device has it (the depth ownership transfers then use the "
@@ -290,6 +301,9 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     // when supported; INERT until the gpu_vulkan_shader_stats consumer queries
     // statistics at pipeline creation.
     XE_UI_VULKAN_STRUCT_EXTENSION(KHR_pipeline_executable_properties)
+    if (cvars::gpu_uma_zero_copy) {
+      XE_UI_VULKAN_STRUCT_EXTENSION(EXT_external_memory_host)
+    }
 #if XE_PLATFORM_ANDROID
     if (cvars::gpu_uma_zero_copy_probe) {
       XE_UI_VULKAN_STRUCT_EXTENSION(
