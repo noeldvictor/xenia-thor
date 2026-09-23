@@ -51,7 +51,10 @@ Always update this file when a rule or the state changes, and check it at the st
 
 - Goal: Xbox 360 games run fast and playable on the AYN Thor and Thor Max.
 - Device: Snapdragon 8 Gen 2, Adreno 740, native Android, ABI `arm64-v8a`.
-- Graphics: Vulkan through the Mesa Turnip driver. The Qualcomm driver is wrong for this work.
+- Graphics: Vulkan through a custom build of Mesa Turnip - required (user, 2026-09-22). Build it with
+  `tools/turnip/build_turnip.sh` (WSL, Mesa ref + optional patch dir -> adrenotools zip); install it
+  with `xenia_gpu_driver(install_zip=...)`. The Qualcomm driver is wrong for this work. The driver is a
+  paradigm axis: name the Mesa commit in every measurement (the scoreboard records the build).
 - CPU: PowerPC guest code runs through the a64 backend and the LLVM backend. No x64 code is in the APK.
 - Targets: Blue Dragon 30 fps at 720p with full foliage. Burnout, Gears, Lost Odyssey, Banjo at 30 to 60 fps.
 - Ship each fix and each win as the app's default behavior. No cvar gates, no intent extras. See directive 17.
@@ -305,6 +308,11 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   and VRS are on in the saved global settings although each defaults off. Every title on the device
   runs with them. Reset them with the user's approval, then enable per title only what the PC
   trace A/B shows neutral.
+- **Custom Turnip (required).** The APK bundles Mesa main `e40d93a` (2026-08-07). The first own
+  build is Mesa main `885dd3a1` (2026-09-22), `tools/turnip/build_turnip.sh`. The scoreboard A/B of
+  the two drivers on Banjo, Gears and MagnaCarta 2 is the next device step.
+- **Banjo's dark lower half is device-verified fixed** (0 of 20 dark with the cull on, 2026-09-22).
+  The global FP16 toggle is off on the device; the cull and both merges stay on.
 - **The order for a device-only bug:** `xenia_cvars` (the settings snapshot) -> the PC replay of
   the device trace with those settings (`tools/pc/trace_ab.py --from-snapshot`) or a PC parity run
   (`tools/pc/pc_run.py --from-snapshot`) -> the device only to confirm.
@@ -412,6 +420,8 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_guest_dump`, `xenia_disasm` | dump guest memory of a title to `scratch/mcp/` (diagnostic cvars, restored after), and disassemble PowerPC from a dump |
 | `xenia_stall` | the stall picture in one call from inside the app: the last spin-lock stall record, the hottest threads over one second with wait channel, the badge history, the GPU counters, the stall and crash lines of the log ring, and a verdict. `xenia_probe` calls it by itself after two intervals without a frame. When the kernel table is locked or no frame comes and no fault record exists, it adds `host_fault_threads`: the symbolized frames of each thread inside a fault handler (a host-code fault with the global lock held) |
 | `xenia_cvars` | the settings snapshot: every cvar whose live value differs from its default, from all sources (config, title profile, app toggles, launch arguments), plus each Android-only build default with its desktop value; `pc_log=` diffs it against a PC log's "Non-default cvars" lines. The FIRST call for any device-only bug |
+| `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
+| `tools/turnip/build_turnip.sh` | the custom Turnip: Mesa ref + patches -> `~/turnip-build/out/turnip-<ref>-<sha>.zip` in WSL (NDK r27c, KGSL, no LTO) |
 | `tools/pc/trace_ab.py` | a device GPU trace replayed on the PC per arm of cvars (about a minute each), image diff against the first arm per half; `--from-snapshot` builds the arms from a `xenia_cvars` file (PC defaults, all device settings, each setting alone). Names the setting behind a device-only glitch without the device |
 | `xenia_api`, `xenia_log`, `xenia_shader_cache` | any endpoint of the in-app server; the in-process log ring with a filter; the pipeline creation lines and the cache files on the device |
 

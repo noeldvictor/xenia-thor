@@ -85,6 +85,26 @@ APK in seconds. The build script generates `build/version.h` and the object-cach
 to build if the MCP server does not compile. Desktop builds (PC trace replay, PC kernel checks) go
 through premake and MSBuild; see `AGENTS.md` section 10.
 
+## Custom Turnip driver (required)
+
+This emulator needs a custom build of Mesa Turnip, the open-source Vulkan driver for the Adreno
+GPU. The Qualcomm driver is not usable for this work: the app stops on it without an error. The
+emulator's tile-GPU render paths use Vulkan extensions that only Turnip exposes on the Adreno 740.
+A driver we build ourselves follows Mesa main, can carry emulator-specific patches, and names the
+exact commit behind every measurement. The APK bundles Mesa main `e40d93a` (2026-08-07).
+
+Build a new one in WSL (Ubuntu), from a Mesa branch, tag or commit, with optional patches:
+
+```sh
+wsl -d Ubuntu -- bash tools/turnip/build_turnip.sh main [patch-dir]
+```
+
+The script downloads NDK r27c and Mesa into `~/turnip-build`. It builds Turnip for arm64 with the
+KGSL kernel interface and writes an adrenotools zip, `meta.json` plus `libvulkan_freedreno.so`, to
+`~/turnip-build/out/`. Install the zip with the app's driver manager, or from the PC with
+`xenia_gpu_driver(install_zip=...)`. Name the driver in every measurement.
+`tools/thor/scoreboard.py` records the installed build per row.
+
 ## Device work
 
 `tools/mcp/xenia_thor_mcp.py` is a stdio MCP server over adb, registered in `.mcp.json`. Every
