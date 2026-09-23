@@ -36,6 +36,7 @@ import trace_ab  # noqa: E402
 from PIL import Image, ImageChops, ImageStat  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+CDB = r'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
 HAZARDS = re.compile(r'hazards=(\d+)/(\d+)/(\d+)/(\d+)')
 PIPES = re.compile(r'VulkanPipelineCache: (\d+) pipelines created, (\d+) ms in creation \(last 64: (\d+) ms')
 # XE_ANDROID_DEFAULT settings that cannot apply to the Windows build: the ARM64
@@ -51,6 +52,21 @@ ANDROID_ONLY = {
     'cpu_llvm_object_cache_skip_lowering', 'gpu_adpf_thermal_throttle',
     'gpu_uma_direct_shared_memory',
 }
+
+
+def emulator_pid(proc, under_cdb):
+    """The process that owns the emulator window: proc itself, or under cdb
+    its xenia child."""
+    if not under_cdb:
+        return proc.pid
+    try:
+        import psutil
+        for child in psutil.Process(proc.pid).children(recursive=True):
+            if child.name().lower().startswith('xenia'):
+                return child.pid
+    except Exception:
+        pass
+    return proc.pid
 
 
 def android_default_cvars():
@@ -96,6 +112,9 @@ def main():
     ap.add_argument('--name', default='')
     ap.add_argument('--oracle', action='store_true')
     ap.add_argument('--exe', default=pc_screens.EXE)
+    ap.add_argument('--cdb', action='store_true',
+                    help='run under cdb: first-chance access violations (the write watches) pass, '
+                         'a second-chance one prints the crash stack at the end')
     ap.add_argument('--trace-at', default='', help='"seconds ..." at which to trace the frame on screen '
                     '(trace_gpu_request_file); the .xtr files land in <storage>/traces for tools/pc/trace_ab.py')
     args = ap.parse_args()
@@ -133,7 +152,19 @@ def main():
         presses.append((float(t), button))
     print('run:', os.path.basename(exe), ' '.join('--' + c for c in cvars) if not args.oracle else '(oracle)',
           flush=True)
-    proc = subprocess.Popen(cmd, cwd=ROOT)
+    cdb_log = os.path.join(storage, 'cdb.log')
+    if args.cdb and not args.oracle:
+        # 2026-09-23: a Banjo crash (a double free in the texture watch lists)
+        # left no log line - xenia's handler ended the process. cdb named it in
+        # one run: FireWatches <- RangeWrittenByGpu <- MarkRangeAsResolved.
+        if os.path.exists(cdb_log):
+            os.remove(cdb_log)
+        cmd = [CDB, '-G', '-logo', cdb_log, '-y', os.path.dirname(os.path.abspath(exe)), '-c',
+               'sxd -c2 ".ecxr;kn 40;r;q" av; sxd -c2 ".ecxr;kn 40;q" c0000409; g'] + cmd
+        # cdb echoes every first-chance fault (the write watches) - the log has it.
+        proc = subprocess.Popen(cmd, cwd=ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        proc = subprocess.Popen(cmd, cwd=ROOT)
     t0 = time.time()
     parked = set()
     prev = None
@@ -156,7 +187,7 @@ def main():
                 print('+%5.1f s press %s' % (now, button), flush=True)
             if now >= next_shot:
                 next_shot += args.every
-                hwnd = pc_screens.find_window(proc.pid)
+                hwnd = pc_screens.find_window(emulator_pid(proc, args.cdb))
                 if hwnd:
                     if hwnd not in parked:
                         pc_screens.park_offscreen(hwnd)
@@ -226,6 +257,16 @@ def main():
     verdict = ('EXITED %s' % exited) if exited is not None else (
         ('FROZEN (cold compiles)' if cold else 'FROZEN') if frozen else
         ('NO FRAME' if not first_frame else 'RUNNING'))
+    if args.cdb and os.path.exists(cdb_log):
+        lines = open(cdb_log, encoding='utf-8', errors='replace').read().splitlines()
+        hit = next((i for i, l in enumerate(lines) if 'second chance' in l), None)
+        if hit is None:
+            print('cdb: no second-chance exception')
+        else:
+            print('cdb crash stack:')
+            for l in lines[hit:hit + 24]:
+                if 'first chance' not in l:
+                    print('  ' + l[:160])
     print('verdict:', verdict, '| log', log)
     return 0 if verdict == 'RUNNING' else 1
 

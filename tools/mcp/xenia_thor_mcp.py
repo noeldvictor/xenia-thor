@@ -1120,13 +1120,22 @@ def xenia_trace_ab(trace: str, arms: str = '', snapshot: str = '') -> str:
 
 @mcp.tool()
 def xenia_pc_run(iso: str, seconds: int = 120, cvars: str = '', presses: str = '',
-                 snapshot: str = '', trace_at: str = '', name: str = '') -> str:
+                 snapshot: str = '', trace_at: str = '', name: str = '',
+                 android_defaults: bool = False, cdb: bool = False) -> str:
     """Run a title on the Windows build (Vulkan) with the device's settings and
     watch it (tools/pc/pc_run.py): parked-window captures, a frozen-screen flag,
-    the log's stall markers; presses "seconds:button ..." through the nop HID;
-    trace_at "seconds ..." traces the frame on screen for xenia_trace_ab.
-    snapshot: a xenia_cvars JSON (its GPU/Vulkan settings apply). PC only."""
+    the log's stall markers, the pipeline compile rate (cold driver cache) and
+    the zero-copy hazard verdict; presses "seconds:button ..." through the nop
+    HID; trace_at "seconds ..." traces the frame on screen for xenia_trace_ab.
+    snapshot: a xenia_cvars JSON (its GPU/Vulkan settings apply).
+    android_defaults: the Android build defaults the PC can run. cdb: run under
+    the debugger and print the stack of a crash (a second-chance fault) - the
+    tool that named the texture watch double free. PC only."""
     args = [iso, '--seconds', seconds]
+    if android_defaults:
+        args.append('--android-defaults')
+    if cdb:
+        args.append('--cdb')
     for flag, value in (('--cvars', cvars), ('--presses', presses), ('--from-snapshot', snapshot),
                         ('--trace-at', trace_at), ('--name', name)):
         if value:
