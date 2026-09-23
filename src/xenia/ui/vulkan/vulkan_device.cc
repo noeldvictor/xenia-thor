@@ -34,6 +34,17 @@ DEFINE_string(
     "tile, device only).",
     "Vulkan");
 
+DEFINE_bool(
+    gpu_uma_zero_copy_probe, false,
+    "Unified-memory zero-copy, stage 0 (docs/research/20260923-uma-zero-copy-"
+    "design.md): request VK_ANDROID_external_memory_android_hardware_buffer "
+    "and VK_EXT_queue_family_foreign, and at shared-memory startup allocate a "
+    "512 MB BLOB AHardwareBuffer, log what the driver reports for importing it "
+    "(memory type bits and their flags), extract its dma-buf fd and check a CPU "
+    "mapping of it; then release it. Nothing is imported or used. Android "
+    "only; default off.",
+    "Vulkan");
+
 DEFINE_bool(vulkan_disable_shader_stencil_export, false,
             "DIAGNOSTIC: do not enable VK_EXT_shader_stencil_export even when "
             "the device has it (the depth ownership transfers then use the "
@@ -279,6 +290,13 @@ std::unique_ptr<VulkanDevice> VulkanDevice::CreateIfSupported(
     // when supported; INERT until the gpu_vulkan_shader_stats consumer queries
     // statistics at pipeline creation.
     XE_UI_VULKAN_STRUCT_EXTENSION(KHR_pipeline_executable_properties)
+#if XE_PLATFORM_ANDROID
+    if (cvars::gpu_uma_zero_copy_probe) {
+      XE_UI_VULKAN_STRUCT_EXTENSION(
+          ANDROID_external_memory_android_hardware_buffer)
+      XE_UI_VULKAN_STRUCT_EXTENSION(EXT_queue_family_foreign)
+    }
+#endif  // XE_PLATFORM_ANDROID
   }
 
 #undef XE_UI_VULKAN_STRUCT_EXTENSION

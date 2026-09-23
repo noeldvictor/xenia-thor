@@ -260,6 +260,11 @@ class VulkanDevice {
     // alpha-test foliage (gpu_vrs_foliage_rate). Confirmed present on both Thor
     // drivers. pipelineFragmentShadingRate enabled when supported.
     bool ext_KHR_fragment_shading_rate = false;
+    // Unified-memory zero-copy, stage 0 (docs/research/20260923-uma-zero-copy-
+    // design.md): import an AHardwareBuffer as the shared-memory buffer.
+    // Requested only with gpu_uma_zero_copy_probe.
+    bool ext_ANDROID_external_memory_android_hardware_buffer = false;
+    bool ext_EXT_queue_family_foreign = false;
     // VK_KHR_fragment_shading_rate: for each coarse rate, indexed 1x1, 2x1,
     // 2x2, 4x2, 4x4, the VkSampleCountFlags the device supports it at, from
     // vkGetPhysicalDeviceFragmentShadingRatesKHR. All bits set means "not

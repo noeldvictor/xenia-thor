@@ -115,9 +115,139 @@ DEFINE_bool(
     "VRAM (1 GB, trivial on the 16 GB UMA Thor).",
     "Vulkan");
 
+DECLARE_bool(gpu_uma_zero_copy_probe);
+
+#if XE_PLATFORM_ANDROID
+#include <android/hardware_buffer.h>
+#include <dlfcn.h>
+#include <sys/mman.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif  // XE_PLATFORM_ANDROID
+
 namespace xe {
 namespace gpu {
 namespace vulkan {
+
+#if XE_PLATFORM_ANDROID
+namespace {
+// Stage 0 of unified-memory zero-copy: can the Thor's driver import a 512 MB
+// AHardwareBuffer as the shared-memory buffer, with which memory types, and
+// does the buffer's dma-buf map on the CPU? Logs only; releases everything.
+// libnativewindow is opened at run time so the build needs no new link.
+void ProbeZeroCopyAhb(const ui::vulkan::VulkanDevice* vulkan_device,
+                      uint32_t size) {
+  using AllocateFn = int (*)(const AHardwareBuffer_Desc*, AHardwareBuffer**);
+  using ReleaseFn = void (*)(AHardwareBuffer*);
+  using SendFn = int (*)(const AHardwareBuffer*, int);
+  void* lib = dlopen("libnativewindow.so", RTLD_NOW);
+  auto ahb_allocate =
+      lib ? reinterpret_cast<AllocateFn>(dlsym(lib, "AHardwareBuffer_allocate"))
+          : nullptr;
+  auto ahb_release =
+      lib ? reinterpret_cast<ReleaseFn>(dlsym(lib, "AHardwareBuffer_release"))
+          : nullptr;
+  auto ahb_send = lib ? reinterpret_cast<SendFn>(dlsym(
+                            lib, "AHardwareBuffer_sendHandleToUnixSocket"))
+                      : nullptr;
+  if (!ahb_allocate || !ahb_release || !ahb_send) {
+    XELOGW("UMA zero-copy probe: libnativewindow AHardwareBuffer calls missing");
+    return;
+  }
+  AHardwareBuffer_Desc desc = {};
+  desc.width = size;
+  desc.height = 1;
+  desc.layers = 1;
+  desc.format = AHARDWAREBUFFER_FORMAT_BLOB;
+  desc.usage = AHARDWAREBUFFER_USAGE_CPU_READ_OFTEN |
+               AHARDWAREBUFFER_USAGE_CPU_WRITE_OFTEN |
+               AHARDWAREBUFFER_USAGE_GPU_DATA_BUFFER;
+  AHardwareBuffer* ahb = nullptr;
+  int alloc_result = ahb_allocate(&desc, &ahb);
+  XELOGI("UMA zero-copy probe: AHardwareBuffer_allocate(BLOB {} MB) = {}",
+         size >> 20, alloc_result);
+  if (alloc_result != 0 || !ahb) {
+    return;
+  }
+  if (vulkan_device->extensions()
+          .ext_ANDROID_external_memory_android_hardware_buffer) {
+    const auto& ifn = vulkan_device->vulkan_instance()->functions();
+    auto get_properties =
+        reinterpret_cast<PFN_vkGetAndroidHardwareBufferPropertiesANDROID>(
+            ifn.vkGetDeviceProcAddr(
+                vulkan_device->device(),
+                "vkGetAndroidHardwareBufferPropertiesANDROID"));
+    if (get_properties) {
+      VkAndroidHardwareBufferPropertiesANDROID properties = {};
+      properties.sType =
+          VK_STRUCTURE_TYPE_ANDROID_HARDWARE_BUFFER_PROPERTIES_ANDROID;
+      VkResult result =
+          get_properties(vulkan_device->device(), ahb, &properties);
+      const auto& types = vulkan_device->memory_types();
+      XELOGI(
+          "UMA zero-copy probe: import properties result {} size {} type bits "
+          "{:08X} (device_local {:08X} host_visible {:08X} host_coherent "
+          "{:08X} host_cached {:08X})",
+          int(result), uint64_t(properties.allocationSize),
+          properties.memoryTypeBits, types.device_local, types.host_visible,
+          types.host_coherent, types.host_cached);
+    } else {
+      XELOGW("UMA zero-copy probe: no vkGetAndroidHardwareBufferPropertiesANDROID");
+    }
+  } else {
+    XELOGW("UMA zero-copy probe: the AHB import extension is not enabled");
+  }
+  // The dma-buf fd, with public NDK calls only: the buffer's native handle
+  // arrives over a socket pair as SCM_RIGHTS fds.
+  int sv[2] = {-1, -1};
+  if (socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sv) == 0) {
+    int send_result = ahb_send(ahb, sv[0]);
+    char data[512];
+    char control[CMSG_SPACE(sizeof(int) * 8)];
+    iovec iov = {data, sizeof(data)};
+    msghdr msg = {};
+    msg.msg_iov = &iov;
+    msg.msg_iovlen = 1;
+    msg.msg_control = control;
+    msg.msg_controllen = sizeof(control);
+    ssize_t received = send_result == 0 ? recvmsg(sv[1], &msg, 0) : -1;
+    int fds[8];
+    int fd_count = 0;
+    for (cmsghdr* cmsg = received > 0 ? CMSG_FIRSTHDR(&msg) : nullptr; cmsg;
+         cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+      if (cmsg->cmsg_level == SOL_SOCKET && cmsg->cmsg_type == SCM_RIGHTS) {
+        int n = int((cmsg->cmsg_len - CMSG_LEN(0)) / sizeof(int));
+        for (int i = 0; i < n && fd_count < 8; ++i) {
+          fds[fd_count++] = reinterpret_cast<int*>(CMSG_DATA(cmsg))[i];
+        }
+      }
+    }
+    bool mapped_ok = false;
+    if (fd_count > 0) {
+      void* p = mmap(nullptr, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fds[0],
+                     0);
+      if (p != MAP_FAILED) {
+        volatile uint32_t* word = reinterpret_cast<volatile uint32_t*>(p);
+        *word = 0x5A5A1234u;
+        mapped_ok = *word == 0x5A5A1234u;
+        munmap(p, 4096);
+      }
+    }
+    XELOGI(
+        "UMA zero-copy probe: native handle send {} received {} bytes, {} fds, "
+        "fd[0] CPU map {}",
+        send_result, int64_t(received), fd_count,
+        mapped_ok ? "read/write ok" : "failed");
+    for (int i = 0; i < fd_count; ++i) {
+      close(fds[i]);
+    }
+    close(sv[0]);
+    close(sv[1]);
+  }
+  ahb_release(ahb);
+}
+}  // namespace
+#endif  // XE_PLATFORM_ANDROID
 
 VulkanSharedMemory::VulkanSharedMemory(
     VulkanCommandProcessor& command_processor, Memory& memory,
@@ -131,6 +261,11 @@ VulkanSharedMemory::VulkanSharedMemory(
 VulkanSharedMemory::~VulkanSharedMemory() { Shutdown(true); }
 
 bool VulkanSharedMemory::Initialize() {
+#if XE_PLATFORM_ANDROID
+  if (cvars::gpu_uma_zero_copy_probe) {
+    ProbeZeroCopyAhb(command_processor_.GetVulkanDevice(), kBufferSize);
+  }
+#endif  // XE_PLATFORM_ANDROID
   if (!InitializeCommon()) {
     return false;
   }
