@@ -12,6 +12,7 @@
 #include "xenia/kernel/xboxkrnl/xboxkrnl_rtl.h"
 
 #include "xenia/base/atomic.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/pe_image.h"
 #include "xenia/kernel/kernel_state.h"
 #include "xenia/kernel/user_module.h"
@@ -19,6 +20,17 @@
 #include "xenia/kernel/xboxkrnl/xboxkrnl_private.h"
 #include "xenia/kernel/xboxkrnl/xboxkrnl_threading.h"
 #include "xenia/kernel/xthread.h"
+
+DEFINE_uint32(
+    rtl_critical_section_min_spin, 0,
+    "Minimum spin of RtlEnterCriticalSection before a contended enter waits on "
+    "the kernel event (the game's own spin count, header.absolute * 256, is "
+    "used when larger; most critical sections have 0). Each try reads the lock "
+    "first and swaps only when it looks free, with a CPU yield hint between "
+    "tries. On the device every contended enter of a 0-spin section paid a "
+    "kernel wait and a futex wake (Gears of War: about 30% of the main "
+    "thread's kernel time, 2026-09-22). 0 = unchanged. Read per call (live).",
+    "Kernel");
 
 namespace xe {
 namespace kernel {
@@ -594,6 +606,14 @@ static void CriticalSectionPrefetchW(const void* vp) {
   swcache::PrefetchW(vp);
 }
 
+static inline void CriticalSectionSpinHint() {
+#if XE_ARCH_ARM64
+  __asm__ __volatile__("yield" ::: "memory");
+#elif XE_ARCH_AMD64 && (defined(__GNUC__) || defined(__clang__))
+  __builtin_ia32_pause();
+#endif
+}
+
 void RtlEnterCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {
   if (!cs.guest_address()) {
     XELOGE("Null critical section in RtlEnterCriticalSection!");
@@ -602,6 +622,7 @@ void RtlEnterCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {
   CriticalSectionPrefetchW(&cs->lock_count);
   uint32_t cur_thread = XThread::GetCurrentThread()->guest_object();
   uint32_t spin_count = cs->header.absolute * 256;
+  const uint32_t min_spin = cvars::rtl_critical_section_min_spin;
 
   if (cs->owning_thread == cur_thread) {
     // We already own the lock.
@@ -611,6 +632,21 @@ void RtlEnterCriticalSection_entry(pointer_t<X_RTL_CRITICAL_SECTION> cs) {
   }
 
   // Spin loop
+  if (min_spin > spin_count) {
+    // rtl_critical_section_min_spin: read before swapping (the swap bounces
+    // the cache line between cores), and hint the core between tries.
+    while (spin_count < min_spin) {
+      ++spin_count;
+      if (*reinterpret_cast<volatile int32_t*>(&cs->lock_count) == -1 &&
+          xe::atomic_cas(-1, 0, &cs->lock_count)) {
+        cs->owning_thread = cur_thread;
+        cs->recursion_count = 1;
+        return;
+      }
+      CriticalSectionSpinHint();
+    }
+    spin_count = 0;
+  }
   while (spin_count--) {
     if (xe::atomic_cas(-1, 0, &cs->lock_count)) {
       // Acquired.

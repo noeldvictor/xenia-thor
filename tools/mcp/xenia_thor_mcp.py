@@ -1057,6 +1057,83 @@ def xenia_cvars(pc_log: str = '') -> str:
     return json.dumps(out, indent=1)[:12000]
 
 
+def _run_tool_script(rel_path: str, args: list, timeout: int, tail_lines: int = 60) -> str:
+    """Run one of the tools/ scripts with this Python and return its output
+    tail (the scripts print their own result tables)."""
+    script = os.path.join(REPO, rel_path)
+    proc = subprocess.run([sys.executable, script] + [str(a) for a in args], cwd=REPO,
+                          capture_output=True, text=True, encoding='utf-8', errors='replace',
+                          timeout=timeout)
+    out = (proc.stdout + ('\n' + proc.stderr if proc.returncode else '')).strip().splitlines()
+    return json.dumps({'exit': proc.returncode, 'script': rel_path, 'output': out[-tail_lines:]}, indent=1)
+
+
+@mcp.tool()
+def xenia_perf_probe(entry: str = 'gears1', cvars: str = '', profile: bool = True) -> str:
+    """Where a title's frame goes, in ONE device launch (tools/thor/perf_probe.py):
+    presented fps, GPU frame time (median, p90), GPU busy, the hottest threads,
+    the command processor's per-frame CPU split (issuedraw, emit, vfres, ...),
+    a simpleperf sample, three screenshots, and a GPU-BOUND / CPU-BOUND / MIXED
+    verdict. entry: a scoreboard entry (banjo_title, banjo_story, gears1, mc2).
+    cvars: space-separated name=value launch cvars. Uses the device: ask first."""
+    args = [entry] + [a for c in cvars.split() if c for a in ('--cvar', c)]
+    if not profile:
+        args.append('--no-profile')
+    return _run_tool_script('tools/thor/perf_probe.py', args, timeout=1800)
+
+
+@mcp.tool()
+def xenia_live_ab(entry: str, arms: str, rounds: int = 2, seconds: float = 8.0) -> str:
+    """Flip cvars LIVE inside one device launch at a scoreboard scene and compare
+    presented fps and GPU busy per arm, alternating rounds (tools/thor/live_ab.py).
+    arms: ';'-separated "label:name=value,name=value" (an empty list after the
+    colon = the start values). Example: "base:;nocull:gpu_cull_compaction=false".
+    Only for cvars read per draw or per call. Uses the device: ask first."""
+    arm_list = [a.strip() for a in arms.split(';') if a.strip()]
+    return _run_tool_script('tools/thor/live_ab.py',
+                            [entry] + arm_list + ['--rounds', rounds, '--seconds', seconds],
+                            timeout=3600)
+
+
+@mcp.tool()
+def xenia_scoreboard(entries: str = '', note: str = '') -> str:
+    """The same device measurements after every install (tools/thor/scoreboard.py):
+    per entry, presented fps, the GPU frame time, panel luma, the driver, one
+    screenshot; a row in docs/scoreboard.jsonl and the change from the entry's
+    previous row. entries: space-separated (default all). Uses the device."""
+    args = [e for e in entries.split() if e] + (['--note', note] if note else [])
+    return _run_tool_script('tools/thor/scoreboard.py', args, timeout=3600)
+
+
+@mcp.tool()
+def xenia_trace_ab(trace: str, arms: str = '', snapshot: str = '') -> str:
+    """Which setting changes this frame? A device GPU trace (.xtr) replayed on the
+    PC once per arm of cvars, image diff per half against the first arm
+    (tools/pc/trace_ab.py). arms: ';'-separated "label:name=value,...";
+    snapshot: a xenia_cvars JSON to build the arms from (PC defaults, all
+    device settings, each setting alone). PC only, no device."""
+    args = [trace] + [a.strip() for a in arms.split(';') if a.strip()]
+    if snapshot:
+        args += ['--from-snapshot', snapshot]
+    return _run_tool_script('tools/pc/trace_ab.py', args, timeout=3600)
+
+
+@mcp.tool()
+def xenia_pc_run(iso: str, seconds: int = 120, cvars: str = '', presses: str = '',
+                 snapshot: str = '', trace_at: str = '', name: str = '') -> str:
+    """Run a title on the Windows build (Vulkan) with the device's settings and
+    watch it (tools/pc/pc_run.py): parked-window captures, a frozen-screen flag,
+    the log's stall markers; presses "seconds:button ..." through the nop HID;
+    trace_at "seconds ..." traces the frame on screen for xenia_trace_ab.
+    snapshot: a xenia_cvars JSON (its GPU/Vulkan settings apply). PC only."""
+    args = [iso, '--seconds', seconds]
+    for flag, value in (('--cvars', cvars), ('--presses', presses), ('--from-snapshot', snapshot),
+                        ('--trace-at', trace_at), ('--name', name)):
+        if value:
+            args += [flag, value]
+    return _run_tool_script('tools/pc/pc_run.py', args, timeout=seconds + 600)
+
+
 STALL_MARKERS = ('SPINLOCK STALL', 'A64 CRASH DIAG', 'guest crash', 'Fatal',
                  'GPU is hung', 'unimplemented', 'Unhandled', 'DbgPrint',
                  'ANR', 'watchdog')
