@@ -1134,6 +1134,28 @@ def xenia_pc_run(iso: str, seconds: int = 120, cvars: str = '', presses: str = '
     return _run_tool_script('tools/pc/pc_run.py', args, timeout=seconds + 600)
 
 
+@mcp.tool()
+def xenia_pc_build(project: str = 'xenia-app') -> str:
+    """Build the Windows app (tools/pc/build_pc.py): finds MSBuild, builds
+    build/<project>.vcxproj as "Release Windows" x64, returns the errors and
+    whether xenia.exe changed. PC only."""
+    return _run_tool_script('tools/pc/build_pc.py', ['--project', project], timeout=1800)
+
+
+@mcp.tool()
+def xenia_turnip_build(ref: str = '885dd3a17a', patches: str = '', plain_cpu: bool = False) -> str:
+    """Build our Turnip in WSL (tools/turnip/build.py): Mesa ref + the patches in
+    tools/turnip/patches (patches="none" for plain Mesa), CPU-tuned unless
+    plain_cpu. Returns the patches applied and the zip copied to
+    scratch/tools/turnip/ for xenia_gpu_driver(install_zip=...). PC only."""
+    args = [ref]
+    if patches:
+        args += ['--patches', patches]
+    if plain_cpu:
+        args.append('--plain-cpu')
+    return _run_tool_script('tools/turnip/build.py', args, timeout=3600)
+
+
 STALL_MARKERS = ('SPINLOCK STALL', 'A64 CRASH DIAG', 'guest crash', 'Fatal',
                  'GPU is hung', 'unimplemented', 'Unhandled', 'DbgPrint',
                  'ANR', 'watchdog')

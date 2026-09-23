@@ -410,6 +410,17 @@ Standing facts:
 - Upstream port pass of 2026-09-18: 90 commits landed (Tier 1 to 4). Windows and NDK builds pass.
   x64 corpus 14,333 failures, unchanged. Device tests are owed; the list is in
   `docs/research/20260918-upstream-triage.md`, section "Port status".
+- Retro 2026-09-23 (1, slow): the Turnip patch work lost three round trips. Git Bash rewrote the
+  `/mnt/f` script path, so a build "passed" with exit 0 and built nothing. WSL `/tmp` did not persist
+  between calls, so the patch files came out empty. Last night's zips did not have the KGSL fence fix,
+  and no tool showed that.
+- Retro 2026-09-23 (2, tool, exists now): `tools/turnip/build.py` (MCP `xenia_turnip_build`) runs the
+  WSL build from Windows, fails when there is no zip, lists the patches applied and copies the zip to
+  `scratch/tools/turnip/`. `build_turnip.sh` applies `tools/turnip/patches/` by default and names
+  the zip `-xeN`, so a zip without our fixes is visible from its name.
+- Retro 2026-09-23 (3, tool, exists now): the Windows app build line took three tries ("Release
+  Windows" and x64 are the only working pair). `tools/pc/build_pc.py` (MCP `xenia_pc_build`) finds
+  MSBuild, builds, returns the errors and whether `xenia.exe` changed.
 
 ## 9. Device control: the debug server inside the emulator, and the MCP client
 
@@ -471,6 +482,8 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_perf_probe`, `xenia_live_ab`, `xenia_scoreboard` | MCP wrappers of `tools/thor/perf_probe.py` (the CPU/GPU split of a scene in one launch, the command processor's per-frame split, a verdict), `live_ab.py` (cvars flipped live in one launch, `;`-separated arms) and `scoreboard.py`. Device tools: ask the user first |
 | `xenia_trace_ab`, `xenia_pc_run` | MCP wrappers of `tools/pc/trace_ab.py` and `tools/pc/pc_run.py` (Vulkan, the device snapshot's settings, `trace_at` for frame traces). PC only |
 | `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
+| `tools/turnip/build.py`, `xenia_turnip_build` | one call from Windows: the WSL Turnip build, the patches applied, the zip copied to `scratch/tools/turnip/`; fails when no zip is made |
+| `tools/pc/build_pc.py`, `xenia_pc_build` | the Windows app build ("Release Windows", x64): errors, and whether `xenia.exe` changed |
 | `tools/turnip/build_turnip.sh` | the custom Turnip: Mesa ref + `tools/turnip/patches/*.patch` (default; `none` = plain) -> `~/turnip-build/out/turnip-<ref>-<sha>-tuned-xeN.zip` in WSL (NDK r27c, KGSL, no LTO). From Git Bash set `MSYS_NO_PATHCONV=1`, or the `/mnt/f/...` script path is rewritten |
 | `tools/thor/driver_ab.py` | Turnip builds, `TU_DEBUG` options and per-arm cvars on one scene: fps, GPU frame time, Turnip perf reasons, zero-copy state; install/select per arm; stops at 44 C or 5 minutes. Device: ask first |
 | `tools/pc/trace_ab.py` | a device GPU trace replayed on the PC per arm of cvars (about a minute each), image diff against the first arm per half; `--from-snapshot` builds the arms from a `xenia_cvars` file (PC defaults, all device settings, each setting alone). Names the setting behind a device-only glitch without the device |
