@@ -78,8 +78,11 @@ def main():
         cvars += trace_ab.arms_from_snapshot(args.from_snapshot)[1][1]  # the "device" arm
     cvars += [c for c in args.cvars.split() if c]
     exe = ORACLE if args.oracle else args.exe
+    # --gpu=vulkan: on Windows Xenia picks D3D12 by default, and the device
+    # runs Vulkan - without this the device's GPU settings never apply
+    # (2026-09-22: the first Gears and MC2 parity runs were D3D12).
     cmd = [exe, '--storage_root=' + storage, '--log_file=' + log, '--mount_cache=true',
-           '--hid=nop', '--hid_nop_connected=true', '--hid_nop_trigger_file=' + trigger]
+           '--gpu=vulkan', '--hid=nop', '--hid_nop_connected=true', '--hid_nop_trigger_file=' + trigger]
     trace_request = os.path.abspath(os.path.join(storage, 'trace_request.txt'))
     trace_dir = os.path.abspath(os.path.join(storage, 'traces')) + os.sep
     trace_times = sorted(float(t) for t in args.trace_at.split() if t)

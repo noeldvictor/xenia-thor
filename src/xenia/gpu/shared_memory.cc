@@ -10,6 +10,7 @@
 #include "xenia/gpu/shared_memory.h"
 
 #include <algorithm>
+#include <chrono>
 #include <utility>
 
 #include "xenia/base/assert.h"
@@ -19,6 +20,15 @@
 #include "xenia/base/profiling.h"
 #include "xenia/memory.h"
 #include "xenia/base/cvar.h"
+
+DEFINE_bool(
+    gpu_shared_memory_stats, false,
+    "Count the shared-memory residency work per frame (RequestRange calls, "
+    "the lock-free answers, uploads, pages, copy and watch time, the global "
+    "lock wait, write-watch hits) and print it on the command processor's "
+    "per-frame CPU line (with vulkan_trace_draw_outcomes_per_frame). Read "
+    "live.",
+    "GPU");
 
 DEFINE_bool(
     gpu_shared_memory_lockfree_valid_check, true,
@@ -329,10 +339,20 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length,
   }
 
   if (memory_invalidation_callback_handle_) {
+    std::chrono::steady_clock::time_point protect_t0;
+    const bool stats = cvars::gpu_shared_memory_stats;
+    if (stats) {
+      protect_t0 = std::chrono::steady_clock::now();
+    }
     memory().EnablePhysicalMemoryAccessCallbacks(
         valid_page_first << page_size_log2_,
         (valid_page_last - valid_page_first + 1) << page_size_log2_, true,
         false);
+    if (stats) {
+      stats_.protect_ns += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                        std::chrono::steady_clock::now() - protect_t0)
+                                        .count());
+    }
   }
 }
 
@@ -371,7 +391,13 @@ inline uint64_t LoadPageFlagsAcquire(const uint64_t* p) {
 }
 }  // namespace
 
+bool SharedMemory::StatsEnabled() { return cvars::gpu_shared_memory_stats; }
+
 bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
+  const bool stats = cvars::gpu_shared_memory_stats;
+  if (stats) {
+    ++stats_.request_calls;
+  }
   if (!length) {
     // Some texture or buffer is empty, for example - safe to draw in this case.
     return true;
@@ -416,6 +442,9 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
       }
     }
     if (all_valid) {
+      if (stats) {
+        ++stats_.request_fast;
+      }
       return true;
     }
   }
@@ -426,7 +455,16 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
   uint32_t block_last = page_last >> 6;
   uint32_t range_start = UINT32_MAX;
   {
+    std::chrono::steady_clock::time_point lock_t0;
+    if (stats) {
+      lock_t0 = std::chrono::steady_clock::now();
+    }
     auto global_lock = global_critical_region_.Acquire();
+    if (stats) {
+      stats_.lock_ns += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                     std::chrono::steady_clock::now() - lock_t0)
+                                     .count());
+    }
     for (uint32_t i = block_first; i <= block_last; ++i) {
       const SystemPageFlagsBlock& block = system_page_flags_[i];
       uint64_t block_valid = block.valid;
@@ -477,7 +515,19 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
     return true;
   }
 
-  return UploadRanges(upload_ranges_);
+  if (!stats) {
+    return UploadRanges(upload_ranges_);
+  }
+  ++stats_.upload_calls;
+  for (const auto& r : upload_ranges_) {
+    stats_.upload_pages += r.second;
+  }
+  auto upload_t0 = std::chrono::steady_clock::now();
+  bool uploaded = UploadRanges(upload_ranges_);
+  stats_.upload_ns += uint64_t(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                   std::chrono::steady_clock::now() - upload_t0)
+                                   .count());
+  return uploaded;
 }
 
 bool SharedMemory::IsRangeValid(uint32_t start, uint32_t length) const {
@@ -517,6 +567,9 @@ std::pair<uint32_t, uint32_t> SharedMemory::MemoryInvalidationCallbackThunk(
 
 std::pair<uint32_t, uint32_t> SharedMemory::MemoryInvalidationCallback(
     uint32_t physical_address_start, uint32_t length, bool exact_range) {
+  if (cvars::gpu_shared_memory_stats) {
+    stat_invalidations_.fetch_add(1, std::memory_order_relaxed);
+  }
   if (length == 0 || physical_address_start >= kBufferSize) {
     return std::make_pair(uint32_t(0), UINT32_MAX);
   }

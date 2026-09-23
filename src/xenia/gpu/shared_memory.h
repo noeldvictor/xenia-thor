@@ -10,6 +10,7 @@
 #ifndef XENIA_GPU_SHARED_MEMORY_H_
 #define XENIA_GPU_SHARED_MEMORY_H_
 
+#include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <utility>
@@ -26,6 +27,28 @@ namespace gpu {
 // system page size granularity.
 class SharedMemory {
  public:
+  // Per-frame counters of the vertex/index residency machinery, read and
+  // reset by the command processor's per-frame CPU line (2026-09-22: Gears
+  // spent ~30 ms per frame in RequestRange on the device, 4.8 ms in the PC
+  // replay; these name the part - the lock, the copy, or the watch).
+  struct Stats {
+    uint64_t request_calls = 0;
+    uint64_t request_fast = 0;     // answered by the lock-free valid check
+    uint64_t upload_calls = 0;
+    uint64_t upload_pages = 0;
+    uint64_t upload_ns = 0;        // UploadRanges, copy + MakeRangeValid
+    uint64_t protect_ns = 0;       // re-arming the write watch
+    uint64_t lock_ns = 0;          // waiting for the global lock in RequestRange
+    uint64_t invalidations = 0;    // write-watch hits (any thread)
+  };
+  Stats TakeStats() {
+    Stats s = stats_;
+    s.invalidations = stat_invalidations_.exchange(0, std::memory_order_relaxed);
+    stats_ = Stats();
+    return s;
+  }
+  static bool StatsEnabled();
+
   static constexpr uint32_t kBufferSizeLog2 = 29;
   static constexpr uint32_t kBufferSize = 1 << kBufferSizeLog2;
 
@@ -228,6 +251,9 @@ class SharedMemory {
   // Flags for each 64 system pages, interleaved as blocks, so bit scan can be
   // used to quickly extract ranges.
   std::vector<SystemPageFlagsBlock> system_page_flags_;
+  // Updated on the command processor thread only, except the atomic.
+  Stats stats_;
+  std::atomic<uint64_t> stat_invalidations_{0};
 
   static std::pair<uint32_t, uint32_t> MemoryInvalidationCallbackThunk(
       void* context_ptr, uint32_t physical_address_start, uint32_t length,

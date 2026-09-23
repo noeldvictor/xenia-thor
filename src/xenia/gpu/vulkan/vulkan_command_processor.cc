@@ -42,6 +42,7 @@
 #include "xenia/ui/vulkan/vulkan_presenter.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
+DECLARE_bool(gpu_shared_memory_lockfree_valid_check);
 // Blue Dragon native-draw HLE step 2 (defined in command_processor.cc): present
 // the decoupled full-surface RT the native field draws rendered into, instead of
 // BD's resolved guest front buffer.
@@ -3292,6 +3293,15 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_cpu_emit_ns_ / 1000, draw_cpu_setup_ns_ / 1000,
         draw_cpu_bindings_ns_ / 1000, draw_cpu_process_ns_ / 1000,
         draw_cpu_vfresidency_ns_ / 1000, rt_pass_break_barrier_);
+    if (SharedMemory::StatsEnabled() && shared_memory_) {
+      SharedMemory::Stats sm = shared_memory_->TakeStats();
+      XELOGI(
+          "GPU shmem/frame: requests={} fast={} uploads={} upload_kb={} "
+          "upload_us={} protect_us={} lock_us={} invalidations={}",
+          sm.request_calls, sm.request_fast, sm.upload_calls,
+          (sm.upload_pages << 12) >> 10, sm.upload_ns / 1000,
+          sm.protect_ns / 1000, sm.lock_ns / 1000, sm.invalidations);
+    }
 
     // ⚠⚠ THE LINE ABOVE IS TRUNCATED BY LOGCAT AT ~1066 CHARACTERS, and
     // gpu_frame_us / gpu_pass_us sit near its END. A HEAVY frame carries
@@ -7690,7 +7700,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   // hoist half of xenia-edge c2674b19d. Gated; default off.
   std::unique_lock<std::recursive_mutex> request_range_hoisted_lock(
       global_critical_region::mutex(), std::defer_lock);
-  if (cvars::vulkan_hoist_request_range_lock) {
+  // With the lock-free valid check (gpu_shared_memory_lockfree_valid_check) a
+  // RequestRange that finds its pages valid - 99.4% of them in Gears of War's
+  // steady state on the PC (2,558 of 2,573 per frame) - takes no lock, and the
+  // few that upload take it themselves. Hoisting the lock would take it for
+  // every draw anyway: ~1,800 acquisitions per frame of the lock the guest
+  // threads hold in their interrupt-disabled sections (2026-09-22).
+  if (cvars::vulkan_hoist_request_range_lock &&
+      !cvars::gpu_shared_memory_lockfree_valid_check) {
     request_range_hoisted_lock.lock();
   }
 
