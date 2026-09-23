@@ -306,7 +306,7 @@ void EnterGlobalLock(PPCContext* ppc_context, void* arg0, void* arg1) {
   }
   auto global_mutex = reinterpret_cast<std::recursive_mutex*>(arg0);
   auto global_lock_count = reinterpret_cast<int32_t*>(arg1);
-  global_mutex->lock();
+  xe::global_critical_region::LockSpin(*global_mutex);
   int32_t new_lock_count = xe::atomic_inc(global_lock_count);
   StoreGlobalLockOwner(ppc_context, new_lock_count);
 }

@@ -31,7 +31,31 @@ DEFINE_bool(global_lock_owner_tracking, false,
             "on only when diagnosing a hang.",
             "CPU");
 
+DEFINE_uint32(
+    global_lock_spin, 0,
+    "Tries of the global critical region's mutex before a waiter parks in the "
+    "kernel (a CPU yield hint between tries). The guest's interrupt-disabled "
+    "sections and the kernel exports take this lock; on the device a contended "
+    "acquire went straight to a futex sleep. 0 = park at once (unchanged). "
+    "Read on every acquire (live).",
+    "CPU");
+
 namespace xe {
+
+void global_critical_region::LockSpin(std::recursive_mutex& m) {
+  const uint32_t spins = cvars::global_lock_spin;
+  for (uint32_t i = 0; i < spins; ++i) {
+    if (m.try_lock()) {
+      return;
+    }
+#if XE_ARCH_ARM64
+    __asm__ __volatile__("yield" ::: "memory");
+#elif XE_ARCH_AMD64 && (defined(__GNUC__) || defined(__clang__))
+    __builtin_ia32_pause();
+#endif
+  }
+  m.lock();
+}
 
 namespace {
 

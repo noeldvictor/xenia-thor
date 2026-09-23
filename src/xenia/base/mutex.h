@@ -67,6 +67,12 @@ class global_critical_region {
   };
 
   static std::recursive_mutex& mutex();
+
+  // Locks the global mutex, first trying it global_lock_spin times with a CPU
+  // yield hint between tries, then parking. The guest's interrupt-disabled
+  // sections hold it for a short time, and on Android a parked waiter pays a
+  // futex sleep plus a wakeup delay. 0 = lock at once (the old behavior).
+  static void LockSpin(std::recursive_mutex& m);
   static void NoteOwner(const char* source = "");
   static uint32_t last_owner_system_thread_id();
   static uint32_t last_owner_thread_id();
@@ -77,7 +83,8 @@ class global_critical_region {
   // to keep an instance of global_critical_region near the members requiring
   // it to keep things readable.
   static std::unique_lock<std::recursive_mutex> AcquireDirect() {
-    auto lock = std::unique_lock<std::recursive_mutex>(mutex());
+    LockSpin(mutex());
+    auto lock = std::unique_lock<std::recursive_mutex>(mutex(), std::adopt_lock);
     NoteOwner("AcquireDirect");
     return lock;
   }
@@ -89,7 +96,8 @@ class global_critical_region {
 
   // Acquires a lock on the global critical section.
   inline std::unique_lock<std::recursive_mutex> Acquire(const char* source) {
-    auto lock = std::unique_lock<std::recursive_mutex>(mutex());
+    LockSpin(mutex());
+    auto lock = std::unique_lock<std::recursive_mutex>(mutex(), std::adopt_lock);
     NoteOwner(source ? source : "Acquire");
     return lock;
   }
