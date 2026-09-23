@@ -40,6 +40,8 @@ def main():
     ap.add_argument('arms', nargs='+')
     ap.add_argument('--rounds', type=int, default=2)
     ap.add_argument('--seconds', type=float, default=8.0)
+    ap.add_argument('--max-case-c', type=float, default=46.0,
+                    help='stop the run when the case passes this temperature')
     args = ap.parse_args()
     arms = [parse_arm(a) for a in args.arms]
     spec = dict(scoreboard.ENTRIES[args.entry])
@@ -63,9 +65,21 @@ def main():
     start = {n: m._api('/cvar?name=%s' % n).get('value') for n in names}
     print('start values:', ' '.join('%s=%s' % kv for kv in start.items()), flush=True)
     results = {label: [] for label, _ in arms}
+    aborted = False
     for rnd in range(args.rounds):
+        if aborted:
+            break
         order = arms if rnd % 2 == 0 else list(reversed(arms))
         for label, pairs in order:
+            # Heat guard (user, 2026-09-22: "we cannot let the emulator fry the
+            # device"): stop the whole run, not just wait, when the case passes
+            # the limit mid-run.
+            case_c = json.loads(m.xenia_preflight()).get('temps', {}).get('case_c', 0)
+            if case_c > args.max_case_c:
+                print('  STOP: case %.1f C > %.1f C - the device is too hot; the run ends here'
+                      % (case_c, args.max_case_c), flush=True)
+                aborted = True
+                break
             for n in names:
                 set_cvar(n, start[n])
             for k, v in pairs:
@@ -79,8 +93,9 @@ def main():
             shot = json.loads(m.xenia_screenshot('liveab-%s-%s-r%d' % (args.entry, label, rnd))).get('path')
             results[label].append((fps, busy, shot))
             print('  round %d %-10s fps %5.1f  gpu busy %s  %s' % (rnd, label, fps, busy, shot), flush=True)
-    for n in names:
-        set_cvar(n, start[n])
+    if not aborted:
+        for n in names:
+            set_cvar(n, start[n])
     print('arm        mean fps')
     for label, rows in results.items():
         print('%-10s %6.1f  %s' % (label, sum(r[0] for r in rows) / max(1, len(rows)),

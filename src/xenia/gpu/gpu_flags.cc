@@ -61,13 +61,24 @@ DEFINE_bool(
     "is largest on CPU-bound/loading scenes).",
     "GPU");
 
+// On by default on Android (2026-09-22: a Gears of War session took the Thor to
+// 52 C case; the user: "we cannot let the emulator fry the device").
 DEFINE_bool(
-    gpu_adpf_thermal_throttle, false,
+    gpu_adpf_thermal_throttle, XE_ANDROID_DEFAULT(true, false),
     "Android only (ADPF Thermal API): read thermal headroom each frame and "
     "pre-emptively cap the present rate (45/30/20 fps as headroom approaches "
     "the throttling threshold) so the fanless handheld sheds heat before the OS "
     "throttles hard. Composes with gpu_frame_limit_fps (takes the lower cap). "
     "No-op off Android or on ROMs without the API. Default off.",
+    "GPU");
+
+DEFINE_int32(
+    thor_thermal_status, 0,
+    "The device's thermal status from Android (PowerManager, set live by the "
+    "app's ThermalGuard): 0 none, 1 light, 2 moderate, 3 severe, 4 critical, "
+    "5 emergency, 6 shutdown. The frame limiter caps the present rate from it: "
+    "moderate 30 fps (no change for a 30 fps title), severe 20, critical and "
+    "above 10 (the app also pauses the game at critical). 0 = no cap from it.",
     "GPU");
 
 // When a title has no frame cap, the ADPF target was a flat 60 fps. ADPF boosts

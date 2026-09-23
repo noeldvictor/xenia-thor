@@ -990,8 +990,9 @@ public final class XeniaOptimizations {
                         + "device approaches the throttling threshold) so the fanless "
                         + "handheld sheds heat gradually instead of the OS slamming the "
                         + "clocks down. Composes with the frame-rate limiter (takes the "
-                        + "lower cap). No effect on ROMs without the API. Experimental.",
-                CATEGORY_THREADS, false, false,
+                        + "lower cap). No effect on ROMs without the API. On by default "
+                        + "(2026-09-22: a Gears of War session reached 52 C on the case).",
+                CATEGORY_THREADS, true, true,
                 new BoolCvar[]{new BoolCvar("gpu_adpf_thermal_throttle")}, null));
 
         list.add(new Optimization(

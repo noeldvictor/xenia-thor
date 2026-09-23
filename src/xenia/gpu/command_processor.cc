@@ -2201,7 +2201,13 @@ uint32_t CommandProcessor::AdpfThermalAdjustedFrameLimit(
   // exceed 1.0). NaN (unsupported) fails every comparison -> no throttle.
   float h = adpf_thermal_headroom_;
   uint32_t cap;
-  if (h >= 1.0f) {
+  // Past the threshold the steps continue below 20: a 30 fps title (most of
+  // them) sees no change until 1.0, so the step after it has to be real.
+  if (h >= 1.25f) {
+    cap = 10u;
+  } else if (h >= 1.1f) {
+    cap = 15u;
+  } else if (h >= 1.0f) {
     cap = 20u;
   } else if (h >= 0.95f) {
     cap = 30u;
@@ -2332,6 +2338,24 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   // cap as ADPF thermal headroom approaches the throttling threshold.
   frame_limit_fps = AdpfThermalAdjustedFrameLimit(frame_limit_fps);
 #endif  // XE_PLATFORM_ANDROID
+  // thor_thermal_status (the OS thermal status, set live by the app): a cap
+  // that does not depend on the headroom forecast, so it also works on ROMs
+  // without the ADPF thermal API.
+  {
+    const int32_t thermal_status = cvars::thor_thermal_status;
+    uint32_t thermal_cap = 0;
+    if (thermal_status >= 4) {
+      thermal_cap = 10u;
+    } else if (thermal_status == 3) {
+      thermal_cap = 20u;
+    } else if (thermal_status == 2) {
+      thermal_cap = 30u;
+    }
+    if (thermal_cap) {
+      frame_limit_fps =
+          frame_limit_fps ? std::min(frame_limit_fps, thermal_cap) : thermal_cap;
+    }
+  }
   if (frame_limit_fps) {
     uint64_t target_interval_ms = 1000ull / frame_limit_fps;
     if (target_interval_ms) {

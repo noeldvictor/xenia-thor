@@ -44,6 +44,9 @@ public class EmulatorActivity extends WindowedAppActivity {
 
     private View mInGameMenu;
     private TextView mFpsOverlay;
+    // Warns the player and caps / pauses the game as the device heats
+    // (ThermalGuard; user, 2026-09-22: "we cannot let the emulator fry the device").
+    private ThermalGuard mThermalGuard;
     private CheckBox mInGameMenuShowFps;
     private TextView mInGameMenuInputStatus;
     private TextView mInGameMenuControllerHelp;
@@ -997,6 +1000,18 @@ public class EmulatorActivity extends WindowedAppActivity {
         setupFpsOverlay(launchArguments);
         setupInGameMenu();
         registerDebugGamepadReceiver();
+        mThermalGuard = new ThermalGuard(this, new ThermalGuard.Host() {
+            @Override
+            public boolean setConfigVar(final String name, final String value) {
+                return nativeSetConfigVar(name, value);
+            }
+
+            @Override
+            public void setPaused(final boolean paused) {
+                nativeSetEmulatorPaused(paused);
+            }
+        });
+        mThermalGuard.start();
         DebugServer.start(this);
         // Draw the compile overlay IMMEDIATELY, before native init and before
         // anything can stall the UI thread.
@@ -1529,6 +1544,9 @@ public class EmulatorActivity extends WindowedAppActivity {
     protected void onResume() {
         super.onResume();
         mDebugResumed = true;
+        if (mThermalGuard != null) {
+            mThermalGuard.start();
+        }
         if (mRefreshFpsFromPreferencesOnResume) {
             mRefreshFpsFromPreferencesOnResume = false;
             setShowFps(XeniaAndroidSettings.getPreferences(this).getBoolean(
@@ -1541,6 +1559,9 @@ public class EmulatorActivity extends WindowedAppActivity {
     @Override
     protected void onPause() {
         mDebugResumed = false;
+        if (mThermalGuard != null) {
+            mThermalGuard.stop();
+        }
         stopFpsTicker();
         super.onPause();
     }
@@ -2393,10 +2414,11 @@ public class EmulatorActivity extends WindowedAppActivity {
         // Read from the native Clock rather than tracking it here, so the badge is
         // right regardless of what set the scalar.
         final double timeScalar = nativeGetGuestTimeScalar();
+        final String heat = mThermalGuard != null ? mThermalGuard.badgeSuffix() : "";
         if (timeScalar > 1.01) {
-            mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS   %.3gx", fps, timeScalar));
+            mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS   %.3gx%s", fps, timeScalar, heat));
         } else {
-            mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS", fps));
+            mFpsOverlay.setText(String.format(Locale.US, "%.1f FPS%s", fps, heat));
         }
         // One line per window (about 2 per second) so a script can read the
         // presented-frame rate from logcat on the play-button path, where no
