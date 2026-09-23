@@ -306,11 +306,12 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   check, and the per-draw hoisted lock only without it (device A/B owed: `live_ab.py gears1
   "hoist:" "nohoist:vulkan_hoist_request_range_lock=false"`, then the `gpu_shared_memory_stats`
   line). Also in its profile: kernel 33-38% (the main thread's `Sleep(0)` as `sched_yield`, the
-  critical-section handoffs as futexes), `xe_llvm_resolve_cached`. The big item behind all of
-  it: the desktop separate-VRAM model (copy guest memory into a GPU buffer, watch pages with
-  mprotect in three views). Turnip exposes dma-buf and AHardwareBuffer export; one allocation as
-  both guest RAM and the GPU buffer removes copy and watch for buffers. Gears 2, 3 and Judgment:
-  images on the device only, not yet run.
+  critical-section handoffs as futexes), `xe_llvm_resolve_cached`. `global_lock_spin` (live,
+  default 0) tries the global mutex N times before a futex sleep; A/B owed. Zero-copy guest
+  memory (one AHardwareBuffer/dma-buf as both guest RAM and the GPU buffer; Turnip exposes the
+  import) removes copy and watch, but Gears' steady-state copy and watch are small (156 KB, 5 hits
+  per frame on the PC) - measure a title's `GPU shmem/frame` line before building it. Gears 2, 3
+  and Judgment: images on the device only, not yet run.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.
 - **Blue Dragon (4D5307DF).** Low priority (re:Blue exists). GPU frame 79 -> 64.5 ms in the field
