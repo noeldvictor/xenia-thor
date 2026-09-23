@@ -31,11 +31,11 @@ crosses. Full table and the open items: `docs/research/20260920-port-paradigm-ma
 | host SIMD | SSE intrinsics | NEON, sse2neon shims differ on rounding and denormals |
 | GPU architecture | immediate-mode dGPU, cheap bandwidth | binning tiler with GMEM, UMA, expensive pass breaks |
 | Xenos model | EDRAM flattened into one big buffer | GMEM is the natural EDRAM analogue |
-| driver | NVIDIA/AMD | Turnip, strict, weekly builds |
+| driver | NVIDIA/AMD; a 0 ms timeout is a poll | Turnip, strict, weekly builds, on the downstream KGSL kernel, where a 0 ms wait means "forever"; our fixes live in `tools/turnip/patches/` |
 | OS | Windows threads, timers, one CPU type | Android, 1+4+3 cores, thermal throttling near 95 C |
 | memory manager | VirtualAlloc, no limits | Scudo, `vm.max_map_count` 65,530 |
 | storage, present, input, build | NVMe, exclusive fullscreen, XInput, MSVC | flash and content URIs, SurfaceFlinger and a sleeping panel, gamepad events, NDK |
-| GPU memory | separate VRAM: copy guest memory into a GPU buffer, watch pages with mprotect (3 views) | one RAM; Turnip exports dma-buf and AHardwareBuffer, so one allocation can be guest RAM and the GPU buffer |
+| GPU memory | separate VRAM: copy guest memory into a GPU buffer, watch pages with mprotect (3 views) | one RAM; our Turnip imports a host pointer (KGSL userptr, IO-coherent), so guest RAM is the GPU buffer, and a buffer page needs no copy and no watch |
 | locks | an uncontended desktop mutex is cheap; a contended one sleeps briefly | a contended futex sleep plus an Android wakeup on every handoff; the global lock was taken per draw |
 | levers | a speed lever is universal | a lever is per title: the CPU draw cull helps a GPU-bound title and cost Gears 40% |
 
@@ -44,8 +44,14 @@ Targets from these rows (2026-09-22, measured on Gears of War; `AGENTS.md` secti
 - The command processor takes no global lock per draw (the lock-free valid check; done).
 - A contended lock spins briefly before it sleeps (`global_lock_spin`,
   `rtl_critical_section_min_spin`; built, the device A/B is owed).
-- Guest memory and the GPU buffer are one allocation where a title's per-frame uploads are large
-  (read its `GPU shmem/frame` line first).
+- Guest memory and the GPU buffer are one allocation (`gpu_uma_zero_copy`; works on the PC, built
+  for the Thor with Turnip patch `0001`, device check owed). With it a vertex or index buffer
+  request takes no lock and arms no watch (`gpu_uma_skip_buffer_watches`): Gears on the PC, 0
+  uploads and 0 write faults per frame.
+- A fence status poll never blocks (Turnip patch `0000`). Then eager completion polls
+  (`vulkan_lazy_completion_polls=false`) can replace the app-side workaround; the device decides.
 - Every lever carries a per-title default from a one-launch live A/B (`tools/thor/live_ab.py`).
-- The driver is ours: a custom Turnip build (`tools/turnip/build_turnip.sh`), named in every
-  measurement.
+- The driver is ours: a custom Turnip build with our patches (`tools/turnip/build.py`, zip name
+  `-xeN`), named in every measurement. A driver A/B compares only zips that carry our fixes.
+- Heat is a hard limit: a device session is at most 5 minutes and stops at 44 C case, and the
+  user approves every session.

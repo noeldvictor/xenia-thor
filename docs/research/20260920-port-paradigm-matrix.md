@@ -135,3 +135,24 @@ which axis it crosses before touching code.
   that holds references changes destruction order; it may hold only objects whose
   destructor has no outside effect (the dispatcher objects), and it releases outside the
   lock.
+
+## Where the axes met on 2026-09-23
+
+- GPU memory and driver: unified memory became real through the driver, not the allocator.
+  Upstream Turnip has no `VK_EXT_external_memory_host`; KGSL has had userptr import
+  (`KGSL_USER_MEM_TYPE_ADDR`, the path of Qualcomm's own `cl_qcom_ext_host_ptr`) all along. Our
+  patch `0001` connects the two, IO-coherent, so the PC code path (NVIDIA host-pointer import)
+  runs unchanged on the Thor. The desktop assumption that stayed: page protection on the guest
+  views is free to use. A GPU import pins every page and a pinned page must be read-write, so
+  the import uses a separate read-write alias of the physical memory (`GetPhysicalAlias`).
+- GPU memory, a second step: with one allocation, the write watch on a buffer page is pure cost.
+  It existed to keep a copy current; there is no copy. Vertex and index requests now do nothing
+  in zero-copy mode (Gears on the PC: 21 to 26 uploads and 5 to 7 write faults per frame before,
+  0 and 0 after; the image is the same). Textures keep the watch, because the texture cache holds
+  converted copies. On the Thor a write fault is a signal, the global lock and an mprotect with
+  a TLB shootdown on every core, so this is where the device gain is expected.
+- Driver: the downstream KGSL kernel reads a 0 ms wait as "wait forever"; upstream Turnip sends
+  0 ms for a status poll and for any deadline under 1 ms. The desktop assumption: a 0 timeout is a
+  poll. The app had a workaround (lazy completion polls, +46 to 78%); the driver fix (`0000`) was
+  in an old build script and missing from the new builds for a day. Rule: driver fixes live as
+  patch files in the repo, applied by default, and the zip name says so (`-xeN`).

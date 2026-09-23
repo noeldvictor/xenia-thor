@@ -66,6 +66,16 @@ def main():
                         'process (tools/mcp, tools/thor, tools/pc, DebugServer.java, '
                         'debug_api_android.cc, kernel_trap, or this hook) - add the tool or the '
                         'reflex the retro names, commit it')
+    # Tool scripts compile and hold no control bytes (a heredoc once turned a
+    # regex escape into byte 0x08 and a perf_probe verdict never fired).
+    try:
+        check = subprocess.run([sys.executable, os.path.join(ROOT, 'tools', 'check_tools.py')],
+                               cwd=ROOT, capture_output=True, text=True, timeout=60)
+        if check.returncode:
+            problems.append('tools/check_tools.py found broken tool scripts: ' +
+                            ' | '.join(check.stdout.strip().splitlines()[:5]))
+    except Exception:
+        pass
     if problems:
         reason = 'Stop ritual (thor_retro.py): ' + '; '.join(problems) + '. Do these, then stop.'
         print(json.dumps({'decision': 'block', 'reason': reason}))

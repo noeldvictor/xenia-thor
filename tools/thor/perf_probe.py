@@ -46,7 +46,8 @@ def main():
     spec = dict(scoreboard.ENTRIES[args.entry])
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
-    cvars = ['vulkan_trace_pass_timestamps=true', 'vulkan_trace_draw_outcomes_per_frame=true'] + spec.get('cvars', []) + args.cvar
+    cvars = ['vulkan_trace_pass_timestamps=true', 'vulkan_trace_draw_outcomes_per_frame=true',
+             'gpu_shared_memory_stats=true'] + spec.get('cvars', []) + args.cvar
     for c in cvars:
         m.xenia_launch_cvars(set=c)
     temps = scoreboard.wait_cool()
@@ -99,11 +100,22 @@ def main():
     import re as _re
     cpu = {}
     for k in ('draws', 'issuedraw_us', 'emit_us', 'setup_us', 'bind_us', 'process_us', 'vfres_us', 'breaks'):
-        vals = [int(v) for v in _re.findall(r'GPU draw cpu/frame:.*?%s=(\d+)' % k, log)]
+        vals = [int(v) for v in _re.findall(r'GPU draw cpu/frame:.*?\b%s=(\d+)' % k, log)]
         if vals:
             cpu[k] = statistics.median(vals)
     if cpu:
         print('command processor per frame (median):', ' '.join('%s=%s' % kv for kv in cpu.items()), flush=True)
+    # The shared-memory residency work per frame (gpu_shared_memory_stats): how
+    # many requests upload, fault or wait for the global lock, and whether
+    # unified memory is on (zero_copy > 0: buffer requests that do nothing).
+    shm = {}
+    for k in ('requests', 'fast', 'zero_copy', 'uploads', 'upload_kb', 'protect_us', 'lock_us', 'invalidations'):
+        vals = [int(v) for v in _re.findall(r'GPU shmem/frame:.*?\b%s=(\d+)' % k, log)]
+        if vals:
+            shm[k] = statistics.median(vals)
+    if shm:
+        print('shared memory per frame (median):', ' '.join('%s=%s' % kv for kv in shm.items()),
+              '| unified memory', 'ACTIVE' if shm.get('zero_copy') else 'off', flush=True)
     frame_us = 1e6 / fps if fps > 0 else None
     top_cpu = max([p or 0 for _, p in hot] or [0])
     cp_us = cpu.get('issuedraw_us') if cpu else None
