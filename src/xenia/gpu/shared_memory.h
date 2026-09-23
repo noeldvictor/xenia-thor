@@ -160,6 +160,9 @@ class SharedMemory {
   SharedMemory(Memory& memory);
   // For gpu_uma_hazard_check: the submission being recorded now, and the last
   // one seen complete. The base class knows no submissions (0 = off).
+  // A GPU trace records the memory the GPU reads as it is requested; the
+  // zero-copy buffer skip must not bypass that.
+  virtual bool IsTraceRecording() const { return false; }
   virtual uint64_t HazardCurrentSubmission() const { return 0; }
   virtual uint64_t HazardCompletedSubmission() const { return 0; }
   // Set by the implementation when its GPU buffer is bound to the guest's

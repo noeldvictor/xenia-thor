@@ -998,11 +998,13 @@ void CommandProcessor::RestoreGammaRamp(
 }
 
 void CommandProcessor::CallInThread(std::function<void()> fn) {
-  if (pending_fns_.empty() &&
+  if (!pending_fns_count_.load(std::memory_order_acquire) &&
       kernel::XThread::IsInThread(worker_thread_.get())) {
     fn();
   } else {
+    std::lock_guard<std::mutex> lock(pending_fns_mutex_);
     pending_fns_.push(std::move(fn));
+    pending_fns_count_.fetch_add(1, std::memory_order_release);
   }
 }
 
@@ -1046,9 +1048,17 @@ void CommandProcessor::WorkerThreadMain() {
   }
 
   while (worker_running_) {
-    while (!pending_fns_.empty()) {
-      auto fn = std::move(pending_fns_.front());
-      pending_fns_.pop();
+    while (pending_fns_count_.load(std::memory_order_acquire)) {
+      std::function<void()> fn;
+      {
+        std::lock_guard<std::mutex> lock(pending_fns_mutex_);
+        if (pending_fns_.empty()) {
+          break;
+        }
+        fn = std::move(pending_fns_.front());
+        pending_fns_.pop();
+        pending_fns_count_.fetch_sub(1, std::memory_order_release);
+      }
       fn();
     }
 
@@ -1071,11 +1081,13 @@ void CommandProcessor::WorkerThreadMain() {
         xe::threading::MaybeYield();
         loop_count++;
         write_ptr_index = write_ptr_index_.load();
-      } while (worker_running_ && pending_fns_.empty() &&
+      } while (worker_running_ &&
+               !pending_fns_count_.load(std::memory_order_acquire) &&
                (write_ptr_index == 0xBAADF00D ||
                 read_ptr_index_ == write_ptr_index));
       ReturnFromWait();
-      if (!worker_running_ || !pending_fns_.empty()) {
+      if (!worker_running_ ||
+          pending_fns_count_.load(std::memory_order_acquire)) {
         continue;
       }
     }

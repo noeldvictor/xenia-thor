@@ -332,6 +332,12 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   invalidations=0 lock_us=0 (without it, 21 to 26 uploads and 5 to 7 write faults per frame).
   The title screen sometimes ignores a Start press on the PC route in both modes: press timing,
   not this change (a repeat reached the menus).
+- **Thor paradigm candidates (2026-09-23):** five code surveys (ARM64 JIT, threads/OS, tiler,
+  unified memory, NEON) ranked in `docs/research/20260923-thor-paradigm-candidates.md`. Fixed the
+  same day: the compiler extension macros (`XE_FORCEINLINE`, prefetch and noinline were empty on
+  clang), the unlocked `pending_fns_` queue (an ARM memory-ordering race), zero-copy trace
+  capture; added `gpu_uma_direct_upload_barrier` for a Thor A/B. The largest open CPU item: every
+  LLVM guest call goes through the host-entry thunk with an `msr FPCR`.
 - **Command-processor CPU per draw, the full split (2026-09-23).** The short `GPU draw cpu/frame`
   line now carries every bucket: `prep_us` (after Process to RequestTextures: shader
   modifications, translation lookups, samplers), `tex_us`, `rt_us`, `pipe_us`, `state_us` (after

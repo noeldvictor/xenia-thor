@@ -612,7 +612,8 @@ bool SharedMemory::RequestBufferRange(uint32_t start, uint32_t length) {
     hazard_kind_override_ = 0;
     return result;
   }
-  if (zero_copy_ && cvars::gpu_uma_skip_buffer_watches) {
+  if (zero_copy_ && cvars::gpu_uma_skip_buffer_watches &&
+      !IsTraceRecording()) {
     if (start > kBufferSize || (kBufferSize - start) < length) {
       return false;
     }

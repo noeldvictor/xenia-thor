@@ -309,7 +309,13 @@ class CommandProcessor {
   std::atomic<bool> worker_running_;
   kernel::object_ref<kernel::XHostThread> worker_thread_;
 
+  // Filled by other threads (the UI thread: CallInThread), drained by the
+  // worker. It had no lock: x86's store order hid it; on ARM the worker could
+  // see the queue's new size before the std::function was fully written
+  // (2026-09-23). The count lets the worker's spin check without the mutex.
+  std::mutex pending_fns_mutex_;
   std::queue<std::function<void()>> pending_fns_;
+  std::atomic<uint32_t> pending_fns_count_{0};
 
   // MicroEngine binary from PM4_ME_INIT
   std::vector<uint32_t> me_bin_;

@@ -90,6 +90,19 @@ DEFINE_bool(
     "gpu_uma_direct_shared_memory + gpu_uma_smart_sync are on.",
     "Vulkan");
 DEFINE_bool(
+    gpu_uma_direct_upload_barrier, true,
+    "Unified-memory direct path (gpu_uma_direct_shared_memory, on by default "
+    "on Android): record a HOST-write -> shader-read buffer barrier after each "
+    "direct write of guest pages. Any pending barrier ends the open render "
+    "pass, and on the Adreno tiler every pass end stores and reloads GMEM. By "
+    "the Vulkan spec, host writes made before vkQueueSubmit are visible to the "
+    "commands of that submission without a barrier, and the direct writes "
+    "happen while the command processor records, before the submit. false = "
+    "no barrier (the device A/B; the direct path had GPU hangs in 2026-05, "
+    "docs/worklog/2026-05-30-uma-and-cross-game-3d.md). "
+    "gpu_uma_strong_coherency still forces the barrier. Read per upload (live).",
+    "Vulkan");
+DEFINE_bool(
     gpu_uma_strong_coherency, false,
     "EXPERIMENT (b) for the Adreno UMA GPU-hang (TDR): when writing guest pages "
     "directly into the persistently-mapped HOST_VISIBLE|DEVICE_LOCAL shared "
@@ -840,6 +853,10 @@ bool VulkanSharedMemory::AllocateSparseHostGpuMemoryRange(
   return true;
 }
 
+bool VulkanSharedMemory::IsTraceRecording() const {
+  return trace_writer_.is_open();
+}
+
 uint64_t VulkanSharedMemory::HazardCurrentSubmission() const {
   return command_processor_.GetCurrentSubmission();
 }
@@ -968,9 +985,12 @@ bool VulkanSharedMemory::UploadRanges(
   }
   if (zero_copy_) {
     // The GPU buffer is guest memory: nothing to copy. Mark the pages valid
-    // and keep the write watch (the texture cache relies on it).
+    // and keep the write watch (the texture cache relies on it). A GPU trace
+    // still needs the data, as the copy path records it below.
     const uint32_t page_size_log2_local = page_size_log2();
     for (const auto& range : upload_page_ranges) {
+      trace_writer_.WriteMemoryRead(range.first << page_size_log2_local,
+                                    range.second << page_size_log2_local);
       MakeRangeValid(range.first << page_size_log2_local,
                      range.second << page_size_log2_local, false);
     }
@@ -1237,7 +1257,7 @@ bool VulkanSharedMemory::UploadRangesDirect(
         current_buffer(), 0, VK_WHOLE_SIZE, VK_PIPELINE_STAGE_HOST_BIT,
         VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_HOST_WRITE_BIT,
         VK_ACCESS_MEMORY_READ_BIT);
-  } else {
+  } else if (cvars::gpu_uma_direct_upload_barrier) {
     command_processor_.PushBufferMemoryBarrier(
         current_buffer(), barrier_first_byte,
         barrier_end_byte - barrier_first_byte, VK_PIPELINE_STAGE_HOST_BIT,

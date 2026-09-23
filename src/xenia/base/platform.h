@@ -55,6 +55,27 @@
 #define XE_COMPILER_UNKNOWN 1
 #endif
 
+// Compiler extension families (upstream xenia). They were missing here until
+// 2026-09-23: every "#if XE_COMPILER_HAS_GNU_EXTENSIONS == 1" was false, so on
+// the NDK's clang XE_FORCEINLINE was a plain inline (the kernel-export
+// trampoline, SpinLoopHint), XE_NOINLINE did nothing, and every swcache
+// prefetch hint compiled to nothing.
+#if defined(__clang__) && defined(_MSC_VER)
+#define XE_COMPILER_CLANG_CL 1
+#else
+#define XE_COMPILER_CLANG_CL 0
+#endif
+#if XE_COMPILER_MSVC == 1 || XE_COMPILER_CLANG_CL == 1
+#define XE_COMPILER_HAS_MSVC_EXTENSIONS 1
+#else
+#define XE_COMPILER_HAS_MSVC_EXTENSIONS 0
+#endif
+#if XE_COMPILER_CLANG == 1 || XE_COMPILER_GNUC == 1
+#define XE_COMPILER_HAS_GNU_EXTENSIONS 1
+#else
+#define XE_COMPILER_HAS_GNU_EXTENSIONS 0
+#endif
+
 #if defined(_M_AMD64) || defined(__amd64__)
 #define XE_ARCH_AMD64 1
 #elif defined(_M_ARM64) || defined(__aarch64__)

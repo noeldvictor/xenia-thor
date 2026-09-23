@@ -92,6 +92,7 @@ class VulkanSharedMemory : public SharedMemory {
   bool UploadRanges(const std::vector<std::pair<uint32_t, uint32_t>>&
                         upload_page_ranges) override;
 
+  bool IsTraceRecording() const override;
   uint64_t HazardCurrentSubmission() const override;
   uint64_t HazardCompletedSubmission() const override;
 
