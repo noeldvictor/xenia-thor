@@ -340,7 +340,15 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   us per frame: prep 380, bind 375, tex 335, state 315, setup 196, emit 195, rt 188, pipe 168,
   process 95, vfres 35 (issuedraw 2,450). No single hot spot on the PC; about 2.1 us per draw.
   The PC does not run the Android defaults (`XE_ANDROID_DEFAULT` levers such as
-  `vulkan_cache_sampler_parameters`), so read the device split before optimizing one bucket. Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
+  `vulkan_cache_sampler_parameters`), so read the device split before optimizing one bucket.
+- **PC checks in the device configuration (2026-09-23).** `pc_run.py --android-defaults`. Banjo
+  with it and zero-copy: the loading screen, the Single Player menu and Spiral Mountain render
+  correctly (lower half not dark). Lesson: a new setting that changes the SPIR-V (the rounding
+  lever) compiles every pipeline cold in the NVIDIA driver cache - about 200 ms each, 76 s for
+  Banjo's jigsaw, which sat still and read as a freeze; the second run took 5 ms each. `pc_run`
+  now prints the compile rate and says "COLD DRIVER CACHE" instead of a plain FROZEN. A stale
+  16-px strip at the left edge of Banjo's PC frames is in the default configuration too and not
+  in the device captures (PC window path; open, low priority). Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
   GPU-readback titles, plus 512 MB of RAM - the device decides.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.
@@ -497,6 +505,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_perf_probe`, `xenia_live_ab`, `xenia_scoreboard` | MCP wrappers of `tools/thor/perf_probe.py` (the CPU/GPU split of a scene in one launch, the command processor's per-frame split, a verdict), `live_ab.py` (cvars flipped live in one launch, `;`-separated arms) and `scoreboard.py`. Device tools: ask the user first |
 | `xenia_trace_ab`, `xenia_pc_run` | MCP wrappers of `tools/pc/trace_ab.py` and `tools/pc/pc_run.py` (Vulkan, the device snapshot's settings, `trace_at` for frame traces). PC only |
 | `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
+| `pc_run.py --android-defaults` | the PC run with the Android build defaults (GPU, kernel, caches: 10 settings; not the ARM64/LLVM CPU backends, the thermal API, or `gpu_uma_direct_shared_memory`, which cannot allocate 512 MB of host-visible VRAM on a desktop GPU and exits). Prints the pipeline compile rate and flags a cold driver cache |
 | `tools/check_tools.py` | every tool script compiles and holds no control bytes (a heredoc turned a regex escape into byte 0x08 and a perf_probe verdict never fired); the stop hook runs it |
 | `tools/turnip/build.py`, `xenia_turnip_build` | one call from Windows: the WSL Turnip build, the patches applied, the zip copied to `scratch/tools/turnip/`; fails when no zip is made |
 | `tools/pc/build_pc.py`, `xenia_pc_build` | the Windows app build ("Release Windows", x64): errors, and whether `xenia.exe` changed |

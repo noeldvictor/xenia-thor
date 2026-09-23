@@ -36,6 +36,29 @@ import trace_ab  # noqa: E402
 from PIL import Image, ImageChops, ImageStat  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+PIPES = re.compile(r'VulkanPipelineCache: (\d+) pipelines created, (\d+) ms in creation \(last 64: (\d+) ms')
+# XE_ANDROID_DEFAULT settings that cannot apply to the Windows build: the ARM64
+# and LLVM CPU backends (Windows runs x64), the Android thermal API, and the
+# unified-memory direct-write buffer (a desktop GPU has no 512 MB host-visible
+# device-local heap: the app exits with "Failed to allocate 512 MB", 2026-09-23).
+# Every other Android default (GPU, kernel, caches) applies with
+# --android-defaults.
+ANDROID_ONLY = {
+    'arm64_jit_inline_extern_thunk', 'cpu_aot_maximize', 'cpu_backend_llvm',
+    'cpu_backend_llvm_context_residency', 'cpu_backend_llvm_residency_writeback',
+    'cpu_drop_redundant_atomic_release_barrier', 'cpu_llvm_object_cache',
+    'cpu_llvm_object_cache_skip_lowering', 'gpu_adpf_thermal_throttle',
+    'gpu_uma_direct_shared_memory',
+}
+
+
+def android_default_cvars():
+    """name=value for every XE_ANDROID_DEFAULT cvar the PC can run, at its
+    Android value (the settings the device changes by build, not by toggle)."""
+    sys.path.insert(0, os.path.join(ROOT, 'tools', 'mcp'))
+    import xenia_thor_mcp  # noqa: E402
+    return ['%s=%s' % (name, android) for name, (android, _desktop)
+            in sorted(xenia_thor_mcp._android_defaults().items()) if name not in ANDROID_ONLY]
 ORACLE = os.path.join(ROOT, 'scratch', 'oracle', 'xenia_canary.exe')
 MARKERS = ('timed out', 'Timeout', 'Unimplemented', 'unimplemented', 'guest crash', 'Fatal',
            'SPINLOCK STALL', 'assert', 'Wait', 'XamShowDirtyDiscErrorUI', 'Non-default cvars')
@@ -63,6 +86,9 @@ def main():
     ap.add_argument('--seconds', type=int, default=120)
     ap.add_argument('--every', type=float, default=10.0)
     ap.add_argument('--from-snapshot', default='')
+    ap.add_argument('--android-defaults', action='store_true',
+                    help='run with the Android build defaults (GPU, kernel, caches) - the '
+                         'device configuration for PC visual and CPU checks')
     ap.add_argument('--cvars', default='')
     ap.add_argument('--presses', default='', help='"seconds:button ..." through the nop HID trigger file')
     ap.add_argument('--hold', type=int, default=150)
@@ -80,6 +106,8 @@ def main():
         os.remove(trigger)
     log = os.path.join(storage, 'xenia.log')
     cvars = []
+    if args.android_defaults:
+        cvars += android_default_cvars()
     if args.from_snapshot:
         cvars += trace_ab.arms_from_snapshot(args.from_snapshot)[1][1]  # the "device" arm
     cvars += [c for c in args.cvars.split() if c]
@@ -150,6 +178,7 @@ def main():
         if exited is None:
             proc.kill()
     counts = {}
+    pipes = None
     try:
         for line in open(log, encoding='utf-8', errors='replace'):
             # The module import tables list export names ("   F 820006F8 ...
@@ -159,11 +188,27 @@ def main():
             for k in MARKERS:
                 if k in line:
                     counts[k] = counts.get(k, 0) + 1
+            m_ = PIPES.search(line)
+            if m_:
+                pipes = tuple(int(g) for g in m_.groups())
     except OSError:
         pass
     print('log markers:', ', '.join('%s=%d' % kv for kv in sorted(counts.items())) or 'none')
+    cold = False
+    if pipes:
+        count, total_ms, last64_ms = pipes
+        cold = last64_ms / 64.0 >= 50.0
+        # 2026-09-23: a new setting that changes the SPIR-V (here the rounding
+        # lever) compiles every pipeline cold in the NVIDIA driver cache, about
+        # 200 ms each - Banjo's jigsaw sat still for a minute and read as a
+        # freeze. The second run of the same settings took 5 ms per pipeline.
+        print('pipelines: %d created, %d ms (last 64: %.0f ms each)%s' % (
+            count, total_ms, last64_ms / 64.0,
+            '  COLD DRIVER CACHE - a still screen may be compiles; run again before calling it a freeze'
+            if cold else ''))
     verdict = ('EXITED %s' % exited) if exited is not None else (
-        'FROZEN' if frozen else ('NO FRAME' if not first_frame else 'RUNNING'))
+        ('FROZEN (cold compiles)' if cold else 'FROZEN') if frozen else
+        ('NO FRAME' if not first_frame else 'RUNNING'))
     print('verdict:', verdict, '| log', log)
     return 0 if verdict == 'RUNNING' else 1
 
