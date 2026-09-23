@@ -364,8 +364,11 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
     `pc_run --exe`), and a bisect that only counts runs that reached the crash point.
   - **PC matrix (2026-09-23, Thor configuration):** Banjo to gameplay (jigsaw, title, story,
     Spiral Mountain), Gears to "Exit the cell area" (sharp with direct resolve), MagnaCarta 2 to
-    its in-engine army scene - correct images, no crash. Blue Dragon stopped on its Voice Language
-    menu with timed presses (route, not a hang). `scratch/gears/gears2.iso` is 1.76 GB against
+    its in-engine army scene - correct images, no crash. With sticky presses (second pass,
+    `scratch/matrix/summary-20260923-163812.json`) all four run: Blue Dragon past its Voice
+    Language menu into the village opening, MagnaCarta 2 through its opening (skipped) into
+    village gameplay ("You brought it on yourself"), Gears into the cell, Banjo into Spiral
+    Mountain. `scratch/gears/gears2.iso` is 1.76 GB against
     7.8 GB for Gears 1 - an incomplete pull; it does not mount ("Failed to read all GDFX
     entries"). Under `--cdb` every write-watch fault is a debugger event and the run slows
     several times over; use it on a crash, not for the whole matrix.
