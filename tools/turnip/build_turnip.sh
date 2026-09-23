@@ -6,15 +6,18 @@
 #   wsl -d Ubuntu -- bash tools/turnip/build_turnip.sh [MESA_REF] [PATCH_DIR]
 #
 # MESA_REF: a branch, tag or commit of https://gitlab.freedesktop.org/mesa/mesa
-# (default main). PATCH_DIR: *.patch files applied with git am/apply in name
-# order - the place for xenia-specific driver changes. The bundled driver is
-# Mesa main e40d93a (2026-08-07, KGSL). Output:
-#   ~/turnip-build/out/turnip-<ref>-<short sha>.zip   (and the .so beside it)
+# (default main). PATCH_DIR: *.patch files applied with git apply in name
+# order - the xenia-specific driver changes. Default: tools/turnip/patches
+# (our driver is the patched one); "none" builds plain Mesa. The bundled
+# driver is Mesa main e40d93a (2026-08-07, KGSL). Output:
+#   ~/turnip-build/out/turnip-<ref>-<short sha>[-tuned][-xeN].zip
+# (N = the number of patches; the .so is in the zip).
 # Everything lives under ~/turnip-build (NDK, source, build); nothing is
 # installed system-wide.
 set -euo pipefail
 REF="${1:-main}"
-PATCH_DIR="${2:-}"
+PATCH_DIR="${2:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches}"
+[ "$PATCH_DIR" = none ] && PATCH_DIR=""
 # CPU tuning for the Thor (Snapdragon 8 Gen 2): ARMv8.2 features every core
 # has (dotprod, fp16, rcpc, crypto; /proc/cpuinfo) and scheduling for the X3,
 # where the emulator's command thread - and so Turnip's command recording -
@@ -53,11 +56,16 @@ git reset -q --hard
 git clean -qfdx
 SHA=$(git rev-parse --short=10 HEAD)
 echo "== mesa $REF at $SHA ($(git log -1 --format=%cs))"
+PATCHES=""
+PATCH_COUNT=0
 if [ -n "$PATCH_DIR" ]; then
   for p in "$PATCH_DIR"/*.patch; do
     [ -e "$p" ] || continue
     echo "   patch $(basename "$p")"
-    git apply "$p"
+    # A Windows checkout can carry CRLF line ends; git apply needs LF.
+    sed 's/\r$//' "$p" | git apply -
+    PATCHES="$PATCHES $(basename "$p" .patch)"
+    PATCH_COUNT=$((PATCH_COUNT + 1))
   done
 fi
 
@@ -70,6 +78,7 @@ CPU_ARGS=""
 SUFFIX=""
 for f in $CPU_FLAGS; do CPU_ARGS="$CPU_ARGS, '$f'"; done
 [ -n "$CPU_FLAGS" ] && SUFFIX="-tuned"
+[ "$PATCH_COUNT" -gt 0 ] && SUFFIX="$SUFFIX-xe$PATCH_COUNT"
 cat > "$ROOT/android-aarch64.txt" <<EOF
 [binaries]
 ar = '$TC/llvm-ar'
@@ -109,7 +118,7 @@ cat > "$PKG/meta.json" <<EOF
 {
   "schemaVersion": 1,
   "name": "Mesa Turnip $REF $SHA$SUFFIX (xenia-thor)",
-  "description": "Turnip from Mesa $REF ($SHA, $(git log -1 --format=%cs)), KGSL, CPU flags: ${CPU_FLAGS:-NDK default}; tools/turnip/build_turnip.sh.",
+  "description": "Turnip from Mesa $REF ($SHA, $(git log -1 --format=%cs)), KGSL, CPU flags: ${CPU_FLAGS:-NDK default}, patches:${PATCHES:- none}; tools/turnip/build_turnip.sh.",
   "author": "xenia-thor",
   "packageVersion": "1",
   "vendor": "Mesa",

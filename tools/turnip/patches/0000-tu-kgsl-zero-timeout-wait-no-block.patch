@@ -1,0 +1,39 @@
+diff --git a/src/freedreno/vulkan/tu_knl_kgsl.cc b/src/freedreno/vulkan/tu_knl_kgsl.cc
+index 44af0c22..77caa891 100644
+--- a/src/freedreno/vulkan/tu_knl_kgsl.cc
++++ b/src/freedreno/vulkan/tu_knl_kgsl.cc
+@@ -821,10 +821,33 @@ wait_timestamp_safe(int fd,
+                     unsigned int timestamp,
+                     uint64_t abs_timeout_ns)
+ {
++   int timeout_ms = get_relative_ms(abs_timeout_ns);
++   if (timeout_ms == 0) {
++      /* The downstream KGSL kernel treats a timeout of 0 ms as "wait forever"
++       * (adreno_drawctxt.c: "If timeout is 0, wait forever"). So a status
++       * poll (vkGetFenceStatus, a zero-timeout vkWaitForFences) and every
++       * deadline less than 1 ms away became a wait until the submission
++       * retired. A deadline in the past is a non-blocking read of the retired
++       * timestamp; a deadline under 1 ms away waits at most 1 ms.
++       */
++      if (abs_timeout_ns <= os_time_get_nano()) {
++         struct kgsl_cmdstream_readtimestamp_ctxtid read = {
++            .context_id = context_id,
++            .type = KGSL_TIMESTAMP_RETIRED,
++         };
++         int ret = safe_ioctl(fd, IOCTL_KGSL_CMDSTREAM_READTIMESTAMP_CTXTID,
++                              &read);
++         if (ret == 0 && timestamp_cmp(read.timestamp, timestamp))
++            return VK_SUCCESS;
++         return VK_TIMEOUT;
++      }
++      timeout_ms = 1;
++   }
++
+    struct kgsl_device_waittimestamp_ctxtid wait = {
+       .context_id = context_id,
+       .timestamp = timestamp,
+-      .timeout = get_relative_ms(abs_timeout_ns),
++      .timeout = (unsigned int) timeout_ms,
+    };
+ 
+    while (true) {

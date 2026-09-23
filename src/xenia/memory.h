@@ -419,6 +419,14 @@ class Memory {
   // This is often something like 0x200000000.
   inline uint8_t* physical_membase() const { return physical_membase_; }
 
+  // A separate read-write host view of the whole 512 MB of physical memory,
+  // at an address the system selects. The page protection of the guest views
+  // (reserve, decommit, write watches) does not apply to it, so a GPU API can
+  // import it as one range (gpu_uma_zero_copy: VK_EXT_external_memory_host
+  // pins every page, and a pinned page must be read-write). Made on the first
+  // call and unmapped with the other views. nullptr on failure.
+  uint8_t* GetPhysicalAlias();
+
   // Translates a guest physical address to a host address that can be accessed
   // as a normal pointer.
   // Note that the contents at the specified host address are big-endian.
@@ -617,6 +625,7 @@ class Memory {
     };
     uint8_t* all_views[9];
   } views_ = {{0}};
+  uint8_t* physical_alias_ = nullptr;
 
   std::unique_ptr<cpu::MMIOHandler> mmio_handler_;
 

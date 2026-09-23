@@ -49,11 +49,12 @@ DEFINE_bool(
     gpu_uma_zero_copy, false,
     "Unified-memory zero-copy (docs/research/20260923-uma-zero-copy-design.md): "
     "the shared-memory GPU buffer IS the guest's physical memory - no copy of "
-    "guest pages into a GPU buffer; the GPU reads and writes guest RAM. Desktop "
-    "(Windows) path: VK_EXT_external_memory_host imports the 512 MB physical "
-    "view by host pointer; the Android path (an AHardwareBuffer backing the "
-    "physical views) is the next stage. Falls back to the normal buffer when "
-    "the import is not possible. Default off.",
+    "guest pages into a GPU buffer; the GPU reads and writes guest RAM. "
+    "VK_EXT_external_memory_host imports a read-write alias of the 512 MB "
+    "physical memory by host pointer: desktop drivers have it; on the Thor it "
+    "needs our Turnip (tools/turnip/patches/0001, KGSL userptr, IO-coherent). "
+    "Falls back to the normal buffer when the import is not possible. Default "
+    "off.",
     "Vulkan");
 
 DEFINE_bool(vulkan_disable_shader_stencil_export, false,

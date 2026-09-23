@@ -104,6 +104,9 @@ void CrashDump() {
   --in_crash_dump;
 }
 
+// The physical memory: 512 MB at file offset 0x100000000 of the mapping.
+static constexpr size_t kPhysicalAliasSize = 0x20000000;
+
 Memory::Memory() {
   system_page_size_ = uint32_t(xe::memory::page_size());
   system_allocation_granularity_ =
@@ -135,6 +138,10 @@ Memory::~Memory() {
 
   // Unmap all views and close mapping.
   if (mapping_ != xe::memory::kFileMappingHandleInvalid) {
+    if (physical_alias_) {
+      xe::memory::UnmapFileView(mapping_, physical_alias_, kPhysicalAliasSize);
+      physical_alias_ = nullptr;
+    }
     UnmapViews();
     xe::memory::CloseFileMappingHandle(mapping_, file_name_);
     mapping_base_ = nullptr;
@@ -341,6 +348,33 @@ int Memory::MapViews(uint8_t* mapping_base) {
     }
   }
   return 0;
+}
+
+uint8_t* Memory::GetPhysicalAlias() {
+  if (physical_alias_) {
+    return physical_alias_;
+  }
+  void* view = xe::memory::MapFileView(mapping_, nullptr, kPhysicalAliasSize,
+                                       xe::memory::PageAccess::kReadWrite,
+                                       0x100000000ull);
+  if (!view) {
+    XELOGE("Memory: could not map the read-write physical alias view");
+    return nullptr;
+  }
+#if XE_PLATFORM_WIN32
+  // The section is reserved, not committed. Commit its physical part through
+  // the alias; the guest views keep their own page protection.
+  if (!xe::memory::AllocFixed(view, kPhysicalAliasSize,
+                              xe::memory::AllocationType::kCommit,
+                              xe::memory::PageAccess::kReadWrite)) {
+    xe::memory::UnmapFileView(mapping_, view, kPhysicalAliasSize);
+    XELOGE("Memory: could not commit the physical alias view");
+    return nullptr;
+  }
+#endif  // XE_PLATFORM_WIN32
+  physical_alias_ = static_cast<uint8_t*>(view);
+  XELOGI("Memory: read-write physical alias view at {}", view);
+  return physical_alias_;
 }
 
 void Memory::UnmapViews() {

@@ -52,7 +52,8 @@ Always update this file when a rule or the state changes, and check it at the st
 - Goal: Xbox 360 games run fast and playable on the AYN Thor and Thor Max.
 - Device: Snapdragon 8 Gen 2, Adreno 740, native Android, ABI `arm64-v8a`.
 - Graphics: Vulkan through a custom build of Mesa Turnip - required (user, 2026-09-22). Build it with
-  `tools/turnip/build_turnip.sh` (WSL, Mesa ref + optional patch dir -> adrenotools zip); install it
+  `tools/turnip/build_turnip.sh` (WSL, Mesa ref + our patches in `tools/turnip/patches/` -> adrenotools
+  zip); install it
   with `xenia_gpu_driver(install_zip=...)`. The Qualcomm driver is wrong for this work. The driver is a
   paradigm axis: name the Mesa commit in every measurement (the scoreboard records the build).
 - CPU: PowerPC guest code runs through the a64 backend and the LLVM backend. No x64 code is in the APK.
@@ -316,9 +317,15 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   writes guest RAM. WORKS ON THE PC (2026-09-23): NVIDIA imports the physical view by host
   pointer (VK_EXT_external_memory_host, handle type 0x80); Banjo's title and Gears to gameplay
   render the same as without it (no torn geometry from the draw-timing hazard in these scenes).
-  The Android path is next: an AHardwareBuffer backing the physical views, imported by Turnip
-  (stage 0 probe `gpu_uma_zero_copy_probe` built: allocation, import memory types, dma-buf CPU
-  map). Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
+  The Android path is built (2026-09-23), not yet run on the device: the same host-pointer import,
+  through our Turnip. Upstream Turnip has no VK_EXT_external_memory_host; our patch
+  `tools/turnip/patches/0001` adds it with a KGSL userptr import (`KGSL_USER_MEM_TYPE_ADDR`, the
+  path of Qualcomm's `cl_qcom_ext_host_ptr`), IO-coherent, cached-coherent memory types only.
+  The app imports `Memory::GetPhysicalAlias()`, a separate read-write view of the physical memory
+  (the kernel pins every page, and the guest views have reserved and write-watched pages). The PC
+  uses the same alias (Banjo checked). The AHB plan of the design doc is the fallback. With the
+  bundled driver the log says "VK_EXT_external_memory_host is not available" and the normal buffer
+  runs. Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
   GPU-readback titles, plus 512 MB of RAM - the device decides.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.
@@ -337,11 +344,18 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   descriptor fixes; new debug options that matter to Xenia's frames: `gmem_warmup` (preallocate a
   large VSC - binning visibility stream - so heavy frames do not overflow it), `forcecb`/`nocb`
   (a7xx concurrent binning: on by default, disabled per render pass for LRZ-clear reasons that
-  `TU_DEBUG=perf` logs), `hiprio`, `nobinmerging`. Next device step (ask first, short, heat stop
-  44 C): `tools/thor/driver_ab.py gears1 "bundled:driver=<id>,tu=perf"
-  "plain:zip=...885dd3a17a.zip,tu=perf" "tuned:zip=...tuned.zip,tu=perf"
-  "warm:zip=...tuned.zip,tu=perf,gmem_warmup"` - fps, GPU frame time, and Turnip's own reasons
-  (concurrent binning off, VSC overflow) per arm.
+  `TU_DEBUG=perf` logs), `hiprio`, `nobinmerging`. Our patches (`tools/turnip/patches/`, applied
+  by default; the zip name ends in `-xeN`): `0000` - the downstream KGSL kernel waits forever on a
+  0 ms timeout, and upstream passes 0 ms for every status poll and every deadline under 1 ms, so a
+  `vkGetFenceStatus` blocked until the GPU finished (an older copy of this fix was in the bundled
+  driver's script, `kgsl-nonblocking-fence-status.patch`, and missing from the 2026-09-22 plain and
+  tuned zips - A/B only `-xe` zips against the bundled one); `0001` - VK_EXT_external_memory_host
+  (above). Current zip: `scratch/tools/turnip/turnip-885dd3a17a-885dd3a17a-tuned-xe2.zip`. Next
+  device step (ask first; 5 minutes, heat stop 44 C): `tools/thor/driver_ab.py gears1
+  "bundled:driver=<id>,tu=perf" "xe2:zip=...tuned-xe2.zip,tu=perf"
+  "warm:zip=...tuned-xe2.zip,tu=perf,gmem_warmup" "zc:zip=...tuned-xe2.zip,cvars=gpu_uma_zero_copy=true"`
+  - fps, GPU frame time, Turnip's own reasons (concurrent binning off, VSC overflow), and the
+  zero-copy state per arm.
 - **Banjo's dark lower half is device-verified fixed** (0 of 20 dark with the cull on, 2026-09-22).
   The global FP16 toggle is off on the device; the cull and both merges stay on.
 - **The order for a device-only bug:** `xenia_cvars` (the settings snapshot) -> the PC replay of
@@ -454,8 +468,8 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_perf_probe`, `xenia_live_ab`, `xenia_scoreboard` | MCP wrappers of `tools/thor/perf_probe.py` (the CPU/GPU split of a scene in one launch, the command processor's per-frame split, a verdict), `live_ab.py` (cvars flipped live in one launch, `;`-separated arms) and `scoreboard.py`. Device tools: ask the user first |
 | `xenia_trace_ab`, `xenia_pc_run` | MCP wrappers of `tools/pc/trace_ab.py` and `tools/pc/pc_run.py` (Vulkan, the device snapshot's settings, `trace_at` for frame traces). PC only |
 | `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
-| `tools/thor/driver_ab.py` | Turnip builds and TU_DEBUG options A/B on one scene: install/select per arm, fps, GPU frame time, Turnip's `perf` reasons; heat stop before each arm. Device: ask first |
-| `tools/turnip/build_turnip.sh` | the custom Turnip: Mesa ref + patches -> `~/turnip-build/out/turnip-<ref>-<sha>.zip` in WSL (NDK r27c, KGSL, no LTO) |
+| `tools/turnip/build_turnip.sh` | the custom Turnip: Mesa ref + `tools/turnip/patches/*.patch` (default; `none` = plain) -> `~/turnip-build/out/turnip-<ref>-<sha>-tuned-xeN.zip` in WSL (NDK r27c, KGSL, no LTO). From Git Bash set `MSYS_NO_PATHCONV=1`, or the `/mnt/f/...` script path is rewritten |
+| `tools/thor/driver_ab.py` | Turnip builds, `TU_DEBUG` options and per-arm cvars on one scene: fps, GPU frame time, Turnip perf reasons, zero-copy state; install/select per arm; stops at 44 C or 5 minutes. Device: ask first |
 | `tools/pc/trace_ab.py` | a device GPU trace replayed on the PC per arm of cvars (about a minute each), image diff against the first arm per half; `--from-snapshot` builds the arms from a `xenia_cvars` file (PC defaults, all device settings, each setting alone). Names the setting behind a device-only glitch without the device |
 | `xenia_api`, `xenia_log`, `xenia_shader_cache` | any endpoint of the in-app server; the in-process log ring with a filter; the pipeline creation lines and the cache files on the device |
 

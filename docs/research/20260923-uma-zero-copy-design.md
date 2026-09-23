@@ -73,6 +73,22 @@ four times (`map_info` in memory.cc): 0xA0000000 (64 KB pages), 0xC0000000 (16 M
   fallback is a dma-buf from Vulkan export (`VkExportMemoryAllocateInfo`, handle type dma-buf) if
   Turnip on KGSL exports it.
 
+## Path taken (2026-09-23): host-pointer import through our Turnip
+
+The PC path (VK_EXT_external_memory_host) worked first, so the Android path uses the same import
+and needs no change to the guest memory allocation. Upstream Turnip does not have the extension.
+Our patch `tools/turnip/patches/0001-tu-kgsl-external-memory-host.patch` adds it:
+`IOCTL_KGSL_GPUOBJ_IMPORT` with `KGSL_USER_MEM_TYPE_ADDR` (the length goes in `priv_len`), flags
+`KGSL_MEMFLAGS_IOCOHERENT` and write-back cache mode, only for the cached-coherent memory types, so
+the coherence hazard above does not apply. The kernel pins every page of the range, and a pinned
+page must be read-write, so the app imports `Memory::GetPhysicalAlias()`: a separate read-write
+map of the physical 512 MB of the guest memory file, apart from the guest views (reserved pages,
+write watches). The AHB stages below stay as the fallback if KGSL refuses the userptr import.
+
+Device check (ask the user first): `driver_ab.py gears1` with an arm
+`zc:zip=...-xe2.zip,cvars=gpu_uma_zero_copy=true`. Pass: the row says `uma: ACTIVE`, the image is
+the same, fps is not lower. Then the timing hazard is the thing to watch.
+
 ## Stages (each: one build, one short device check)
 
 | stage | change | device check | pass |

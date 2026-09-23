@@ -860,18 +860,15 @@ bool VulkanSharedMemory::TryCreateZeroCopyBuffer(
     XELOGW("Shared memory: gpu_uma_zero_copy: no vkGetMemoryHostPointerPropertiesEXT");
     return false;
   }
-  void* host_pointer = memory().TranslatePhysical<void*>(0);
-#if XE_PLATFORM_WIN32
-  // The guest memory section is reserved, not committed; the driver pins
-  // committed pages only. Commit the whole physical view (all views share the
-  // section's pages).
-  if (!xe::memory::AllocFixed(host_pointer, kBufferSize,
-                              xe::memory::AllocationType::kCommit,
-                              xe::memory::PageAccess::kReadWrite)) {
-    XELOGW("Shared memory: gpu_uma_zero_copy: could not commit the physical view");
+  // The driver pins every page of the range, and a pinned page must be
+  // read-write. The guest views are not (reserved pages, write watches), so
+  // import a separate read-write alias of the same physical memory. On the
+  // Thor this needs our Turnip (tools/turnip/patches/0001: KGSL userptr).
+  void* host_pointer = memory().GetPhysicalAlias();
+  if (!host_pointer) {
+    XELOGW("Shared memory: gpu_uma_zero_copy: no physical alias view");
     return false;
   }
-#endif  // XE_PLATFORM_WIN32
   VkExternalMemoryHandleTypeFlagBits handle_type =
       VkExternalMemoryHandleTypeFlagBits(0);
   uint32_t host_memory_type_bits = 0;

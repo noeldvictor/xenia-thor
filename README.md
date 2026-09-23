@@ -102,8 +102,17 @@ exact commit behind every measurement. The APK bundles Mesa main `e40d93a` (2026
 Build a new one in WSL (Ubuntu), from a Mesa branch, tag or commit, with optional patches:
 
 ```sh
-wsl -d Ubuntu -- bash tools/turnip/build_turnip.sh main [patch-dir]
+wsl -d Ubuntu -- bash tools/turnip/build_turnip.sh main [patch-dir | none]
 ```
+
+Our driver changes live in `tools/turnip/patches/` and are applied by default (the zip name ends
+in `-xeN`, N patches):
+
+- `0000`: the downstream KGSL kernel waits forever on a 0 ms timeout. Upstream Turnip passes 0 ms
+  for a fence status poll and for every deadline less than 1 ms away, so a status poll blocked
+  until the GPU finished. The patch reads the retired timestamp instead.
+- `0001`: `VK_EXT_external_memory_host` on KGSL (userptr import, IO-coherent). With it the
+  emulator's `gpu_uma_zero_copy` makes the GPU buffer the game's own RAM: nothing is copied.
 
 The script downloads NDK r27c and Mesa into `~/turnip-build`. It builds Turnip for arm64 with the
 KGSL kernel interface and writes an adrenotools zip, `meta.json` plus `libvulkan_freedreno.so`, to
