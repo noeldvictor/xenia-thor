@@ -353,9 +353,12 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   (above). Current zip: `scratch/tools/turnip/turnip-885dd3a17a-885dd3a17a-tuned-xe2.zip`. Next
   device step (ask first; 5 minutes, heat stop 44 C): `tools/thor/driver_ab.py gears1
   "bundled:driver=<id>,tu=perf" "xe2:zip=...tuned-xe2.zip,tu=perf"
-  "warm:zip=...tuned-xe2.zip,tu=perf,gmem_warmup" "zc:zip=...tuned-xe2.zip,cvars=gpu_uma_zero_copy=true"`
-  - fps, GPU frame time, Turnip's own reasons (concurrent binning off, VSC overflow), and the
-  zero-copy state per arm.
+  "warm:zip=...tuned-xe2.zip,tu=perf,gmem_warmup" "zc:zip=...tuned-xe2.zip,cvars=gpu_uma_zero_copy=true"
+  "eager:zip=...tuned-xe2.zip,cvars=vulkan_lazy_completion_polls=false"` - fps, GPU frame time,
+  Turnip's own reasons (concurrent binning off, VSC overflow), and the zero-copy state per arm. The
+  `eager` arm: `vulkan_lazy_completion_polls` (default on) is the app-side workaround for the
+  blocking status poll; with patch `0000` a poll no longer blocks, so eager polls can learn GPU
+  completion sooner.
 - **Banjo's dark lower half is device-verified fixed** (0 of 20 dark with the cull on, 2026-09-22).
   The global FP16 toggle is off on the device; the cull and both merges stay on.
 - **The order for a device-only bug:** `xenia_cvars` (the settings snapshot) -> the PC replay of
