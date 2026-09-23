@@ -15,6 +15,7 @@
 
 #include "xenia/base/assert.h"
 #include "xenia/base/bit_range.h"
+#include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
 #include "xenia/base/profiling.h"
@@ -47,6 +48,18 @@ DEFINE_bool(
     "global lock and no mprotect. Texture, resolve and memexport requests keep "
     "the watch (the texture cache needs it). No effect without zero-copy. "
     "Read per call (live).",
+    "GPU");
+
+DEFINE_bool(
+    gpu_uma_hazard_check, false,
+    "Diagnostic for unified-memory zero-copy (gpu_uma_zero_copy): count CPU "
+    "writes to pages that a GPU submission still reads - with zero-copy the "
+    "GPU reads guest memory when it executes, not when the command processor "
+    "recorded the draw, so such a write changes what the GPU sees. Counted on "
+    "the GPU shmem/frame line (hazards=...) with the first addresses logged. "
+    "Keeps the write watch on buffer pages (ignores "
+    "gpu_uma_skip_buffer_watches) so their writes are seen. Slow; off by "
+    "default.",
     "GPU");
 
 namespace xe {
@@ -419,6 +432,10 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
 
   SCOPE_profile_cpu_f("gpu");
 
+  if (cvars::gpu_uma_hazard_check && zero_copy_ && !hazard_kind_override_) {
+    HazardNoteUse(start, length, 2);
+  }
+
   if (!EnsureHostGpuMemoryAllocated(start, length)) {
     return false;
   }
@@ -541,7 +558,60 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
   return uploaded;
 }
 
+void SharedMemory::HazardNoteUse(uint32_t start, uint32_t length,
+                                 uint8_t kind) {
+  if (!length || start >= kBufferSize) {
+    return;
+  }
+  const uint32_t page_count = kBufferSize >> page_size_log2_;
+  if (!hazard_page_use_) {
+    hazard_page_use_ = std::make_unique<uint64_t[]>(page_count);
+    hazard_page_kind_ = std::make_unique<uint8_t[]>(page_count);
+  }
+  const uint64_t submission = HazardCurrentSubmission();
+  const uint32_t page_first = start >> page_size_log2_;
+  const uint32_t page_last =
+      std::min(start + (length - 1), kBufferSize - 1) >> page_size_log2_;
+  for (uint32_t page = page_first; page <= page_last; ++page) {
+    hazard_page_use_[page] = submission;
+    hazard_page_kind_[page] = kind;
+  }
+}
+
+void SharedMemory::HazardCheckWrite(uint32_t page_first, uint32_t page_last) {
+  if (!hazard_page_use_) {
+    return;
+  }
+  const uint64_t current = HazardCurrentSubmission();
+  const uint64_t completed = HazardCompletedSubmission();
+  for (uint32_t page = page_first; page <= page_last; ++page) {
+    const uint64_t use = hazard_page_use_[page];
+    if (!use || use <= completed) {
+      continue;
+    }
+    const uint32_t kind_index = hazard_page_kind_[page] == 1 ? 0 : 1;
+    const bool definite = use >= current;
+    (definite ? stat_hazard_definite_ : stat_hazard_possible_)[kind_index]
+        .fetch_add(1, std::memory_order_relaxed);
+    if (hazard_logged_.fetch_add(1, std::memory_order_relaxed) < 40) {
+      XELOGW(
+          "UMA hazard: CPU write to physical 0x{:08X} ({}) while submission "
+          "{} still reads it ({}; current {}, completed {})",
+          page << page_size_log2_, kind_index ? "texture/other" : "buffer",
+          use, definite ? "not submitted yet" : "in flight", current,
+          completed);
+    }
+  }
+}
+
 bool SharedMemory::RequestBufferRange(uint32_t start, uint32_t length) {
+  if (cvars::gpu_uma_hazard_check && zero_copy_) {
+    HazardNoteUse(start, length, 1);
+    hazard_kind_override_ = 1;
+    bool result = RequestRange(start, length);
+    hazard_kind_override_ = 0;
+    return result;
+  }
   if (zero_copy_ && cvars::gpu_uma_skip_buffer_watches) {
     if (start > kBufferSize || (kBufferSize - start) < length) {
       return false;
@@ -605,6 +675,10 @@ std::pair<uint32_t, uint32_t> SharedMemory::MemoryInvalidationCallback(
   uint32_t page_last = physical_address_last >> page_size_log2_;
   uint32_t block_first = page_first >> 6;
   uint32_t block_last = page_last >> 6;
+
+  if (cvars::gpu_uma_hazard_check && zero_copy_) {
+    HazardCheckWrite(page_first, page_last);
+  }
 
   auto global_lock = global_critical_region_.Acquire();
 

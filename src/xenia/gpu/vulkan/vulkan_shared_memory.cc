@@ -840,6 +840,14 @@ bool VulkanSharedMemory::AllocateSparseHostGpuMemoryRange(
   return true;
 }
 
+uint64_t VulkanSharedMemory::HazardCurrentSubmission() const {
+  return command_processor_.GetCurrentSubmission();
+}
+
+uint64_t VulkanSharedMemory::HazardCompletedSubmission() const {
+  return command_processor_.GetCompletedSubmission();
+}
+
 bool VulkanSharedMemory::TryCreateZeroCopyBuffer(
     const VkBufferCreateInfo& base_create_info) {
   const ui::vulkan::VulkanDevice* const vulkan_device =

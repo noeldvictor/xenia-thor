@@ -36,6 +36,7 @@ import trace_ab  # noqa: E402
 from PIL import Image, ImageChops, ImageStat  # noqa: E402
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+HAZARDS = re.compile(r'hazards=(\d+)/(\d+)/(\d+)/(\d+)')
 PIPES = re.compile(r'VulkanPipelineCache: (\d+) pipelines created, (\d+) ms in creation \(last 64: (\d+) ms')
 # XE_ANDROID_DEFAULT settings that cannot apply to the Windows build: the ARM64
 # and LLVM CPU backends (Windows runs x64), the Android thermal API, and the
@@ -179,6 +180,7 @@ def main():
             proc.kill()
     counts = {}
     pipes = None
+    hazard_frames = []
     try:
         for line in open(log, encoding='utf-8', errors='replace'):
             # The module import tables list export names ("   F 820006F8 ...
@@ -191,6 +193,9 @@ def main():
             m_ = PIPES.search(line)
             if m_:
                 pipes = tuple(int(g) for g in m_.groups())
+            m_ = HAZARDS.search(line)
+            if m_:
+                hazard_frames.append(tuple(int(g) for g in m_.groups()))
     except OSError:
         pass
     print('log markers:', ', '.join('%s=%d' % kv for kv in sorted(counts.items())) or 'none')
@@ -206,6 +211,18 @@ def main():
             count, total_ms, last64_ms / 64.0,
             '  COLD DRIVER CACHE - a still screen may be compiles; run again before calling it a freeze'
             if cold else ''))
+    if hazard_frames:
+        # gpu_uma_hazard_check (2026-09-23): CPU writes to pages a GPU
+        # submission still reads. With zero-copy the GPU reads them late; the
+        # copy path took a snapshot. MagnaCarta 2 tore a cutscene frame this
+        # way. Zero or near zero over the run = zero-copy is safe for this title.
+        bad = [f for f in hazard_frames if any(f)]
+        med = [sorted(f[i] for f in hazard_frames)[len(hazard_frames) // 2] for i in range(4)]
+        print('zero-copy hazards: %d of %d frames (buffer definite/possible, other definite/possible '
+              'median %d/%d/%d/%d) -> %s' % (
+                  len(bad), len(hazard_frames), med[0], med[1], med[2], med[3],
+                  'SAFE for this title' if len(bad) * 100 <= len(hazard_frames) else
+                  'UNSAFE: the GPU sees data the game changed after the draw was recorded'))
     verdict = ('EXITED %s' % exited) if exited is not None else (
         ('FROZEN (cold compiles)' if cold else 'FROZEN') if frozen else
         ('NO FRAME' if not first_frame else 'RUNNING'))

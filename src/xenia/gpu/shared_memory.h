@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <utility>
 #include <vector>
@@ -41,10 +42,22 @@ class SharedMemory {
     uint64_t lock_ns = 0;          // waiting for the global lock in RequestRange
     uint64_t invalidations = 0;    // write-watch hits (any thread)
     uint64_t request_zero_copy = 0;  // buffer requests with nothing to do
+    // gpu_uma_hazard_check: CPU writes to a page that a GPU submission still
+    // reads. [0] vertex/index buffers, [1] everything else (textures,
+    // resolves, memexport). "definite": the submission was not even
+    // submitted yet; "possible": submitted, completion not seen yet.
+    uint64_t hazard_definite[2] = {};
+    uint64_t hazard_possible[2] = {};
   };
   Stats TakeStats() {
     Stats s = stats_;
     s.invalidations = stat_invalidations_.exchange(0, std::memory_order_relaxed);
+    for (uint32_t i = 0; i < 2; ++i) {
+      s.hazard_definite[i] =
+          stat_hazard_definite_[i].exchange(0, std::memory_order_relaxed);
+      s.hazard_possible[i] =
+          stat_hazard_possible_[i].exchange(0, std::memory_order_relaxed);
+    }
     stats_ = Stats();
     return s;
   }
@@ -145,6 +158,10 @@ class SharedMemory {
 
  protected:
   SharedMemory(Memory& memory);
+  // For gpu_uma_hazard_check: the submission being recorded now, and the last
+  // one seen complete. The base class knows no submissions (0 = off).
+  virtual uint64_t HazardCurrentSubmission() const { return 0; }
+  virtual uint64_t HazardCompletedSubmission() const { return 0; }
   // Set by the implementation when its GPU buffer is bound to the guest's
   // physical memory itself (gpu_uma_zero_copy): an upload copies nothing.
   bool zero_copy_ = false;
@@ -266,6 +283,16 @@ class SharedMemory {
   // Updated on the command processor thread only, except the atomic.
   Stats stats_;
   std::atomic<uint64_t> stat_invalidations_{0};
+  // gpu_uma_hazard_check: per page, the submission that last requested it and
+  // the kind of request (1 buffer, 2 other). Made on the first use.
+  std::unique_ptr<uint64_t[]> hazard_page_use_;
+  std::unique_ptr<uint8_t[]> hazard_page_kind_;
+  uint8_t hazard_kind_override_ = 0;
+  std::atomic<uint64_t> stat_hazard_definite_[2]{};
+  std::atomic<uint64_t> stat_hazard_possible_[2]{};
+  std::atomic<uint32_t> hazard_logged_{0};
+  void HazardNoteUse(uint32_t start, uint32_t length, uint8_t kind);
+  void HazardCheckWrite(uint32_t page_first, uint32_t page_last);
 
   static std::pair<uint32_t, uint32_t> MemoryInvalidationCallbackThunk(
       void* context_ptr, uint32_t physical_address_start, uint32_t length,

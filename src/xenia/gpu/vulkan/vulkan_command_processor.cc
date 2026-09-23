@@ -3301,10 +3301,13 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       SharedMemory::Stats sm = shared_memory_->TakeStats();
       XELOGI(
           "GPU shmem/frame: requests={} fast={} zero_copy={} uploads={} "
-          "upload_kb={} upload_us={} protect_us={} lock_us={} invalidations={}",
+          "upload_kb={} upload_us={} protect_us={} lock_us={} invalidations={} "
+          "hazards={}/{}/{}/{}",
           sm.request_calls, sm.request_fast, sm.request_zero_copy,
           sm.upload_calls, (sm.upload_pages << 12) >> 10, sm.upload_ns / 1000,
-          sm.protect_ns / 1000, sm.lock_ns / 1000, sm.invalidations);
+          sm.protect_ns / 1000, sm.lock_ns / 1000, sm.invalidations,
+          sm.hazard_definite[0], sm.hazard_possible[0], sm.hazard_definite[1],
+          sm.hazard_possible[1]);
     }
 
     // ⚠⚠ THE LINE ABOVE IS TRUNCATED BY LOGCAT AT ~1066 CHARACTERS, and
