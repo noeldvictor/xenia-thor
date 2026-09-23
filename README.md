@@ -56,8 +56,14 @@ One device, one architecture, measured changes.
   per-title default. Start New Game reaches the opening story; the freeze on the save panel was a
   closed file kept alive by the Android-only handle cache, fixed. The dark, flickering lower half
   of the screen was a stale primitive topology after a geometry-shader pipeline bind, turned on by
-  the CPU draw-cull toggle; fixed and verified on the PC replay of a device frame, device check
-  pending.
+  the CPU draw-cull toggle; fixed, and verified on the device (0 of 20 frames dark).
+- Gears of War: 12.5 to about 20.5 fps in the first gameplay scene with per-title defaults (the
+  CPU draw cull, VRS and FP16 off). The command processor spent most of the rest waiting for the
+  global lock; the fixes are in, and one device run showed about 26 fps with two lock-spin
+  settings on (not yet confirmed).
+- Heat: the app watches Android's thermal status and heat forecast, warns the player, lowers the
+  frame cap in steps, and pauses the game before the device gets too hot. The FPS badge shows the
+  heat level.
 - Blue Dragon: GPU frame 79 to 64.5 ms in the field (about 10 to 12.7 presented fps): the Xenos
   21-bit rounding of scalar approximations is now a lever, off on Android. Blue Dragon is low
   priority: [re:Blue](https://github.com/zolaware/reblue) is a native recompilation of it.
