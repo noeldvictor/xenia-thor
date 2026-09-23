@@ -35,3 +35,17 @@ crosses. Full table and the open items: `docs/research/20260920-port-paradigm-ma
 | OS | Windows threads, timers, one CPU type | Android, 1+4+3 cores, thermal throttling near 95 C |
 | memory manager | VirtualAlloc, no limits | Scudo, `vm.max_map_count` 65,530 |
 | storage, present, input, build | NVMe, exclusive fullscreen, XInput, MSVC | flash and content URIs, SurfaceFlinger and a sleeping panel, gamepad events, NDK |
+| GPU memory | separate VRAM: copy guest memory into a GPU buffer, watch pages with mprotect (3 views) | one RAM; Turnip exports dma-buf and AHardwareBuffer, so one allocation can be guest RAM and the GPU buffer |
+| locks | an uncontended desktop mutex is cheap; a contended one sleeps briefly | a contended futex sleep plus an Android wakeup on every handoff; the global lock was taken per draw |
+| levers | a speed lever is universal | a lever is per title: the CPU draw cull helps a GPU-bound title and cost Gears 40% |
+
+Targets from these rows (2026-09-22, measured on Gears of War; `AGENTS.md` section 8):
+
+- The command processor takes no global lock per draw (the lock-free valid check; done).
+- A contended lock spins briefly before it sleeps (`global_lock_spin`,
+  `rtl_critical_section_min_spin`; built, the device A/B is owed).
+- Guest memory and the GPU buffer are one allocation where a title's per-frame uploads are large
+  (read its `GPU shmem/frame` line first).
+- Every lever carries a per-title default from a one-launch live A/B (`tools/thor/live_ab.py`).
+- The driver is ours: a custom Turnip build (`tools/turnip/build_turnip.sh`), named in every
+  measurement.

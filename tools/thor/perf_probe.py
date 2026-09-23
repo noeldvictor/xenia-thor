@@ -106,7 +106,15 @@ def main():
         print('command processor per frame (median):', ' '.join('%s=%s' % kv for kv in cpu.items()), flush=True)
     frame_us = 1e6 / fps if fps > 0 else None
     top_cpu = max([p or 0 for _, p in hot] or [0])
-    if med and frame_us and med >= 0.85 * frame_us:
+    cp_us = cpu.get('issuedraw_us') if cpu else None
+    if cp_us and frame_us and cp_us >= 0.6 * frame_us and (not med or cp_us > med):
+        # The command processor's draw submission is the longest part of the
+        # frame (Gears of War, 2026-09-22: ~40 of 54 ms, 30 of them vertex
+        # residency) - the verdict "MIXED" hid this.
+        verdict = ('COMMAND-PROCESSOR-BOUND (draw submission %d us of a %d us frame; vfres %s us, '
+                   'emit %s us; gpu %s us) - see the GPU shmem/frame line with gpu_shared_memory_stats' % (
+                       cp_us, frame_us, cpu.get('vfres_us'), cpu.get('emit_us'), med))
+    elif med and frame_us and med >= 0.85 * frame_us:
         verdict = 'GPU-BOUND (gpu %d us of a %d us frame)' % (med, frame_us)
     elif top_cpu >= 85 and (not med or not frame_us or med < 0.6 * frame_us):
         verdict = 'CPU-BOUND (a thread at %s%% of a core, gpu %s us of %s us)' % (top_cpu, med, frame_us and int(frame_us))
