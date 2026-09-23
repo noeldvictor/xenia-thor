@@ -16,6 +16,12 @@ each line: time, top/bottom luma, the change from the previous capture.
 FROZEN = three captures in a row without change after the first frame. At
 the end: the log's marker counts (waits, timeouts, unimplemented, crashes)
 and the verdict. Captures stay in scratch/<name>/pcrun/.
+
+The live captures are for "which screen / is it frozen", not for pixels: the
+parked window's capture shows a ~16 px strip of stale content at the left
+edge (MagnaCarta 2, 2026-09-22: luma 52-62 in the strip against 8-10 beside
+it, while the trace replay of the same frame is continuous). Check pixels
+with --trace-at and tools/pc/trace_ab.py.
 """
 import argparse
 import os
