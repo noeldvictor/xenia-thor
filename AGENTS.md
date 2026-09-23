@@ -295,10 +295,22 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   PC replay of a device frame; the device check waits for the user. Open: a second, rarer freeze
   at swap 307 (a free on the null heap from `DoWork_CStreamingWaveBank_XACT`), the gameplay route
   and its fps.
-- **Gears of War (4D5307D5).** On the PC with the device's settings it reaches gameplay in 290 s.
-  FP16 pixel shaders darken its lighting; it ships with FP16 off. The device's earlier stall (guest
-  threads wait on an event the HLE never signals) did not show on the PC; check the device.
-  Gears 2, 3 and Judgment: images on the device only, not yet run.
+- **Gears of War (4D5307D5), the user's priority (30 fps and a clean image).** Device, prison
+  cell: 12.5 fps with the leftover toggles; the CPU draw cull cost 40% (20.3 fps without it) and
+  VRS made the armor blocky - Gears ships with the cull, VRS and FP16 off (~20.5 fps). The frame
+  then: 54 ms presented, GPU 25 ms (75% busy), the command processor ~40 ms per frame issuing
+  ~1,800 draws, ~30 ms of it in vertex residency (`RequestRange`). The PC (Vulkan) in steady state:
+  submission 4.2 ms, residency 0.25 ms, 2,573 requests with 2,558 answered lock-free, 20 uploads
+  of 156 KB, 5 watch hits per frame - the device's 30 ms is WAITING for the global lock the guest
+  threads hold in their interrupt-disabled sections, not work. Fixes landed: the lock-free valid
+  check, and the per-draw hoisted lock only without it (device A/B owed: `live_ab.py gears1
+  "hoist:" "nohoist:vulkan_hoist_request_range_lock=false"`, then the `gpu_shared_memory_stats`
+  line). Also in its profile: kernel 33-38% (the main thread's `Sleep(0)` as `sched_yield`, the
+  critical-section handoffs as futexes), `xe_llvm_resolve_cached`. The big item behind all of
+  it: the desktop separate-VRAM model (copy guest memory into a GPU buffer, watch pages with
+  mprotect in three views). Turnip exposes dma-buf and AHardwareBuffer export; one allocation as
+  both guest RAM and the GPU buffer removes copy and watch for buffers. Gears 2, 3 and Judgment:
+  images on the device only, not yet run.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.
 - **Blue Dragon (4D5307DF).** Low priority (re:Blue exists). GPU frame 79 -> 64.5 ms in the field
