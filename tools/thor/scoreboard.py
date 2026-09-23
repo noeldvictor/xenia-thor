@@ -38,10 +38,15 @@ ENTRIES = {
     # Single Player -> Start New Game -> the opening story over the world.
     'banjo_story': dict(kind='goto', title='banjo',
                         steps=BANJO_START + '|name:menu;press:A;settle:6000|name:story;press:A;settle:25000'),
-    # Title -> menus -> the prison cell (the PC reached gameplay at 290 s).
-    'gears1': dict(kind='timed', path=GEARS, at=330,
-                   presses=[(60, 'START'), (75, 'A'), (90, 'A'), (105, 'START'), (120, 'A'), (135, 'A'),
-                            (195, 'START'), (215, 'A'), (245, 'START'), (265, 'A'), (295, 'A')]),
+    # Title -> menus -> the prison cell. The title (red, "PRESS START") comes
+    # later on the device than on the PC, so the route waits for it instead
+    # of pressing on a clock (2026-09-22: timed presses left it at the title).
+    'gears1': dict(kind='goto', path=GEARS,
+                   steps='name:title;until:red>0.2;timeout:400;press:START;settle:12000'
+                         '|name:m1;press:A;settle:12000|name:m2;press:A;settle:12000'
+                         '|name:m3;press:START;settle:12000|name:m4;press:A;settle:15000'
+                         '|name:m5;press:A;settle:60000|name:cell;press:START;settle:15000'
+                         '|name:c2;press:A;settle:20000|name:c3;press:A;settle:30000'),
     # Title -> menus -> the castle scene (the PC reached it at 200 s). a64 only.
     'mc2': dict(kind='timed', path=MC2, at=260, cvars=['cpu_backend_llvm=false'],
                 presses=[(50, 'START'), (65, 'A'), (80, 'A'), (95, 'START'), (110, 'A'), (125, 'A'),
@@ -82,13 +87,14 @@ def run_entry(name, spec):
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
     m.xenia_launch_cvars(set='vulkan_trace_pass_timestamps=true')
+    m.xenia_launch_cvars(set='vulkan_trace_draw_outcomes_per_frame=true')  # the timing line prints inside its block
     for c in spec.get('cvars', []):
         m.xenia_launch_cvars(set=c)
     temps = wait_cool()
     reached = False
     if spec['kind'] == 'goto':
-        g = json.loads(m.xenia_goto(steps=spec['steps'], title=spec['title'], launch=True,
-                                    screenshot=False)).get('goto') or {}
+        g = json.loads(m.xenia_goto(steps=spec['steps'], title=spec.get('title') or spec['path'],
+                                    launch=True, screenshot=False)).get('goto') or {}
         reached = bool(g.get('reached'))
     else:
         r = json.loads(m.xenia_launch(spec['path'], skip_preflight=True))
@@ -106,6 +112,20 @@ def run_entry(name, spec):
         gpu = json.loads(m.xenia_fps()).get('summary', {}).get('median_gpu_frame_us')
     except Exception:
         gpu = None
+    # The driver is a paradigm axis: record the one this row ran on.
+    driver = None
+    try:
+        d = json.loads(m.xenia_gpu_driver())
+        driver = d.get('selected') or d.get('active') or d.get('current')
+        if driver is None:
+            driver = str(d)[:160]
+    except Exception:
+        pass
+    timing_lines = 0
+    try:
+        timing_lines = m._adb('logcat', '-d', '-s', 'xenia:*', timeout=120).count('GPU pass timing:')
+    except Exception:
+        pass
     shot = json.loads(m.xenia_screenshot('score-' + name)).get('path')
     top = bottom = None
     if shot and os.path.exists(shot):
@@ -116,7 +136,8 @@ def run_entry(name, spec):
         bottom = round(ImageStat.Stat(im.crop((0, h // 2, w, h))).mean[0], 1)
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
-    return {'entry': name, 'reached': reached, 'fps': fps, 'gpu_frame_us': gpu,
+    return {'entry': name, 'reached': reached, 'fps': fps, 'gpu_frame_us': gpu, 'driver': driver,
+            'timing_lines': timing_lines,
             'luma_top': top, 'luma_bottom': bottom, 'case_c': temps.get('case_c'), 'shot': shot}
 
 

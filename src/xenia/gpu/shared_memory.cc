@@ -18,6 +18,15 @@
 #include "xenia/base/memory.h"
 #include "xenia/base/profiling.h"
 #include "xenia/memory.h"
+#include "xenia/base/cvar.h"
+
+DEFINE_bool(
+    gpu_shared_memory_lockfree_valid_check, true,
+    "SharedMemory::RequestRange answers \"every page of the range is already "
+    "valid\" without taking the global critical region (the lock the guest "
+    "threads take in their interrupt-disabled sections). Behavior is the same; "
+    "false restores the locked check. Read per call (live).",
+    "GPU");
 
 namespace xe {
 namespace gpu {
@@ -350,6 +359,18 @@ void SharedMemory::UnlinkWatchRange(WatchRange* range) {
   watch_range_first_free_ = range;
 }
 
+namespace {
+// An aligned 64-bit load, atomic on every supported host (the page flags are
+// written under the global critical region; this reads them without it).
+inline uint64_t LoadPageFlagsAcquire(const uint64_t* p) {
+#if defined(__GNUC__) || defined(__clang__)
+  return __atomic_load_n(p, __ATOMIC_ACQUIRE);
+#else
+  return *reinterpret_cast<const volatile uint64_t*>(p);
+#endif
+}
+}  // namespace
+
 bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
   if (!length) {
     // Some texture or buffer is empty, for example - safe to draw in this case.
@@ -367,6 +388,37 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
 
   uint32_t page_first = start >> page_size_log2_;
   uint32_t page_last = (start + length - 1) >> page_size_log2_;
+
+  // gpu_shared_memory_lockfree_valid_check: when every page of the range is
+  // already valid there is nothing to upload, and the answer does not need
+  // the global critical region. The guest threads take that lock in their
+  // interrupt-disabled sections, and the command processor asked for it once
+  // per vertex buffer per draw: about 1,800 times a frame on Gears of War,
+  // 30 of its 54 ms per frame in vertex-fetch residency (2026-09-22). A
+  // concurrent invalidation that lands after this read is the same as one
+  // that lands after the locked check releases the lock.
+  if (cvars::gpu_shared_memory_lockfree_valid_check) {
+    bool all_valid = true;
+    const uint32_t fast_block_first = page_first >> 6;
+    const uint32_t fast_block_last = page_last >> 6;
+    for (uint32_t i = fast_block_first; i <= fast_block_last; ++i) {
+      uint64_t valid_mask = UINT64_MAX;
+      if (i == fast_block_first) {
+        valid_mask &= ~((uint64_t(1) << (page_first & 63)) - 1);
+      }
+      if (i == fast_block_last && (page_last & 63) != 63) {
+        valid_mask &= (uint64_t(1) << ((page_last & 63) + 1)) - 1;
+      }
+      if ((LoadPageFlagsAcquire(&system_page_flags_[i].valid) & valid_mask) !=
+          valid_mask) {
+        all_valid = false;
+        break;
+      }
+    }
+    if (all_valid) {
+      return true;
+    }
+  }
 
   upload_ranges_.clear();
   bool any_data_resolved = false;

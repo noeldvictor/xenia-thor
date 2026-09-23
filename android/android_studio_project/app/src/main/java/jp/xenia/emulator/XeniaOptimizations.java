@@ -1242,8 +1242,16 @@ public final class XeniaOptimizations {
         // band the lamps (PC replay of a gameplay frame, tools/pc/trace_ab.py:
         // image diff 2.2, lower-half luma 12.8 -> 9.4; 2026-09-22). Off for
         // this title even when the global toggle is on.
+        // The CPU draw cull costs Gears 40% of its frame rate (one-launch live
+        // A/B in the prison cell, tools/thor/live_ab.py: 12.5 fps with it, 20.3
+        // without; Gears is not GPU-bound, GPU busy 39-44%, so the cull's
+        // per-vertex CPU decode is pure cost). VRS "balanced" makes Marcus's
+        // armor edges blocky (2x1 coarse shading) and gains nothing with the
+        // cull off (20.6 vs 20.3 fps). 2026-09-22.
         final java.util.Map<String, Integer> gears = new java.util.HashMap<>();
         gears.put("opt_fp16_pixel", OVERRIDE_OFF);
+        gears.put("opt_whole_draw_cull", OVERRIDE_OFF);
+        gears.put("opt_vrs_balanced", OVERRIDE_OFF);
         SHIPPED_TITLE_OVERRIDES.put("4D5307D5", gears);
     }
 
