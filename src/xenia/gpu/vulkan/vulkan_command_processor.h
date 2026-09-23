@@ -1776,6 +1776,15 @@ class VulkanCommandProcessor : public CommandProcessor {
   // whether the dominant per-draw cost is CPU setup or the emit/wait path.
   uint64_t draw_cpu_setup_ns_ = 0;
   uint64_t draw_cpu_emit_ns_ = 0;
+  // The two stretches no bucket covered - 1.4 of 3.7 ms per frame on Gears
+  // (PC, 2026-09-23): prep_ = after Process -> RequestTextures (shader
+  // translation lookup, memexport and texture masks); state_ = after
+  // ConfigurePipeline -> UpdateBindings (pipeline bind, viewport, dynamic
+  // state, system constants).
+  uint64_t draw_cpu_prep_ns_ = 0;
+  uint64_t draw_cpu_state_ns_ = 0;
+  std::chrono::steady_clock::time_point draw_cpu_prep_t0_;
+  std::chrono::steady_clock::time_point draw_cpu_state_t0_;
   // BeginSubmission time (a SUBSET of setup_, which spans entry->Process and
   // includes this call). BeginSubmission contains the frame-await throttle-wait
   // that blocks until the GPU catches up - so this separates the GPU-paced WAIT

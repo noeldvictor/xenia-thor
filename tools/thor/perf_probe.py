@@ -99,7 +99,10 @@ def main():
     # The command processor's CPU per frame (vulkan_trace_draw_outcomes_per_frame).
     import re as _re
     cpu = {}
-    for k in ('draws', 'issuedraw_us', 'emit_us', 'setup_us', 'bind_us', 'process_us', 'vfres_us', 'breaks'):
+    # prep/tex/rt/pipe/state (2026-09-23) split the part no bucket covered
+    # (1.4 of 3.7 ms per frame on PC Gears).
+    for k in ('draws', 'issuedraw_us', 'setup_us', 'process_us', 'prep_us', 'tex_us', 'rt_us',
+              'pipe_us', 'state_us', 'bind_us', 'vfres_us', 'emit_us', 'breaks'):
         vals = [int(v) for v in _re.findall(r'GPU draw cpu/frame:.*?\b%s=(\d+)' % k, log)]
         if vals:
             cpu[k] = statistics.median(vals)

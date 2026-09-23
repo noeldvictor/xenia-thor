@@ -331,7 +331,16 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   first cutscene with a correct image: `GPU shmem/frame` requests=2526 zero_copy=2494 uploads=0
   invalidations=0 lock_us=0 (without it, 21 to 26 uploads and 5 to 7 write faults per frame).
   The title screen sometimes ignores a Start press on the PC route in both modes: press timing,
-  not this change (a repeat reached the menus). Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
+  not this change (a repeat reached the menus).
+- **Command-processor CPU per draw, the full split (2026-09-23).** The short `GPU draw cpu/frame`
+  line now carries every bucket: `prep_us` (after Process to RequestTextures: shader
+  modifications, translation lookups, samplers), `tex_us`, `rt_us`, `pipe_us`, `state_us` (after
+  ConfigurePipeline to UpdateBindings: pipeline bind, viewport, dynamic state, constants),
+  `bind_us`, `emit_us`; `perf_probe` prints them. PC Gears cutscene, 1,152 draws, zero-copy, in
+  us per frame: prep 380, bind 375, tex 335, state 315, setup 196, emit 195, rt 188, pipe 168,
+  process 95, vfres 35 (issuedraw 2,450). No single hot spot on the PC; about 2.1 us per draw.
+  The PC does not run the Android defaults (`XE_ANDROID_DEFAULT` levers such as
+  `vulkan_cache_sampler_parameters`), so read the device split before optimizing one bucket. Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
   GPU-readback titles, plus 512 MB of RAM - the device decides.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.

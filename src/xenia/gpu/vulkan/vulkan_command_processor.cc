@@ -3288,11 +3288,15 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     // (2026-09-22, the same lesson as the GPU pass timing line below).
     XELOGI(
         "GPU draw cpu/frame: draws={} issuedraw_us={} emit_us={} "
-        "setup_us={} bind_us={} process_us={} vfres_us={} breaks={}",
+        "setup_us={} bind_us={} process_us={} vfres_us={} breaks={} "
+        "prep_us={} tex_us={} rt_us={} pipe_us={} state_us={}",
         draw_outcomes_rendered_, draw_cpu_total_ns_ / 1000,
         draw_cpu_emit_ns_ / 1000, draw_cpu_setup_ns_ / 1000,
         draw_cpu_bindings_ns_ / 1000, draw_cpu_process_ns_ / 1000,
-        draw_cpu_vfresidency_ns_ / 1000, rt_pass_break_barrier_);
+        draw_cpu_vfresidency_ns_ / 1000, rt_pass_break_barrier_,
+        draw_cpu_prep_ns_ / 1000, draw_cpu_textures_ns_ / 1000,
+        draw_cpu_rt_ns_ / 1000, draw_cpu_pipeline_ns_ / 1000,
+        draw_cpu_state_ns_ / 1000);
     if (SharedMemory::StatsEnabled() && shared_memory_) {
       SharedMemory::Stats sm = shared_memory_->TakeStats();
       XELOGI(
@@ -3554,6 +3558,8 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     draw_cpu_bindings_ns_ = 0;
     draw_cpu_setup_ns_ = 0;
     draw_cpu_emit_ns_ = 0;
+    draw_cpu_prep_ns_ = 0;
+    draw_cpu_state_ns_ = 0;
     draw_cpu_beginsubmit_ns_ = 0;
     draw_cpu_vfresidency_ns_ = 0;
     draw_cpu_frame_open_wait_ns_ = 0;
@@ -6556,9 +6562,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     }
     bool process_ok = primitive_processor_->Process(primitive_processing_result);
     if (trace_draw_cpu) {
+      draw_cpu_prep_t0_ = std::chrono::steady_clock::now();
       draw_cpu_process_ns_ += uint64_t(
           std::chrono::duration_cast<std::chrono::nanoseconds>(
-              std::chrono::steady_clock::now() - proc_t0)
+              draw_cpu_prep_t0_ - proc_t0)
               .count());
     }
     if (!process_ok) {
@@ -6933,6 +6940,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   std::chrono::steady_clock::time_point tex_t0;
   if (trace_draw_cpu) {
     tex_t0 = std::chrono::steady_clock::now();
+    draw_cpu_prep_ns_ += uint64_t(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            tex_t0 - draw_cpu_prep_t0_)
+            .count());
   }
   texture_cache_->RequestTextures(used_texture_mask);
   if (trace_draw_cpu) {
@@ -7169,9 +7180,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       render_target_cache_->last_update_render_pass_key(), pipeline,
       pipeline_layout_provider, bd_cr_bound_pass_);
   if (trace_draw_cpu) {
+    draw_cpu_state_t0_ = std::chrono::steady_clock::now();
     draw_cpu_pipeline_ns_ += uint64_t(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
-            std::chrono::steady_clock::now() - pipe_t0)
+            draw_cpu_state_t0_ - pipe_t0)
             .count());
   }
   if (!configure_pipeline_ok) {
@@ -7678,6 +7690,10 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   std::chrono::steady_clock::time_point bind_t0;
   if (trace_draw_cpu) {
     bind_t0 = std::chrono::steady_clock::now();
+    draw_cpu_state_ns_ += uint64_t(
+        std::chrono::duration_cast<std::chrono::nanoseconds>(
+            bind_t0 - draw_cpu_state_t0_)
+            .count());
   }
   bool update_bindings_ok = UpdateBindings(vertex_shader, pixel_shader);
   if (trace_draw_cpu) {
