@@ -39,6 +39,15 @@
 DEFINE_bool(ignore_thread_priorities, false,
             "Ignores game-specified thread priorities.", "Kernel");
 UPDATE_from_bool(ignore_thread_priorities, 2026, 4, 9, 12, true);
+DEFINE_uint32(
+    thor_sleep0_backoff_us, 0,
+    "Guest Sleep(0) (KeDelayExecutionThread with a zero interval, not "
+    "alertable) is a sched_yield. A thread that polls with it back to back - "
+    "Gears of War's main thread: 70% of its kernel time - keeps a core at full "
+    "load doing nothing, which is heat. With N > 0, the 32nd and later zero "
+    "delays of a streak (each within 1 ms of the last) sleep N microseconds "
+    "instead. 0 = unchanged. Read per call (live).",
+    "Kernel");
 DEFINE_bool(ignore_thread_affinities, true,
             "Ignores game-specified thread affinities.", "Kernel");
 DEFINE_int32(
@@ -1516,6 +1525,22 @@ X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable,
     }
   } else {
     if (timeout_ms == 0) {
+      const uint32_t backoff_us = cvars::thor_sleep0_backoff_us;
+      if (backoff_us) {
+        thread_local uint64_t last_zero_delay_us = 0;
+        thread_local uint32_t zero_delay_streak = 0;
+        const uint64_t now_us = uint64_t(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count());
+        zero_delay_streak =
+            (now_us - last_zero_delay_us < 1000) ? zero_delay_streak + 1 : 0;
+        last_zero_delay_us = now_us;
+        if (zero_delay_streak >= 32) {
+          xe::threading::NanoSleep(int64_t(backoff_us) * 1000);
+          return X_STATUS_SUCCESS;
+        }
+      }
       if (priority_ <= xe::threading::ThreadPriority::kBelowNormal) {
         xe::threading::NanoSleep(100);
       } else {
