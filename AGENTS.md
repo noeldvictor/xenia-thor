@@ -348,7 +348,12 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   Banjo's jigsaw, which sat still and read as a freeze; the second run took 5 ms each. `pc_run`
   now prints the compile rate and says "COLD DRIVER CACHE" instead of a plain FROZEN. A stale
   16-px strip at the left edge of Banjo's PC frames is in the default configuration too and not
-  in the device captures (PC window path; open, low priority). Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
+  in the device captures (PC window path; open, low priority).
+  The same check for the other focus titles (device configuration + zero-copy): Gears reaches the
+  first in-game cutscene with a correct image; MagnaCarta 2 reaches its in-engine cutscene. One MC2
+  capture (225 s, a camera pan) has a full-width horizontal cut at y=274 - most likely a
+  PrintWindow capture tear (a zero-copy data hazard would tear geometry, not one row across the
+  frame). Confirm with `pc_run --trace-at` at that moment and a replay before calling it a bug. Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
   GPU-readback titles, plus 512 MB of RAM - the device decides.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.
