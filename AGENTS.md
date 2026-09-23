@@ -357,7 +357,18 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   zero-copy is clean. Likely the design doc's timing hazard or a resolve/present race that the copy
   path hid; not proven (a PrintWindow capture can tear too, and the sample is small). Zero-copy stays
   default off. The device arm with zero-copy must include MC2 screenshots: the app's own capture on
-  the Thor has no PrintWindow tear. A replay cannot show it (a trace replays in order). Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
+  the Thor has no PrintWindow tear. A replay cannot show it (a trace replays in order).
+  **Hazard check (`gpu_uma_hazard_check`, 2026-09-23)** names it: CPU writes to pages a GPU
+  submission still reads, per frame on the `GPU shmem/frame` line as
+  `hazards=buffer-definite/buffer-possible/other-definite/other-possible`; `pc_run` prints a
+  SAFE/UNSAFE verdict. MC2: hazards in 3,283 of 6,276 frames (typically 1 buffer page written
+  before its draw was submitted + about 6 texture/other pages at 0x1FB6A000-0x1FC80000, 256 KB
+  apart, written while in flight) - UNSAFE. Gears, title and menus only (the run was stopped by
+  Claude Code for low PC memory, not restarted): 1,023 of 4,039 frames, the same pattern; the
+  buffer page 0x1F9A0000 is the same in both games (maybe a system structure, not game data).
+  "possible" is inflated: with lazy completion polls the completed submission is stale. Next:
+  name the pages (which guest allocation), exclude system pages, then stage 3 or a per-title
+  zero-copy list. Zero-copy stays default off. Gears' own copy volume is small (156 KB/frame), so the speed gain is for heavy-upload and
   GPU-readback titles, plus 512 MB of RAM - the device decides.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.
