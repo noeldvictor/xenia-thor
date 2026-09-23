@@ -15,6 +15,13 @@
 set -euo pipefail
 REF="${1:-main}"
 PATCH_DIR="${2:-}"
+# CPU tuning for the Thor (Snapdragon 8 Gen 2): ARMv8.2 features every core
+# has (dotprod, fp16, rcpc, crypto; /proc/cpuinfo) and scheduling for the X3,
+# where the emulator's command thread - and so Turnip's command recording -
+# runs (thor_gpu_thread_affinity_cpu=7). No SVE: the kernel does not expose
+# it, so -mcpu=cortex-x3 would emit instructions that fault. Empty = the NDK
+# default (armv8-a). The zip name carries a -tuned suffix when set.
+CPU_FLAGS="${TURNIP_CPU_FLAGS--march=armv8.2-a+dotprod+fp16+rcpc+crypto -mtune=cortex-x3}"
 ROOT="$HOME/turnip-build"
 NDK_VER=r27c
 NDK="$ROOT/android-ndk-$NDK_VER"
@@ -33,8 +40,15 @@ if [ ! -d mesa ]; then
   git clone -q --filter=blob:none https://gitlab.freedesktop.org/mesa/mesa.git mesa
 fi
 cd mesa
-git fetch -q origin "$REF" || git fetch -q origin
-git checkout -q --detach FETCH_HEAD 2>/dev/null || git checkout -q --detach "$REF"
+# A commit that is already local (a SHA of an earlier build) checks out
+# directly; a branch or tag is fetched. Fetching a short SHA fails and the
+# old fallback took the latest main instead (2026-09-22) - never again.
+if git cat-file -e "$REF^{commit}" 2>/dev/null && ! git show-ref -q --verify "refs/remotes/origin/$REF"; then
+  git checkout -q --detach "$REF"
+else
+  git fetch -q origin "$REF"
+  git checkout -q --detach FETCH_HEAD
+fi
 git reset -q --hard
 git clean -qfdx
 SHA=$(git rev-parse --short=10 HEAD)
@@ -52,11 +66,15 @@ python3 -c 'import mako, yaml, packaging' 2>/dev/null || \
   python3 -m pip install --user --break-system-packages -q mako pyyaml packaging
 
 TC="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
+CPU_ARGS=""
+SUFFIX=""
+for f in $CPU_FLAGS; do CPU_ARGS="$CPU_ARGS, '$f'"; done
+[ -n "$CPU_FLAGS" ] && SUFFIX="-tuned"
 cat > "$ROOT/android-aarch64.txt" <<EOF
 [binaries]
 ar = '$TC/llvm-ar'
-c = ['ccache', '$TC/aarch64-linux-android$API-clang']
-cpp = ['ccache', '$TC/aarch64-linux-android$API-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++', '-Wno-c++11-narrowing']
+c = ['ccache', '$TC/aarch64-linux-android$API-clang'$CPU_ARGS]
+cpp = ['ccache', '$TC/aarch64-linux-android$API-clang++', '-fno-exceptions', '-fno-unwind-tables', '-fno-asynchronous-unwind-tables', '-static-libstdc++', '-Wno-c++11-narrowing'$CPU_ARGS]
 c_ld = 'lld'
 cpp_ld = 'lld'
 strip = '$TC/llvm-strip'
@@ -90,8 +108,8 @@ cp "$SO" "$PKG/libvulkan_freedreno.so"
 cat > "$PKG/meta.json" <<EOF
 {
   "schemaVersion": 1,
-  "name": "Mesa Turnip $REF $SHA (xenia-thor)",
-  "description": "Turnip from Mesa $REF ($SHA, $(git log -1 --format=%cs)), KGSL, built by tools/turnip/build_turnip.sh.",
+  "name": "Mesa Turnip $REF $SHA$SUFFIX (xenia-thor)",
+  "description": "Turnip from Mesa $REF ($SHA, $(git log -1 --format=%cs)), KGSL, CPU flags: ${CPU_FLAGS:-NDK default}; tools/turnip/build_turnip.sh.",
   "author": "xenia-thor",
   "packageVersion": "1",
   "vendor": "Mesa",
@@ -100,7 +118,7 @@ cat > "$PKG/meta.json" <<EOF
   "libraryName": "libvulkan_freedreno.so"
 }
 EOF
-ZIP="$ROOT/out/turnip-${REF//\//_}-$SHA.zip"
+ZIP="$ROOT/out/turnip-${REF//\//_}-$SHA$SUFFIX.zip"
 (cd "$PKG" && rm -f "$ZIP" && zip -q "$ZIP" meta.json libvulkan_freedreno.so)
 ls -la "$SO" "$ZIP"
 echo "done: $ZIP"

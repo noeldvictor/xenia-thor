@@ -321,9 +321,19 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   and VRS are on in the saved global settings although each defaults off. Every title on the device
   runs with them. Reset them with the user's approval, then enable per title only what the PC
   trace A/B shows neutral.
-- **Custom Turnip (required).** The APK bundles Mesa main `e40d93a` (2026-08-07). The first own
-  build is Mesa main `885dd3a1` (2026-09-22), `tools/turnip/build_turnip.sh`. The scoreboard A/B of
-  the two drivers on Banjo, Gears and MagnaCarta 2 is the next device step.
+- **Custom Turnip (required; user: "we really need to pay more attention to our custom turnip").**
+  The APK bundles Mesa main `e40d93a` (2026-08-07). Own builds (`tools/turnip/build_turnip.sh`,
+  zips in `scratch/tools/turnip/`): Mesa main `885dd3a1` (2026-09-22) plain, and the same commit
+  CPU-tuned for the Thor (`-march=armv8.2-a+dotprod+fp16+rcpc+crypto -mtune=cortex-x3`; no SVE -
+  the kernel does not expose it). 156 Turnip/ir3 commits since `e40d93a`, mostly LRZ, GMEM and
+  descriptor fixes; new debug options that matter to Xenia's frames: `gmem_warmup` (preallocate a
+  large VSC - binning visibility stream - so heavy frames do not overflow it), `forcecb`/`nocb`
+  (a7xx concurrent binning: on by default, disabled per render pass for LRZ-clear reasons that
+  `TU_DEBUG=perf` logs), `hiprio`, `nobinmerging`. Next device step (ask first, short, heat stop
+  44 C): `tools/thor/driver_ab.py gears1 "bundled:driver=<id>,tu=perf"
+  "plain:zip=...885dd3a17a.zip,tu=perf" "tuned:zip=...tuned.zip,tu=perf"
+  "warm:zip=...tuned.zip,tu=perf,gmem_warmup"` - fps, GPU frame time, and Turnip's own reasons
+  (concurrent binning off, VSC overflow) per arm.
 - **Banjo's dark lower half is device-verified fixed** (0 of 20 dark with the cull on, 2026-09-22).
   The global FP16 toggle is off on the device; the cull and both merges stay on.
 - **The order for a device-only bug:** `xenia_cvars` (the settings snapshot) -> the PC replay of
@@ -436,6 +446,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_perf_probe`, `xenia_live_ab`, `xenia_scoreboard` | MCP wrappers of `tools/thor/perf_probe.py` (the CPU/GPU split of a scene in one launch, the command processor's per-frame split, a verdict), `live_ab.py` (cvars flipped live in one launch, `;`-separated arms) and `scoreboard.py`. Device tools: ask the user first |
 | `xenia_trace_ab`, `xenia_pc_run` | MCP wrappers of `tools/pc/trace_ab.py` and `tools/pc/pc_run.py` (Vulkan, the device snapshot's settings, `trace_at` for frame traces). PC only |
 | `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
+| `tools/thor/driver_ab.py` | Turnip builds and TU_DEBUG options A/B on one scene: install/select per arm, fps, GPU frame time, Turnip's `perf` reasons; heat stop before each arm. Device: ask first |
 | `tools/turnip/build_turnip.sh` | the custom Turnip: Mesa ref + patches -> `~/turnip-build/out/turnip-<ref>-<sha>.zip` in WSL (NDK r27c, KGSL, no LTO) |
 | `tools/pc/trace_ab.py` | a device GPU trace replayed on the PC per arm of cvars (about a minute each), image diff against the first arm per half; `--from-snapshot` builds the arms from a `xenia_cvars` file (PC defaults, all device settings, each setting alone). Names the setting behind a device-only glitch without the device |
 | `xenia_api`, `xenia_log`, `xenia_shader_cache` | any endpoint of the in-app server; the in-process log ring with a filter; the pipeline creation lines and the cache files on the device |

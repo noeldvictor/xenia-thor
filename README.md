@@ -105,6 +105,12 @@ KGSL kernel interface and writes an adrenotools zip, `meta.json` plus `libvulkan
 `xenia_gpu_driver(install_zip=...)`. Name the driver in every measurement.
 `tools/thor/scoreboard.py` records the installed build per row.
 
+The build is tuned for the Thor's CPU by default: the ARMv8.2 features all its cores have, and
+scheduling for the Cortex-X3 that runs the emulator's GPU command thread (`TURNIP_CPU_FLAGS`
+overrides it; the zip name ends in `-tuned`). SVE is not used, because the kernel does not expose
+it. `tools/thor/driver_ab.py` compares builds and Turnip debug options (`TU_DEBUG`, for example
+`gmem_warmup` or `forcecb`) on one scene, with a heat stop before each run.
+
 ## Device work
 
 `tools/mcp/xenia_thor_mcp.py` is a stdio MCP server over adb, registered in `.mcp.json`. Every
