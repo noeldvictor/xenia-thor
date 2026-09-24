@@ -24,6 +24,7 @@ import glob
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -73,6 +74,8 @@ def main():
     ap.add_argument('--thor-profile', action='store_true',
                     help='the Android defaults and the default-on app toggles (pc_run.py)')
     ap.add_argument('--cvars', default='')
+    ap.add_argument('--keep-saves', action='store_true',
+                    help='keep the saved games of earlier runs (default: delete them)')
     args = ap.parse_args()
     titles = args.titles or list(ENTRIES)
     stamp = time.strftime('%Y%m%d-%H%M%S')
@@ -84,6 +87,13 @@ def main():
             print('%-7s SKIP (no %s)' % (title, iso), flush=True)
             continue
         name = 'matrix_%s' % title
+        if not args.keep_saves:
+            # Saved games (content type 00000001) change the route: after a run
+            # that reached gameplay, Gears asks to overwrite its checkpoint and
+            # the route stops there (2026-09-24). Every run starts clean.
+            for saves in glob.glob(os.path.join(ROOT, 'scratch', name, 'pcrun', 'content',
+                                                '*', '*', '00000001')):
+                shutil.rmtree(saves, ignore_errors=True)
         cmd = [sys.executable, os.path.join(ROOT, 'tools', 'pc', 'pc_run.py'), iso, '--name', name,
                '--seconds', str(seconds), '--every', str(every), '--presses', presses]
         if args.thor_profile:
