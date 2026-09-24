@@ -543,6 +543,16 @@ Standing facts:
 - Retro 2026-09-23 (3, tool, exists now): the Windows app build line took three tries ("Release
   Windows" and x64 are the only working pair). `tools/pc/build_pc.py` (MCP `xenia_pc_build`) finds
   MSBuild, builds, returns the errors and whether `xenia.exe` changed.
+- Retro 2026-09-24 (1, slow): the Banjo crash bisect took six builds, because timed routes often
+  stopped on a menu before the crash point and those runs were counted as passes; and Banjo's
+  grass drew as opaque cards on the Vulkan path for weeks because nothing compared Vulkan with the
+  D3D12 backend on the same frame.
+- Retro 2026-09-24 (2, tool, exists now): `tools/pc/backend_ab.py` (MCP `xenia_backend_ab`)
+  replays a trace on both trace dumps and writes the D3D12-above-Vulkan pair - it named the
+  grass bug (alpha to mask) in one replay; `pc_matrix.py` with sticky presses (`"45:start+"`)
+  gets every title to gameplay on the PC.
+- Retro 2026-09-24 (3, reflex): a bisect run counts only when its last frame shows the crash
+  point was reached; take the stack first (`pc_run --cdb`), then bisect.
 
 ## 9. Device control: the debug server inside the emulator, and the MCP client
 
@@ -604,6 +614,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_perf_probe`, `xenia_live_ab`, `xenia_scoreboard` | MCP wrappers of `tools/thor/perf_probe.py` (the CPU/GPU split of a scene in one launch, the command processor's per-frame split, a verdict), `live_ab.py` (cvars flipped live in one launch, `;`-separated arms) and `scoreboard.py`. Device tools: ask the user first |
 | `xenia_trace_ab`, `xenia_pc_run` | MCP wrappers of `tools/pc/trace_ab.py` and `tools/pc/pc_run.py` (Vulkan, the device snapshot's settings, `trace_at` for frame traces). PC only |
 | `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
+| `tools/pc/backend_ab.py`, `xenia_backend_ab` | a trace replayed on the Vulkan and the D3D12 trace dumps: image difference, dropped draws per backend, and a D3D12-above-Vulkan pair in `scratch/backend_ab/`. The Thor runs Vulkan; D3D12 is the reference for what the SPIR-V path lacks |
 | `tools/pc/pc_matrix.py` | the PC regression matrix: Banjo, Gears, Gears 2, MagnaCarta 2, Blue Dragon one after another in the Thor configuration (`--android-defaults`), a contact sheet per title and a JSON summary in `scratch/matrix/`; a crash reruns under cdb for its stack. Run it after every change set and look at the sheets |
 | `pc_run.py` sticky presses (`"45:start+"`) | pressed again every `--retry-every` s until the picture changes; later presses wait. Titles ignore presses while they load and the load time varies - fixed-time routes stuck Gears on its main menu |
 | `pc_run.py --cdb` (MCP `xenia_pc_run(cdb=True)`) | the run under cdb: first-chance faults (the write watches) pass, a crash prints its stack at the end. A crash that leaves no log line gets named in one run (2026-09-23: the texture watch double free) |
