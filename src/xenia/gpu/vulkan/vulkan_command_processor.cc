@@ -9997,7 +9997,7 @@ bool VulkanCommandProcessor::IssueCopy() {
     ++scored_present_resolve_readback_count_;
   }
   bool readback_resolve =
-      cvars::vulkan_readback_resolve &&
+      (cvars::vulkan_readback_resolve || IsDebugDumpResolvesEnabled()) &&
       !texture_cache_->IsDrawResolutionScaled() && written_length;
   if ((trace_checksum || readback_resolve || scored_candidate) &&
       written_length) {
@@ -10006,6 +10006,9 @@ bool VulkanCommandProcessor::IssueCopy() {
         written_address, written_length, "resolve",
         trace_checksum || scored_candidate, readback_resolve,
         scored_candidate ? &scored_stats : nullptr);
+    if (readback_resolve && readback_ok) {
+      DebugDumpResolve(written_address, written_length);
+    }
     if (scored_candidate && readback_ok) {
       constexpr uint32_t kScoredPresentResolveMinScore = 64;
       bool useful_scored_candidate =

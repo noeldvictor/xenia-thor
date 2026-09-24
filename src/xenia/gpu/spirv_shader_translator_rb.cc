@@ -539,6 +539,31 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
   // Loaded if needed.
   spv::Id msaa_samples = spv::NoResult;
 
+  // oDepth, clamped to 0...1 like SV_Depth in the DXBC translator (outside of
+  // it is not safe for the float24 conversion). For float24, scaled from guest
+  // 0...1 to host 0...0.5 like the viewport (full_float24_in_0_to_1 on the
+  // host render target path) - the viewport does not apply to oDepth (Gears'
+  // float24 frames drifted further from D3D12 without it).
+  if (output_fragment_depth_ != spv::NoResult) {
+    spv::Id fragment_depth = builder_->createTriBuiltinCall(
+        type_float_, ext_inst_glsl_std_450_, GLSLstd450NClamp,
+        builder_->createLoad(var_main_fragment_depth_, spv::NoPrecision),
+        const_float_0_, const_float_1_);
+    spv::Id depth_float24 = builder_->createBinOp(
+        spv::OpINotEqual, type_bool_,
+        builder_->createBinOp(
+            spv::OpBitwiseAnd, type_uint_, main_system_constant_flags_,
+            builder_->makeUintConstant(kSysFlag_DepthFloat24)),
+        const_uint_0_);
+    fragment_depth = builder_->createTriOp(
+        spv::OpSelect, type_float_, depth_float24,
+        builder_->createNoContractionBinOp(spv::OpFMul, type_float_,
+                                           fragment_depth,
+                                           builder_->makeFloatConstant(0.5f)),
+        fragment_depth);
+    builder_->createStore(fragment_depth, output_fragment_depth_);
+  }
+
   if (edram_fragment_shader_interlock_ && !FSI_IsDepthStencilEarly()) {
     if (msaa_samples == spv::NoResult) {
       msaa_samples = LoadMsaaSamplesFromFlags();

@@ -425,13 +425,11 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   `tools/pc/draw_bisect.py --filter "colorcontrol & 0x10"` (the alpha-to-mask draws) and a D3D12
   replay with `d3d12_debug_disable_alpha_to_mask` (opaque cards on both backends showed the
   geometry itself differed), then the microcode from `--dump_shaders`. Thor check owed.
-- **Gears cell: Vulkan lights Marcus, D3D12 draws a silhouette (open, likely D3D12's, 2026-09-24):**
-  trace 4D5307D5_25775 differs by 5.8%. `draw_bisect --mode both --region 280,340,560,720`: draw
-  1034 (a full-screen rectangle list, PS FE858056C056B302) explains 43% - it copies a transform
-  of tf0 wherever tf1 passes `kill_gt c254.y`; on D3D12 it covers Marcus, on Vulkan his pixels
-  are killed. Draws in 1464-1607 explain the rest (not split, cap). In the game's opening cell
-  Marcus is visible with armor highlights, so the Vulkan picture is the likely correct one; the
-  tf1 decode (a depth texture?) is the next thing to compare if a device capture disagrees.
+- **Gears cell: Vulkan lit Marcus, D3D12 drew a silhouette (fixed, 2026-09-24 - Vulkan was
+  wrong):** first recorded as "likely D3D12's" because the game shows Marcus lit; that guess was
+  wrong. The cause was the missing oDepth on Vulkan (below): with it, all six Gears frames match
+  D3D12 to 0.01-0.08% (was 1-7%). Lesson: a backend difference is Vulkan's until a tool proves
+  otherwise; the resolve comparison would have shown it at once.
 - **User clip planes on Vulkan (ported, 2026-09-24):** the SPIR-V path had none (upstream left
   the geometry shader key fields commented out). Now like the DXBC translator: the enabled
   `PA_CL_UCP` planes packed in the system constants (declared only by those vertex shaders), a
@@ -448,6 +446,25 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   surface (max 94 levels; anisotropy and PWL gamma match); Blue Dragon's is softer sun-shadow
   edges on the ground and bushes. Low priority; the next tool would dump every resolve on both
   backends and compare them.
+- **Pixel shader depth output (oDepth) on Vulkan (fixed, 2026-09-24):** the SPIR-V store switch
+  ended in `default: // TODO(Triang3l): All storage targets`, so every oDepth write was dropped
+  on the Vulkan path (the Thor). Blue Dragon's shadow map shader emulates the cut-out of the
+  windmill sails and the foliage by writing the far depth for transparent texels - on Vulkan
+  they cast solid shadows; Gears' lighting passes depend on oDepth too. Now `gl_FragDepth` with
+  `DepthReplacing` on the host render target path, a function variable that starts at the
+  rasterized depth (every path writes it), clamped to 0...1 and, for float24, scaled to the
+  host 0...0.5 range like the viewport (`kSysFlag_DepthFloat24`, as the DXBC translator does -
+  without the scale Gears drifted 2% further). Against D3D12: Blue Dragon 3% -> 0.00% (all 5
+  sweep frames and the older one), Gears 1-7% -> 0.01-0.08%, Banjo and MC2 unchanged; 606
+  modules pass `spirv-val`; Windows and Android build. Found in four calls: `trace_sweep`,
+  `resolve_ab` (the first divergent resolve: Blue Dragon's 1024x1024 sun shadow map), `resolve_ab
+  --prefix` (draw 187, the sail cloth), then the microcode (`maxs_sat oDepth`) and the SPIR-V
+  interface without `gl_FragDepth`. Thor check owed; the shaders that write depth run with late
+  Z, as on D3D12.
+- **After the depth fix (2026-09-24):** the only large Vulkan-vs-D3D12 difference left in the 26
+  traces is Banjo's gameplay (2-4.3%): `resolve_ab` puts it at the first main-scene color
+  resolve (draw 1227 of 4D5307ED_23271) - per-triangle differences on the rocks and per-texel
+  ones on the grass; the depth resolves differ too. Next: `resolve_ab --prefix resolve_000_004`.
 - `scratch/gears/gears2.iso` is 1.76 GB against 7.8 GB for Gears 1 - an incomplete pull; it does
   not mount ("Failed to read all GDFX entries"). Under `--cdb` every write-watch fault is a
   debugger event and the run slows several times over; use it on a crash, not for the whole
@@ -666,6 +683,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_trace_ab`, `xenia_pc_run` | MCP wrappers of `tools/pc/trace_ab.py` and `tools/pc/pc_run.py` (Vulkan, the device snapshot's settings, `trace_at` for frame traces). PC only |
 | `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
 | `tools/pc/backend_ab.py`, `xenia_backend_ab` | a trace replayed on the Vulkan and the D3D12 trace dumps: image difference, dropped draws per backend, and a D3D12-above-Vulkan pair in `scratch/backend_ab/`. The Thor runs Vulkan; D3D12 is the reference for what the SPIR-V path lacks. `--d3d12-skip CVAR`: the pixels a class of draws renders on D3D12 and whether Vulkan draws them |
+| `tools/pc/resolve_ab.py`, `xenia_resolve_ab` | every resolve of a trace compared between the Vulkan and the D3D12 trace dumps (`gpu_debug_dump_resolves`: the backends read each resolve back and dump it with its state): exact and large differences per resolve, the first divergent one with untiled images (color and depth). `--prefix RESOLVE` binary-searches the first draw that makes that resolve differ. Reaches the render targets the final composite samples, which the frame compares cannot |
 | `tools/pc/trace_census.py` | per trace, the draws that use the Xenos features the SPIR-V path had gaps in: tessellated patches, vertex kill (and OR mode), alpha to mask, user clip planes (and cull-only), point, rectangle and quad lists (from `gpu_debug_log_draws`). A feature with draws and no Vulkan support is the next Vulkan-only glitch |
 | `tools/pc/trace_sweep.py` | Vulkan-only glitches across titles in one call: each title on its `pc_matrix` route with the Android defaults and GPU traces at five times, then `backend_ab` on every trace; rows sorted by the share of pixels that differ from D3D12. Name the draws with `draw_bisect` |
 | `tools/pc/spirv_validate.py`, `xenia_spirv_validate` | every SPIR-V module a trace translates through spirv-val (WSL), the failures grouped by rule with an example shader. Turnip is strict: run it after a translator change |

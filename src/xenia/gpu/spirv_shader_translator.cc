@@ -212,6 +212,8 @@ void SpirvShaderTranslator::Reset() {
   input_front_facing_ = spv::NoResult;
   input_sample_mask_ = spv::NoResult;
   output_sample_mask_ = spv::NoResult;
+  output_fragment_depth_ = spv::NoResult;
+  var_main_fragment_depth_ = spv::NoResult;
   std::fill(input_output_interpolators_.begin(),
             input_output_interpolators_.end(), spv::NoResult);
   output_point_coordinates_ = spv::NoResult;
@@ -951,6 +953,10 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
     if (IsExecutionModeEarlyFragmentTests()) {
       builder_->addExecutionMode(function_main_,
                                  spv::ExecutionModeEarlyFragmentTests);
+    }
+    if (output_fragment_depth_ != spv::NoResult) {
+      builder_->addExecutionMode(function_main_,
+                                 spv::ExecutionModeDepthReplacing);
     }
     // EDRAM SOLVE (edram_fsi_no_hardware_interlock_): the buffer path runs on
     // Turnip with NO FSI (forced full-buffer atomic path, or the hybrid FSI
@@ -2735,7 +2741,7 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
   // and there's no early depth / stencil), depth writing in the fragment shader
   // (per-sample if supported).
   if (edram_fragment_shader_interlock_ || param_gen_needed ||
-      IsAlphaToMaskEmulated()) {
+      IsAlphaToMaskEmulated() || IsFragmentDepthOutput()) {
     input_fragment_coordinates_ = builder_->createVariable(
         spv::NoPrecision, spv::StorageClassInput, type_float4_, "gl_FragCoord");
     builder_->addDecoration(input_fragment_coordinates_, spv::DecorationBuiltIn,
@@ -2766,6 +2772,18 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
     builder_->addDecoration(input_sample_mask_, spv::DecorationBuiltIn,
                             spv::BuiltInSampleMask);
     main_interface_.push_back(input_sample_mask_);
+  }
+
+  // Depth output (oDepth). The SPIR-V path dropped it (2026-09-24): Blue
+  // Dragon's shadow map shader writes the far depth for transparent texels of
+  // the windmill sails and foliage, and on Vulkan they cast solid shadows.
+  if (IsFragmentDepthOutput()) {
+    output_fragment_depth_ = builder_->createVariable(
+        spv::NoPrecision, spv::StorageClassOutput, type_float_,
+        "gl_FragDepth");
+    builder_->addDecoration(output_fragment_depth_, spv::DecorationBuiltIn,
+                            spv::BuiltInFragDepth);
+    main_interface_.push_back(output_fragment_depth_);
   }
 
   // Sample mask output for alpha to mask.
@@ -2832,6 +2850,22 @@ void SpirvShaderTranslator::StartFragmentShaderInMain() {
   // on the Xenos, and also keeping a single critical section exit and return
   // for safety across different Vulkan implementations with fragment shader
   // interlock.
+  // oDepth starts at the rasterized depth, so every path writes gl_FragDepth.
+  if (output_fragment_depth_ != spv::NoResult) {
+    id_vector_temp_.clear();
+    id_vector_temp_.push_back(builder_->makeIntConstant(2));
+    var_main_fragment_depth_ = builder_->createVariable(
+        spv::NoPrecision, spv::StorageClassFunction, type_float_,
+        "xe_var_fragment_depth");
+    builder_->createStore(
+        builder_->createLoad(
+            builder_->createAccessChain(spv::StorageClassInput,
+                                        input_fragment_coordinates_,
+                                        id_vector_temp_),
+            spv::NoPrecision),
+        var_main_fragment_depth_);
+  }
+
   if (current_shader().kills_pixels()) {
     if (features_.demote_to_helper_invocation) {
       // TODO(Triang3l): Promoted to SPIR-V 1.6 - don't add the extension there.
@@ -3511,6 +3545,12 @@ void SpirvShaderTranslator::StoreResult(const InstructionResult& result,
     case InstructionStorageTarget::kExportAddress: {
       // spv::NoResult if memory export usage is unsupported or invalid.
       target_pointer = var_main_memexport_address_;
+    } break;
+    case InstructionStorageTarget::kDepth: {
+      // X only. spv::NoResult with the fragment shader interlock (it computes
+      // the depth itself).
+      assert_true(is_pixel_shader());
+      target_pointer = var_main_fragment_depth_;
     } break;
     case InstructionStorageTarget::kExportData: {
       // spv::NoResult if memory export usage is unsupported or invalid.

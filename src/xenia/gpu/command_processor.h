@@ -266,6 +266,13 @@ class CommandProcessor {
                          bool major_mode_explicit) = 0;
   virtual bool IssueCopy() = 0;
 
+  // gpu_debug_dump_resolves (a folder): the backends read every resolve back
+  // to guest memory, then call DebugDumpResolve with the written range, which
+  // writes the bytes and a line of the resolve state
+  // (tools/pc/resolve_ab.py compares two backends).
+  bool IsDebugDumpResolvesEnabled() const;
+  void DebugDumpResolve(uint32_t written_address, uint32_t written_length);
+
   // Blue Dragon native-draw HLE (Half B): arm/disarm out-of-band capture of the
   // host color render target the NEXT IssueDraw binds - used to snapshot the
   // decoupled full-surface RT a native draw renders into (gpu_bd_native_hle +
@@ -285,6 +292,11 @@ class CommandProcessor {
   // Draws since the last swap, for gpu_debug_skip_draws and
   // gpu_debug_log_draws (the same numbers on every backend).
   uint32_t debug_draw_index_in_frame_ = 0;
+  // The index of the draw packet being executed (a resolve is one too).
+  uint32_t debug_current_draw_index_ = 0;
+  // gpu_debug_dump_resolves: swaps so far, and resolves since the last swap.
+  uint32_t debug_swap_index_ = 0;
+  uint32_t debug_resolve_index_in_frame_ = 0;
 
   // "Actual" is for the command processor thread, to be read by the
   // implementations.

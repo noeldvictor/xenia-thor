@@ -14,10 +14,12 @@
 #include <cinttypes>
 #include <cmath>
 #include <cstring>
+#include <filesystem>
 
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/byte_stream.h"
 #include "xenia/base/clock.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
@@ -84,6 +86,16 @@ DEFINE_string(
     "ranges or single indices (for example \"120-180,200\"). The indices are "
     "the same on every backend, so a trace replay bisects which draws make a "
     "pixel difference (tools/pc/draw_bisect.py).",
+    "GPU");
+DEFINE_string(
+    gpu_debug_dump_resolves, "",
+    "Diagnostic: a folder. Every resolve is read back to guest memory (like "
+    "d3d12_readback_resolve / vulkan_readback_resolve - slow) and its bytes "
+    "written to <folder>/resolve_<swap>_<index>.bin, with a line of state "
+    "(the index of the copy draw packet, destination layout and format) in "
+    "<folder>/resolves.txt. "
+    "tools/pc/resolve_ab.py compares the Vulkan and the D3D12 dumps of a "
+    "trace resolve by resolve.",
     "GPU");
 DEFINE_bool(gpu_debug_log_draws, false,
             "Diagnostic: log every draw with its index since the last swap, "
@@ -2397,6 +2409,8 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height,
             display_width, display_height);
   debug_draw_index_in_frame_ = 0;
+  ++debug_swap_index_;
+  debug_resolve_index_in_frame_ = 0;
   // RenderDoc: a capture request set live (renderdoc_trigger_capture) takes
   // the next frame; polled once per guest swap.
   ui::RenderDocPollTrigger();
@@ -3029,8 +3043,15 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
       // TODO(Triang3l || JoelLinn): Handle this properly in the render
       // backends.
       uint32_t debug_draw_index = debug_draw_index_in_frame_++;
+      debug_current_draw_index_ = debug_draw_index;
+      // A draw packet in the copy EDRAM mode is a resolve (the backends call
+      // IssueCopy from IssueDraw): numbered like the draws, never skipped, so
+      // skipping the draws after N keeps every resolve.
+      bool debug_draw_is_copy =
+          register_file_->Get<reg::RB_MODECONTROL>().edram_mode ==
+          xenos::EdramMode::kCopy;
       bool debug_draw_skipped = false;
-      if (!cvars::gpu_debug_skip_draws.empty()) {
+      if (!cvars::gpu_debug_skip_draws.empty() && !debug_draw_is_copy) {
         // "a-b,c,d-e" - ranges or single indices.
         const char* skip_list = cvars::gpu_debug_skip_draws.c_str();
         while (*skip_list && !debug_draw_skipped) {
@@ -3077,7 +3098,8 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
                             2) &
                            1)
                 : 0,
-            debug_draw_skipped ? " skipped" : "");
+            debug_draw_is_copy ? " copy"
+                               : (debug_draw_skipped ? " skipped" : ""));
       }
       if (debug_draw_skipped) {
         draw_succeeded = true;
@@ -3428,6 +3450,60 @@ void CommandProcessor::InitializeTrace() {
 
   trace_writer_.WriteGammaRamp(gamma_ramp_256_entry_table(),
                                gamma_ramp_pwl_rgb(), gamma_ramp_rw_component_);
+}
+
+bool CommandProcessor::IsDebugDumpResolvesEnabled() const {
+  return !cvars::gpu_debug_dump_resolves.empty();
+}
+
+void CommandProcessor::DebugDumpResolve(uint32_t written_address,
+                                        uint32_t written_length) {
+  if (cvars::gpu_debug_dump_resolves.empty() || !written_length) {
+    return;
+  }
+  std::filesystem::path dump_dir =
+      xe::to_path(cvars::gpu_debug_dump_resolves);
+  std::error_code create_error;
+  std::filesystem::create_directories(dump_dir, create_error);
+  std::string name = fmt::format("resolve_{:03}_{:03}", debug_swap_index_,
+                                 debug_resolve_index_in_frame_++);
+  FILE* bytes_file =
+      xe::filesystem::OpenFile(dump_dir / (name + ".bin"), "wb");
+  if (bytes_file) {
+    std::fwrite(memory_->TranslatePhysical(written_address), 1,
+                written_length, bytes_file);
+    std::fclose(bytes_file);
+  }
+  // The state again from the registers (a pure function of them), for the
+  // tool to untile the destination.
+  draw_util::ResolveInfo resolve_info;
+  bool resolve_info_valid = draw_util::GetResolveInfo(
+      *register_file_, *memory_, trace_writer_, 1, 1, false, false,
+      resolve_info);
+  const FormatInfo* dest_format_info = FormatInfo::Get(
+      xenos::TextureFormat(resolve_info.copy_dest_info.copy_dest_format));
+  std::string line = fmt::format(
+      "{} draw={} address={:08X} length={:X} base={:08X} pitch32={} "
+      "height32={} offx8={} offy8={} width8={} height8={} format={} bpp={} "
+      "endian={} depth={} valid={}\n",
+      name, debug_current_draw_index_, written_address, written_length,
+      resolve_info.copy_dest_base,
+      uint32_t(resolve_info.copy_dest_coordinate_info.pitch_aligned_div_32),
+      uint32_t(resolve_info.copy_dest_coordinate_info.height_aligned_div_32),
+      uint32_t(resolve_info.copy_dest_coordinate_info.offset_x_div_8),
+      uint32_t(resolve_info.copy_dest_coordinate_info.offset_y_div_8),
+      uint32_t(resolve_info.coordinate_info.width_div_8),
+      resolve_info.height_div_8,
+      dest_format_info ? dest_format_info->name : "?",
+      dest_format_info ? dest_format_info->bits_per_pixel : 0,
+      uint32_t(resolve_info.copy_dest_info.copy_dest_endian),
+      uint32_t(resolve_info.IsCopyingDepth()), uint32_t(resolve_info_valid));
+  FILE* index_file =
+      xe::filesystem::OpenFile(dump_dir / "resolves.txt", "ab");
+  if (index_file) {
+    std::fwrite(line.data(), 1, line.size(), index_file);
+    std::fclose(index_file);
+  }
 }
 
 }  // namespace gpu

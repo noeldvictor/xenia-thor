@@ -1201,6 +1201,23 @@ def xenia_spirv_validate(traces: str, cvars: str = '', env: str = 'vulkan1.2') -
 
 
 @mcp.tool()
+def xenia_resolve_ab(trace: str, prefix: str = '', cvars: str = '',
+                     threshold: float = 0.5) -> str:
+    """Compare every resolve of a trace between the Vulkan and the D3D12 trace
+    dumps (tools/pc/resolve_ab.py, gpu_debug_dump_resolves): per resolve the
+    exact and the large differences, the first divergent one with untiled
+    images (color and depth). prefix="resolve_000_004": then binary-search the
+    first draw that makes that resolve differ. Found Blue Dragon's shadow map
+    and the missing oDepth (2026-09-24). PC only."""
+    args = [trace, '--threshold', str(threshold)]
+    if prefix:
+        args += ['--prefix', prefix]
+    if cvars:
+        args += ['--cvars', cvars]
+    return _run_tool_script('tools/pc/resolve_ab.py', args, timeout=3600)
+
+
+@mcp.tool()
 def xenia_pc_build(project: str = 'xenia-app') -> str:
     """Build the Windows app (tools/pc/build_pc.py): finds MSBuild, builds
     build/<project>.vcxproj as "Release Windows" x64, returns the errors and

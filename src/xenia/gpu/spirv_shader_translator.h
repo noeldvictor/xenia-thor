@@ -708,6 +708,14 @@ class SpirvShaderTranslator : public ShaderTranslator {
                Shader::HostVertexShaderType::kMemExportCompute;
   }
 
+  // oDepth on the host render target path: gl_FragDepth (the fragment shader
+  // interlock path computes the depth itself).
+  bool IsFragmentDepthOutput() const {
+    return !is_depth_only_fragment_shader_ &&
+           !edram_fragment_shader_interlock_ && is_pixel_shader() &&
+           current_shader().writes_depth();
+  }
+
   // Xenos alpha to mask with the dither pattern and the sample mask output
   // (the host render target path).
   bool IsAlphaToMaskEmulated() const {
@@ -1192,6 +1200,10 @@ class SpirvShaderTranslator : public ShaderTranslator {
   spv::Id input_sample_mask_;
   // PS, only with IsAlphaToMaskEmulated - int[1].
   spv::Id output_sample_mask_;
+  // PS, only with IsFragmentDepthOutput - float gl_FragDepth, and the function
+  // variable oDepth is written to (starting at the rasterized depth).
+  spv::Id output_fragment_depth_;
+  spv::Id var_main_fragment_depth_;
 
   // VS output or PS input, only the ones that are needed (spv::NoResult for the
   // unneeded interpolators), indexed by the guest interpolator index - float4.

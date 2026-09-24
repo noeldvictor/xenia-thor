@@ -2843,7 +2843,7 @@ bool D3D12CommandProcessor::IssueCopy() {
                                      written_address, written_length)) {
     return false;
   }
-  if (cvars::d3d12_readback_resolve &&
+  if ((cvars::d3d12_readback_resolve || IsDebugDumpResolvesEnabled()) &&
       !texture_cache_->IsDrawResolutionScaled() && written_length) {
     // Read the resolved data on the CPU.
     ID3D12Resource* readback_buffer = RequestReadbackBuffer(written_length);
@@ -2865,6 +2865,7 @@ bool D3D12CommandProcessor::IssueCopy() {
                       readback_mapping, written_length);
           D3D12_RANGE readback_write_range = {};
           readback_buffer->Unmap(0, &readback_write_range);
+          DebugDumpResolve(written_address, written_length);
         }
       }
     }
