@@ -232,6 +232,14 @@ dword_result_t NetDll_XNetRandom_entry(dword_t caller, lpvoid_t buffer_ptr,
 }
 DECLARE_XAM_EXPORT1(NetDll_XNetRandom, kNetworking, kStub);
 
+// Was missing: MagnaCarta 2 calls it at startup, and an undefined extern
+// leaves r3 as the argument, so the title read its caller id as the title ID
+// (2026-09-24, the PC matrix log).
+dword_result_t XNetLogonGetTitleID_entry(dword_t caller) {
+  return kernel_state()->title_id();
+}
+DECLARE_XAM_EXPORT1(XNetLogonGetTitleID, kNetworking, kImplemented);
+
 dword_result_t NetDll_WSAStartup_entry(dword_t caller, word_t version,
                                        pointer_t<X_WSADATA> data_ptr) {
 // TODO(benvanik): abstraction layer needed.
