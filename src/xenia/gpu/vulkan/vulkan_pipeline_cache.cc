@@ -54,6 +54,14 @@ DEFINE_string(
     "app to its private files dir). Empty disables on-disk persistence.",
     "Vulkan");
 
+DEFINE_bool(
+    vulkan_alpha_to_coverage, true,
+    "Xenos alpha to mask as the host's alpha to coverage on the host render "
+    "target path. Without it alpha-to-mask geometry draws opaque (Banjo's "
+    "grass as quads with black where the blades should be clear). false = the "
+    "old behavior, for an A/B.",
+    "Vulkan");
+
 namespace xe {
 namespace gpu {
 namespace vulkan {
@@ -954,6 +962,23 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
     description_out.pixel_shader_modification = pixel_shader->modification();
   }
   description_out.render_pass_key = render_pass_key;
+
+  // Alpha to mask (2026-09-23): the DXBC translator emulates it with the Xenos
+  // dither pattern (CompletePixelShader_AlphaToMask); the SPIR-V path had
+  // nothing, so alpha-to-mask geometry drew as opaque cards - Banjo's grass
+  // as big quads with black where the blades should be clear (PC trace
+  // replay against D3D12, and the Thor's own title captures). The host's alpha
+  // to coverage from color output 0 is the close equivalent on the host
+  // render target path (the dither pattern differs; the coverage is right).
+  // With the fragment shader interlock path the output merger runs in the
+  // shader, and the host coverage does not apply.
+  if (cvars::vulkan_alpha_to_coverage && pixel_shader &&
+      (normalized_color_mask & 0b1111) &&
+      regs.Get<reg::RB_COLORCONTROL>().alpha_to_mask_enable &&
+      render_target_cache_.GetPath() ==
+          RenderTargetCache::Path::kHostRenderTargets) {
+    description_out.alpha_to_coverage = 1;
+  }
 
   // TODO(Triang3l): Implement primitive types currently using geometry shaders
   // without them.
@@ -2658,6 +2683,8 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     multisample_state.rasterizationSamples = VkSampleCountFlagBits(
         uint32_t(1) << uint32_t(description.render_pass_key.msaa_samples));
   }
+  multisample_state.alphaToCoverageEnable =
+      description.alpha_to_coverage ? VK_TRUE : VK_FALSE;
 
   VkPipelineDepthStencilStateCreateInfo depth_stencil_state = {};
   depth_stencil_state.sType =

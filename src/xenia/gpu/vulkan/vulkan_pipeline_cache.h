@@ -227,6 +227,9 @@ class VulkanPipelineCache {
     // and non-CR pipelines as distinct cache entries (they are render-pass-
     // INCOMPATIBLE, so must never alias).
     uint32_t bd_custom_resolve : 1;  // 10
+    // Xenos alpha to mask (RB_COLORCONTROL.alpha_to_mask_enable) as the host's
+    // alpha to coverage, host render target path only.
+    uint32_t alpha_to_coverage : 1;  // 11
 
     // Filled only for the attachments present in the render pass object.
     PipelineRenderTarget render_targets[xenos::kMaxColorRenderTargets];

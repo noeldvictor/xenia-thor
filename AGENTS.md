@@ -384,6 +384,16 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
     submitted draw reads; unsafe). Zero-copy per title: only Blue Dragon is a candidate. Caveat:
     the check keeps every buffer page watched and slows loads - Gears' level load under it took
     minutes; zero-copy alone loads Gears normally into the cell.
+- **Alpha to mask on Vulkan (fixed, 2026-09-23):** the SPIR-V translator never implemented
+  Xenos alpha to mask (the DXBC translator emulates it with the Xenos dither pattern). Banjo's
+  grass - drawn with alpha to mask - rendered as opaque cards: the "noisy dark grass" on the
+  title and big green-and-black quads in the Spiral Mountain intro, on the PC Vulkan path and on
+  the Thor. `vulkan_alpha_to_coverage` (default on) sets the host's alpha to coverage from
+  `RB_COLORCONTROL.alpha_to_mask_enable` on the host render target path. Trace replays: the
+  grass matches D3D12 (the intro frame's pixels differing by more than 8 from D3D12: 2.71% ->
+  0.31%); only Banjo's traces change - 2 Gears, 1 Blue Dragon and 6 MagnaCarta 2 traces replay
+  identical. Found with `pc_run --gpu d3d12` against Vulkan, then the D3D12 trace dump on the
+  same trace (`build/bin/Windows/Release/xenia-gpu-d3d12-trace-dump.exe`).
 - **Tessellation is dropped on Vulkan (open, 2026-09-23):** `IssueDraw` returns false for the
   domain vertex shader types; only the DXBC (D3D12) translator implements them. Banjo logs about
   10,000 `PM4_DRAW_INDX(99, 17, 0): Failed in backend` per run (0x11 = kTrianglePatch), MC2 about
