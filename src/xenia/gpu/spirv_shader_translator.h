@@ -60,6 +60,10 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // Pipeline stage and input configuration.
       Shader::HostVertexShaderType host_vertex_shader_type
           : Shader::kHostVertexShaderTypeBitCount;
+      // For the domain HostVertexShaderTypes (tessellation evaluation), the
+      // Xenos tessellation mode (VGT_HOS_CNTL): the spacing - integer for
+      // discrete, fractional even for continuous and adaptive. 0 otherwise.
+      xenos::TessellationMode tessellation_mode : 2;
     } vertex;
     struct PixelShaderModification {
       // uint32_t 0.
@@ -309,6 +313,15 @@ class SpirvShaderTranslator : public ShaderTranslator {
 
     // The constant blend factor for the respective modes.
     float edram_blend_constant[4];
+
+    // Read only by the host tessellation vertex and control shaders
+    // (tessellation_vk.glsli, at these offsets), so the guest shader
+    // translation does not declare them.
+    // VGT_HOS_MIN_TESS_LEVEL and VGT_HOS_MAX_TESS_LEVEL, plus 1.
+    float tessellation_factor_range[2];
+    // VGT_MIN_VTX_INDX and VGT_MAX_VTX_INDX.
+    uint32_t vertex_index_min;
+    uint32_t vertex_index_max;
   };
 
   enum ConstantBuffer : uint32_t {
@@ -699,6 +712,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
 
   void StartVertexOrTessEvalShaderBeforeMain();
   void StartVertexOrTessEvalShaderInMain();
+  // Writes the tessellation coordinates and the control point or patch
+  // indices to r0 and r1 as the guest domain shaders expect.
+  void StartTessEvalShaderInMain_LoadDomain();
   void CompleteVertexOrTessEvalShaderInMain();
 
   void StartFragmentShaderBeforeMain();
@@ -1118,6 +1134,11 @@ class SpirvShaderTranslator : public ShaderTranslator {
   spv::Id input_vertex_index_;
   // VS as TES only - int.
   spv::Id input_primitive_id_;
+  // VS as TES only - float3.
+  spv::Id input_tess_coord_;
+  // VS as TES only - float[32], the control point or patch indices written
+  // by the host tessellation control shader.
+  spv::Id input_control_point_indices_;
   // PS, only when needed - float2.
   spv::Id input_point_coordinates_;
   // PS, only when needed - float4.

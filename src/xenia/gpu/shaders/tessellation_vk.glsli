@@ -1,0 +1,39 @@
+// Vulkan tessellation: the system constants that the host tessellation vertex
+// and control shaders read. The Direct3D 12 equivalents are the .hlsl hull and
+// vertex shaders with the same names; this is the SPIR-V port (2026-09-24).
+//
+// The members are at the offsets of SpirvShaderTranslator::SystemConstants
+// (static_assert in vulkan_pipeline_cache.cc). Descriptor set 1 is
+// kDescriptorSetConstants, binding 0 is kConstantBufferSystem.
+
+#ifndef XENIA_GPU_SHADERS_TESSELLATION_VK_GLSLI_
+#define XENIA_GPU_SHADERS_TESSELLATION_VK_GLSLI_
+
+layout(set = 1, binding = 0, std140) uniform XeSystemConstants {
+  layout(offset = 8) uint xe_vertex_index_endian;
+  layout(offset = 12) int xe_vertex_base_index;
+  layout(offset = 384) vec2 xe_tessellation_factor_range;
+  layout(offset = 392) uint xe_vertex_index_min;
+  layout(offset = 396) uint xe_vertex_index_max;
+};
+
+// xenos::Endian.
+uint XeEndianSwap32(uint value, uint endian) {
+  if (endian == 1u || endian == 2u) {
+    value = ((value & 0x00FF00FFu) << 8u) | ((value & 0xFF00FF00u) >> 8u);
+  }
+  if (endian == 2u || endian == 3u) {
+    value = (value << 16u) | (value >> 16u);
+  }
+  return value;
+}
+
+// Only the lower 24 bits of the vertex index are used (tested on an Adreno 200
+// phone). `((index & 0xFFFFFF) + offset) & 0xFFFFFF` is the same as
+// `(index + offset) & 0xFFFFFF`.
+float XeGuestIndexToFloat(uint index) {
+  return float(clamp((index + uint(xe_vertex_base_index)) & 0xFFFFFFu,
+                     xe_vertex_index_min, xe_vertex_index_max));
+}
+
+#endif  // XENIA_GPU_SHADERS_TESSELLATION_VK_GLSLI_

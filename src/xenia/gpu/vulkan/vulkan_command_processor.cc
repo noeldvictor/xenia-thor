@@ -6578,6 +6578,26 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     if (!process_ok) {
       return false;
     }
+    // Tessellation: on the host, every draw with a domain shader is a patch
+    // list, also a tessellated triangle or quad list (patches of 3 or 4
+    // control points). The patch type keeps these draws out of the paths that
+    // are only for triangle lists and strips - the dynamic topology (the
+    // pipeline topology is static), the CPU cull and the draw merges (the
+    // adaptive patch index is the primitive index within the draw).
+    if (Shader::IsHostVertexShaderTypeDomain(
+            primitive_processing_result.host_vertex_shader_type)) {
+      switch (primitive_processing_result.host_vertex_shader_type) {
+        case Shader::HostVertexShaderType::kTriangleDomainCPIndexed:
+        case Shader::HostVertexShaderType::kTriangleDomainPatchIndexed:
+          primitive_processing_result.host_primitive_type =
+              xenos::PrimitiveType::kTrianglePatch;
+          break;
+        default:
+          primitive_processing_result.host_primitive_type =
+              xenos::PrimitiveType::kQuadPatch;
+          break;
+      }
+    }
     if (!primitive_processing_result.host_draw_vertex_count) {
       // Nothing to draw.
       if (trace_draw_state) {
@@ -6589,9 +6609,25 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       }
       return true;
     }
-    // TODO(Triang3l): Tessellation, geometry-type-specific vertex shader,
-    // vertex shader as compute.
-    if (primitive_processing_result.host_vertex_shader_type !=
+    // TODO(Triang3l): Geometry-type-specific vertex shader, vertex shader as
+    // compute.
+    // Tessellation (2026-09-24): the host tessellation vertex shader reads the
+    // guest index (or the adaptive edge factor) from gl_VertexIndex only, so a
+    // 32-bit guest index buffer needs fullDrawIndexUint32 (the Adreno 740 and
+    // desktop GPUs have it).
+    bool tessellated = Shader::IsHostVertexShaderTypeDomain(
+        primitive_processing_result.host_vertex_shader_type);
+    if (tessellated &&
+        (!GetVulkanDevice()->properties().tessellationShader ||
+         (!GetVulkanDevice()->properties().fullDrawIndexUint32 &&
+          primitive_processing_result.index_buffer_type ==
+              PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
+          primitive_processing_result.host_index_format ==
+              xenos::IndexFormat::kInt32))) {
+      return false;
+    }
+    if (!tessellated &&
+        primitive_processing_result.host_vertex_shader_type !=
             Shader::HostVertexShaderType::kVertex &&
         primitive_processing_result.host_vertex_shader_type !=
             Shader::HostVertexShaderType::kPointListAsTriangleStrip) {
@@ -6606,7 +6642,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // constant = the shader's first texture binding; producer view = the current
     // (producer) framebuffer's color view (stable until the pass entry redirect).
     feedback_merge_active_ = false;
-    if (cvars::gpu_vulkan_feedback_merge && pixel_shader &&
+    if (cvars::gpu_vulkan_feedback_merge && pixel_shader && !tessellated &&
         feedback_producer_begin_pos_ != SIZE_MAX && current_framebuffer_ &&
         current_framebuffer_->color_view != VK_NULL_HANDLE) {
       bool composite_prim =
@@ -6658,7 +6694,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // Computed UNGATED for the gpu_trace_resolve_timing brick-2 measurement (times
     // these passes under kGuestComposite); the hybrid routing below reuses it.
     current_draw_is_composite_consumer_ =
-        pixel_shader &&
+        pixel_shader && !tessellated &&
         (prim_type == xenos::PrimitiveType::kRectangleList ||
          (index_count >= 3 && index_count <= 6)) &&
         !pixel_shader->texture_bindings().empty();
@@ -11770,6 +11806,30 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
   // Vertex index offset.
   dirty |= system_constants_.vertex_base_index != vgt_indx_offset;
   system_constants_.vertex_base_index = vgt_indx_offset;
+
+  // Tessellation (the host tessellation vertex and control shaders): the
+  // factor range, plus 1.0 according to the images in
+  // https://www.slideshare.net/blackdevilvikas/next-generation-graphics-programming-on-xbox-360
+  // and the vertex index range.
+  if (Shader::IsHostVertexShaderTypeDomain(
+          primitive_processing_result.host_vertex_shader_type)) {
+    float tessellation_factor_min =
+        regs.Get<float>(XE_GPU_REG_VGT_HOS_MIN_TESS_LEVEL) + 1.0f;
+    float tessellation_factor_max =
+        regs.Get<float>(XE_GPU_REG_VGT_HOS_MAX_TESS_LEVEL) + 1.0f;
+    dirty |= system_constants_.tessellation_factor_range[0] !=
+             tessellation_factor_min;
+    dirty |= system_constants_.tessellation_factor_range[1] !=
+             tessellation_factor_max;
+    system_constants_.tessellation_factor_range[0] = tessellation_factor_min;
+    system_constants_.tessellation_factor_range[1] = tessellation_factor_max;
+    uint32_t vgt_min_vtx_indx = regs.Get<reg::VGT_MIN_VTX_INDX>().min_indx;
+    uint32_t vgt_max_vtx_indx = regs.Get<reg::VGT_MAX_VTX_INDX>().max_indx;
+    dirty |= system_constants_.vertex_index_min != vgt_min_vtx_indx;
+    dirty |= system_constants_.vertex_index_max != vgt_max_vtx_indx;
+    system_constants_.vertex_index_min = vgt_min_vtx_indx;
+    system_constants_.vertex_index_max = vgt_max_vtx_indx;
+  }
 
   // Conversion to host normalized device coordinates.
   for (uint32_t i = 0; i < 3; ++i) {

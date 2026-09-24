@@ -54,6 +54,13 @@ DEFINE_bool(d3d12_submit_on_primary_buffer_end, true,
             "possible to submit immediately to try to reduce frame latency.",
             "D3D12");
 
+DEFINE_bool(
+    d3d12_debug_skip_tessellated_draws, false,
+    "Diagnostic: skip draws with a domain (tessellation) vertex shader. A "
+    "D3D12 trace replay with and without it shows what these draws render "
+    "(tools/pc/backend_ab.py --d3d12-skip).",
+    "D3D12");
+
 namespace xe {
 namespace gpu {
 namespace d3d12 {
@@ -2364,6 +2371,14 @@ bool D3D12CommandProcessor::IssueDraw(xenos::PrimitiveType primitive_type,
   }
   if (!primitive_processing_result.host_draw_vertex_count) {
     // Nothing to draw.
+    return true;
+  }
+  // Diagnostic: the frame without the tessellated draws. Until 2026-09-24 the
+  // Vulkan backend dropped them all; the difference to a normal replay showed
+  // what the Thor was missing.
+  if (cvars::d3d12_debug_skip_tessellated_draws &&
+      Shader::IsHostVertexShaderTypeDomain(
+          primitive_processing_result.host_vertex_shader_type)) {
     return true;
   }
 

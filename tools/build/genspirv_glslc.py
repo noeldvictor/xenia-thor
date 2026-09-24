@@ -5,6 +5,9 @@ spirv-opt -O, then spirv-dis; the NDK spirv-opt has no --canonicalize-ids), but 
 Android NDK because no Vulkan SDK is installed on this PC.
 
 Usage: python tools/build/genspirv_glslc.py <shader.cs.xesl> [...]
+
+A plain <name>.<stage>.glsl file (Vulkan only, with its own #version, such as
+the tessellation vertex and control shaders) is compiled as it is.
 """
 import os
 import subprocess
@@ -29,8 +32,11 @@ WRAPPER = ('#version 460\n'
 
 def build(src_path):
     src_name = os.path.basename(src_path)
-    if not src_name.endswith('.xesl') or src_name[-8] != '.':
-        raise SystemExit('not a .<stage>.xesl file: ' + src_path)
+    plain_glsl = src_name.endswith('.glsl')
+    if (not (src_name.endswith('.xesl') or plain_glsl) or
+            src_name[-8] != '.'):
+        raise SystemExit('not a .<stage>.xesl or .<stage>.glsl file: ' +
+                         src_path)
     identifier = src_name[:-5].replace('.', '_')
     stage = STAGES[identifier[-2:]]
     src_dir = os.path.dirname(os.path.abspath(src_path))
@@ -42,10 +48,16 @@ def build(src_path):
     opt = base + '.spv'
     dis = base + '.txt'
     print('- %s > vulkan_spirv' % src_path)
-    subprocess.run([GLSLC, '-x', 'glsl', '-fshader-stage=' + stage,
-                    '--target-env=vulkan1.0', '-DSHADING_LANGUAGE_GLSL_XE=1',
-                    '-I', src_dir, '-o', raw, '-'],
-                   input=(WRAPPER % src_name).encode(), check=True)
+    if plain_glsl:
+        subprocess.run([GLSLC, '-x', 'glsl', '-fshader-stage=' + stage,
+                        '--target-env=vulkan1.0', '-I', src_dir, '-o', raw,
+                        os.path.abspath(src_path)], check=True)
+    else:
+        subprocess.run([GLSLC, '-x', 'glsl', '-fshader-stage=' + stage,
+                        '--target-env=vulkan1.0',
+                        '-DSHADING_LANGUAGE_GLSL_XE=1', '-I', src_dir, '-o',
+                        raw, '-'],
+                       input=(WRAPPER % src_name).encode(), check=True)
     subprocess.run([SPIRV_OPT, '-O', raw, '-o', opt],
                    check=True)
     os.remove(raw)

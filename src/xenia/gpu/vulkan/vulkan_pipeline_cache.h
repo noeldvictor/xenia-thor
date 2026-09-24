@@ -396,6 +396,17 @@ class VulkanPipelineCache {
   // shader interlock when no Xenos pixel shader provided.
   VkShaderModule depth_only_fragment_shader_ = VK_NULL_HANDLE;
 
+  // Host tessellation vertex and control shaders (the translated guest vertex
+  // shader is the evaluation shader). VK_NULL_HANDLE without
+  // tessellationShader - then tessellated draws are dropped.
+  VkShaderModule tessellation_indexed_vs_ = VK_NULL_HANDLE;
+  VkShaderModule tessellation_adaptive_vs_ = VK_NULL_HANDLE;
+  VkShaderModule tessellation_indexed_1cp_hs_ = VK_NULL_HANDLE;
+  VkShaderModule tessellation_indexed_3cp_hs_ = VK_NULL_HANDLE;
+  VkShaderModule tessellation_indexed_4cp_hs_ = VK_NULL_HANDLE;
+  VkShaderModule tessellation_adaptive_triangle_hs_ = VK_NULL_HANDLE;
+  VkShaderModule tessellation_adaptive_quad_hs_ = VK_NULL_HANDLE;
+
   // In-memory pipeline cache passed to vkCreateGraphicsPipelines so repeated
   // pipeline creation within a session reuses prior compilation work. A valid
   // cache is spec-transparent vs VK_NULL_HANDLE (identical pipelines, just faster

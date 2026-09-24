@@ -1144,16 +1144,21 @@ def xenia_pc_run(iso: str, seconds: int = 120, cvars: str = '', presses: str = '
 
 
 @mcp.tool()
-def xenia_backend_ab(traces: str, cvars: str = '') -> str:
+def xenia_backend_ab(traces: str, cvars: str = '', d3d12_skip: str = '') -> str:
     """Replay GPU traces on the Vulkan and the D3D12 trace dumps and compare
     (tools/pc/backend_ab.py): the Thor runs Vulkan, and D3D12 implements what
     the SPIR-V path lacks - a large difference is a Vulkan-only glitch; the
     D3D12-above-Vulkan pair PNGs land in scratch/backend_ab/. traces:
     space-separated .xtr paths. Named Banjo's grass bug (alpha to mask) in one
-    replay. PC only."""
+    replay. d3d12_skip: a D3D12 cvar that skips a class of draws (such as
+    d3d12_debug_skip_tessellated_draws=true) - reports the pixels those draws
+    render and whether Vulkan draws them (showed Banjo's tessellated chasm).
+    PC only."""
     args = [t for t in traces.split() if t]
     if cvars:
         args += ['--cvars', cvars]
+    if d3d12_skip:
+        args += ['--d3d12-skip', d3d12_skip]
     return _run_tool_script('tools/pc/backend_ab.py', args, timeout=3600)
 
 

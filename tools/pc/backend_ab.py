@@ -12,6 +12,14 @@ look at the pair. "Failed in backend" counts the draws each backend dropped.
 
 2026-09-23: Banjo's grass drew as opaque cards on Vulkan; D3D12 showed the
 blades. This comparison named it (alpha to mask) in one replay.
+
+--d3d12-skip CVAR (for example d3d12_debug_skip_tessellated_draws=true) also
+replays D3D12 with that cvar: the pixels it changes are what that class of
+draws renders (their share, the bounding box, and a crop - D3D12 above, D3D12
+without the draws in the middle, Vulkan below - in scratch/backend_ab/). The
+"within" numbers compare Vulkan with D3D12 on those pixels only. 2026-09-24:
+Banjo's two failed Vulkan draws per frame were the chasm and the cliff walls
+(tessellation); Vulkan now draws them.
 """
 import argparse
 import glob
@@ -40,10 +48,43 @@ def replay(gpu, trace, out, cvars):
     return (pngs[0] if pngs else None), failed
 
 
+def skip_report(name, trace, cvars, skip_cvar, d3d, vk):
+    """What the draws that skip_cvar removes render on D3D12, and whether
+    Vulkan draws the same pixels."""
+    skip, _ = replay('d3d12', trace, os.path.join(OUT, name, 'd3d12_skip'),
+                     cvars + [skip_cvar])
+    if not skip:
+        return '  skip: no image'
+    a = Image.open(d3d).convert('RGB')
+    s = Image.open(skip).convert('RGB')
+    b = Image.open(vk).convert('RGB')
+    mask = ImageChops.difference(a, s).convert('L').point(
+        lambda v: 255 if v > 8 else 0)
+    bbox = mask.getbbox()
+    w, h = a.size
+    count = sum(1 for p in mask.getdata() if p)
+    if not count:
+        return '  skip %s: no pixel changes' % skip_cvar
+    vd = ImageChops.difference(a, b).convert('L')
+    within_off = sum(1 for p, m in zip(vd.getdata(), mask.getdata())
+                     if m and p > 8)
+    crop = Image.new('RGB', (bbox[2] - bbox[0], (bbox[3] - bbox[1]) * 3))
+    for i, im in enumerate((a, s, b)):
+        crop.paste(im.crop(bbox), (0, i * (bbox[3] - bbox[1])))
+    crop.save(os.path.join(OUT, name + '_skip_crop.png'))
+    return ('  skip %s: %.2f%% of pixels, bbox %s; Vulkan differs on %.1f%% '
+            'of them (100%% = Vulkan lacks the draws)' %
+            (skip_cvar, 100.0 * count / (w * h), bbox,
+             100.0 * within_off / count))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('traces', nargs='+')
     ap.add_argument('--cvars', default='')
+    ap.add_argument('--d3d12-skip', default='',
+                    help='a D3D12 cvar that skips a class of draws, such as '
+                         'd3d12_debug_skip_tessellated_draws=true')
     args = ap.parse_args()
     cvars = [c for c in args.cvars.split() if c]
     missing = [g for g in ('vulkan', 'd3d12')
@@ -76,6 +117,8 @@ def main():
         pair.paste(b, (0, h))
         pair.resize((w // 2, h)).save(os.path.join(OUT, name + '_pair.png'))
         print('%-18s %6.1f %6.1f %6.1f %7.2f%%  %d/%d' % (name, whole, top, bot, off, fd, fv))
+        if args.d3d12_skip:
+            print(skip_report(name, trace, cvars, args.d3d12_skip, d3d, vk))
     print('pairs in', os.path.relpath(OUT, ROOT))
     return 0
 

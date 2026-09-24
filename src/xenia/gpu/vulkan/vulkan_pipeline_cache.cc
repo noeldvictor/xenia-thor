@@ -148,6 +148,31 @@ std::vector<uint8_t> GetPipelineCacheData(
 
 }  // namespace
 
+// Generated with tools/build/genspirv_glslc.py from the .glsl sources.
+namespace shaders {
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tessellation_adaptive_quad_hs.h"
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tessellation_adaptive_triangle_hs.h"
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tessellation_adaptive_vs.h"
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tessellation_indexed_1cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tessellation_indexed_3cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tessellation_indexed_4cp_hs.h"
+#include "xenia/gpu/shaders/bytecode/vulkan_spirv/tessellation_indexed_vs.h"
+}  // namespace shaders
+
+// The host tessellation shaders declare these members at fixed offsets
+// (tessellation_vk.glsli).
+static_assert(offsetof(SpirvShaderTranslator::SystemConstants,
+                       vertex_index_endian) == 8 &&
+                  offsetof(SpirvShaderTranslator::SystemConstants,
+                           vertex_base_index) == 12 &&
+                  offsetof(SpirvShaderTranslator::SystemConstants,
+                           tessellation_factor_range) == 384 &&
+                  offsetof(SpirvShaderTranslator::SystemConstants,
+                           vertex_index_min) == 392 &&
+                  offsetof(SpirvShaderTranslator::SystemConstants,
+                           vertex_index_max) == 396,
+              "Update tessellation_vk.glsli and rebuild its shaders");
+
 VulkanPipelineCache::VulkanPipelineCache(
     VulkanCommandProcessor& command_processor,
     const RegisterFile& register_file,
@@ -209,6 +234,42 @@ bool VulkanPipelineCache::Initialize() {
           "fragment shader for the fragment shader interlock render backend "
           "implementation");
       return false;
+    }
+  }
+
+  if (vulkan_device->properties().tessellationShader) {
+    struct {
+      VkShaderModule* module;
+      const uint32_t* code;
+      size_t code_size_bytes;
+    } tessellation_shaders[] = {
+        {&tessellation_indexed_vs_, shaders::tessellation_indexed_vs,
+         sizeof(shaders::tessellation_indexed_vs)},
+        {&tessellation_adaptive_vs_, shaders::tessellation_adaptive_vs,
+         sizeof(shaders::tessellation_adaptive_vs)},
+        {&tessellation_indexed_1cp_hs_, shaders::tessellation_indexed_1cp_hs,
+         sizeof(shaders::tessellation_indexed_1cp_hs)},
+        {&tessellation_indexed_3cp_hs_, shaders::tessellation_indexed_3cp_hs,
+         sizeof(shaders::tessellation_indexed_3cp_hs)},
+        {&tessellation_indexed_4cp_hs_, shaders::tessellation_indexed_4cp_hs,
+         sizeof(shaders::tessellation_indexed_4cp_hs)},
+        {&tessellation_adaptive_triangle_hs_,
+         shaders::tessellation_adaptive_triangle_hs,
+         sizeof(shaders::tessellation_adaptive_triangle_hs)},
+        {&tessellation_adaptive_quad_hs_,
+         shaders::tessellation_adaptive_quad_hs,
+         sizeof(shaders::tessellation_adaptive_quad_hs)},
+    };
+    for (const auto& tessellation_shader : tessellation_shaders) {
+      *tessellation_shader.module = ui::vulkan::util::CreateShaderModule(
+          vulkan_device, tessellation_shader.code,
+          tessellation_shader.code_size_bytes);
+      if (*tessellation_shader.module == VK_NULL_HANDLE) {
+        // Not fatal: without the modules, tessellated draws are dropped.
+        XELOGE(
+            "VulkanPipelineCache: Failed to create a tessellation shader "
+            "module - tessellated draws will be skipped");
+      }
     }
   }
 
@@ -291,6 +352,14 @@ void VulkanPipelineCache::Shutdown() {
   // Destroy all internal shaders.
   ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyShaderModule, device,
                                          depth_only_fragment_shader_);
+  for (VkShaderModule* tessellation_shader :
+       {&tessellation_indexed_vs_, &tessellation_adaptive_vs_,
+        &tessellation_indexed_1cp_hs_, &tessellation_indexed_3cp_hs_,
+        &tessellation_indexed_4cp_hs_, &tessellation_adaptive_triangle_hs_,
+        &tessellation_adaptive_quad_hs_}) {
+    ui::vulkan::util::DestroyAndNullHandle(dfn.vkDestroyShaderModule, device,
+                                           *tessellation_shader);
+  }
   for (const auto& geometry_shader_pair : geometry_shaders_) {
     if (geometry_shader_pair.second != VK_NULL_HANDLE) {
       dfn.vkDestroyShaderModule(device, geometry_shader_pair.second, nullptr);
@@ -348,6 +417,11 @@ VulkanPipelineCache::GetCurrentVertexShaderModification(
           host_vertex_shader_type));
 
   modification.vertex.interpolator_mask = interpolator_mask;
+
+  if (Shader::IsHostVertexShaderTypeDomain(host_vertex_shader_type)) {
+    modification.vertex.tessellation_mode =
+        regs.Get<reg::VGT_HOS_CNTL>().tess_mode;
+  }
 
   if (host_vertex_shader_type ==
       Shader::HostVertexShaderType::kPointListAsTriangleStrip) {
@@ -1014,8 +1088,19 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
       geometry_shader = PipelineGeometryShader::kQuadList;
       primitive_topology = PipelinePrimitiveTopology::kLineListWithAdjacency;
       break;
+    case xenos::PrimitiveType::kTrianglePatch:
+    case xenos::PrimitiveType::kQuadPatch:
+      // The command processor gives every tessellated draw one of these types
+      // (also tessellated triangle and quad lists, which are patches of 3 or 4
+      // control points).
+      if (!Shader::IsHostVertexShaderTypeDomain(
+              primitive_processing_result.host_vertex_shader_type)) {
+        return false;
+      }
+      primitive_topology = PipelinePrimitiveTopology::kPatchList;
+      break;
     default:
-      // TODO(Triang3l): All primitive types and tessellation.
+      // TODO(Triang3l): All primitive types.
       return false;
   }
   description_out.geometry_shader = geometry_shader;
@@ -1279,14 +1364,23 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
 
 bool VulkanPipelineCache::ArePipelineRequirementsMet(
     const PipelineDescription& description) const {
+  bool tessellated = Shader::IsHostVertexShaderTypeDomain(
+      SpirvShaderTranslator::Modification(
+          description.vertex_shader_modification)
+          .vertex.host_vertex_shader_type);
   VkShaderStageFlags vertex_shader_stage =
-      Shader::IsHostVertexShaderTypeDomain(
-          SpirvShaderTranslator::Modification(
-              description.vertex_shader_modification)
-              .vertex.host_vertex_shader_type)
-          ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT
-          : VK_SHADER_STAGE_VERTEX_BIT;
+      tessellated ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT
+                  : VK_SHADER_STAGE_VERTEX_BIT;
   if (!(guest_shader_vertex_stages_ & vertex_shader_stage)) {
+    return false;
+  }
+  if (tessellated && (tessellation_indexed_vs_ == VK_NULL_HANDLE ||
+                      tessellation_adaptive_vs_ == VK_NULL_HANDLE ||
+                      tessellation_indexed_1cp_hs_ == VK_NULL_HANDLE ||
+                      tessellation_indexed_3cp_hs_ == VK_NULL_HANDLE ||
+                      tessellation_indexed_4cp_hs_ == VK_NULL_HANDLE ||
+                      tessellation_adaptive_triangle_hs_ == VK_NULL_HANDLE ||
+                      tessellation_adaptive_quad_hs_ == VK_NULL_HANDLE)) {
     return false;
   }
 
@@ -2430,7 +2524,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
            creation_arguments.pixel_shader->modification())
                .pixel.hybrid_fsi_composite != 0);
 
-  std::array<VkPipelineShaderStageCreateInfo, 3> shader_stages;
+  std::array<VkPipelineShaderStageCreateInfo, 5> shader_stages;
   uint32_t shader_stage_count = 0;
 
   // Vertex or tessellation evaluation shader.
@@ -2438,13 +2532,91 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   if (!creation_arguments.vertex_shader->is_valid()) {
     return false;
   }
+  SpirvShaderTranslator::Modification vertex_shader_modification(
+      creation_arguments.vertex_shader->modification());
+  Shader::HostVertexShaderType host_vertex_shader_type =
+      vertex_shader_modification.vertex.host_vertex_shader_type;
+  bool tessellated =
+      Shader::IsHostVertexShaderTypeDomain(host_vertex_shader_type);
+  VkPipelineTessellationStateCreateInfo tessellation_state = {};
+  tessellation_state.sType =
+      VK_STRUCTURE_TYPE_PIPELINE_TESSELLATION_STATE_CREATE_INFO;
+  if (tessellated) {
+    // Like the Direct3D 12 pipeline: a host vertex shader passes the guest
+    // indices (or, for adaptive tessellation, the edge factors) from the index
+    // buffer to a host control shader, and the translated guest vertex shader
+    // is the evaluation shader.
+    bool adaptive = vertex_shader_modification.vertex.tessellation_mode ==
+                    xenos::TessellationMode::kAdaptive;
+    VkShaderModule tessellation_control_shader = VK_NULL_HANDLE;
+    switch (host_vertex_shader_type) {
+      case Shader::HostVertexShaderType::kTriangleDomainCPIndexed:
+        tessellation_control_shader = tessellation_indexed_3cp_hs_;
+        tessellation_state.patchControlPoints = 3;
+        break;
+      case Shader::HostVertexShaderType::kTriangleDomainPatchIndexed:
+        tessellation_control_shader = adaptive
+                                          ? tessellation_adaptive_triangle_hs_
+                                          : tessellation_indexed_1cp_hs_;
+        tessellation_state.patchControlPoints = adaptive ? 3 : 1;
+        break;
+      case Shader::HostVertexShaderType::kQuadDomainCPIndexed:
+        tessellation_control_shader = tessellation_indexed_4cp_hs_;
+        tessellation_state.patchControlPoints = 4;
+        break;
+      case Shader::HostVertexShaderType::kQuadDomainPatchIndexed:
+        tessellation_control_shader = adaptive
+                                          ? tessellation_adaptive_quad_hs_
+                                          : tessellation_indexed_1cp_hs_;
+        tessellation_state.patchControlPoints = adaptive ? 4 : 1;
+        break;
+      default:
+        assert_unhandled_case(host_vertex_shader_type);
+        return false;
+    }
+    if (adaptive && (host_vertex_shader_type ==
+                         Shader::HostVertexShaderType::kTriangleDomainCPIndexed ||
+                     host_vertex_shader_type ==
+                         Shader::HostVertexShaderType::kQuadDomainCPIndexed)) {
+      // The primitive processor does not create these.
+      return false;
+    }
+    VkPipelineShaderStageCreateInfo& shader_stage_host_vertex =
+        shader_stages[shader_stage_count++];
+    shader_stage_host_vertex.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shader_stage_host_vertex.pNext = nullptr;
+    shader_stage_host_vertex.flags = 0;
+    shader_stage_host_vertex.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    shader_stage_host_vertex.module =
+        adaptive ? tessellation_adaptive_vs_ : tessellation_indexed_vs_;
+    shader_stage_host_vertex.pName = "main";
+    shader_stage_host_vertex.pSpecializationInfo = nullptr;
+    VkPipelineShaderStageCreateInfo& shader_stage_tessellation_control =
+        shader_stages[shader_stage_count++];
+    shader_stage_tessellation_control.sType =
+        VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shader_stage_tessellation_control.pNext = nullptr;
+    shader_stage_tessellation_control.flags = 0;
+    shader_stage_tessellation_control.stage =
+        VK_SHADER_STAGE_TESSELLATION_CONTROL_BIT;
+    shader_stage_tessellation_control.module = tessellation_control_shader;
+    shader_stage_tessellation_control.pName = "main";
+    shader_stage_tessellation_control.pSpecializationInfo = nullptr;
+    if (shader_stage_host_vertex.module == VK_NULL_HANDLE ||
+        tessellation_control_shader == VK_NULL_HANDLE) {
+      return false;
+    }
+  }
   VkPipelineShaderStageCreateInfo& shader_stage_vertex =
       shader_stages[shader_stage_count++];
   shader_stage_vertex.sType =
       VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
   shader_stage_vertex.pNext = nullptr;
   shader_stage_vertex.flags = 0;
-  shader_stage_vertex.stage = VK_SHADER_STAGE_VERTEX_BIT;
+  shader_stage_vertex.stage = tessellated
+                                  ? VK_SHADER_STAGE_TESSELLATION_EVALUATION_BIT
+                                  : VK_SHADER_STAGE_VERTEX_BIT;
   shader_stage_vertex.module =
       creation_arguments.vertex_shader->shader_module();
   assert_true(shader_stage_vertex.module != VK_NULL_HANDLE);
@@ -2948,7 +3120,8 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   pipeline_create_info.pStages = shader_stages.data();
   pipeline_create_info.pVertexInputState = &vertex_input_state;
   pipeline_create_info.pInputAssemblyState = &input_assembly_state;
-  pipeline_create_info.pTessellationState = nullptr;
+  pipeline_create_info.pTessellationState =
+      tessellated ? &tessellation_state : nullptr;
   pipeline_create_info.pViewportState = &viewport_state;
   pipeline_create_info.pRasterizationState = &rasterization_state;
   pipeline_create_info.pMultisampleState = &multisample_state;
