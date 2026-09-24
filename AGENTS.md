@@ -567,6 +567,11 @@ Standing facts:
 
 - PPC hardware corpus: 169,117 cases in `src/xenia/cpu/ppc/testing/`. a64 failures 7,907 to 3,038 on
   2026-08-18. x64 failures 17,851 to 14,591 on 2026-08-18. One class is 94% of what is left on a64.
+  2026-09-24, on the PC (a64 under qemu, `tools/qemu/ppc_tests_arm64.py`): a64 3,038 - no regression
+  since 2026-08-18 (vmaddfp/vnmsubfp 1,012 each, vsr/vsl 454/422 - random per-byte shift counts
+  the hardware leaves undefined - and the estimate and single-rounding cases); x64 14,333. The
+  Thor's ten PPC/HIR front-end toggles change no case on x64 (on and off identical). The harness
+  kept a CR on MEMORY_OUT lines outside Windows' text mode and failed 16 store cases; fixed.
 - The edge kernel layer is landed and device-validated (`f3e780d2e`). Phase 4 IRQL unification is pending.
 - ADPF is disabled on this device (2026-08-19). The hint session holds one thread. The target it feeds
   is a known false hint.

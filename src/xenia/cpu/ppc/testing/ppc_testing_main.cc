@@ -169,7 +169,11 @@ class TestSuite {
           // Looks legit.
           std::string key(start + 3, next_space);
           std::string value(next_space + 1);
-          while (value.find_last_of(" \t\n") == value.size() - 1) {
+          // "\r" too: CRLF checkouts keep it outside Windows' text mode, and
+          // MEMORY_OUT then read a byte past the value (the ARM64 runner under
+          // qemu failed 16 store cases, 2026-09-24).
+          while (!value.empty() &&
+                 value.find_last_of(" \t\r\n") == value.size() - 1) {
             value.erase(value.end() - 1);
           }
           if (!current_test_case) {
