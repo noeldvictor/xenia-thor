@@ -1225,6 +1225,22 @@ def xenia_resolve_ab(trace: str, prefix: str = '', cvars: str = '',
 
 
 @mcp.tool()
+def xenia_ppc_tests_arm64(cvars: str = '', baseline: str = '') -> str:
+    """The 169,117-case PPC hardware corpus on the Thor's a64 JIT, on the PC
+    under qemu-aarch64 (tools/qemu/ppc_tests_arm64.py): links a static ARM64
+    runner against the last NativeCore build's libraries, runs every suite,
+    returns the totals and the failures per test file (with baseline: what
+    changed). Rebuild NativeCore first after an a64 change. About an hour. PC
+    only."""
+    args = []
+    if cvars:
+        args += ['--cvars', cvars]
+    if baseline:
+        args += ['--baseline', baseline]
+    return _run_tool_script('tools/qemu/ppc_tests_arm64.py', args, timeout=7200)
+
+
+@mcp.tool()
 def xenia_pc_build(project: str = 'xenia-app') -> str:
     """Build the Windows app (tools/pc/build_pc.py): finds MSBuild, builds
     build/<project>.vcxproj as "Release Windows" x64, returns the errors and
