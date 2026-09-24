@@ -112,6 +112,9 @@ def main():
     ap.add_argument('--retry-every', type=float, default=5.0,
                     help='a sticky press ("50:start+") repeats this often until the screen changes')
     ap.add_argument('--retry-max', type=int, default=12)
+    ap.add_argument('--gpu', default='vulkan',
+                    help='vulkan (the Thor path, default) or d3d12 - the reference for what '
+                         'the Vulkan backend drops (2026-09-23: tessellated patches)')
     ap.add_argument('--name', default='')
     ap.add_argument('--oracle', action='store_true')
     ap.add_argument('--exe', default=pc_screens.EXE)
@@ -139,7 +142,7 @@ def main():
     # runs Vulkan - without this the device's GPU settings never apply
     # (2026-09-22: the first Gears and MC2 parity runs were D3D12).
     cmd = [exe, '--storage_root=' + storage, '--log_file=' + log, '--mount_cache=true',
-           '--gpu=vulkan', '--hid=nop', '--hid_nop_connected=true', '--hid_nop_trigger_file=' + trigger]
+           '--gpu=' + args.gpu, '--hid=nop', '--hid_nop_connected=true', '--hid_nop_trigger_file=' + trigger]
     trace_request = os.path.abspath(os.path.join(storage, 'trace_request.txt'))
     trace_dir = os.path.abspath(os.path.join(storage, 'traces')) + os.sep
     trace_times = sorted(float(t) for t in args.trace_at.split() if t)

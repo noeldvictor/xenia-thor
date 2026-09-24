@@ -48,10 +48,14 @@ class SharedMemory {
     // submitted yet; "possible": submitted, completion not seen yet.
     uint64_t hazard_definite[2] = {};
     uint64_t hazard_possible[2] = {};
+    // Writes to a page a submission still reads, but to other bytes than the
+    // requests of that submission covered: not a hazard (byte-exact check).
+    uint64_t hazard_near = 0;
   };
   Stats TakeStats() {
     Stats s = stats_;
     s.invalidations = stat_invalidations_.exchange(0, std::memory_order_relaxed);
+    s.hazard_near = stat_hazard_near_.exchange(0, std::memory_order_relaxed);
     for (uint32_t i = 0; i < 2; ++i) {
       s.hazard_definite[i] =
           stat_hazard_definite_[i].exchange(0, std::memory_order_relaxed);
@@ -290,6 +294,12 @@ class SharedMemory {
   // the kind of request (1 buffer, 2 other). Made on the first use.
   std::unique_ptr<uint64_t[]> hazard_page_use_;
   std::unique_ptr<uint8_t[]> hazard_page_kind_;
+  // The byte range within the page that the requests of hazard_page_use_'s
+  // submission covered (their envelope), so a write elsewhere in the page -
+  // a vertex ring appending after the bytes a draw reads - is not a hazard.
+  std::unique_ptr<uint16_t[]> hazard_page_lo_;
+  std::unique_ptr<uint16_t[]> hazard_page_hi_;
+  std::atomic<uint64_t> stat_hazard_near_{0};
   uint8_t hazard_kind_override_ = 0;
   std::atomic<uint64_t> stat_hazard_definite_[2]{};
   std::atomic<uint64_t> stat_hazard_possible_[2]{};

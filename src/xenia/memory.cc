@@ -107,6 +107,16 @@ void CrashDump() {
 // The physical memory: 512 MB at file offset 0x100000000 of the mapping.
 static constexpr size_t kPhysicalAliasSize = 0x20000000;
 
+// See Memory::GetWriteHint. Set by PhysicalHeap::TriggerCallbacks around the
+// invalidation callbacks, on the writing thread.
+static thread_local uint32_t g_write_hint_start = 0;
+static thread_local uint32_t g_write_hint_length = 0;
+
+void Memory::GetWriteHint(uint32_t& physical_start, uint32_t& length) {
+  physical_start = g_write_hint_start;
+  length = g_write_hint_length;
+}
+
 Memory::Memory() {
   system_page_size_ = uint32_t(xe::memory::page_size());
   system_allocation_granularity_ =
@@ -2083,6 +2093,8 @@ bool PhysicalHeap::TriggerCallbacks(
       heap_size_ - (physical_address_start - physical_address_offset));
   uint32_t unwatch_first = 0;
   uint32_t unwatch_last = UINT32_MAX;
+  g_write_hint_start = GetPhysicalAddress(virtual_address);
+  g_write_hint_length = length;
   for (auto invalidation_callback :
        memory_->physical_memory_invalidation_callbacks_) {
     std::pair<uint32_t, uint32_t> callback_unwatch_range =
@@ -2098,6 +2110,7 @@ bool PhysicalHeap::TriggerCallbacks(
               std::max(callback_unwatch_range.second, uint32_t(1)) - 1));
     }
   }
+  g_write_hint_length = 0;
   if (!unwatch_exact_range) {
     // Always unwatch at least the requested pages.
     unwatch_first = std::min(unwatch_first, physical_address_start);

@@ -427,6 +427,13 @@ class Memory {
   // call and unmapped with the other views. nullptr on failure.
   uint8_t* GetPhysicalAlias();
 
+  // The exact guest physical range of the write whose access callbacks run on
+  // this thread right now (the fault address with length 1 for a guest store,
+  // the exact range for a host write such as a file read); length 0 outside
+  // the callbacks. The callbacks themselves only get whole pages. For
+  // diagnostics that need the bytes (gpu_uma_hazard_check).
+  static void GetWriteHint(uint32_t& physical_start, uint32_t& length);
+
   // Translates a guest physical address to a host address that can be accessed
   // as a normal pointer.
   // Note that the contents at the specified host address are big-endian.

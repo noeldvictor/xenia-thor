@@ -567,14 +567,31 @@ void SharedMemory::HazardNoteUse(uint32_t start, uint32_t length,
   if (!hazard_page_use_) {
     hazard_page_use_ = std::make_unique<uint64_t[]>(page_count);
     hazard_page_kind_ = std::make_unique<uint8_t[]>(page_count);
+    hazard_page_lo_ = std::make_unique<uint16_t[]>(page_count);
+    hazard_page_hi_ = std::make_unique<uint16_t[]>(page_count);
   }
   const uint64_t submission = HazardCurrentSubmission();
+  const uint32_t end = std::min(start + (length - 1), kBufferSize - 1) + 1;
+  const uint32_t page_size = uint32_t(1) << page_size_log2_;
   const uint32_t page_first = start >> page_size_log2_;
-  const uint32_t page_last =
-      std::min(start + (length - 1), kBufferSize - 1) >> page_size_log2_;
+  const uint32_t page_last = (end - 1) >> page_size_log2_;
   for (uint32_t page = page_first; page <= page_last; ++page) {
-    hazard_page_use_[page] = submission;
-    hazard_page_kind_[page] = kind;
+    const uint32_t page_start = page << page_size_log2_;
+    const uint16_t lo = uint16_t(std::max(start, page_start) - page_start);
+    const uint16_t hi =
+        uint16_t(std::min(end, page_start + page_size) - page_start);
+    if (hazard_page_use_[page] == submission) {
+      hazard_page_lo_[page] = std::min(hazard_page_lo_[page], lo);
+      hazard_page_hi_[page] = std::max(hazard_page_hi_[page], hi);
+      if (kind == 1) {
+        hazard_page_kind_[page] = 1;
+      }
+    } else {
+      hazard_page_use_[page] = submission;
+      hazard_page_kind_[page] = kind;
+      hazard_page_lo_[page] = lo;
+      hazard_page_hi_[page] = hi;
+    }
   }
 }
 
@@ -584,10 +601,28 @@ void SharedMemory::HazardCheckWrite(uint32_t page_first, uint32_t page_last) {
   }
   const uint64_t current = HazardCurrentSubmission();
   const uint64_t completed = HazardCompletedSubmission();
+  // The bytes this write touches. A guest store reports only its address
+  // (length 1): assume 16 bytes, the widest normal store, from there.
+  uint32_t write_start, write_length;
+  Memory::GetWriteHint(write_start, write_length);
+  const bool exact = write_length != 0;
+  if (write_length == 1) {
+    write_length = 16;
+  }
+  const uint32_t write_end = write_start + write_length;
   for (uint32_t page = page_first; page <= page_last; ++page) {
     const uint64_t use = hazard_page_use_[page];
     if (!use || use <= completed) {
       continue;
+    }
+    if (exact) {
+      const uint32_t page_start = page << page_size_log2_;
+      const uint32_t lo = page_start + hazard_page_lo_[page];
+      const uint32_t hi = page_start + hazard_page_hi_[page];
+      if (write_end <= lo || write_start >= hi) {
+        stat_hazard_near_.fetch_add(1, std::memory_order_relaxed);
+        continue;
+      }
     }
     const uint32_t kind_index = hazard_page_kind_[page] == 1 ? 0 : 1;
     const bool definite = use >= current;
