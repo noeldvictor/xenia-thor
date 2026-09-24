@@ -1144,7 +1144,8 @@ def xenia_pc_run(iso: str, seconds: int = 120, cvars: str = '', presses: str = '
 
 
 @mcp.tool()
-def xenia_backend_ab(traces: str, cvars: str = '', d3d12_skip: str = '') -> str:
+def xenia_backend_ab(traces: str, cvars: str = '', d3d12_skip: str = '',
+                     thor_profile: bool = False) -> str:
     """Replay GPU traces on the Vulkan and the D3D12 trace dumps and compare
     (tools/pc/backend_ab.py): the Thor runs Vulkan, and D3D12 implements what
     the SPIR-V path lacks - a large difference is a Vulkan-only glitch; the
@@ -1159,6 +1160,10 @@ def xenia_backend_ab(traces: str, cvars: str = '', d3d12_skip: str = '') -> str:
         args += ['--cvars', cvars]
     if d3d12_skip:
         args += ['--d3d12-skip', d3d12_skip]
+    if thor_profile:
+        # Vulkan with the Thor's GPU settings (Android defaults and the
+        # default-on app toggles) - a bug in a Thor-only option shows here.
+        args.append('--thor-profile')
     return _run_tool_script('tools/pc/backend_ab.py', args, timeout=3600)
 
 
@@ -1202,7 +1207,7 @@ def xenia_spirv_validate(traces: str, cvars: str = '', env: str = 'vulkan1.2') -
 
 @mcp.tool()
 def xenia_resolve_ab(trace: str, prefix: str = '', cvars: str = '',
-                     threshold: float = 0.5) -> str:
+                     threshold: float = 0.5, thor_profile: bool = False) -> str:
     """Compare every resolve of a trace between the Vulkan and the D3D12 trace
     dumps (tools/pc/resolve_ab.py, gpu_debug_dump_resolves): per resolve the
     exact and the large differences, the first divergent one with untiled
@@ -1210,6 +1215,8 @@ def xenia_resolve_ab(trace: str, prefix: str = '', cvars: str = '',
     first draw that makes that resolve differ. Found Blue Dragon's shadow map
     and the missing oDepth (2026-09-24). PC only."""
     args = [trace, '--threshold', str(threshold)]
+    if thor_profile:
+        args.append('--thor-profile')
     if prefix:
         args += ['--prefix', prefix]
     if cvars:

@@ -34,6 +34,34 @@ BIN = os.path.join(ROOT, 'build', 'bin', 'Windows', 'Release')
 OUT = os.path.join(ROOT, 'scratch', 'backend_ab')
 
 
+# Thor-side settings that are not GPU state or cannot run in a trace replay.
+THOR_PROFILE_SKIP = ('gpu_frame_limit_fps', 'vulkan_present_refresh_capped',
+                     'vulkan_persistent_pipeline_cache', 'gpu_adpf_', 'thor_',
+                     'gpu_cp_worker_nice', 'gpu_uma_direct_shared_memory')
+
+
+def thor_profile_cvars(include_vrs=True):
+    """The GPU cvars the Thor runs with: the Android build defaults and the app
+    toggles that are on by default (XeniaOptimizations.java), as name=value.
+    gpu_vrs_foliage_rate is a deliberate quality trade (include_vrs=False to
+    leave it out)."""
+    sys.path.insert(0, os.path.join(ROOT, 'tools', 'mcp'))
+    import xenia_thor_mcp  # noqa: E402
+    out = {}
+    for name, (android, _desktop) in xenia_thor_mcp._android_defaults().items():
+        out[name] = android
+    for toggle in xenia_thor_mcp._toggle_catalog():
+        if not toggle['default']:
+            continue
+        for cvar in toggle['cvars']:
+            name, _, value = cvar.partition('=')
+            out[name] = value or 'true'
+    return ['%s=%s' % (k, v) for k, v in sorted(out.items())
+            if k.startswith(('gpu_', 'vulkan_', 'rt_', 'spirv_', 'render_'))
+            and not k.startswith(THOR_PROFILE_SKIP)
+            and (include_vrs or not k.startswith('gpu_vrs_'))]
+
+
 def backend_cvars(gpu, cvars):
     """The cvars for one trace dump: vulkan_* only for Vulkan, d3d12_* only
     for D3D12 - the other dump does not know them and stops on an error
@@ -96,11 +124,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('traces', nargs='+')
     ap.add_argument('--cvars', default='')
+    ap.add_argument('--thor-profile', action='store_true',
+                    help='Vulkan with the Thor GPU settings (Android defaults and '
+                         'the default-on app toggles, without VRS)')
     ap.add_argument('--d3d12-skip', default='',
                     help='a D3D12 cvar that skips a class of draws, such as '
                          'd3d12_debug_skip_tessellated_draws=true')
     args = ap.parse_args()
     cvars = [c for c in args.cvars.split() if c]
+    if args.thor_profile:
+        # Only the Vulkan dump knows vulkan_*; gpu_* ones apply to both, the
+        # same as on the Thor's shared front end.
+        cvars += thor_profile_cvars(include_vrs=False)
+        print('Thor profile: ' + ' '.join(thor_profile_cvars(include_vrs=False)))
     missing = [g for g in ('vulkan', 'd3d12')
                if not os.path.exists(os.path.join(BIN, 'xenia-gpu-%s-trace-dump.exe' % g))]
     if missing:

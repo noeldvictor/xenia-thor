@@ -215,8 +215,12 @@ def main():
     ap.add_argument('--threshold', type=float, default=0.5)
     ap.add_argument('--images', choices=('all', 'first', 'none'), default='first')
     ap.add_argument('--prefix', default='')
+    ap.add_argument('--thor-profile', action='store_true',
+                    help='Vulkan with the Thor GPU settings (backend_ab.thor_profile_cvars)')
     args = ap.parse_args()
     cvars = [c for c in args.cvars.split() if c]
+    if args.thor_profile:
+        cvars += backend_ab.thor_profile_cvars(include_vrs=False)
     name = os.path.splitext(os.path.basename(args.trace))[0]
     out = os.path.join(OUT, name)
     os.makedirs(out, exist_ok=True)
