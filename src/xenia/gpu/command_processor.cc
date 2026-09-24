@@ -78,6 +78,17 @@ DEFINE_bool(
     "poll this fence? does the crash vanish? fps cost?), then narrow to BD's "
     "field-resolve fences. See memory bd-turnip-crash-race-diagnosis.",
     "GPU");
+DEFINE_string(
+    gpu_debug_skip_draws, "",
+    "Diagnostic: skip the draws with these indices since the last swap, "
+    "ranges or single indices (for example \"120-180,200\"). The indices are "
+    "the same on every backend, so a trace replay bisects which draws make a "
+    "pixel difference (tools/pc/draw_bisect.py).",
+    "GPU");
+DEFINE_bool(gpu_debug_log_draws, false,
+            "Diagnostic: log every draw with its index since the last swap, "
+            "the primitive type, the index count and the shader hashes.",
+            "GPU");
 DEFINE_bool(gpu_hle_surface_trace, false,
             "GPU D3D-HLE: log BD's surface/tiling/copy register writes (RB_SURFACE_"
             "INFO / COLOR / DEPTH / MODECONTROL / COPY_CONTROL / COPY_DEST_INFO) as "
@@ -2385,6 +2396,7 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
 
   IssueSwap(frontbuffer_ptr, frontbuffer_width, frontbuffer_height,
             display_width, display_height);
+  debug_draw_index_in_frame_ = 0;
   // RenderDoc: a capture request set live (renderdoc_trigger_capture) takes
   // the next frame; polled once per guest swap.
   ui::RenderDocPollTrigger();
@@ -3016,7 +3028,52 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
       // shader has memexport.
       // TODO(Triang3l || JoelLinn): Handle this properly in the render
       // backends.
-      if (nhle_cover && cvars::gpu_bd_native_hle_replace) {
+      uint32_t debug_draw_index = debug_draw_index_in_frame_++;
+      bool debug_draw_skipped = false;
+      if (!cvars::gpu_debug_skip_draws.empty()) {
+        // "a-b,c,d-e" - ranges or single indices.
+        const char* skip_list = cvars::gpu_debug_skip_draws.c_str();
+        while (*skip_list && !debug_draw_skipped) {
+          char* skip_end;
+          unsigned long skip_first = std::strtoul(skip_list, &skip_end, 10);
+          if (skip_end == skip_list) {
+            break;
+          }
+          unsigned long skip_last = skip_first;
+          skip_list = skip_end;
+          if (*skip_list == '-') {
+            ++skip_list;
+            skip_last = std::strtoul(skip_list, &skip_end, 10);
+            if (skip_end == skip_list) {
+              break;
+            }
+            skip_list = skip_end;
+          }
+          debug_draw_skipped = debug_draw_index >= skip_first &&
+                               debug_draw_index <= skip_last;
+          if (*skip_list == ',') {
+            ++skip_list;
+          }
+        }
+      }
+      if (cvars::gpu_debug_log_draws) {
+        XELOGI(
+            "GPU debug draw {}: prim {} count {} indexed {} vs {:016X} ps "
+            "{:016X} depthcontrol {:08X} colorcontrol {:08X} modecntl "
+            "{:08X}{}",
+            debug_draw_index, uint32_t(vgt_draw_initiator.prim_type),
+            uint32_t(vgt_draw_initiator.num_indices), is_indexed,
+            active_vertex_shader_ ? active_vertex_shader_->ucode_data_hash()
+                                  : 0,
+            active_pixel_shader_ ? active_pixel_shader_->ucode_data_hash() : 0,
+            register_file_->values[XE_GPU_REG_RB_DEPTHCONTROL],
+            register_file_->values[XE_GPU_REG_RB_COLORCONTROL],
+            register_file_->values[XE_GPU_REG_PA_SU_SC_MODE_CNTL],
+            debug_draw_skipped ? " skipped" : "");
+      }
+      if (debug_draw_skipped) {
+        draw_succeeded = true;
+      } else if (nhle_cover && cvars::gpu_bd_native_hle_replace) {
         // Front-end replacement: skip BD's original LLE foliage draw entirely;
         // the synthetic native emit below is the SOLE submit for this draw.
         // register_file_ already holds BD's full decoded state (the PM4 parse

@@ -61,6 +61,14 @@ DEFINE_bool(
     "(tools/pc/backend_ab.py --d3d12-skip).",
     "D3D12");
 
+DEFINE_bool(
+    d3d12_debug_disable_alpha_to_mask, false,
+    "Diagnostic: ignore RB_COLORCONTROL.alpha_to_mask_enable, so alpha-to-mask "
+    "geometry draws opaque - its full coverage, to compare with the Vulkan "
+    "backend with vulkan_alpha_to_mask_dither and vulkan_alpha_to_coverage "
+    "off.",
+    "D3D12");
+
 namespace xe {
 namespace gpu {
 namespace d3d12 {
@@ -3603,7 +3611,8 @@ void D3D12CommandProcessor::UpdateSystemConstantValues(
   // Alpha test and alpha to coverage.
   dirty |= system_constants_.alpha_test_reference != rb_alpha_ref;
   system_constants_.alpha_test_reference = rb_alpha_ref;
-  uint32_t alpha_to_mask = rb_colorcontrol.alpha_to_mask_enable
+  uint32_t alpha_to_mask = rb_colorcontrol.alpha_to_mask_enable &&
+                                   !cvars::d3d12_debug_disable_alpha_to_mask
                                ? (rb_colorcontrol.value >> 24) | (1 << 8)
                                : 0;
   dirty |= system_constants_.alpha_to_mask != alpha_to_mask;

@@ -61,6 +61,14 @@ DEFINE_bool(
     "grass as quads with black where the blades should be clear). false = the "
     "old behavior, for an A/B.",
     "Vulkan");
+DEFINE_bool(
+    vulkan_alpha_to_mask_dither, true,
+    "Xenos alpha to mask with its dither pattern in the pixel shader (the "
+    "sample mask output) on the host render target path, like the D3D12 "
+    "backend. The host's alpha to coverage keeps low-alpha samples that the "
+    "Xenos drops (Banjo's vines over the chasm). false = the host's alpha to "
+    "coverage (vulkan_alpha_to_coverage).",
+    "Vulkan");
 
 namespace xe {
 namespace gpu {
@@ -423,6 +431,11 @@ VulkanPipelineCache::GetCurrentVertexShaderModification(
         regs.Get<reg::VGT_HOS_CNTL>().tess_mode;
   }
 
+  modification.vertex.vertex_kill_and = uint32_t(
+      (shader.writes_point_size_edge_flag_kill_vertex() & 0b100) &&
+      !regs.Get<reg::PA_CL_CLIP_CNTL>().vtx_kill_or &&
+      command_processor_.GetVulkanDevice()->properties().shaderCullDistance);
+
   if (host_vertex_shader_type ==
       Shader::HostVertexShaderType::kPointListAsTriangleStrip) {
     modification.vertex.output_point_parameters = uint32_t(ps_param_gen_used);
@@ -501,6 +514,16 @@ VulkanPipelineCache::GetCurrentPixelShaderModification(
     } else {
       modification.pixel.depth_stencil_mode = DepthStencilMode::kNoModifiers;
     }
+
+    // Alpha to mask with the Xenos dither (the translator writes the sample
+    // mask). With early fragment tests the pipeline's alpha to coverage
+    // remains.
+    modification.pixel.alpha_to_mask = uint32_t(
+        cvars::vulkan_alpha_to_mask_dither &&
+        modification.pixel.depth_stencil_mode !=
+            DepthStencilMode::kEarlyHint &&
+        shader.writes_color_target(0) &&
+        regs.Get<reg::RB_COLORCONTROL>().alpha_to_mask_enable);
 
     // Check if MIN/MAX blend is used with non-trivial source factors.
     // Vulkan/D3D12 fixed-function blend ignores factors for MIN/MAX, but
@@ -1047,6 +1070,9 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
   // With the fragment shader interlock path the output merger runs in the
   // shader, and the host coverage does not apply.
   if (cvars::vulkan_alpha_to_coverage && pixel_shader &&
+      !SpirvShaderTranslator::Modification(
+           description_out.pixel_shader_modification)
+           .pixel.alpha_to_mask &&
       (normalized_color_mask & 0b1111) &&
       regs.Get<reg::RB_COLORCONTROL>().alpha_to_mask_enable &&
       render_target_cache_.GetPath() ==
@@ -1467,8 +1493,7 @@ bool VulkanPipelineCache::GetGeometryShaderKey(
       /* vertex_shader_modification.vertex.user_clip_plane_count */ 0;
   key.user_clip_plane_cull =
       /* vertex_shader_modification.vertex.user_clip_plane_cull */ 0;
-  key.has_vertex_kill_and =
-      /* vertex_shader_modification.vertex.vertex_kill_and */ 0;
+  key.has_vertex_kill_and = vertex_shader_modification.vertex.vertex_kill_and;
   key.has_point_size =
       vertex_shader_modification.vertex.output_point_parameters;
   key.has_point_coordinates = pixel_shader_modification.pixel.param_gen_point;

@@ -11807,6 +11807,23 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
   dirty |= system_constants_.vertex_base_index != vgt_indx_offset;
   system_constants_.vertex_base_index = vgt_indx_offset;
 
+  // Alpha to mask for the pixel shaders with the alpha_to_mask modification:
+  // the dither offsets and the host sample count.
+  uint32_t alpha_to_mask = 0;
+  if (rb_colorcontrol.alpha_to_mask_enable) {
+    xenos::MsaaSamples alpha_to_mask_samples =
+        draw_util::ClampForcedMsaaSamples(rb_surface_info.msaa_samples);
+    alpha_to_mask = (rb_colorcontrol.value >> 24) |
+                    (alpha_to_mask_samples != xenos::MsaaSamples::k1X
+                         ? UINT32_C(1) << 8
+                         : 0) |
+                    (alpha_to_mask_samples == xenos::MsaaSamples::k4X
+                         ? UINT32_C(1) << 9
+                         : 0);
+  }
+  dirty |= system_constants_.alpha_to_mask != alpha_to_mask;
+  system_constants_.alpha_to_mask = alpha_to_mask;
+
   // Tessellation (the host tessellation vertex and control shaders): the
   // factor range, plus 1.0 according to the images in
   // https://www.slideshare.net/blackdevilvikas/next-generation-graphics-programming-on-xbox-360

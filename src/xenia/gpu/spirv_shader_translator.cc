@@ -11,7 +11,9 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cstddef>
+#include <iterator>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -209,6 +211,7 @@ void SpirvShaderTranslator::Reset() {
   input_fragment_coordinates_ = spv::NoResult;
   input_front_facing_ = spv::NoResult;
   input_sample_mask_ = spv::NoResult;
+  output_sample_mask_ = spv::NoResult;
   std::fill(input_output_interpolators_.begin(),
             input_output_interpolators_.end(), spv::NoResult);
   output_point_coordinates_ = spv::NoResult;
@@ -406,15 +409,26 @@ void SpirvShaderTranslator::StartTranslation() {
       {"edram_blend_constant", offsetof(SystemConstants, edram_blend_constant),
        type_float4_},
   };
+  // Members for only some shaders are declared after the common ones, so the
+  // other shaders keep their SPIR-V.
+  std::vector<SystemConstant> system_constants_declared(
+      std::begin(system_constants), std::end(system_constants));
+  static_assert(kSystemConstantAlphaToMask == xe::countof(system_constants),
+                "The alpha to mask constant is declared after the others");
+  if (IsAlphaToMaskEmulated()) {
+    system_constants_declared.push_back(
+        {"alpha_to_mask", offsetof(SystemConstants, alpha_to_mask),
+         type_uint_});
+  }
   id_vector_temp_.clear();
-  id_vector_temp_.reserve(xe::countof(system_constants));
-  for (size_t i = 0; i < xe::countof(system_constants); ++i) {
-    id_vector_temp_.push_back(system_constants[i].type);
+  id_vector_temp_.reserve(system_constants_declared.size());
+  for (const SystemConstant& system_constant : system_constants_declared) {
+    id_vector_temp_.push_back(system_constant.type);
   }
   spv::Id type_system_constants =
       builder_->makeStructType(id_vector_temp_, "XeSystemConstants");
-  for (size_t i = 0; i < xe::countof(system_constants); ++i) {
-    const SystemConstant& system_constant = system_constants[i];
+  for (size_t i = 0; i < system_constants_declared.size(); ++i) {
+    const SystemConstant& system_constant = system_constants_declared[i];
     builder_->addMemberName(type_system_constants, static_cast<unsigned int>(i),
                             system_constant.name);
     builder_->addMemberDecoration(
@@ -1671,8 +1685,21 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
 
   // Create the gl_PerVertex output for used system outputs.
   std::vector<spv::Id> struct_per_vertex_members;
-  struct_per_vertex_members.reserve(kOutputPerVertexMemberCount);
+  struct_per_vertex_members.reserve(kOutputPerVertexMemberCount + 1);
   struct_per_vertex_members.push_back(type_float4_);
+  // Vertex kill with the AND operator: a cull distance, negative for a killed
+  // vertex, like SV_CullDistance in the DXBC translator. The geometry shaders
+  // for the primitive types Vulkan lacks read it (has_vertex_kill_and).
+  output_per_vertex_member_cull_distance_ = UINT32_MAX;
+  if (GetSpirvShaderModification().vertex.vertex_kill_and &&
+      features_.cull_distance &&
+      (current_shader().writes_point_size_edge_flag_kill_vertex() & 0b100)) {
+    builder_->addCapability(spv::CapabilityCullDistance);
+    output_per_vertex_member_cull_distance_ =
+        uint32_t(struct_per_vertex_members.size());
+    struct_per_vertex_members.push_back(builder_->makeArrayType(
+        type_float_, builder_->makeUintConstant(1), 0));
+  }
   spv::Id type_struct_per_vertex =
       builder_->makeStructType(struct_per_vertex_members, "gl_PerVertex");
   builder_->addMemberName(type_struct_per_vertex,
@@ -1680,6 +1707,14 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
   builder_->addMemberDecoration(type_struct_per_vertex,
                                 kOutputPerVertexMemberPosition,
                                 spv::DecorationBuiltIn, spv::BuiltInPosition);
+  if (output_per_vertex_member_cull_distance_ != UINT32_MAX) {
+    builder_->addMemberName(type_struct_per_vertex,
+                            output_per_vertex_member_cull_distance_,
+                            "gl_CullDistance");
+    builder_->addMemberDecoration(
+        type_struct_per_vertex, output_per_vertex_member_cull_distance_,
+        spv::DecorationBuiltIn, spv::BuiltInCullDistance);
+  }
   builder_->addDecoration(type_struct_per_vertex, spv::DecorationBlock);
   output_per_vertex_ = builder_->createVariable(
       spv::NoPrecision, spv::StorageClassOutput, type_struct_per_vertex, "");
@@ -2187,6 +2222,49 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
 
   Modification shader_modification = GetSpirvShaderModification();
 
+  // Vertex kill (2026-09-24). The SPIR-V path ignored oPts.z: Banjo's grass
+  // vertex shader kills the cards where its density texture has no grass, and
+  // on Vulkan the cards covered the cliff faces, the chasm and the rocks. Like
+  // the DXBC translator: killed if bits 0:30 are not zero (`and`, not a
+  // comparison with 0.0, to avoid denormal flushing); with the AND operator a
+  // negative cull distance, otherwise a NaN W, which drops every primitive
+  // with the vertex (the OR operator).
+  if (current_shader().writes_point_size_edge_flag_kill_vertex() & 0b100) {
+    assert_true(var_main_point_size_edge_flag_kill_vertex_ != spv::NoResult);
+    id_vector_temp_.clear();
+    id_vector_temp_.push_back(builder_->makeIntConstant(2));
+    spv::Id vertex_killed = builder_->createBinOp(
+        spv::OpINotEqual, type_bool_,
+        builder_->createBinOp(
+            spv::OpBitwiseAnd, type_uint_,
+            builder_->createUnaryOp(
+                spv::OpBitcast, type_uint_,
+                builder_->createLoad(
+                    builder_->createAccessChain(
+                        spv::StorageClassFunction,
+                        var_main_point_size_edge_flag_kill_vertex_,
+                        id_vector_temp_),
+                    spv::NoPrecision)),
+            builder_->makeUintConstant(UINT32_C(0x7FFFFFFF))),
+        const_uint_0_);
+    if (output_per_vertex_member_cull_distance_ != UINT32_MAX) {
+      id_vector_temp_.clear();
+      id_vector_temp_.push_back(builder_->makeIntConstant(
+          int(output_per_vertex_member_cull_distance_)));
+      id_vector_temp_.push_back(const_int_0_);
+      builder_->createStore(
+          builder_->createTriOp(spv::OpSelect, type_float_, vertex_killed,
+                                builder_->makeFloatConstant(-1.0f),
+                                const_float_0_),
+          builder_->createAccessChain(spv::StorageClassOutput,
+                                      output_per_vertex_, id_vector_temp_));
+    } else {
+      position_w = builder_->createTriOp(
+          spv::OpSelect, type_float_, vertex_killed,
+          builder_->makeFloatConstant(std::nanf("")), position_w);
+    }
+  }
+
   // Expand the point sprite.
   if (shader_modification.vertex.host_vertex_shader_type ==
       Shader::HostVertexShaderType::kPointListAsTriangleStrip) {
@@ -2563,7 +2641,8 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
   // TODO(Triang3l): More conditions - alpha to coverage (if RT 0 is written,
   // and there's no early depth / stencil), depth writing in the fragment shader
   // (per-sample if supported).
-  if (edram_fragment_shader_interlock_ || param_gen_needed) {
+  if (edram_fragment_shader_interlock_ || param_gen_needed ||
+      IsAlphaToMaskEmulated()) {
     input_fragment_coordinates_ = builder_->createVariable(
         spv::NoPrecision, spv::StorageClassInput, type_float4_, "gl_FragCoord");
     builder_->addDecoration(input_fragment_coordinates_, spv::DecorationBuiltIn,
@@ -2594,6 +2673,17 @@ void SpirvShaderTranslator::StartFragmentShaderBeforeMain() {
     builder_->addDecoration(input_sample_mask_, spv::DecorationBuiltIn,
                             spv::BuiltInSampleMask);
     main_interface_.push_back(input_sample_mask_);
+  }
+
+  // Sample mask output for alpha to mask.
+  if (IsAlphaToMaskEmulated()) {
+    output_sample_mask_ = builder_->createVariable(
+        spv::NoPrecision, spv::StorageClassOutput,
+        builder_->makeArrayType(type_int_, builder_->makeUintConstant(1), 0),
+        "gl_SampleMask");
+    builder_->addDecoration(output_sample_mask_, spv::DecorationBuiltIn,
+                            spv::BuiltInSampleMask);
+    main_interface_.push_back(output_sample_mask_);
   }
 
   if (!is_depth_only_fragment_shader_) {

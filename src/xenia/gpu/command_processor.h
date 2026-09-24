@@ -282,6 +282,9 @@ class CommandProcessor {
   // + resets it at swap to confirm the WHOLE foliage pass (~1194 draws) fired
   // natively.
   uint32_t bd_native_emits_this_frame_ = 0;
+  // Draws since the last swap, for gpu_debug_skip_draws and
+  // gpu_debug_log_draws (the same numbers on every backend).
+  uint32_t debug_draw_index_in_frame_ = 0;
 
   // "Actual" is for the command processor thread, to be read by the
   // implementations.

@@ -1163,6 +1163,32 @@ def xenia_backend_ab(traces: str, cvars: str = '', d3d12_skip: str = '') -> str:
 
 
 @mcp.tool()
+def xenia_draw_bisect(trace: str, region: str = '', mode: str = 'vulkan',
+                      filter: str = '', cvars: str = '', max_leaves: int = 6,
+                      max_evals: int = 40) -> str:
+    """Which draws make a trace's Vulkan frame differ from D3D12
+    (tools/pc/draw_bisect.py): skips draw ranges on both trace dumps
+    (gpu_debug_skip_draws, the same numbers on every backend) and splits the
+    ranges that remove the mismatch down to single draws, printed with their
+    state (primitive, count, shader hashes, RB_DEPTHCONTROL, RB_COLORCONTROL,
+    PA_SU_SC_MODE_CNTL). region: "x0,y0,x1,y1" to limit the mismatch. mode:
+    vulkan = skip on Vulkan only (geometry only Vulkan draws), d3d12 = skip on
+    D3D12 only (geometry Vulkan lacks), both. filter: the candidate draws, a
+    Python expression over prim, count, vs, ps, depthcontrol, colorcontrol,
+    modecntl (for example "colorcontrol & 0x10") - needed in the one-backend
+    modes. Minutes. PC only."""
+    args = [trace, '--mode', mode, '--max-leaves', str(max_leaves),
+            '--max-evals', str(max_evals)]
+    if filter:
+        args += ['--filter', filter]
+    if region:
+        args += ['--region', region]
+    if cvars:
+        args += ['--cvars', cvars]
+    return _run_tool_script('tools/pc/draw_bisect.py', args, timeout=7200)
+
+
+@mcp.tool()
 def xenia_pc_build(project: str = 'xenia-app') -> str:
     """Build the Windows app (tools/pc/build_pc.py): finds MSBuild, builds
     build/<project>.vcxproj as "Release Windows" x64, returns the errors and

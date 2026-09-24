@@ -406,14 +406,29 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   pipeline, and three system constants at the end of the struct (factor range, index min/max)
   that only the host shaders read. The command processor gives tessellated draws a patch
   primitive type, so the dynamic topology, the CPU cull and the draw merges skip them. Banjo's
-  traces: 0 failed draws (was 2 per frame); the chasm pixels match D3D12 except the vines drawn
-  over them (the alpha-to-coverage difference); the other 13 traces replay unchanged.
+  traces: 0 failed draws (was 2 per frame); the chasm pixels match D3D12 except the grass cards
+  drawn over them (the vertex kill, below); the other 13 traces replay unchanged.
   Needs `tessellationShader` and, for 32-bit indices, `fullDrawIndexUint32` (the Adreno 740 has
   both). Thor check owed. `backend_ab.py --d3d12-skip CVAR` gives this picture in one call.
-  `scratch/gears/gears2.iso` is 1.76 GB against
-    7.8 GB for Gears 1 - an incomplete pull; it does not mount ("Failed to read all GDFX
-    entries"). Under `--cdb` every write-watch fault is a debugger event and the run slows
-    several times over; use it on a crash, not for the whole matrix.
+- **Vertex kill and exact alpha to mask on Vulkan (fixed, 2026-09-24):** the SPIR-V translator
+  wrote the Xenos kill-vertex flag (`oPts.z`) to a variable that nothing read. Banjo's grass
+  vertex shader (VS 480C6F4ED3AAD74D) reads a height map and a density map in the vertex shader
+  and kills the cards where the density map has no grass; on Vulkan the cards covered the cliff
+  faces, the chasm and the rocks (on the Thor too). Now like the DXBC translator: a negative
+  `gl_CullDistance` for the AND mode (`PA_CL_CLIP_CNTL.vtx_kill_or` off; the modification bit
+  `vertex_kill_and`, and the geometry shaders read it), a NaN W for the OR mode. Also Xenos
+  alpha to mask with its dither (the thresholds of the DXBC translator, `gl_SampleMask`, the
+  pixel modification bit `alpha_to_mask`, `vulkan_alpha_to_mask_dither`, default on; host alpha
+  to coverage stays for early-fragment-test shaders). Banjo 3060 against D3D12: 17.9% of the
+  pixels differed with tessellation alone, 5.8% with vertex kill, 2.2% with both; 3146 19.5% ->
+  2.3%; 3380 0.48% -> 0.03%; Gears, Blue Dragon and MC2 unchanged. Found with
+  `tools/pc/draw_bisect.py --filter "colorcontrol & 0x10"` (the alpha-to-mask draws) and a D3D12
+  replay with `d3d12_debug_disable_alpha_to_mask` (opaque cards on both backends showed the
+  geometry itself differed), then the microcode from `--dump_shaders`. Thor check owed.
+- `scratch/gears/gears2.iso` is 1.76 GB against 7.8 GB for Gears 1 - an incomplete pull; it does
+  not mount ("Failed to read all GDFX entries"). Under `--cdb` every write-watch fault is a
+  debugger event and the run slows several times over; use it on a crash, not for the whole
+  matrix.
 - **Command-processor CPU per draw, the full split (2026-09-23).** The short `GPU draw cpu/frame`
   line now carries every bucket: `prep_us` (after Process to RequestTextures: shader
   modifications, translation lookups, samplers), `tex_us`, `rt_us`, `pipe_us`, `state_us` (after
@@ -628,6 +643,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_trace_ab`, `xenia_pc_run` | MCP wrappers of `tools/pc/trace_ab.py` and `tools/pc/pc_run.py` (Vulkan, the device snapshot's settings, `trace_at` for frame traces). PC only |
 | `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
 | `tools/pc/backend_ab.py`, `xenia_backend_ab` | a trace replayed on the Vulkan and the D3D12 trace dumps: image difference, dropped draws per backend, and a D3D12-above-Vulkan pair in `scratch/backend_ab/`. The Thor runs Vulkan; D3D12 is the reference for what the SPIR-V path lacks. `--d3d12-skip CVAR`: the pixels a class of draws renders on D3D12 and whether Vulkan draws them |
+| `tools/pc/draw_bisect.py`, `xenia_draw_bisect` | which draws make a trace's Vulkan frame differ from D3D12: skips draw lists (`gpu_debug_skip_draws`, the same numbers on every backend) on Vulkan, D3D12 or both and splits the lists that explain the mismatch down to single draws, with their state from `gpu_debug_log_draws` (shader hashes, RB_DEPTHCONTROL, RB_COLORCONTROL). In the one-backend modes give candidates with `--filter` (for example `colorcontrol & 0x10`, alpha to mask): skipping every draw leaves a black frame that explains nothing |
 | `tools/pc/pc_matrix.py` | the PC regression matrix: Banjo, Gears, Gears 2, MagnaCarta 2, Blue Dragon one after another in the Thor configuration (`--android-defaults`), a contact sheet per title and a JSON summary in `scratch/matrix/`; a crash reruns under cdb for its stack. Run it after every change set and look at the sheets |
 | `pc_run.py` sticky presses (`"45:start+"`) | pressed again every `--retry-every` s until the picture changes; later presses wait. Titles ignore presses while they load and the load time varies - fixed-time routes stuck Gears on its main menu |
 | `pc_run.py --cdb` (MCP `xenia_pc_run(cdb=True)`) | the run under cdb: first-chance faults (the write watches) pass, a crash prints its stack at the end. A crash that leaves no log line gets named in one run (2026-09-23: the texture watch double free) |

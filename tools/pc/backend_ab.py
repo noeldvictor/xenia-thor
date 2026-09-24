@@ -34,13 +34,27 @@ BIN = os.path.join(ROOT, 'build', 'bin', 'Windows', 'Release')
 OUT = os.path.join(ROOT, 'scratch', 'backend_ab')
 
 
+def backend_cvars(gpu, cvars):
+    """The cvars for one trace dump: vulkan_* only for Vulkan, d3d12_* only
+    for D3D12 - the other dump does not know them and stops on an error
+    dialog (a hung replay, 2026-09-24)."""
+    other = 'd3d12_' if gpu == 'vulkan' else 'vulkan_'
+    return [c for c in cvars if not c.startswith(other)]
+
+
 def replay(gpu, trace, out, cvars):
+    cvars = backend_cvars(gpu, cvars)
     os.makedirs(out, exist_ok=True)
     exe = os.path.join(BIN, 'xenia-gpu-%s-trace-dump.exe' % gpu)
     log = os.path.join(out, 'dump.log')
-    subprocess.run([exe, '--target_trace_file=' + trace, '--trace_dump_path=' + out,
-                    '--log_file=' + log] + ['--' + c for c in cvars],
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
+    try:
+        subprocess.run([exe, '--target_trace_file=' + trace, '--trace_dump_path=' + out,
+                        '--log_file=' + log] + ['--' + c for c in cvars],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+    except subprocess.TimeoutExpired:
+        # A replay takes well under a minute; a hang is usually an error dialog.
+        print('  %s replay hung (300 s) - killed' % gpu)
+        return None, 0
     pngs = glob.glob(os.path.join(out, '*.png'))
     failed = 0
     if os.path.exists(log):

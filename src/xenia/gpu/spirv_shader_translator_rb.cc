@@ -428,6 +428,113 @@ spv::Id SpirvShaderTranslator::Depth20e4To32(SpirvBuilder& builder,
   return f32;
 }
 
+void SpirvShaderTranslator::CompleteFragmentShader_AlphaToMask() {
+  // The same as DxbcShaderTranslator::CompletePixelShader_AlphaToMask without
+  // the rasterizer-ordered view. Host alpha to coverage keeps samples that the
+  // Xenos dither drops - at 1x, the thresholds are 1.0 - offset / 4, so an
+  // alpha below 0.25 never covers the pixel. Banjo's vines over the chasm drew
+  // on Vulkan and not on D3D12 (2026-09-24).
+  assert_true(output_sample_mask_ != spv::NoResult);
+  id_vector_temp_.clear();
+  id_vector_temp_.push_back(builder_->makeIntConstant(3));
+  spv::Id alpha = builder_->createLoad(
+      builder_->createAccessChain(spv::StorageClassOutput,
+                                  output_or_var_fragment_data_[0],
+                                  id_vector_temp_),
+      spv::NoPrecision);
+  id_vector_temp_.clear();
+  id_vector_temp_.push_back(
+      builder_->makeIntConstant(kSystemConstantAlphaToMask));
+  spv::Id alpha_to_mask = builder_->createLoad(
+      builder_->createAccessChain(spv::StorageClassUniform,
+                                  uniform_system_constants_, id_vector_temp_),
+      spv::NoPrecision);
+  spv::Id const_uint_1 = builder_->makeUintConstant(1);
+
+  // The dither offset index for the pixel, Y - low bit, X - high bit. With
+  // resolution scaling, still using host pixels, to preserve the idea of
+  // dithering.
+  spv::Id fragment_coordinates =
+      builder_->createLoad(input_fragment_coordinates_, spv::NoPrecision);
+  spv::Id pixel_x = builder_->createUnaryOp(
+      spv::OpConvertFToU, type_uint_,
+      builder_->createCompositeExtract(fragment_coordinates, type_float_, 0));
+  spv::Id pixel_y = builder_->createUnaryOp(
+      spv::OpConvertFToU, type_uint_,
+      builder_->createCompositeExtract(fragment_coordinates, type_float_, 1));
+  spv::Id offset_index = builder_->createBinOp(
+      spv::OpBitwiseOr, type_uint_,
+      builder_->createBinOp(
+          spv::OpShiftLeftLogical, type_uint_,
+          builder_->createBinOp(spv::OpBitwiseAnd, type_uint_, pixel_x,
+                                const_uint_1),
+          const_uint_1),
+      builder_->createBinOp(spv::OpBitwiseAnd, type_uint_, pixel_y,
+                            const_uint_1));
+  spv::Id offset = builder_->createUnaryOp(
+      spv::OpConvertUToF, type_float_,
+      builder_->createTriOp(
+          spv::OpBitFieldUExtract, type_uint_, alpha_to_mask,
+          builder_->createBinOp(spv::OpShiftLeftLogical, type_uint_,
+                                offset_index, const_uint_1),
+          builder_->makeUintConstant(2)));
+
+  // A sample is covered if the alpha is at or above base - offset * scale
+  // (false for NaN, like the Direct3D 11.3 functional specification).
+  auto sample_bit = [&](float threshold_base, float offset_scale,
+                        uint32_t sample_index) {
+    spv::Id threshold = builder_->createNoContractionBinOp(
+        spv::OpFSub, type_float_, builder_->makeFloatConstant(threshold_base),
+        builder_->createNoContractionBinOp(
+            spv::OpFMul, type_float_, offset,
+            builder_->makeFloatConstant(offset_scale)));
+    return builder_->createTriOp(
+        spv::OpSelect, type_uint_,
+        builder_->createBinOp(spv::OpFOrdGreaterThanEqual, type_bool_, alpha,
+                              threshold),
+        builder_->makeUintConstant(UINT32_C(1) << sample_index),
+        const_uint_0_);
+  };
+  auto or_bits = [&](spv::Id a, spv::Id b) {
+    return builder_->createBinOp(spv::OpBitwiseOr, type_uint_, a, b);
+  };
+  // 1x.
+  spv::Id mask_1x = sample_bit(1.0f, 1.0f / 4.0f, 0);
+  // 2x - native: top (0 in Xenia) is 1 on the host, bottom (1 in Xenia) is 0;
+  // 2x as 4x: top is 0, bottom is 3.
+  spv::Id mask_2x =
+      or_bits(sample_bit(0.5f, 1.0f / 8.0f,
+                         native_2x_msaa_with_attachments_ ? 1 : 0),
+              sample_bit(1.0f, 1.0f / 8.0f,
+                         native_2x_msaa_with_attachments_ ? 0 : 3));
+  // 4x.
+  spv::Id mask_4x =
+      or_bits(or_bits(sample_bit(0.75f, 1.0f / 16.0f, 0),
+                      sample_bit(0.25f, 1.0f / 16.0f, 1)),
+              or_bits(sample_bit(0.5f, 1.0f / 16.0f, 2),
+                      sample_bit(1.0f, 1.0f / 16.0f, 3)));
+  spv::Id msaa = builder_->createBinOp(
+      spv::OpINotEqual, type_bool_,
+      builder_->createBinOp(spv::OpBitwiseAnd, type_uint_, alpha_to_mask,
+                            builder_->makeUintConstant(UINT32_C(1) << 8)),
+      const_uint_0_);
+  spv::Id msaa_4x = builder_->createBinOp(
+      spv::OpINotEqual, type_bool_,
+      builder_->createBinOp(spv::OpBitwiseAnd, type_uint_, alpha_to_mask,
+                            builder_->makeUintConstant(UINT32_C(1) << 9)),
+      const_uint_0_);
+  spv::Id mask = builder_->createTriOp(
+      spv::OpSelect, type_uint_, msaa_4x, mask_4x,
+      builder_->createTriOp(spv::OpSelect, type_uint_, msaa, mask_2x,
+                            mask_1x));
+  id_vector_temp_.clear();
+  id_vector_temp_.push_back(const_int_0_);
+  builder_->createStore(
+      builder_->createUnaryOp(spv::OpBitcast, type_int_, mask),
+      builder_->createAccessChain(spv::StorageClassOutput,
+                                  output_sample_mask_, id_vector_temp_));
+}
+
 void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
   // Loaded if needed.
   spv::Id msaa_samples = spv::NoResult;
@@ -626,7 +733,13 @@ void SpirvShaderTranslator::CompleteFragmentShaderInMain() {
     }
     if_alpha_test_function_is_non_always.makeEndIf();
 
-    // TODO(Triang3l): Alpha to coverage.
+    // Alpha to mask. On the host render target path with the alpha_to_mask
+    // modification - the Xenos dither pattern like in the DXBC translator;
+    // otherwise the pipeline may use the host's alpha to coverage.
+    // TODO(Triang3l): Alpha to mask with the fragment shader interlock.
+    if (IsAlphaToMaskEmulated()) {
+      CompleteFragmentShader_AlphaToMask();
+    }
 
     if (edram_fragment_shader_interlock_) {
       // Close the render target 0 written check.

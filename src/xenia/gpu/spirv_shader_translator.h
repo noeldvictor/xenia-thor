@@ -64,6 +64,11 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // Xenos tessellation mode (VGT_HOS_CNTL): the spacing - integer for
       // discrete, fractional even for continuous and adaptive. 0 otherwise.
       xenos::TessellationMode tessellation_mode : 2;
+      // The shader writes the vertex kill flag (oPts.z) and a primitive is
+      // killed only if all its vertices are (PA_CL_CLIP_CNTL.vtx_kill_or
+      // off): a cull distance. Set only with shaderCullDistance. Otherwise a
+      // killed vertex gets a NaN W, which drops every primitive with it.
+      uint32_t vertex_kill_and : 1;
     } vertex;
     struct PixelShaderModification {
       // uint32_t 0.
@@ -119,6 +124,11 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // no room for two 5-bit fields in the second uint32_t.
       uint32_t rt0_blend_rgb_premult_src_alpha : 1;
       uint32_t rt0_blend_a_premult_src_alpha : 1;
+      // For host render targets - Xenos alpha to mask with its dither pattern
+      // through the sample mask output (RB_COLORCONTROL.alpha_to_mask_enable,
+      // without early fragment tests), instead of the host's alpha to
+      // coverage.
+      uint32_t alpha_to_mask : 1;
     } pixel;
     uint64_t value = 0;
 
@@ -322,6 +332,11 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // VGT_MIN_VTX_INDX and VGT_MAX_VTX_INDX.
     uint32_t vertex_index_min;
     uint32_t vertex_index_max;
+
+    // Declared only by the pixel shaders with the alpha_to_mask modification.
+    // Bits 0:7 - the four 2-bit dither offsets (RB_COLORCONTROL bits 24:31),
+    // bit 8 - MSAA, bit 9 - 4x MSAA.
+    uint32_t alpha_to_mask;
   };
 
   enum ConstantBuffer : uint32_t {
@@ -682,6 +697,16 @@ class SpirvShaderTranslator : public ShaderTranslator {
                Shader::HostVertexShaderType::kMemExportCompute;
   }
 
+  // Xenos alpha to mask with the dither pattern and the sample mask output
+  // (the host render target path).
+  bool IsAlphaToMaskEmulated() const {
+    return !is_depth_only_fragment_shader_ &&
+           !edram_fragment_shader_interlock_ && is_pixel_shader() &&
+           GetSpirvShaderModification().pixel.alpha_to_mask &&
+           (current_shader().writes_color_targets() & 0b1) &&
+           !IsExecutionModeEarlyFragmentTests();
+  }
+
   bool IsExecutionModeEarlyFragmentTests() const {
     // Trust the kEarlyHint modification: vulkan_pipeline_cache is the gatekeeper
     // and sets it ONLY when early-Z is safe - either implicit_early_z_write_allowed
@@ -720,6 +745,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
   void StartFragmentShaderBeforeMain();
   void StartFragmentShaderInMain();
   void CompleteFragmentShaderInMain();
+  // Writes the sample mask output from the alpha of color output 0.
+  void CompleteFragmentShader_AlphaToMask();
 
   // Updates the current flow control condition (to be called in the beginning
   // of exec and in jumps), closing the previous conditionals if needed.
@@ -1084,6 +1111,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
     kSystemConstantEdramRTKeepMask,
     kSystemConstantEdramRTClamp,
     kSystemConstantEdramBlendConstant,
+    // Only in the pixel shaders with the alpha_to_mask modification.
+    kSystemConstantAlphaToMask,
   };
   spv::Id uniform_system_constants_;
   spv::Id uniform_float_constants_;
@@ -1147,6 +1176,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
   spv::Id input_front_facing_;
   // PS, only when needed - int[1].
   spv::Id input_sample_mask_;
+  // PS, only with IsAlphaToMaskEmulated - int[1].
+  spv::Id output_sample_mask_;
 
   // VS output or PS input, only the ones that are needed (spv::NoResult for the
   // unneeded interpolators), indexed by the guest interpolator index - float4.
@@ -1170,6 +1201,8 @@ class SpirvShaderTranslator : public ShaderTranslator {
     kOutputPerVertexMemberCount,
   };
   spv::Id output_per_vertex_;
+  // gl_CullDistance in gl_PerVertex for vertex_kill_and, or UINT32_MAX.
+  uint32_t output_per_vertex_member_cull_distance_ = UINT32_MAX;
 
   // With fragment shader interlock, variables in the main function.
   // Otherwise, framebuffer color attachment outputs.
