@@ -1,7 +1,7 @@
 """Which draws make the Vulkan frame differ from D3D12? Bisect a GPU trace.
 
   python tools/pc/draw_bisect.py TRACE.xtr [--region x0,y0,x1,y1]
-      [--mode vulkan|d3d12|both] [--filter "colorcontrol&0x10"]
+      [--mode prefix|vulkan|d3d12|both] [--filter "colorcontrol&0x10"]
       [--cvars "a=1 b=2"] [--max-leaves 6] [--max-evals 40] [--min-gain 0.05]
 
 The draws are numbered from the last swap, the same on every backend
@@ -11,7 +11,15 @@ where the Vulkan and the D3D12 replays differ by more than 8. A range of draws
 is skipped, and if the share of M it explains is --min-gain or more, the range
 holds a cause and the search splits it (earliest first) down to single draws.
 The modes:
-- vulkan (default, one replay per step): skipped on Vulkan only; explained =
+- prefix (default): every draw after N is skipped on both backends, and a
+  binary search finds the first N where the two partial frames differ (by
+  --min-gain of the final mismatch, or at least 100 pixels) - the first draw
+  that renders differently. The resolves still run, so the partial frame is
+  what the frame's render targets held at that draw. Two replays per step,
+  about 12 steps. The other modes can pick a clear or a background draw
+  (skipping it changes both frames the same way; Banjo 23271 draw 77 and Blue
+  Dragon 21407 draw 49, 2026-09-24).
+- vulkan (one replay per step): skipped on Vulkan only; explained =
   the M pixels that then match the normal D3D12 frame. Finds geometry that
   Vulkan draws and D3D12 does not (Banjo's vines, 2026-09-24).
 - d3d12: skipped on D3D12 only, against the normal Vulkan frame. Finds
@@ -20,8 +28,10 @@ The modes:
   result differs, but also "explains" any background it removes.
 In the vulkan and d3d12 modes, skipping every draw leaves a black frame that
 matches nothing, so give candidates: --filter is a Python expression over the
-draw log fields (prim, count, vs, ps, depthcontrol, colorcontrol, modecntl as
-integers), for example "colorcontrol & 0x10" (alpha to mask) or "prim == 4";
+draw log fields (prim, count, vs, ps, depthcontrol, colorcontrol, modecntl,
+clipcntl, vskill as integers, and index), for example "colorcontrol & 0x10"
+(alpha to mask), "prim == 4" or "index > 49" (past a draw that only removes
+the background);
 the search then splits the list of matching draws.
 Each leaf is printed with its state from the draw log (primitive, count,
 shader hashes, RB_DEPTHCONTROL, RB_COLORCONTROL, PA_SU_SC_MODE_CNTL) - compare
@@ -43,9 +53,9 @@ import backend_ab  # noqa: E402
 
 OUT = os.path.join(backend_ab.ROOT, 'scratch', 'draw_bisect')
 DRAW_RE = re.compile(r'GPU debug draw (\d+): (.*)$')
-FIELD_RE = re.compile(r'(prim|count|vs|ps|depthcontrol|colorcontrol|modecntl) '
-                      r'([0-9A-Fa-f]+)')
-HEX_FIELDS = ('vs', 'ps', 'depthcontrol', 'colorcontrol', 'modecntl')
+FIELD_RE = re.compile(r'(prim|count|vs|ps|depthcontrol|colorcontrol|modecntl|'
+                      r'clipcntl|vskill) ([0-9A-Fa-f]+)')
+HEX_FIELDS = ('vs', 'ps', 'depthcontrol', 'colorcontrol', 'modecntl', 'clipcntl')
 
 
 def draw_fields(text):
@@ -88,12 +98,53 @@ def count_in(mask, within):
     return sum(1 for p, m in zip(mask.getdata(), within.getdata()) if p and m)
 
 
+def prefix_search(args, cvars, region, out, draws, last, total):
+    """The first draw after which the Vulkan and the D3D12 frames differ."""
+    need = max(100, int(args.min_gain * total))
+    cache = {}
+
+    def mismatch(n):
+        if n in cache:
+            return cache[n]
+        skip = ['gpu_debug_skip_draws=%d-%d' % (n + 1, last)] if n < last else []
+        tag = 'prefix_%d' % n
+        vk, _ = backend_ab.replay('vulkan', args.trace, os.path.join(out, tag, 'vk'),
+                                  cvars + skip)
+        d3d, _ = backend_ab.replay('d3d12', args.trace, os.path.join(out, tag, 'd3d12'),
+                                   cvars + skip)
+        count = 0
+        if vk and d3d:
+            count = sum(1 for p in diff_mask(load(vk), load(d3d), region).getdata() if p)
+        print('  draws 0-%d: %d pixels differ' % (n, count))
+        cache[n] = count
+        return count
+
+    lo, hi = 0, last
+    if mismatch(lo) >= need:
+        hi = lo
+    steps = 0
+    while hi - lo > 1 and steps < args.max_evals:
+        steps += 1
+        mid = (lo + hi) // 2
+        if mismatch(mid) >= need:
+            hi = mid
+        else:
+            lo = mid
+    print('first divergent draw (the partial frames differ from here, %d+ pixels):'
+          % need)
+    for i in range(max(0, hi - 2), min(last, hi + 2) + 1):
+        print('  %s%d  %s' % ('>' if i == hi else ' ', i, draws.get(i, '?')))
+    print('images in', os.path.relpath(out, backend_ab.ROOT),
+          '(prefix_<N>/vk and d3d12)')
+    return 0
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('trace')
     ap.add_argument('--region', default='')
-    ap.add_argument('--mode', choices=('vulkan', 'd3d12', 'both'),
-                    default='vulkan')
+    ap.add_argument('--mode', choices=('prefix', 'vulkan', 'd3d12', 'both'),
+                    default='prefix')
     ap.add_argument('--filter', default='')
     ap.add_argument('--cvars', default='')
     ap.add_argument('--max-leaves', type=int, default=6)
@@ -132,10 +183,14 @@ def main():
     if not total:
         return 0
 
+    if args.mode == 'prefix':
+        return prefix_search(args, cvars, region, out, draws, last, total)
+
     candidates = sorted(draws)
     if args.filter:
         candidates = [i for i in candidates
-                      if eval(args.filter, {}, draw_fields(draws[i]))]
+                      if eval(args.filter, {},
+                              dict(draw_fields(draws[i]), index=i))]
         print('%d draws match the filter %r' % (len(candidates), args.filter))
         if not candidates:
             return 0
