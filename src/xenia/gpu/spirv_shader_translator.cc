@@ -741,8 +741,14 @@ void SpirvShaderTranslator::StartTranslation() {
           "xe_var_debug_tfetch_last_raw_signed", const_float4_0_);
     }
     if (register_count()) {
+      // A new array type: with stride 0 the glslang builder reuses any float4
+      // array of the same size - also a constant buffer's, which has an
+      // ArrayStride decoration, and a Function variable must not have an
+      // explicit layout (VUID-StandaloneSpirv-None-10684: 19 of 364 Banjo
+      // shaders failed spirv-val, 2026-09-24). A nonzero stride only skips the
+      // lookup; the builder adds no decoration.
       spv::Id type_register_array = builder_->makeArrayType(
-          type_float4_, builder_->makeUintConstant(register_count()), 0);
+          type_float4_, builder_->makeUintConstant(register_count()), 1);
       // BRICK 3 fp16 (gpu_fp16_shaders): relax the general-purpose register file
       // so the entire register-based pixel-shader dataflow (operand loads +
       // result stores, incl. interpolant-derived and texture-fetch values) is

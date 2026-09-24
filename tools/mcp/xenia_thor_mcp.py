@@ -1189,6 +1189,18 @@ def xenia_draw_bisect(trace: str, region: str = '', mode: str = 'vulkan',
 
 
 @mcp.tool()
+def xenia_spirv_validate(traces: str, cvars: str = '', env: str = 'vulkan1.2') -> str:
+    """Replay GPU traces on the Vulkan trace dump with --dump_shaders and run
+    spirv-val (WSL) on every translated module (tools/pc/spirv_validate.py):
+    failures grouped by rule with an example shader. Turnip is strict - run it
+    after a translator change. traces: space-separated .xtr paths. PC only."""
+    args = [t for t in traces.split() if t] + ['--env', env]
+    if cvars:
+        args += ['--cvars', cvars]
+    return _run_tool_script('tools/pc/spirv_validate.py', args, timeout=1800)
+
+
+@mcp.tool()
 def xenia_pc_build(project: str = 'xenia-app') -> str:
     """Build the Windows app (tools/pc/build_pc.py): finds MSBuild, builds
     build/<project>.vcxproj as "Release Windows" x64, returns the errors and
