@@ -464,7 +464,12 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
 - **After the depth fix (2026-09-24):** the only large Vulkan-vs-D3D12 difference left in the 26
   traces is Banjo's gameplay (2-4.3%): `resolve_ab` puts it at the first main-scene color
   resolve (draw 1227 of 4D5307ED_23271) - per-triangle differences on the rocks and per-texel
-  ones on the grass; the depth resolves differ too. Next: `resolve_ab --prefix resolve_000_004`.
+  ones on the grass; the depth resolves differ too. `resolve_ab --prefix resolve_000_004
+  --threshold 0.005`: it starts at draw 661 (VS C144639F256C1EA9, PS E225591D03FC078C - normal
+  map, 3 cascade shadow maps with 4 point taps each, a point-light loop) and grows with later
+  lighting draws. Distribution in that resolve: 57% of pixels differ at all, 4.1% by more than 8,
+  1.3% by more than 16, 0.16% by more than 32 - the shape of floating-point variance in long
+  lighting math (rsq, contraction, filtering), not a missing feature. Low priority.
 - `scratch/gears/gears2.iso` is 1.76 GB against 7.8 GB for Gears 1 - an incomplete pull; it does
   not mount ("Failed to read all GDFX entries"). Under `--cdb` every write-watch fault is a
   debugger event and the run slows several times over; use it on a crash, not for the whole
