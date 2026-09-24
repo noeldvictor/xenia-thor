@@ -1484,7 +1484,12 @@ def _toggle_catalog() -> list[dict]:
         key, title, body = m.group(1), m.group(2), m.group(3)
         flags = re.findall(r',\s*(true|false)\s*,\s*(true|false)\s*,', body)
         default = flags[0][0] == 'true' if flags else None
-        bools = re.findall(r'new BoolCvar\("([^"]+)"', body)
+        # A BoolCvar writes its onValue (default true) when the toggle is on;
+        # new BoolCvar("protect_zero", false) was read as protect_zero=true
+        # (2026-09-24), so the tools had the readable zero page inverted.
+        bools = [name if value in ('', 'true') else f'{name}={value}'
+                 for name, value in re.findall(
+                     r'new BoolCvar\("([^"]+)"(?:\s*,\s*(true|false))?\)', body)]
         ints = re.findall(r'new IntCvar\("([^"]+)",\s*(-?\d+)\)', body)
         out.append({'key': key, 'title': title, 'default': default,
                     'cvars': bools + [f'{k}={v}' for k, v in ints]})

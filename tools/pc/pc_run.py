@@ -69,6 +69,31 @@ def emulator_pid(proc, under_cdb):
     return proc.pid
 
 
+# App toggles that cannot run on the Windows build: the ARM64 and LLVM CPU
+# backends and their caches, the Android thread and thermal controls.
+THOR_TOGGLE_SKIP = ('arm64_', 'cpu_backend_llvm', 'cpu_aot', 'cpu_llvm_', 'thor_',
+                    'gpu_adpf_', 'gpu_cp_worker_nice', 'gpu_uma_direct_shared_memory',
+                    'cpu_drop_redundant_atomic_release_barrier')
+
+
+def thor_profile_cvars():
+    """The Android defaults plus every default-on app toggle
+    (XeniaOptimizations.java) the PC can run - the Thor's configuration, not
+    only its build defaults. The kernel, timer, XMA and front-end toggles run
+    on x64 too, so a hang or crash they cause shows here first."""
+    sys.path.insert(0, os.path.join(ROOT, 'tools', 'mcp'))
+    import xenia_thor_mcp  # noqa: E402
+    out = dict(c.split('=', 1) for c in android_default_cvars())
+    for toggle in xenia_thor_mcp._toggle_catalog():
+        if not toggle['default']:
+            continue
+        for cvar in toggle['cvars']:
+            name, _, value = cvar.partition('=')
+            if not name.startswith(THOR_TOGGLE_SKIP):
+                out[name] = value or 'true'
+    return ['%s=%s' % kv for kv in sorted(out.items())]
+
+
 def android_default_cvars():
     """name=value for every XE_ANDROID_DEFAULT cvar the PC can run, at its
     Android value (the settings the device changes by build, not by toggle)."""
@@ -103,6 +128,9 @@ def main():
     ap.add_argument('--seconds', type=int, default=120)
     ap.add_argument('--every', type=float, default=10.0)
     ap.add_argument('--from-snapshot', default='')
+    ap.add_argument('--thor-profile', action='store_true',
+                    help='the Android defaults and every default-on app toggle the PC '
+                         'can run (thor_profile_cvars)')
     ap.add_argument('--android-defaults', action='store_true',
                     help='run with the Android build defaults (GPU, kernel, caches) - the '
                          'device configuration for PC visual and CPU checks')
@@ -132,7 +160,9 @@ def main():
         os.remove(trigger)
     log = os.path.join(storage, 'xenia.log')
     cvars = []
-    if args.android_defaults:
+    if args.thor_profile:
+        cvars += thor_profile_cvars()
+    elif args.android_defaults:
         cvars += android_default_cvars()
     if args.from_snapshot:
         cvars += trace_ab.arms_from_snapshot(args.from_snapshot)[1][1]  # the "device" arm

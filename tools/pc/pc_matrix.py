@@ -70,6 +70,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('titles', nargs='*')
     ap.add_argument('--plain', action='store_true', help='PC defaults instead of the Android defaults')
+    ap.add_argument('--thor-profile', action='store_true',
+                    help='the Android defaults and the default-on app toggles (pc_run.py)')
     ap.add_argument('--cvars', default='')
     args = ap.parse_args()
     titles = args.titles or list(ENTRIES)
@@ -84,7 +86,9 @@ def main():
         name = 'matrix_%s' % title
         cmd = [sys.executable, os.path.join(ROOT, 'tools', 'pc', 'pc_run.py'), iso, '--name', name,
                '--seconds', str(seconds), '--every', str(every), '--presses', presses]
-        if not args.plain:
+        if args.thor_profile:
+            cmd.append('--thor-profile')
+        elif not args.plain:
             cmd.append('--android-defaults')
         if args.cvars:
             cmd += ['--cvars', args.cvars]
