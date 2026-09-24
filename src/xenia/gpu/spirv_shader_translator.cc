@@ -420,6 +420,18 @@ void SpirvShaderTranslator::StartTranslation() {
         {"alpha_to_mask", offsetof(SystemConstants, alpha_to_mask),
          type_uint_});
   }
+  static_assert(offsetof(SystemConstants, user_clip_planes) % 16 == 0,
+                "std140 float4 array alignment");
+  if (is_vertex_shader() &&
+      GetSpirvShaderModification().vertex.user_clip_plane_count) {
+    spv::Id type_float4_array_6 = builder_->makeArrayType(
+        type_float4_, builder_->makeUintConstant(6), sizeof(float) * 4);
+    builder_->addDecoration(type_float4_array_6, spv::DecorationArrayStride,
+                            sizeof(float) * 4);
+    system_constants_declared.push_back(
+        {"user_clip_planes", offsetof(SystemConstants, user_clip_planes),
+         type_float4_array_6});
+  }
   id_vector_temp_.clear();
   id_vector_temp_.reserve(system_constants_declared.size());
   for (const SystemConstant& system_constant : system_constants_declared) {
@@ -1693,18 +1705,45 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
   std::vector<spv::Id> struct_per_vertex_members;
   struct_per_vertex_members.reserve(kOutputPerVertexMemberCount + 1);
   struct_per_vertex_members.push_back(type_float4_);
-  // Vertex kill with the AND operator: a cull distance, negative for a killed
-  // vertex, like SV_CullDistance in the DXBC translator. The geometry shaders
-  // for the primitive types Vulkan lacks read it (has_vertex_kill_and).
-  output_per_vertex_member_cull_distance_ = UINT32_MAX;
-  if (GetSpirvShaderModification().vertex.vertex_kill_and &&
+  // Like SV_ClipDistance and SV_CullDistance in the DXBC translator: the user
+  // clip planes (clip distances, or cull distances in the cull-only mode),
+  // then for vertex kill with the AND operator a cull distance, negative for
+  // a killed vertex. The geometry shaders for the primitive types Vulkan
+  // lacks read the same (GeometryShaderKey).
+  Modification per_vertex_modification = GetSpirvShaderModification();
+  output_user_clip_planes_cull_ =
+      per_vertex_modification.vertex.user_clip_plane_cull != 0;
+  output_user_clip_plane_count_ =
+      (output_user_clip_planes_cull_ ? features_.cull_distance
+                                     : features_.clip_distance)
+          ? per_vertex_modification.vertex.user_clip_plane_count
+          : 0;
+  bool vertex_kill_cull_distance =
+      per_vertex_modification.vertex.vertex_kill_and &&
       features_.cull_distance &&
-      (current_shader().writes_point_size_edge_flag_kill_vertex() & 0b100)) {
+      (current_shader().writes_point_size_edge_flag_kill_vertex() & 0b100);
+  uint32_t clip_distance_count =
+      output_user_clip_planes_cull_ ? 0 : output_user_clip_plane_count_;
+  uint32_t cull_distance_count =
+      (output_user_clip_planes_cull_ ? output_user_clip_plane_count_ : 0) +
+      uint32_t(vertex_kill_cull_distance);
+  output_per_vertex_member_clip_distance_ = UINT32_MAX;
+  output_per_vertex_member_cull_distance_ = UINT32_MAX;
+  output_cull_distance_vertex_kill_ =
+      vertex_kill_cull_distance ? cull_distance_count - 1 : UINT32_MAX;
+  if (clip_distance_count) {
+    builder_->addCapability(spv::CapabilityClipDistance);
+    output_per_vertex_member_clip_distance_ =
+        uint32_t(struct_per_vertex_members.size());
+    struct_per_vertex_members.push_back(builder_->makeArrayType(
+        type_float_, builder_->makeUintConstant(clip_distance_count), 0));
+  }
+  if (cull_distance_count) {
     builder_->addCapability(spv::CapabilityCullDistance);
     output_per_vertex_member_cull_distance_ =
         uint32_t(struct_per_vertex_members.size());
     struct_per_vertex_members.push_back(builder_->makeArrayType(
-        type_float_, builder_->makeUintConstant(1), 0));
+        type_float_, builder_->makeUintConstant(cull_distance_count), 0));
   }
   spv::Id type_struct_per_vertex =
       builder_->makeStructType(struct_per_vertex_members, "gl_PerVertex");
@@ -1713,6 +1752,14 @@ void SpirvShaderTranslator::StartVertexOrTessEvalShaderBeforeMain() {
   builder_->addMemberDecoration(type_struct_per_vertex,
                                 kOutputPerVertexMemberPosition,
                                 spv::DecorationBuiltIn, spv::BuiltInPosition);
+  if (output_per_vertex_member_clip_distance_ != UINT32_MAX) {
+    builder_->addMemberName(type_struct_per_vertex,
+                            output_per_vertex_member_clip_distance_,
+                            "gl_ClipDistance");
+    builder_->addMemberDecoration(
+        type_struct_per_vertex, output_per_vertex_member_clip_distance_,
+        spv::DecorationBuiltIn, spv::BuiltInClipDistance);
+  }
   if (output_per_vertex_member_cull_distance_ != UINT32_MAX) {
     builder_->addMemberName(type_struct_per_vertex,
                             output_per_vertex_member_cull_distance_,
@@ -2179,6 +2226,45 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
     }
   }
 
+  // User clip planes: the distances from the position in the guest clip
+  // space (before the NDC scale, like the DXBC translator).
+  if (output_user_clip_plane_count_) {
+    spv::Id guest_clip_position;
+    {
+      std::unique_ptr<spv::Instruction> composite_construct_op =
+          std::make_unique<spv::Instruction>(
+              builder_->getUniqueId(), type_float4_, spv::OpCompositeConstruct);
+      composite_construct_op->addIdOperand(position_xyz);
+      composite_construct_op->addIdOperand(position_w);
+      guest_clip_position = composite_construct_op->getResultId();
+      builder_->getBuildPoint()->addInstruction(
+          std::move(composite_construct_op));
+    }
+    uint32_t distance_member = output_user_clip_planes_cull_
+                                   ? output_per_vertex_member_cull_distance_
+                                   : output_per_vertex_member_clip_distance_;
+    for (uint32_t i = 0; i < output_user_clip_plane_count_; ++i) {
+      id_vector_temp_.clear();
+      id_vector_temp_.push_back(
+          builder_->makeIntConstant(kSystemConstantUserClipPlanes));
+      id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
+      spv::Id plane = builder_->createLoad(
+          builder_->createAccessChain(spv::StorageClassUniform,
+                                      uniform_system_constants_,
+                                      id_vector_temp_),
+          spv::NoPrecision);
+      spv::Id distance = builder_->createNoContractionBinOp(
+          spv::OpDot, type_float_, guest_clip_position, plane);
+      id_vector_temp_.clear();
+      id_vector_temp_.push_back(builder_->makeIntConstant(int(distance_member)));
+      id_vector_temp_.push_back(builder_->makeIntConstant(int(i)));
+      builder_->createStore(
+          distance, builder_->createAccessChain(spv::StorageClassOutput,
+                                                output_per_vertex_,
+                                                id_vector_temp_));
+    }
+  }
+
   // Apply the NDC scale and offset for guest to host viewport transformation.
   // DIAGNOSTIC: spirv_debug_identity_ndc skips this whole transform (and the two
   // system-constant uniform reads it needs) to bisect a degenerate-position
@@ -2253,11 +2339,12 @@ void SpirvShaderTranslator::CompleteVertexOrTessEvalShaderInMain() {
                     spv::NoPrecision)),
             builder_->makeUintConstant(UINT32_C(0x7FFFFFFF))),
         const_uint_0_);
-    if (output_per_vertex_member_cull_distance_ != UINT32_MAX) {
+    if (output_cull_distance_vertex_kill_ != UINT32_MAX) {
       id_vector_temp_.clear();
       id_vector_temp_.push_back(builder_->makeIntConstant(
           int(output_per_vertex_member_cull_distance_)));
-      id_vector_temp_.push_back(const_int_0_);
+      id_vector_temp_.push_back(
+          builder_->makeIntConstant(int(output_cull_distance_vertex_kill_)));
       builder_->createStore(
           builder_->createTriOp(spv::OpSelect, type_float_, vertex_killed,
                                 builder_->makeFloatConstant(-1.0f),

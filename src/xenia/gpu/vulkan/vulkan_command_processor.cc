@@ -11824,6 +11824,28 @@ void VulkanCommandProcessor::UpdateSystemConstantValues(
   dirty |= system_constants_.alpha_to_mask != alpha_to_mask;
   system_constants_.alpha_to_mask = alpha_to_mask;
 
+  // User clip planes (UCP_ENA_#), when not CLIP_DISABLE, packed tightly like
+  // the D3D12 backend - the shader knows only the count.
+  auto pa_cl_clip_cntl = regs.Get<reg::PA_CL_CLIP_CNTL>();
+  if (!pa_cl_clip_cntl.clip_disable) {
+    float* user_clip_plane_write_ptr = system_constants_.user_clip_planes[0];
+    uint32_t user_clip_planes_remaining = pa_cl_clip_cntl.ucp_ena;
+    uint32_t user_clip_plane_index;
+    while (xe::bit_scan_forward(user_clip_planes_remaining,
+                                &user_clip_plane_index)) {
+      user_clip_planes_remaining &= ~(UINT32_C(1) << user_clip_plane_index);
+      const void* user_clip_plane_regs =
+          &regs[XE_GPU_REG_PA_CL_UCP_0_X + user_clip_plane_index * 4];
+      if (std::memcmp(user_clip_plane_write_ptr, user_clip_plane_regs,
+                      4 * sizeof(float))) {
+        dirty = true;
+        std::memcpy(user_clip_plane_write_ptr, user_clip_plane_regs,
+                    4 * sizeof(float));
+      }
+      user_clip_plane_write_ptr += 4;
+    }
+  }
+
   // Tessellation (the host tessellation vertex and control shaders): the
   // factor range, plus 1.0 according to the images in
   // https://www.slideshare.net/blackdevilvikas/next-generation-graphics-programming-on-xbox-360

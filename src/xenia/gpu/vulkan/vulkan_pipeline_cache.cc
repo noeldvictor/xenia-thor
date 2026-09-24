@@ -431,10 +431,27 @@ VulkanPipelineCache::GetCurrentVertexShaderModification(
         regs.Get<reg::VGT_HOS_CNTL>().tess_mode;
   }
 
-  modification.vertex.vertex_kill_and = uint32_t(
-      (shader.writes_point_size_edge_flag_kill_vertex() & 0b100) &&
-      !regs.Get<reg::PA_CL_CLIP_CNTL>().vtx_kill_or &&
-      command_processor_.GetVulkanDevice()->properties().shaderCullDistance);
+  const ui::vulkan::VulkanDevice::Properties& clip_device_properties =
+      command_processor_.GetVulkanDevice()->properties();
+  auto pa_cl_clip_cntl = regs.Get<reg::PA_CL_CLIP_CNTL>();
+  modification.vertex.vertex_kill_and =
+      uint32_t((shader.writes_point_size_edge_flag_kill_vertex() & 0b100) &&
+               !pa_cl_clip_cntl.vtx_kill_or &&
+               clip_device_properties.shaderCullDistance);
+
+  // User clip planes, like the D3D12 pipeline cache (upstream Vulkan left them
+  // out).
+  uint32_t user_clip_planes =
+      pa_cl_clip_cntl.clip_disable ? 0 : pa_cl_clip_cntl.ucp_ena;
+  bool user_clip_planes_cull =
+      user_clip_planes && pa_cl_clip_cntl.ucp_cull_only_ena;
+  if (user_clip_planes &&
+      (user_clip_planes_cull ? clip_device_properties.shaderCullDistance
+                             : clip_device_properties.shaderClipDistance)) {
+    modification.vertex.user_clip_plane_count =
+        xe::bit_count(user_clip_planes);
+    modification.vertex.user_clip_plane_cull = uint32_t(user_clip_planes_cull);
+  }
 
   if (host_vertex_shader_type ==
       Shader::HostVertexShaderType::kPointListAsTriangleStrip) {
@@ -1490,9 +1507,9 @@ bool VulkanPipelineCache::GetGeometryShaderKey(
   key.interpolator_count =
       xe::bit_count(vertex_shader_modification.vertex.interpolator_mask);
   key.user_clip_plane_count =
-      /* vertex_shader_modification.vertex.user_clip_plane_count */ 0;
+      vertex_shader_modification.vertex.user_clip_plane_count;
   key.user_clip_plane_cull =
-      /* vertex_shader_modification.vertex.user_clip_plane_cull */ 0;
+      vertex_shader_modification.vertex.user_clip_plane_cull;
   key.has_vertex_kill_and = vertex_shader_modification.vertex.vertex_kill_and;
   key.has_point_size =
       vertex_shader_modification.vertex.output_point_parameters;

@@ -69,6 +69,12 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // off): a cull distance. Set only with shaderCullDistance. Otherwise a
       // killed vertex gets a NaN W, which drops every primitive with it.
       uint32_t vertex_kill_and : 1;
+      // User clip planes (PA_CL_CLIP_CNTL.ucp_ena without clip_disable): the
+      // number of enabled planes (packed tightly in the system constants),
+      // and whether they only cull (ucp_cull_only_ena) - clip distances or
+      // cull distances. Set only with the device feature for that.
+      uint32_t user_clip_plane_count : 3;
+      uint32_t user_clip_plane_cull : 1;
     } vertex;
     struct PixelShaderModification {
       // uint32_t 0.
@@ -337,6 +343,11 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // Bits 0:7 - the four 2-bit dither offsets (RB_COLORCONTROL bits 24:31),
     // bit 8 - MSAA, bit 9 - 4x MSAA.
     uint32_t alpha_to_mask;
+
+    uint32_t padding_user_clip_planes[3];
+    // Declared only by the vertex shaders with user clip planes: the enabled
+    // PA_CL_UCP planes, packed tightly.
+    float user_clip_planes[6][4];
   };
 
   enum ConstantBuffer : uint32_t {
@@ -1113,6 +1124,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
     kSystemConstantEdramBlendConstant,
     // Only in the pixel shaders with the alpha_to_mask modification.
     kSystemConstantAlphaToMask,
+    // Only in the vertex shaders with user clip planes. No shader declares
+    // both, so they have the same member index.
+    kSystemConstantUserClipPlanes = kSystemConstantAlphaToMask,
   };
   spv::Id uniform_system_constants_;
   spv::Id uniform_float_constants_;
@@ -1201,8 +1215,14 @@ class SpirvShaderTranslator : public ShaderTranslator {
     kOutputPerVertexMemberCount,
   };
   spv::Id output_per_vertex_;
-  // gl_CullDistance in gl_PerVertex for vertex_kill_and, or UINT32_MAX.
+  // gl_ClipDistance and gl_CullDistance in gl_PerVertex, or UINT32_MAX.
+  uint32_t output_per_vertex_member_clip_distance_ = UINT32_MAX;
   uint32_t output_per_vertex_member_cull_distance_ = UINT32_MAX;
+  // User clip plane distances written (to the clip or the cull distances),
+  // and the cull distance of vertex_kill_and (after them), or UINT32_MAX.
+  uint32_t output_user_clip_plane_count_ = 0;
+  bool output_user_clip_planes_cull_ = false;
+  uint32_t output_cull_distance_vertex_kill_ = UINT32_MAX;
 
   // With fragment shader interlock, variables in the main function.
   // Otherwise, framebuffer color attachment outputs.

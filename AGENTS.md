@@ -432,6 +432,22 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   are killed. Draws in 1464-1607 explain the rest (not split, cap). In the game's opening cell
   Marcus is visible with armor highlights, so the Vulkan picture is the likely correct one; the
   tf1 decode (a depth texture?) is the next thing to compare if a device capture disagrees.
+- **User clip planes on Vulkan (ported, 2026-09-24):** the SPIR-V path had none (upstream left
+  the geometry shader key fields commented out). Now like the DXBC translator: the enabled
+  `PA_CL_UCP` planes packed in the system constants (declared only by those vertex shaders), a
+  `gl_ClipDistance` per plane, or `gl_CullDistance` in the cull-only mode (before the vertex-kill
+  cull distance), fed to the geometry shader key too. `trace_census.py` over the 20 sweep traces:
+  only Blue Dragon uses them, 127 draws per frame (VS F5CE501A336FEE16, the field shader, and
+  B580B862A05B91BC); its frames do not change - the planes cut nothing visible there. All
+  modules pass `spirv-val`; the other titles replay unchanged.
+- **Trace sweep, 2026-09-24 (20 frames, 4 titles, `trace_sweep.py`):** 0 failed draws. Off from
+  D3D12: Gears 1-7% (the cell lighting pass above and the same class on Dom), Banjo up to 4.4%,
+  Blue Dragon about 3%, MC2 under 0.5%. `draw_bisect --mode prefix` puts both Banjo 23271 and
+  Blue Dragon 21407 at the final full-screen composite (draw 2575 / 1242), so the divergence is
+  in a render target the composite samples. Banjo's is fine per-texel noise over every textured
+  surface (max 94 levels; anisotropy and PWL gamma match); Blue Dragon's is softer sun-shadow
+  edges on the ground and bushes. Low priority; the next tool would dump every resolve on both
+  backends and compare them.
 - `scratch/gears/gears2.iso` is 1.76 GB against 7.8 GB for Gears 1 - an incomplete pull; it does
   not mount ("Failed to read all GDFX entries"). Under `--cdb` every write-watch fault is a
   debugger event and the run slows several times over; use it on a crash, not for the whole
@@ -650,6 +666,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `xenia_trace_ab`, `xenia_pc_run` | MCP wrappers of `tools/pc/trace_ab.py` and `tools/pc/pc_run.py` (Vulkan, the device snapshot's settings, `trace_at` for frame traces). PC only |
 | `tools/thor/scoreboard.py` | the same device measurements after every install: banjo_title, banjo_story, gears1, mc2 - presented fps, median GPU frame time, panel luma, one screenshot; a row per entry in `docs/scoreboard.jsonl` with the commit and the installed build; prints the change from the previous row. Outcome rule 4 |
 | `tools/pc/backend_ab.py`, `xenia_backend_ab` | a trace replayed on the Vulkan and the D3D12 trace dumps: image difference, dropped draws per backend, and a D3D12-above-Vulkan pair in `scratch/backend_ab/`. The Thor runs Vulkan; D3D12 is the reference for what the SPIR-V path lacks. `--d3d12-skip CVAR`: the pixels a class of draws renders on D3D12 and whether Vulkan draws them |
+| `tools/pc/trace_census.py` | per trace, the draws that use the Xenos features the SPIR-V path had gaps in: tessellated patches, vertex kill (and OR mode), alpha to mask, user clip planes (and cull-only), point, rectangle and quad lists (from `gpu_debug_log_draws`). A feature with draws and no Vulkan support is the next Vulkan-only glitch |
 | `tools/pc/trace_sweep.py` | Vulkan-only glitches across titles in one call: each title on its `pc_matrix` route with the Android defaults and GPU traces at five times, then `backend_ab` on every trace; rows sorted by the share of pixels that differ from D3D12. Name the draws with `draw_bisect` |
 | `tools/pc/spirv_validate.py`, `xenia_spirv_validate` | every SPIR-V module a trace translates through spirv-val (WSL), the failures grouped by rule with an example shader. Turnip is strict: run it after a translator change |
 | `tools/pc/draw_bisect.py`, `xenia_draw_bisect` | which draws make a trace's Vulkan frame differ from D3D12: skips draw lists (`gpu_debug_skip_draws`, the same numbers on every backend) on Vulkan, D3D12 or both and splits the lists that explain the mismatch down to single draws, with their state from `gpu_debug_log_draws` (shader hashes, RB_DEPTHCONTROL, RB_COLORCONTROL). In the one-backend modes give candidates with `--filter` (for example `colorcontrol & 0x10`, alpha to mask): skipping every draw leaves a black frame that explains nothing |
