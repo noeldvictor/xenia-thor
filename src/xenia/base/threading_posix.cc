@@ -577,14 +577,17 @@ class PosixCondition<Semaphore> : public PosixConditionBase {
   bool Signal() override { return Release(1, nullptr); }
 
   bool Release(uint32_t release_count, int* out_previous_count) {
-    if (maximum_count_ - count_ >= release_count) {
-      auto lock = std::unique_lock<std::mutex>(mutex_);
-      if (out_previous_count) *out_previous_count = count_;
-      count_ += release_count;
-      NotifyWaiters();
-      return true;
+    // The limit check reads count_, which waiters change under mutex_. It was
+    // made before taking the lock: two releasers could both pass it and push
+    // the count past the maximum (x86 made the window small; ARM keeps it).
+    auto lock = std::unique_lock<std::mutex>(mutex_);
+    if (maximum_count_ - count_ < release_count) {
+      return false;
     }
-    return false;
+    if (out_previous_count) *out_previous_count = count_;
+    count_ += release_count;
+    NotifyWaiters();
+    return true;
   }
 
  private:
@@ -610,16 +613,18 @@ class PosixCondition<Mutant> : public PosixConditionBase {
   bool Signal() override { return Release(); }
 
   bool Release() {
-    if (owner_ == std::this_thread::get_id() && count_ > 0) {
-      auto lock = std::unique_lock<std::mutex>(mutex_);
-      --count_;
-      // Free to be acquired by another thread
-      if (count_ == 0) {
-        NotifyWaiters();
-      }
-      return true;
+    // owner_ and count_ are written under mutex_ by the acquiring thread;
+    // reading them without it was a data race (2026-09-23).
+    auto lock = std::unique_lock<std::mutex>(mutex_);
+    if (owner_ != std::this_thread::get_id() || count_ == 0) {
+      return false;
     }
-    return false;
+    --count_;
+    // Free to be acquired by another thread
+    if (count_ == 0) {
+      NotifyWaiters();
+    }
+    return true;
   }
 
   void* native_handle() const override { return mutex_.native_handle(); }
