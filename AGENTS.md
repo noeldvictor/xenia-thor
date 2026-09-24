@@ -376,8 +376,18 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
     page-granular; a dynamic vertex ring that appends into the rest of a page a draw already
     uses reads as a hazard although the bytes do not overlap (the same page, 0x1F9A0000, in
     several titles points at a shared system ring). Texture/other hazards are now median 0 for
-    MC2 (6 per frame before direct resolve became the default). Next: record the exact fault
-    address and the requested byte range per page, and count only overlapping writes. `scratch/gears/gears2.iso` is 1.76 GB against
+    MC2 (6 per frame before direct resolve became the default).
+  - **Byte-exact hazard check (built; `hazard_near=` counts same-page writes that miss the
+    requested bytes; `summary-20260923-230114.json`):** Blue Dragon SAFE (0 of 7,685 frames),
+    Gears 892 of 6,493 frames (median 0), MagnaCarta 2 3,260 of 7,191 (median 0), Banjo 6,969 of
+    7,072 (median 4 overlapping buffer writes per frame - it rewrites bytes a recorded, not yet
+    submitted draw reads; unsafe). Zero-copy per title: only Blue Dragon is a candidate. Caveat:
+    the check keeps every buffer page watched and slows loads - Gears' level load under it took
+    minutes; zero-copy alone loads Gears normally into the cell.
+- **Tessellation is dropped on Vulkan (open, 2026-09-23):** `IssueDraw` returns false for the
+  domain vertex shader types; only the DXBC (D3D12) translator implements them. Banjo logs about
+  10,000 `PM4_DRAW_INDX(99, 17, 0): Failed in backend` per run (0x11 = kTrianglePatch), MC2 about
+  800 - on the Thor these draws are missing. `pc_run --gpu d3d12` shows what they are. `scratch/gears/gears2.iso` is 1.76 GB against
     7.8 GB for Gears 1 - an incomplete pull; it does not mount ("Failed to read all GDFX
     entries"). Under `--cdb` every write-watch fault is a debugger event and the run slows
     several times over; use it on a crash, not for the whole matrix.
