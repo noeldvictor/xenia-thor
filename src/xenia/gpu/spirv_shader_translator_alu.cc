@@ -42,13 +42,50 @@ DEFINE_bool(
     "(tools/pc/cvar_ab.py).",
     "GPU");
 
+DEFINE_bool(
+    spirv_fast_zero_rule, false,
+    "Research: the Shader Model 3 zero rule the way DXVK's default d3d9 "
+    "float emulation does it on drivers without a native legacy multiply "
+    "(Turnip): plain IEEE multiplies, and no Inf or NaN made where they come "
+    "from - exp, rsq and rcp clamped to +-FLT_MAX, log to -FLT_MAX, sqrt of a "
+    "negative 0, NaN flushed from the float constants. 0 times a finite value "
+    "is then 0 without a test on every multiply (27% of the Adreno "
+    "instructions). Not exact for Inf or NaN from textures or vertex data.",
+    "GPU");
+
 namespace xe {
 namespace gpu {
+
+spv::Id SpirvShaderTranslator::ClampToFiniteForZeroRule(spv::Id value,
+                                                       bool low, bool high) {
+  // A NaN becomes 0: under the Shader Model 3 rule a NaN is either multiplied
+  // by 0 (giving 0) or ends in a saturate (giving 0) - a NaN clamped to
+  // FLT_MAX saturated to 1 instead and lit Gears' cell ceiling (trace 13183,
+  // 36% of the pixels). Inf becomes +-FLT_MAX, so 0 times it is 0.
+  spv::Id is_nan = builder_->createUnaryOp(spv::OpIsNan, type_bool_, value);
+  // 2^64, not FLT_MAX: a clamped rcp of the far-plane depth times a
+  // matrix entry above 1 overflowed back to Inf and then NaN (Gears'
+  // deferred light volumes, trace 13183 draw 1298); 2^64 times the usual
+  // constants stays finite and still acts as "infinite" in compares.
+  const float kBig = 18446744073709551616.0f;
+  if (high) {
+    value = builder_->createBinBuiltinCall(
+        type_float_, ext_inst_glsl_std_450_, GLSLstd450NMin, value,
+        builder_->makeFloatConstant(kBig));
+  }
+  if (low) {
+    value = builder_->createBinBuiltinCall(
+        type_float_, ext_inst_glsl_std_450_, GLSLstd450NMax, value,
+        builder_->makeFloatConstant(-kBig));
+  }
+  return builder_->createTriOp(spv::OpSelect, type_float_, is_nan,
+                               const_float_0_, value);
+}
 
 spv::Id SpirvShaderTranslator::ZeroIfAnyOperandIsZero(spv::Id value,
                                                       spv::Id operand_0_abs,
                                                       spv::Id operand_1_abs) {
-  if (cvars::spirv_debug_ieee_multiply) {
+  if (cvars::spirv_debug_ieee_multiply || cvars::spirv_fast_zero_rule) {
     return value;
   }
   EnsureBuildPointAvailable();
@@ -252,7 +289,7 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
           used_result_components &
           ~instr.vector_operands[0].GetIdenticalComponents(
               instr.vector_operands[1]);
-      if (cvars::spirv_debug_ieee_multiply) {
+      if (cvars::spirv_debug_ieee_multiply || cvars::spirv_fast_zero_rule) {
         multiplicands_different = 0;
       }
       if (multiplicands_different) {
@@ -1265,28 +1302,43 @@ spv::Id SpirvShaderTranslator::ProcessScalarAluOperation(
           type_float_, ext_inst_glsl_std_450_, GLSLstd450Exp2,
           GetOperandComponents(operand_storage[0], instr.scalar_operands[0],
                                0b0001));
-      return ReduceFloatPrecision(result, 21);
+      result = ReduceFloatPrecision(result, 21);
+      return cvars::spirv_fast_zero_rule
+                 ? ClampToFiniteForZeroRule(result, false, true)
+                 : result;
     }
     case ucode::AluScalarOpcode::kLog: {
       spv::Id result = builder_->createUnaryBuiltinCall(
           type_float_, ext_inst_glsl_std_450_, GLSLstd450Log2,
           GetOperandComponents(operand_storage[0], instr.scalar_operands[0],
                                0b0001));
-      return ReduceFloatPrecision(result, 21);
+      result = ReduceFloatPrecision(result, 21);
+      return cvars::spirv_fast_zero_rule
+                 ? ClampToFiniteForZeroRule(result, true, false)
+                 : result;
     }
     case ucode::AluScalarOpcode::kSqrt: {
       spv::Id result = builder_->createUnaryBuiltinCall(
           type_float_, ext_inst_glsl_std_450_, GLSLstd450Sqrt,
           GetOperandComponents(operand_storage[0], instr.scalar_operands[0],
                                0b0001));
-      return ReduceFloatPrecision(result, 21);
+      result = ReduceFloatPrecision(result, 21);
+      // sqrt of a negative is NaN; NMax returns 0 for it.
+      return cvars::spirv_fast_zero_rule
+                 ? builder_->createBinBuiltinCall(
+                       type_float_, ext_inst_glsl_std_450_, GLSLstd450NMax,
+                       result, const_float_0_)
+                 : result;
     }
     case ucode::AluScalarOpcode::kRsq: {
       spv::Id result = builder_->createUnaryBuiltinCall(
           type_float_, ext_inst_glsl_std_450_, GLSLstd450InverseSqrt,
           GetOperandComponents(operand_storage[0], instr.scalar_operands[0],
                                0b0001));
-      return ReduceFloatPrecision(result, 21);
+      result = ReduceFloatPrecision(result, 21);
+      return cvars::spirv_fast_zero_rule
+                 ? ClampToFiniteForZeroRule(result, false, true)
+                 : result;
     }
     case ucode::AluScalarOpcode::kLogc: {
       spv::Id result = builder_->createUnaryBuiltinCall(
@@ -1343,7 +1395,10 @@ spv::Id SpirvShaderTranslator::ProcessScalarAluOperation(
           spv::OpFDiv, type_float_, const_float_1_,
           GetOperandComponents(operand_storage[0], instr.scalar_operands[0],
                                0b0001));
-      return ReduceFloatPrecision(result, 21);
+      result = ReduceFloatPrecision(result, 21);
+      return cvars::spirv_fast_zero_rule
+                 ? ClampToFiniteForZeroRule(result, true, true)
+                 : result;
     }
     case ucode::AluScalarOpcode::kRsqc: {
       spv::Id result = builder_->createUnaryBuiltinCall(

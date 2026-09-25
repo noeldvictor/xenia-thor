@@ -73,6 +73,8 @@ const RENDERDOC_API_1_0_0* BdGetRenderDocApi() {
 }
 }  // namespace
 
+DECLARE_bool(spirv_fast_zero_rule);
+
 namespace xe {
 namespace gpu {
 namespace vulkan {
@@ -332,6 +334,20 @@ std::string VulkanCommandProcessor::GetWindowTitleText() const {
   title << " - HEAVILY INCOMPLETE, early development";
   return title.str();
 }
+
+namespace {
+// spirv_fast_zero_rule: a NaN float constant becomes 0 (as DXVK's d3d9 fast
+// float emulation does), so 0 times a constant stays 0 without a test.
+void FlushNanFloatConstants(uint8_t* begin, uint8_t* end) {
+  for (uint8_t* p = begin; p + sizeof(uint32_t) <= end; p += sizeof(uint32_t)) {
+    uint32_t bits;
+    std::memcpy(&bits, p, sizeof(bits));
+    if ((bits & 0x7F800000u) == 0x7F800000u && (bits & 0x007FFFFFu)) {
+      std::memset(p, 0, sizeof(bits));
+    }
+  }
+}
+}  // namespace
 
 void VulkanCommandProcessor::InitializeShaderStorage(
     const std::filesystem::path& cache_root, uint32_t title_id,
@@ -12428,6 +12444,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       if (!mapping) {
         return DrawFailed(__LINE__);
       }
+      uint8_t* float_constants_start = mapping;
       for (uint32_t i = 0; i < 4; ++i) {
         uint64_t float_constant_map_entry =
             current_float_constant_map_vertex_[i];
@@ -12441,6 +12458,9 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
                       sizeof(float) * 4);
           mapping += sizeof(float) * 4;
         }
+      }
+      if (cvars::spirv_fast_zero_rule) {
+        FlushNanFloatConstants(float_constants_start, mapping);
       }
       if (arena) {
         dynamic_constants_rings_
@@ -12464,6 +12484,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
       if (!mapping) {
         return DrawFailed(__LINE__);
       }
+      uint8_t* float_constants_start = mapping;
       for (uint32_t i = 0; i < 4; ++i) {
         uint64_t float_constant_map_entry =
             current_float_constant_map_pixel_[i];
@@ -12477,6 +12498,9 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
                       sizeof(float) * 4);
           mapping += sizeof(float) * 4;
         }
+      }
+      if (cvars::spirv_fast_zero_rule) {
+        FlushNanFloatConstants(float_constants_start, mapping);
       }
       if (arena) {
         dynamic_constants_rings_

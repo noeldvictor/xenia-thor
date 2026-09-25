@@ -16,6 +16,7 @@ sign conversion when no bound texture needs it) - the proof that it is exact.
 """
 import argparse
 import os
+import re
 import sys
 
 from PIL import Image, ImageChops
@@ -27,9 +28,70 @@ ROOT = backend_ab.ROOT
 OUT = os.path.join(ROOT, 'scratch', 'cvar_ab')
 
 
+DRAW_RE = re.compile(r'GPU debug draw (\d+): (.*)')
+
+
+def frames_differ(a_png, b_png, threshold):
+    a = Image.open(a_png).convert('RGB')
+    b = Image.open(b_png).convert('RGB')
+    if a.size != b.size:
+        return True
+    values = ImageChops.difference(a, b).convert('L').getdata()
+    return any(v > threshold for v in values)
+
+
+def prefix_search(trace, common, cvars_a, cvars_b, threshold):
+    """The first draw of the frame after which A and B differ: both replays
+    keep draws 0..N-1 (gpu_debug_skip_draws, resolves are never skipped) and
+    N is binary-searched. Prints that draw's line of gpu_debug_log_draws
+    (primitive, count, the vertex and pixel shader hashes)."""
+    name = os.path.splitext(os.path.basename(trace))[0]
+    out = os.path.join(OUT, name + '_prefix')
+    png, _ = backend_ab.replay('vulkan', trace, os.path.join(out, 'log'),
+                               common + cvars_a + ['gpu_debug_log_draws=true'])
+    log = os.path.join(out, 'log', 'dump.log')
+    draws = {}
+    for line in open(log, encoding='utf-8', errors='replace'):
+        m = DRAW_RE.search(line)
+        if m:
+            draws[int(m.group(1))] = m.group(2).strip()
+    total = max(draws) + 1 if draws else 0
+    if not total:
+        print('%s: no draws logged' % name)
+        return 1
+
+    def differs(n):
+        skip = ['gpu_debug_skip_draws=%d-999999' % n] if n < total else []
+        images = []
+        for side, extra in (('a', cvars_a), ('b', cvars_b)):
+            probe = os.path.join(out, '%s%d' % (side, n))
+            png, _ = backend_ab.replay('vulkan', trace, probe, common + extra + skip)
+            images.append(png)
+        return all(images) and frames_differ(images[0], images[1], threshold)
+
+    if not differs(total):
+        print('%s: the full frames do not differ by more than %d' % (name, threshold))
+        return 0
+    lo, hi = 0, total  # differs(hi) is true; find the smallest such n.
+    while hi - lo > 1:
+        mid = (lo + hi) // 2
+        if differs(mid):
+            hi = mid
+        else:
+            lo = mid
+    print('%s: A and B first differ after draw %d of %d' % (name, hi - 1, total))
+    print('  draw %d: %s' % (hi - 1, draws.get(hi - 1, '?')))
+    return 1
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('traces', nargs='+')
+    ap.add_argument('--prefix', action='store_true',
+                    help='binary-search the first draw after which A and B differ '
+                         '(one trace; names its shaders)')
+    ap.add_argument('--threshold', type=int, default=8,
+                    help='--prefix: a pixel differs above this')
     ap.add_argument('--a', required=True, help='cvars of replay A')
     ap.add_argument('--b', required=True, help='cvars of replay B')
     ap.add_argument('--cvars', default='', help='cvars of both replays')
@@ -40,6 +102,9 @@ def main():
     common = [c for c in args.cvars.split() if c]
     if args.thor_profile:
         common += backend_ab.thor_profile_cvars(include_vrs=False)
+    if args.prefix:
+        return prefix_search(args.traces[0], common, [c for c in args.a.split() if c],
+                             [c for c in args.b.split() if c], args.threshold)
     changed = 0
     print('%-28s %10s %10s %6s  %s' % ('trace', 'changed', 'off>8', 'max', 'failed a/b'))
     for trace in args.traces:

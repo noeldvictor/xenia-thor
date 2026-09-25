@@ -856,6 +856,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // For Shader Model 3 multiplication (+-0 or denormal * anything = +0),
   // replaces the value with +0 if the minimum of the two operands is 0. This
   // must be called with absolute values of operands - use GetAbsoluteOperand!
+  // spirv_fast_zero_rule: min(value, FLT_MAX) and/or max(value, -FLT_MAX),
+  // a NaN becoming the bound.
+  spv::Id ClampToFiniteForZeroRule(spv::Id value, bool low, bool high);
   spv::Id ZeroIfAnyOperandIsZero(spv::Id value, spv::Id operand_0_abs,
                                  spv::Id operand_1_abs);
   // Pack/unpack two floats as Xbox 360 extended-range float16, where exponent
