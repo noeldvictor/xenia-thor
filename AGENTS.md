@@ -525,6 +525,12 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   ends) and the segments restart. Gears past the cell block: 0 failed draws, 16 overflows in
   400 s, the corridors render. A dark triangle near the weapon pickup (shot 20 of the run) is
   still to be checked with a trace.
+- **Deep sweep (2026-09-24, `trace_sweep.py gears banjo --deep --thor-profile`):** Gears in the
+  prison corridors: Vulkan against D3D12 0.02-0.13% on 5 gameplay frames; Banjo walking
+  Spiral Mountain 0.03-4.3% (the known floating-point class); 0 failed draws on both backends.
+  The Banjo "FROZEN" verdict at the end is Gruntilda's dialog waiting for a press.
+  The 10 gameplay traces: 0 validation errors (Thor profile); 554 modules compile on the
+  Adreno 740 compiler, the largest gameplay pixel shaders about 4,900 instructions.
 - **Signature census (2026-09-24, `tools/xex/xdk_sigs.py`, 6 s for 4 titles):** 175 functions are
   identical in Banjo, Gears, Blue Dragon and MC2 and 216 in three; Gears and Blue Dragon share
   25-28% of their functions (about 500,000 instructions: Unreal Engine 3 at one version), MC2
