@@ -702,6 +702,16 @@ Standing facts:
   gets every title to gameplay on the PC.
 - Retro 2026-09-24 (3, reflex): a bisect run counts only when its last frame shows the crash
   point was reached; take the stack first (`pc_run --cdb`), then bisect.
+- Retro 2026-09-25 (1, slow): the Gears black screen past the cell block took two more
+  5-minute runs and log searches to name, because `pc_run` called it "FROZEN (cold compiles)"
+  and 7 million "Failed in backend" lines gave no reason; and the first trace bench blamed
+  textures for 46% of the draw cost, a replay artifact.
+- Retro 2026-09-25 (2, tool, exists now): every `IssueDraw`/`UpdateBindings` failure exit logs
+  its source line (`DrawFailed`), and `pc_run` prints "draw failures: N ... (exits: file:line)"
+  and the arena overflows, with the verdict "FROZEN (draws failing at <exit>)" - the first run
+  names the cause.
+- Retro 2026-09-25 (3, reflex): a new measurement is checked against a live-game fact before it
+  is believed (the bench's `loads` equalled `changed`: every replay reloaded every texture).
 
 ## 9. Device control: the debug server inside the emulator, and the MCP client
 

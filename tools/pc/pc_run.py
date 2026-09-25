@@ -102,6 +102,7 @@ def android_default_cvars():
     return ['%s=%s' % (name, android) for name, (android, _desktop)
             in sorted(xenia_thor_mcp._android_defaults().items()) if name not in ANDROID_ONLY]
 ORACLE = os.path.join(ROOT, 'scratch', 'oracle', 'xenia_canary.exe')
+FAIL_EXIT = re.compile(r'IssueDraw failed at (\S+) \((\d+) times\)')
 MARKERS = ('timed out', 'Timeout', 'Unimplemented', 'unimplemented', 'guest crash', 'Fatal',
            'SPINLOCK STALL', 'assert', 'Wait', 'XamShowDirtyDiscErrorUI', 'Non-default cvars')
 
@@ -284,12 +285,29 @@ def main():
     counts = {}
     pipes = None
     hazard_frames = []
+    # Draws the backend dropped, by the IssueDraw/UpdateBindings exit that
+    # dropped them (DrawFailed), and constants arena overflows. 2026-09-24:
+    # Gears went black past its cell block with 7 million "Failed in backend"
+    # and this summary said "FROZEN (cold compiles)"; naming the exit took two
+    # more runs.
+    failed_draws = 0
+    fail_exits = {}
+    arena_overflows = 0
     try:
         for line in open(log, encoding='utf-8', errors='replace'):
             # The module import tables list export names ("   F 820006F8 ...
             # XamShowDirtyDiscErrorUI"); a listed name is not a call.
             if IMPORT_ROW.match(line):
                 continue
+            if 'Failed in backend' in line:
+                failed_draws += 1
+                continue
+            m_ = FAIL_EXIT.search(line)
+            if m_:
+                fail_exits[m_.group(1)] = max(fail_exits.get(m_.group(1), 0), int(m_.group(2)))
+                continue
+            if 'Constants arena full' in line:
+                arena_overflows += 1
             for k in MARKERS:
                 if k in line:
                     counts[k] = counts.get(k, 0) + 1
@@ -326,8 +344,19 @@ def main():
                   len(bad), len(hazard_frames), med[0], med[1], med[2], med[3],
                   'SAFE for this title' if len(bad) * 100 <= len(hazard_frames) else
                   'UNSAFE: the GPU sees data the game changed after the draw was recorded'))
+    top_exit = max(fail_exits.items(), key=lambda kv: kv[1])[0] if fail_exits else ''
+    if failed_draws or arena_overflows:
+        print('draw failures: %d dropped by the backend%s; constants arena overflows: %d' % (
+            failed_draws,
+            ' (exits: %s)' % ', '.join('%s x%d+' % kv for kv in
+                                       sorted(fail_exits.items(), key=lambda kv: -kv[1])[:3])
+            if fail_exits else '', arena_overflows))
+    if frozen and failed_draws >= 100:
+        frozen_reason = 'FROZEN (draws failing%s)' % (' at ' + top_exit if top_exit else '')
+    else:
+        frozen_reason = 'FROZEN (cold compiles)' if cold else 'FROZEN'
     verdict = ('EXITED %s' % exited) if exited is not None else (
-        ('FROZEN (cold compiles)' if cold else 'FROZEN') if frozen else
+        frozen_reason if frozen else
         ('NO FRAME' if not first_frame else 'RUNNING'))
     if args.cdb and os.path.exists(cdb_log):
         lines = open(cdb_log, encoding='utf-8', errors='replace').read().splitlines()
