@@ -542,6 +542,21 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   test: record on the PC (`pc_matrix --deep`), push `<cache_root>/shaders/vulkan/<title>.xvs`,
   launch with the cvar on, read the "Vulkan shader storage" line and the in-play pipeline
   count.
+- **The Shader Model 3 zero rule costs 27% of the Adreno instructions (2026-09-25,
+  `spirv_debug_ieee_multiply`, research only):** every multiply emulates "+0 times anything
+  (Inf, NaN) is +0" with `min(|a|,|b|)`, a compare and a select. Plain IEEE multiplies over
+  616 modules of 4 titles: pixel shaders 862,518 -> 633,770 instructions (-26.5%, largest
+  4,915 -> 3,776), vertex shaders -30.6%. `cvar_ab` on 30 traces: Banjo 0 of 10 and MC2 0 of
+  5 changed; Gears 1 of 10 (trace 13183: 6.3% of the pixels, the lit window behind the cell
+  bars - the rule decides it), Blue Dragon 5 of 5 (0.17%, max 20). So not a blanket
+  change. Options: a per-title lever for titles with no dependence (Banjo, MC2 - device
+  frame time decides), or an exact range analysis that skips the test where both operands
+  are bounded (saturated values, fixed-point textures, constants bounded at draw time);
+  interpolated values and `rsq`/`rcp` results stay unbounded, so its coverage is unknown.
+  Adreno `sel.f32` could make the exact test 2 instructions instead of 3 (device test).
+- **Sign specialization CPU cost (2026-09-25, `trace_bench --a/--b`):** `SwizzleSigns` per
+  bound texture per draw cost prep +266 us per frame on Banjo; the raw sign fields of dword 0
+  (one load) leave +82 us, the rest within the bench noise; 0 changed pixels on 6 traces.
 - **fp16 on the Adreno, upper bound (2026-09-25, `shader_lab.py --relax`):** RelaxedPrecision
   added to the translated pixel modules (Turnip: `mediump_16bit_alu`). All float math: waves
   +854 over 343 shaders, registers -760, instructions +48%; plus the register variables (Turnip
