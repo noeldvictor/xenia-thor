@@ -465,6 +465,7 @@ bool VulkanCommandProcessor::SetupContext() {
         VkDeviceSize(sizeof(uint32_t) * 6 * 32)};
     bool arena_ok = true;
     for (uint32_t i = 0; i < SpirvShaderTranslator::kConstantBufferCount; ++i) {
+      dynamic_constants_ring_ranges_[i] = arena_specs[i].range;
       if (!dynamic_constants_rings_[i].Initialize(
               vulkan_device, arena_specs[i].capacity,
               VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
@@ -6558,6 +6559,37 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   VulkanShader::VulkanTranslation* vertex_shader_translation;
   VulkanShader::VulkanTranslation* pixel_shader_translation;
 
+  // The constants arena rings hold one frame's constants per segment. A frame
+  // with more constant uploads than a segment holds (Gears past its cell block,
+  // 2026-09-24: the fetch ring ran out and every later draw of the frame
+  // failed - a black screen) first lets the GPU finish everything recorded so
+  // far: then no submission reads the segment and it can start over.
+  if (constants_dynamic_descriptor_set_ != VK_NULL_HANDLE) {
+    bool arena_full = false;
+    for (uint32_t i = 0; i < SpirvShaderTranslator::kConstantBufferCount; ++i) {
+      if (!dynamic_constants_rings_[i].HasRoomFor(
+              dynamic_constants_ring_ranges_[i])) {
+        arena_full = true;
+        break;
+      }
+    }
+    if (arena_full) {
+      ++constants_arena_overflows_;
+      if (constants_arena_overflows_ <= 4 ||
+          !(constants_arena_overflows_ & (constants_arena_overflows_ - 1))) {
+        XELOGW(
+            "Constants arena full in frame {} - awaited the GPU and restarted "
+            "the segments ({} times)",
+            frame_current_, constants_arena_overflows_);
+      }
+      CheckSubmissionCompletionAndDeviceLoss(GetCurrentSubmission());
+      for (auto& ring : dynamic_constants_rings_) {
+        ring.RestartSegment();
+      }
+      current_constant_buffers_up_to_date_ = 0;
+    }
+  }
+
   // Two iterations because a submission (even the current one - in which case
   // it needs to be ended, and a new one must be started) may need to be awaited
   // in case of a sampler count overflow, and if that happens, all subsystem
@@ -12355,7 +12387,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           SpirvShaderTranslator::kConstantBufferSystem,
           sizeof(SpirvShaderTranslator::SystemConstants), buffer_info, ring_off);
       if (!mapping) {
-        return false;
+        return DrawFailed(__LINE__);
       }
       std::memcpy(mapping, &system_constants_,
                   sizeof(SpirvShaderTranslator::SystemConstants));
@@ -12385,7 +12417,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           SpirvShaderTranslator::kConstantBufferFloatVertex,
           float_constants_size, buffer_info, ring_off);
       if (!mapping) {
-        return false;
+        return DrawFailed(__LINE__);
       }
       for (uint32_t i = 0; i < 4; ++i) {
         uint64_t float_constant_map_entry =
@@ -12421,7 +12453,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           SpirvShaderTranslator::kConstantBufferFloatPixel, float_constants_size,
           buffer_info, ring_off);
       if (!mapping) {
-        return false;
+        return DrawFailed(__LINE__);
       }
       for (uint32_t i = 0; i < 4; ++i) {
         uint64_t float_constant_map_entry =
@@ -12456,7 +12488,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           SpirvShaderTranslator::kConstantBufferBoolLoop, kBoolLoopConstantsSize,
           buffer_info, ring_off);
       if (!mapping) {
-        return false;
+        return DrawFailed(__LINE__);
       }
       std::memcpy(mapping, &regs[XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031],
                   kBoolLoopConstantsSize);
@@ -12478,7 +12510,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
           SpirvShaderTranslator::kConstantBufferFetch, kFetchConstantsSize,
           buffer_info, ring_off);
       if (!mapping) {
-        return false;
+        return DrawFailed(__LINE__);
       }
       std::memcpy(mapping, &regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0],
                   kFetchConstantsSize);
@@ -12988,7 +13020,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
                   1);
         }
         if (constants_descriptor_set == VK_NULL_HANDLE) {
-          return false;
+          return DrawFailed(__LINE__);
         }
       }
       constants_transient_descriptors_used_.emplace_back(
@@ -13038,7 +13070,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
                 vertex_sampler_image_info_offset,
             write_textures);
     if (!texture_descriptor_set_write_count) {
-      return false;
+      return DrawFailed(__LINE__);
     }
     write_descriptor_set_count += texture_descriptor_set_write_count;
     write_descriptor_set_bits |=
@@ -13091,7 +13123,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
                   pixel_sampler_image_info_offset,
               write_textures);
       if (!texture_descriptor_set_write_count) {
-        return false;
+        return DrawFailed(__LINE__);
       }
       write_descriptor_set_count += texture_descriptor_set_write_count;
       write_descriptor_set_bits |=
@@ -13114,7 +13146,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
             uint32_t(write_descriptor_sets[i].descriptorType),
             write_descriptor_sets[i].dstBinding,
             write_descriptor_sets[i].descriptorCount);
-        return false;
+        return DrawFailed(__LINE__);
       }
     }
     dfn.vkUpdateDescriptorSets(device, write_descriptor_set_count,

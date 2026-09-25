@@ -12,6 +12,7 @@
 
 #include <cstdint>
 
+#include "xenia/base/math.h"
 #include "xenia/ui/vulkan/vulkan_device.h"
 
 namespace xe {
@@ -71,6 +72,14 @@ class VulkanDynamicBufferRing {
   // Rotate to the segment for (frame_index % kFramesInFlight) and reset its
   // write cursor. Call once per frame.
   void FrameAdvance(uint64_t frame_index);
+
+  // Whether Allocate(size) fits in the current segment.
+  bool HasRoomFor(VkDeviceSize size) const {
+    return xe::round_up(segment_write_, alignment_) + size <= segment_size_;
+  }
+  // Restarts the current segment. Only after every submission that read it
+  // has completed (the caller awaited the GPU).
+  void RestartSegment() { segment_write_ = 0; }
 
  private:
   uint32_t ChooseMemoryType(uint32_t type_bits,

@@ -517,8 +517,14 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   and a `pc_run` press takes its own hold (`"200:ls_up,rt/4000"`), so a route can walk and
   fire. The first deeper Gears route (walk out of the cell block, fire at 265 s) went black at
   270 s: every draw after it logged "Failed in backend" (7 million lines, no reason). Each
-  `IssueDraw` failure exit now logs its source line (`DrawFailed`); the cause is being
-  traced.
+  `IssueDraw` and `UpdateBindings` failure exit now logs its source line (`DrawFailed`); two
+  runs named it: the fetch-constant ring of `vulkan_dynamic_constants_arena` (on by default in
+  the app) holds one frame's constants per segment (6 MB over 3 frames: about 2,700 fetch
+  uploads; the float rings about 2,000 full ones), and a heavier frame failed every draw after
+  the segment filled. Fixed: a draw that would not fit awaits the GPU (the open submission
+  ends) and the segments restart. Gears past the cell block: 0 failed draws, 16 overflows in
+  400 s, the corridors render. A dark triangle near the weapon pickup (shot 20 of the run) is
+  still to be checked with a trace.
 - `scratch/gears/gears2.iso` is 1.76 GB against 7.8 GB for Gears 1 - an incomplete pull; it does
   not mount ("Failed to read all GDFX entries"). Under `--cdb` every write-watch fault is a
   debugger event and the run slows several times over; use it on a crash, not for the whole

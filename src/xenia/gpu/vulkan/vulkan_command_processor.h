@@ -839,6 +839,11 @@ class VulkanCommandProcessor : public CommandProcessor {
   std::array<ui::vulkan::VulkanDynamicBufferRing,
              size_t(SpirvShaderTranslator::kConstantBufferCount)>
       dynamic_constants_rings_;
+  // The most one draw writes into each ring (its descriptor range): a draw
+  // starts only with this much room in every ring.
+  VkDeviceSize dynamic_constants_ring_ranges_
+      [SpirvShaderTranslator::kConstantBufferCount] = {};
+  uint64_t constants_arena_overflows_ = 0;
   // R2: a UNIFORM_BUFFER_DYNAMIC variant of descriptor_set_layout_constants_ plus
   // one persistent descriptor set bound once to dynamic_constants_rings_ (the
   // per-draw dynamic offset selects each draw's constant slot). All VK_NULL_HANDLE
