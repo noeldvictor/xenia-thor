@@ -525,6 +525,16 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   ends) and the segments restart. Gears past the cell block: 0 failed draws, 16 overflows in
   400 s, the corridors render. A dark triangle near the weapon pickup (shot 20 of the run) is
   still to be checked with a trace.
+- **Signature census (2026-09-24, `tools/xex/xdk_sigs.py`, 6 s for 4 titles):** 175 functions are
+  identical in Banjo, Gears, Blue Dragon and MC2 and 216 in three; Gears and Blue Dragon share
+  25-28% of their functions (about 500,000 instructions: Unreal Engine 3 at one version), MC2
+  (another UE3 version) 8%. Banjo's `memset` (a hooked function in `guest_crt_hooks.cc`) is in
+  all three other titles and its `memcpy` in MC2, found by the masked-prefix search - the
+  per-title hook table can become a signature table. reNut's 4,969 Banjo names find 489
+  functions in Gears, 278 in Blue Dragon, 468 in MC2, but only 4-7 D3D functions (the
+  resource calls): the draw path differs per XDK version (Banjo 2008, Gears 2006), so a
+  D3D-level hook needs a signature set per XDK version. Next: which shared functions are hot
+  (a guest profile), then signature-armed host versions of the hot ones.
 - `scratch/gears/gears2.iso` is 1.76 GB against 7.8 GB for Gears 1 - an incomplete pull; it does
   not mount ("Failed to read all GDFX entries"). Under `--cdb` every write-watch fault is a
   debugger event and the run slows several times over; use it on a crash, not for the whole
@@ -758,6 +768,8 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `tools/pc/cvar_ab.py`, `xenia_cvar_ab` | a lever A/B on one trace dump: each trace replayed with `--a` and `--b` cvars, changed pixels per trace. A lever that must not change the picture shows 0 on every trace |
 | `tools/pc/trace_bench.py`, `xenia_trace_bench` | the command processor's CPU cost per draw without the device: the trace dump replays the captured frame `--iterations` times with warm caches (`trace_dump_bench_iterations`) and logs the draw-path buckets per frame (`vulkan_trace_draw_outcomes_per_frame`) and the texture-request split (`GPU tex cpu/frame`); medians per frame and per draw. `--a/--b` runs an A/B as A B A B. x64 gives the direction and the size; the Thor judges the speed |
 | `tools/pc/vk_validate.py`, `xenia_vk_validate` | the Khronos validation layer (synchronization validation on) over trace replays, messages grouped by ID with counts and an example. The layer is built from source once in `scratch/tools/vvl` (tag `vulkan-sdk-1.4.357.0`, `cmake -D UPDATE_DEPS=ON`, build with `/m:2`: with more jobs next to another build the compiler runs out of heap) |
+| `tools/xex/xdk_sigs.py` | library code shared across titles: each XEX decrypted and split by its `.pdata` into functions, each function hashed with the address fields masked; the census of functions shared by 2, 3, 4 titles, the largest with a guess (memory routine, VMX128, FPU, syscall). `--seed banjo=renut_funcs.toml,...` finds the reNut-named Banjo functions in the other titles (exact hash, else a 16-instruction masked prefix) |
+| `pc_matrix.py --deep`, `trace_sweep.py --deep --thor-profile` | the deeper gameplay routes (`pc_matrix.DEEP`: Gears past the cell block, Banjo walking Spiral Mountain) with traces at their own times inside gameplay; saved games deleted before each run |
 | `tools/pc/draw_bisect.py`, `xenia_draw_bisect` | which draws make a trace's Vulkan frame differ from D3D12: skips draw lists (`gpu_debug_skip_draws`, the same numbers on every backend) on Vulkan, D3D12 or both and splits the lists that explain the mismatch down to single draws, with their state from `gpu_debug_log_draws` (shader hashes, RB_DEPTHCONTROL, RB_COLORCONTROL). In the one-backend modes give candidates with `--filter` (for example `colorcontrol & 0x10`, alpha to mask): skipping every draw leaves a black frame that explains nothing |
 | `tools/pc/pc_matrix.py` | the PC regression matrix: Banjo, Gears, Gears 2, MagnaCarta 2, Blue Dragon one after another in the Thor configuration (`--android-defaults`), a contact sheet per title and a JSON summary in `scratch/matrix/`; a crash reruns under cdb for its stack. Run it after every change set and look at the sheets |
 | `pc_run.py` sticky presses (`"45:start+"`) | pressed again every `--retry-every` s until the picture changes; later presses wait. Titles ignore presses while they load and the load time varies - fixed-time routes stuck Gears on its main menu |

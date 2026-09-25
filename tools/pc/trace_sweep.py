@@ -34,23 +34,33 @@ def main():
     ap.add_argument('--at', default='')
     ap.add_argument('--cvars', default='')
     ap.add_argument('--plain', action='store_true')
+    ap.add_argument('--thor-profile', action='store_true',
+                    help='the Android defaults and the default-on app toggles (pc_run.py)')
+    ap.add_argument('--deep', action='store_true',
+                    help='the deeper gameplay routes of pc_matrix.DEEP, traced at their own '
+                         'times inside gameplay')
     args = ap.parse_args()
-    titles = args.titles or list(pc_matrix.ENTRIES)
+    entries = pc_matrix.DEEP if args.deep else pc_matrix.ENTRIES
+    titles = args.titles or list(entries)
     rows = []
     for title in titles:
-        iso, seconds, every, presses = pc_matrix.ENTRIES[title]
+        iso, seconds, every, presses = entries[title][:4]
         if not os.path.exists(os.path.join(ROOT, iso)):
             print('%-7s SKIP (no %s)' % (title, iso), flush=True)
             continue
-        at = args.at or ' '.join(str(int(seconds * f)) for f in (0.5, 0.6, 0.7, 0.8, 0.9))
-        name = 'sweep_%s' % title
+        at = args.at or (entries[title][4] if args.deep else
+                         ' '.join(str(int(seconds * f)) for f in (0.5, 0.6, 0.7, 0.8, 0.9)))
+        name = ('sweep_deep_%s' if args.deep else 'sweep_%s') % title
+        pc_matrix.delete_saves(name)
         trace_dir = os.path.join(ROOT, 'scratch', name, 'pcrun', 'traces')
         for old in glob.glob(os.path.join(trace_dir, '*.xtr')):
             os.remove(old)
         cmd = [sys.executable, os.path.join(ROOT, 'tools', 'pc', 'pc_run.py'), iso,
                '--name', name, '--seconds', str(seconds), '--every', str(every),
                '--presses', presses, '--trace-at', at]
-        if not args.plain:
+        if args.thor_profile:
+            cmd.append('--thor-profile')
+        elif not args.plain:
             cmd.append('--android-defaults')
         if args.cvars:
             cmd += ['--cvars', args.cvars]
@@ -63,7 +73,8 @@ def main():
         if not traces:
             continue
         ab = subprocess.run([sys.executable, os.path.join(ROOT, 'tools', 'pc', 'backend_ab.py')] +
-                            traces + (['--cvars', args.cvars] if args.cvars else []),
+                            traces + (['--cvars', args.cvars] if args.cvars else []) +
+                            (['--thor-profile'] if args.thor_profile else []),
                             cwd=ROOT, capture_output=True, text=True,
                             encoding='utf-8', errors='replace')
         for line in ab.stdout.splitlines():

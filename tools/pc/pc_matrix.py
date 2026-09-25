@@ -52,6 +52,42 @@ ENTRIES = {
 }
 
 
+# Deeper routes (--deep): past the menus into the level, walking and firing
+# with the sticks and triggers (the nop HID trigger file). Each has its own
+# trace times, inside gameplay. 2026-09-24: the first deep Gears route found
+# the constants arena failing every draw past the cell block.
+_GEARS_START = '45:start+ 60:a+ 75:a+ 90:start+ 105:a+ 150:start 170:a'
+_BANJO_START = '70:a+ 85:a 100:start 115:a 130:a 145:a 160:a 175:a 190:a 205:a 220:a'
+DEEP = {
+    'gears': ('scratch/gears/gears.iso', 420, 15,
+              _GEARS_START + ' 200:ls_up/4000 206:rs_right/700 208:ls_up/4000 214:ls_up/4000'
+              ' 220:rs_left/700 222:ls_up/5000 230:rt/1500 234:ls_up/5000 240:ls_up/5000'
+              ' 246:rs_right/600 248:ls_up/5000 255:ls_up/5000 262:lt,rt/1500 266:ls_up/5000'
+              ' 272:ls_up/5000 280:rs_left/900 282:ls_up/5000 290:ls_up/5000 298:ls_up/5000'
+              ' 306:a 310:ls_up/5000 318:ls_up/5000 326:rs_right/900 328:ls_up/5000'
+              ' 336:ls_up/5000 344:ls_up/5000 352:a 356:ls_up/5000 364:ls_up/5000'
+              ' 372:ls_up/5000 380:ls_up/5000 390:ls_up/5000 400:ls_up/5000',
+              '240 300 330 360 400'),
+    'banjo': ('scratch/banjo/banjo.iso', 420, 15,
+              _BANJO_START + ' 255:ls_up/4000 262:rs_right/1000 264:ls_up/5000'
+              ' 272:ls_left/3000 278:ls_up/5000 286:a 290:ls_up/5000 298:rs_left/1500'
+              ' 300:ls_up/6000 310:ls_right/3000 316:ls_up/6000 326:a 330:ls_up/6000'
+              ' 340:ls_up/6000 350:rs_right/1500 352:ls_up/6000 362:ls_up/6000'
+              ' 372:ls_up/6000 382:rs_left/1500 384:ls_up/6000 394:ls_up/6000'
+              ' 404:ls_up/6000',
+              '290 330 360 390 410'),
+}
+
+
+def delete_saves(name):
+    """Saved games (content type 00000001) change the route: after a run
+    that reached gameplay, Gears asks to overwrite its checkpoint and the route
+    stops there (2026-09-24). Every run starts clean."""
+    for saves in glob.glob(os.path.join(ROOT, 'scratch', name, 'pcrun', 'content',
+                                        '*', '*', '00000001')):
+        shutil.rmtree(saves, ignore_errors=True)
+
+
 def contact_sheet(shots, path, label):
     if not shots:
         return None
@@ -74,26 +110,26 @@ def main():
     ap.add_argument('--thor-profile', action='store_true',
                     help='the Android defaults and the default-on app toggles (pc_run.py)')
     ap.add_argument('--cvars', default='')
+    ap.add_argument('--deep', action='store_true',
+                    help='the deeper gameplay routes (DEEP) for the titles that have one')
     ap.add_argument('--keep-saves', action='store_true',
                     help='keep the saved games of earlier runs (default: delete them)')
     args = ap.parse_args()
-    titles = args.titles or list(ENTRIES)
+    entries = dict(ENTRIES)
+    if args.deep:
+        entries = {t: v[:4] for t, v in DEEP.items()}
+    titles = args.titles or list(entries)
     stamp = time.strftime('%Y%m%d-%H%M%S')
     os.makedirs(OUT, exist_ok=True)
     rows = []
     for title in titles:
-        iso, seconds, every, presses = ENTRIES[title]
+        iso, seconds, every, presses = entries[title]
         if not os.path.exists(os.path.join(ROOT, iso)):
             print('%-7s SKIP (no %s)' % (title, iso), flush=True)
             continue
-        name = 'matrix_%s' % title
+        name = ('deep_%s' if args.deep else 'matrix_%s') % title
         if not args.keep_saves:
-            # Saved games (content type 00000001) change the route: after a run
-            # that reached gameplay, Gears asks to overwrite its checkpoint and
-            # the route stops there (2026-09-24). Every run starts clean.
-            for saves in glob.glob(os.path.join(ROOT, 'scratch', name, 'pcrun', 'content',
-                                                '*', '*', '00000001')):
-                shutil.rmtree(saves, ignore_errors=True)
+            delete_saves(name)
         cmd = [sys.executable, os.path.join(ROOT, 'tools', 'pc', 'pc_run.py'), iso, '--name', name,
                '--seconds', str(seconds), '--every', str(every), '--presses', presses]
         if args.thor_profile:
