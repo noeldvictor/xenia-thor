@@ -525,6 +525,18 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   ends) and the segments restart. Gears past the cell block: 0 failed draws, 16 overflows in
   400 s, the corridors render. A dark triangle near the weapon pickup (shot 20 of the run) is
   still to be checked with a trace.
+- **Vulkan shader and pipeline storage (2026-09-25, `vulkan_shader_storage`, default on with
+  `store_shaders`):** the Vulkan backend had none (only D3D12). Now the guest shaders and the
+  pipeline descriptions a title uses are appended to `<cache_root>/shaders/vulkan/<title>.xvs`
+  and the pipelines are created at the next launch before the game draws (special render
+  passes - Blue Dragon custom resolve, feedback merge, hybrid - are not stored). Banjo on the
+  PC, 300 s: run 1 created about 760 pipelines in play (10.6 s of compiles); run 2 created
+  759 of 759 stored at launch in 4.4 s and about 9 in play (1.2 s, -88%), 0 failed draws, the
+  picture correct. The records are guest microcode and Xenos state, so a file recorded on the
+  PC gives the Thor its pipelines with its own translation and driver. Open for the Thor:
+  `emulator.cc` skips storage initialization on Android (a bring-up note); the launch-time
+  creation is single-threaded (4.4 s on the PC, far longer on Adreno without the driver
+  cache) - parallel creation and a non-blocking start come before enabling it there.
 - **fp16 on the Adreno, upper bound (2026-09-25, `shader_lab.py --relax`):** RelaxedPrecision
   added to the translated pixel modules (Turnip: `mediump_16bit_alu`). All float math: waves
   +854 over 343 shaders, registers -760, instructions +48%; plus the register variables (Turnip

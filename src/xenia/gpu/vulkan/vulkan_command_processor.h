@@ -349,6 +349,9 @@ class VulkanCommandProcessor : public CommandProcessor {
 
  protected:
   bool SetupContext() override;
+  // Shader and pipeline storage (VulkanPipelineCache::InitializeShaderStorage).
+  void InitializeShaderStorage(const std::filesystem::path& cache_root,
+                               uint32_t title_id, bool blocking) override;
   void ShutdownContext() override;
 
   void WriteRegister(uint32_t index, uint32_t value) override;

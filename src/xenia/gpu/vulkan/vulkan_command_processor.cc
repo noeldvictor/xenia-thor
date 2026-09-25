@@ -333,6 +333,15 @@ std::string VulkanCommandProcessor::GetWindowTitleText() const {
   return title.str();
 }
 
+void VulkanCommandProcessor::InitializeShaderStorage(
+    const std::filesystem::path& cache_root, uint32_t title_id,
+    bool blocking) {
+  CommandProcessor::InitializeShaderStorage(cache_root, title_id, blocking);
+  if (pipeline_cache_) {
+    pipeline_cache_->InitializeShaderStorage(cache_root, title_id, blocking);
+  }
+}
+
 bool VulkanCommandProcessor::SetupContext() {
   if (!CommandProcessor::SetupContext()) {
     XELOGE("Failed to initialize base command processor context");

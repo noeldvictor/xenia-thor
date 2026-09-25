@@ -11,12 +11,15 @@
 #define XENIA_GPU_VULKAN_VULKAN_PIPELINE_STATE_CACHE_H_
 
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include "xenia/base/hash.h"
 #include "xenia/base/platform.h"
@@ -59,6 +62,18 @@ class VulkanPipelineCache {
 
   bool Initialize();
   void Shutdown();
+
+  // Shader and pipeline storage (store_shaders, vulkan_shader_storage): the
+  // guest shaders and the pipeline descriptions a title uses are appended to
+  // <cache_root>/shaders/vulkan/<title_id>.xvs, and at the next launch the
+  // pipelines are created before the game draws, so no pipeline compiles in
+  // play. The records are guest microcode and Xenos state, not host code: a
+  // file recorded on the PC creates the Thor's pipelines with the Thor's own
+  // translation and driver. Call on the command processor thread (or while it
+  // is paused).
+  void InitializeShaderStorage(const std::filesystem::path& cache_root,
+                               uint32_t title_id, bool blocking);
+  void ShutdownShaderStorage();
 
   VulkanShader* LoadShader(xenos::ShaderType shader_type,
                            const uint32_t* host_address, uint32_t dword_count);
@@ -438,6 +453,19 @@ class VulkanPipelineCache {
   // Previously used pipeline, to avoid lookups if the state wasn't changed.
   const std::pair<const PipelineDescription, Pipeline>* last_pipeline_ =
       nullptr;
+
+  // Shader and pipeline storage (InitializeShaderStorage).
+  void StoreShader(xenos::ShaderType shader_type, uint64_t hash,
+                   const uint32_t* host_address, uint32_t dword_count);
+  void StorePipeline(const PipelineDescription& description);
+  void FlushShaderStorage(bool force);
+  // Creates a stored pipeline as ConfigurePipeline would for its description.
+  bool CreateStoredPipeline(const PipelineDescription& description);
+  FILE* storage_file_ = nullptr;
+  std::vector<uint8_t> storage_pending_;
+  uint64_t storage_last_flush_ms_ = 0;
+  // While the stored records are replayed: nothing is appended again.
+  bool storage_replaying_ = false;
 };
 
 }  // namespace vulkan

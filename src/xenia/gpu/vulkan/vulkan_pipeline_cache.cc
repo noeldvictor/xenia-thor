@@ -25,6 +25,7 @@
 #include "xenia/base/assert.h"
 #include "xenia/base/clock.h"
 #include "xenia/base/cvar.h"
+#include "xenia/base/filesystem.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/profiling.h"
@@ -48,6 +49,13 @@ DEFINE_bool(
     "first-encounter shader-compilation stutter. Needs vulkan_pipeline_cache_path. "
     "The driver validates the cache UUID, so a stale or wrong-driver blob is "
     "safely ignored rather than misused.",
+    "Vulkan");
+DEFINE_bool(
+    vulkan_shader_storage, true,
+    "With store_shaders: record the guest shaders and pipeline descriptions a "
+    "title uses (cache_root/shaders/vulkan/<title_id>.xvs) and create those "
+    "pipelines at the next launch, before the game draws. The records are "
+    "platform-independent, so a file recorded on the PC works on the Thor.",
     "Vulkan");
 DEFINE_string(
     vulkan_pipeline_cache_path, "",
@@ -336,6 +344,8 @@ bool VulkanPipelineCache::Initialize() {
 }
 
 void VulkanPipelineCache::Shutdown() {
+  ShutdownShaderStorage();
+
   const ui::vulkan::VulkanDevice* const vulkan_device =
       command_processor_.GetVulkanDevice();
   const ui::vulkan::VulkanDevice::Functions& dfn = vulkan_device->functions();
@@ -406,6 +416,9 @@ VulkanShader* VulkanPipelineCache::LoadShader(xenos::ShaderType shader_type,
       new VulkanShader(command_processor_.GetVulkanDevice(), shader_type,
                        data_hash, host_address, dword_count);
   shaders_.emplace(data_hash, shader);
+  if (storage_file_ && !storage_replaying_) {
+    StoreShader(shader_type, data_hash, host_address, dword_count);
+  }
   return shader;
 }
 
@@ -794,6 +807,10 @@ bool VulkanPipelineCache::ConfigurePipeline(
   creation_arguments.feedback_merge = feedback_merge;
   if (!EnsurePipelineCreated(creation_arguments)) {
     return false;
+  }
+  if (storage_file_ && !storage_replaying_ && !description.bd_custom_resolve &&
+      !feedback_merge && !hybrid_fsi_composite) {
+    StorePipeline(description);
   }
   pipeline_out = pipeline.second.pipeline;
   pipeline_layout_out = pipeline_layout;
@@ -3285,6 +3302,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     pipeline_create_ms_at_report_ = pipeline_create_ms_;
   }
   SavePipelineCacheIfDue(false);
+  FlushShaderStorage(false);
   return true;
 }
 
@@ -3322,6 +3340,287 @@ void VulkanPipelineCache::SavePipelineCacheIfDue(bool force) {
     return;
   }
   std::thread(WritePipelineCacheFile, std::move(data)).detach();
+}
+
+namespace {
+// <cache_root>/shaders/vulkan/<title_id>.xvs: a header, then records of
+// {uint32 tag, uint32 payload size, payload}. A shader record is {uint64 ucode
+// hash, uint32 shader type, uint32 dword count, the guest dwords as read from
+// guest memory}; a pipeline record is a PipelineDescription. A header that does
+// not match (another version, another render target path) starts a new file.
+constexpr uint32_t kShaderStorageMagic = 0x53564558;  // 'XEVS'
+constexpr uint32_t kShaderStorageVersion = 1;
+constexpr uint32_t kShaderStorageRecordShader = 1;
+constexpr uint32_t kShaderStorageRecordPipeline = 2;
+struct ShaderStorageHeader {
+  uint32_t magic;
+  uint32_t version;
+  uint32_t modification_version;
+  uint32_t description_size;
+  uint32_t render_target_path;
+};
+}  // namespace
+
+void VulkanPipelineCache::InitializeShaderStorage(
+    const std::filesystem::path& cache_root, uint32_t title_id,
+    bool blocking) {
+  ShutdownShaderStorage();
+  if (!cvars::vulkan_shader_storage) {
+    return;
+  }
+  std::filesystem::path directory = cache_root / "shaders" / "vulkan";
+  std::error_code error;
+  std::filesystem::create_directories(directory, error);
+  std::filesystem::path path =
+      directory / fmt::format("{:08X}.xvs", title_id);
+  ShaderStorageHeader expected_header = {
+      kShaderStorageMagic, kShaderStorageVersion,
+      SpirvShaderTranslator::Modification::kVersion,
+      uint32_t(sizeof(PipelineDescription)),
+      uint32_t(render_target_cache_.GetPath())};
+
+  std::vector<uint8_t> data;
+  if (FILE* file = xe::filesystem::OpenFile(path, "rb")) {
+    std::fseek(file, 0, SEEK_END);
+    long size = std::ftell(file);
+    std::fseek(file, 0, SEEK_SET);
+    if (size > 0) {
+      data.resize(size_t(size));
+      if (std::fread(data.data(), 1, data.size(), file) != data.size()) {
+        data.clear();
+      }
+    }
+    std::fclose(file);
+  }
+  bool header_valid =
+      data.size() >= sizeof(ShaderStorageHeader) &&
+      !std::memcmp(data.data(), &expected_header, sizeof(expected_header));
+
+  const uint64_t start_ms = xe::Clock::QueryHostUptimeMillis();
+  uint32_t shader_count = 0;
+  std::vector<PipelineDescription> descriptions;
+  size_t valid_end = sizeof(ShaderStorageHeader);
+  if (header_valid) {
+    storage_replaying_ = true;
+    std::vector<uint32_t> dwords;
+    size_t position = sizeof(ShaderStorageHeader);
+    while (position + 8 <= data.size()) {
+      uint32_t tag, size;
+      std::memcpy(&tag, data.data() + position, sizeof(tag));
+      std::memcpy(&size, data.data() + position + 4, sizeof(size));
+      if (position + 8 + size > data.size()) {
+        break;  // A record cut off by a crash or a force-stop.
+      }
+      const uint8_t* payload = data.data() + position + 8;
+      if (tag == kShaderStorageRecordShader && size >= 16) {
+        uint32_t shader_type, dword_count;
+        std::memcpy(&shader_type, payload + 8, sizeof(shader_type));
+        std::memcpy(&dword_count, payload + 12, sizeof(dword_count));
+        if (size != 16 + size_t(dword_count) * sizeof(uint32_t) ||
+            shader_type > uint32_t(xenos::ShaderType::kPixel)) {
+          break;
+        }
+        dwords.resize(dword_count);
+        std::memcpy(dwords.data(), payload + 16, dword_count * sizeof(uint32_t));
+        LoadShader(xenos::ShaderType(shader_type), dwords.data(), dword_count);
+        ++shader_count;
+      } else if (tag == kShaderStorageRecordPipeline &&
+                 size == sizeof(PipelineDescription)) {
+        PipelineDescription description;
+        std::memcpy(&description, payload, sizeof(description));
+        descriptions.push_back(description);
+      } else {
+        break;
+      }
+      position += 8 + size;
+      valid_end = position;
+    }
+    uint32_t created = 0, failed = 0;
+    for (const PipelineDescription& description : descriptions) {
+      if (pipelines_.find(description) != pipelines_.end()) {
+        continue;
+      }
+      if (CreateStoredPipeline(description)) {
+        ++created;
+      } else {
+        ++failed;
+      }
+    }
+    storage_replaying_ = false;
+    XELOGI(
+        "Vulkan shader storage {}: {} shaders and {} pipelines stored, {} "
+        "pipelines created in {} ms ({} not created)",
+        xe::path_to_utf8(path), shader_count, descriptions.size(), created,
+        xe::Clock::QueryHostUptimeMillis() - start_ms, failed);
+  }
+
+  if (header_valid && valid_end == data.size()) {
+    storage_file_ = xe::filesystem::OpenFile(path, "ab");
+  } else {
+    // A new file, or the valid records without a cut-off tail.
+    storage_file_ = xe::filesystem::OpenFile(path, "wb");
+    if (storage_file_) {
+      if (header_valid) {
+        std::fwrite(data.data(), 1, valid_end, storage_file_);
+      } else {
+        std::fwrite(&expected_header, 1, sizeof(expected_header),
+                    storage_file_);
+      }
+      std::fflush(storage_file_);
+    }
+  }
+  if (!storage_file_) {
+    XELOGW("Vulkan shader storage: cannot open {} for writing",
+           xe::path_to_utf8(path));
+  }
+  storage_last_flush_ms_ = xe::Clock::QueryHostUptimeMillis();
+}
+
+void VulkanPipelineCache::ShutdownShaderStorage() {
+  if (!storage_file_) {
+    return;
+  }
+  FlushShaderStorage(true);
+  std::fclose(storage_file_);
+  storage_file_ = nullptr;
+}
+
+void VulkanPipelineCache::StoreShader(xenos::ShaderType shader_type,
+                                      uint64_t hash,
+                                      const uint32_t* host_address,
+                                      uint32_t dword_count) {
+  uint32_t header[2] = {kShaderStorageRecordShader,
+                        uint32_t(16 + dword_count * sizeof(uint32_t))};
+  uint32_t type = uint32_t(shader_type);
+  size_t offset = storage_pending_.size();
+  storage_pending_.resize(offset + 8 + header[1]);
+  uint8_t* out = storage_pending_.data() + offset;
+  std::memcpy(out, header, 8);
+  std::memcpy(out + 8, &hash, 8);
+  std::memcpy(out + 16, &type, 4);
+  std::memcpy(out + 20, &dword_count, 4);
+  std::memcpy(out + 24, host_address, dword_count * sizeof(uint32_t));
+}
+
+void VulkanPipelineCache::StorePipeline(
+    const PipelineDescription& description) {
+  uint32_t header[2] = {kShaderStorageRecordPipeline,
+                        uint32_t(sizeof(description))};
+  size_t offset = storage_pending_.size();
+  storage_pending_.resize(offset + 8 + sizeof(description));
+  std::memcpy(storage_pending_.data() + offset, header, 8);
+  std::memcpy(storage_pending_.data() + offset + 8, &description,
+              sizeof(description));
+}
+
+void VulkanPipelineCache::FlushShaderStorage(bool force) {
+  if (!storage_file_ || storage_pending_.empty()) {
+    return;
+  }
+  const uint64_t now_ms = xe::Clock::QueryHostUptimeMillis();
+  // A few writes a minute at most; a force-stop loses at most this window.
+  if (!force && now_ms - storage_last_flush_ms_ < 5000) {
+    return;
+  }
+  std::fwrite(storage_pending_.data(), 1, storage_pending_.size(),
+              storage_file_);
+  std::fflush(storage_file_);
+  storage_pending_.clear();
+  storage_last_flush_ms_ = now_ms;
+}
+
+bool VulkanPipelineCache::CreateStoredPipeline(
+    const PipelineDescription& description) {
+  // The special render passes (Blue Dragon's custom resolve, the feedback
+  // merge, the hybrid post-process) are never stored.
+  if (description.bd_custom_resolve ||
+      !ArePipelineRequirementsMet(description)) {
+    return false;
+  }
+  auto vertex_shader_it = shaders_.find(description.vertex_shader_hash);
+  if (vertex_shader_it == shaders_.end()) {
+    return false;
+  }
+  VulkanShader* vertex_shader = vertex_shader_it->second;
+  VulkanShader* pixel_shader = nullptr;
+  if (description.pixel_shader_hash) {
+    auto pixel_shader_it = shaders_.find(description.pixel_shader_hash);
+    if (pixel_shader_it == shaders_.end()) {
+      return false;
+    }
+    pixel_shader = pixel_shader_it->second;
+  }
+  SpirvShaderTranslator::Modification vertex_shader_modification(
+      description.vertex_shader_modification);
+  SpirvShaderTranslator::Modification pixel_shader_modification(
+      description.pixel_shader_modification);
+  if (pixel_shader &&
+      (pixel_shader_modification.pixel.feedback_input_attachment ||
+       pixel_shader_modification.pixel.hybrid_fsi_composite)) {
+    return false;
+  }
+  if (!vertex_shader->is_ucode_analyzed()) {
+    AnalyzeShaderUcode(*vertex_shader);
+  }
+  if (pixel_shader && !pixel_shader->is_ucode_analyzed()) {
+    AnalyzeShaderUcode(*pixel_shader);
+  }
+  auto vertex_translation = static_cast<VulkanShader::VulkanTranslation*>(
+      vertex_shader->GetOrCreateTranslation(
+          description.vertex_shader_modification));
+  auto pixel_translation =
+      pixel_shader ? static_cast<VulkanShader::VulkanTranslation*>(
+                         pixel_shader->GetOrCreateTranslation(
+                             description.pixel_shader_modification))
+                   : nullptr;
+  if (!EnsureShadersTranslated(vertex_translation, pixel_translation)) {
+    return false;
+  }
+  const PipelineLayoutProvider* pipeline_layout =
+      command_processor_.GetPipelineLayout(
+          pixel_shader ? pixel_shader->GetTextureBindingsAfterTranslation().size()
+                       : 0,
+          pixel_shader ? pixel_shader->GetSamplerBindingsAfterTranslation().size()
+                       : 0,
+          vertex_shader->GetTextureBindingsAfterTranslation().size(),
+          vertex_shader->GetSamplerBindingsAfterTranslation().size(), false);
+  if (!pipeline_layout) {
+    return false;
+  }
+  VkShaderModule geometry_shader = VK_NULL_HANDLE;
+  GeometryShaderKey geometry_shader_key;
+  if (GetGeometryShaderKey(description.geometry_shader,
+                           vertex_shader_modification,
+                           pixel_shader_modification, geometry_shader_key)) {
+    geometry_shader = GetGeometryShader(geometry_shader_key);
+    if (geometry_shader == VK_NULL_HANDLE) {
+      return false;
+    }
+  }
+  VkRenderPass render_pass =
+      render_target_cache_.GetPath() ==
+              RenderTargetCache::Path::kPixelShaderInterlock
+          ? render_target_cache_.GetFragmentShaderInterlockRenderPass()
+          : render_target_cache_.GetHostRenderTargetsRenderPass(
+                description.render_pass_key);
+  if (render_pass == VK_NULL_HANDLE) {
+    return false;
+  }
+  PipelineCreationArguments creation_arguments;
+  auto& pipeline =
+      *pipelines_.emplace(description, Pipeline(pipeline_layout)).first;
+  creation_arguments.pipeline = &pipeline;
+  creation_arguments.vertex_shader = vertex_translation;
+  creation_arguments.pixel_shader = pixel_translation;
+  creation_arguments.geometry_shader = geometry_shader;
+  creation_arguments.render_pass = render_pass;
+  creation_arguments.feedback_merge = false;
+  if (!EnsurePipelineCreated(creation_arguments)) {
+    // Not left as an empty entry for a later draw to find.
+    pipelines_.erase(description);
+    return false;
+  }
+  return true;
 }
 
 }  // namespace vulkan
