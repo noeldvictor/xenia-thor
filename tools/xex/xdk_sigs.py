@@ -159,6 +159,30 @@ def first_word_index(img):
     return words, index
 
 
+FINGERPRINTS = ('Unreal Engine 3', 'PhysX', 'Havok', 'Bink', 'FaceFX', 'SpeedTree', 'Scaleform',
+                'CRI ', 'ADX', 'Wwise', 'FMOD', 'Miles', 'Gamebryo', 'RenderWare',
+                'Microcode Compiler', 'deflate 1.')
+
+
+def xdk_build(path):
+    """The kernel import library version of the XEX header: the XDK build."""
+    x = open(path, 'rb').read()
+    for i in range(struct.unpack_from('>I', x, 0x14)[0]):
+        key, value = struct.unpack_from('>II', x, 0x18 + i * 8)
+        if key == 0x000103FF:
+            str_size = struct.unpack_from('>I', x, value + 4)[0]
+            p = value + 12 + str_size
+            version = struct.unpack_from('>I', x, p + 28)[0]
+            return (version >> 8) & 0xFFFF
+    return 0
+
+
+def fingerprints(img):
+    """Engine and middleware names found in the image (2026-09-25: Blue Dragon
+    is not Unreal; what it shares with Gears is the XDK's shader compiler)."""
+    return [f.strip() for f in FINGERPRINTS if img.find(f.encode()) >= 0]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('xex', nargs='+', help='TITLE=path.xex')
@@ -193,8 +217,9 @@ def main():
             hash_at[title][start] = digest
             count += 1
         per_title[title] = count
-        print('%-6s %6d functions of %d+ instructions (%d in .pdata)' % (
-            title, count, args.min_insns, len(funcs)))
+        print('%-6s %6d functions of %d+ instructions (%d in .pdata), XDK %d: %s' % (
+            title, count, args.min_insns, len(funcs), xdk_build(path),
+            ', '.join(fingerprints(img)) or 'no known engine or middleware'))
     titles = list(per_title)
     shared = collections.Counter(len(v) for v in by_hash.values())
     print('\nshared by: ' + '  '.join('%d titles %d' % (k, shared[k])

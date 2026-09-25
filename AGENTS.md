@@ -533,8 +533,14 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   Adreno 740 compiler, the largest gameplay pixel shaders about 4,900 instructions.
 - **Signature census (2026-09-24, `tools/xex/xdk_sigs.py`, 6 s for 4 titles):** 175 functions are
   identical in Banjo, Gears, Blue Dragon and MC2 and 216 in three; Gears and Blue Dragon share
-  25-28% of their functions (about 500,000 instructions: Unreal Engine 3 at one version), MC2
-  (another UE3 version) 8%. Banjo's `memset` (a hooked function in `guest_crt_hooks.cc`) is in
+  25-28% of their functions (about 500,000 instructions), Banjo and MC2 5-8%. Blue Dragon is
+  NOT Unreal (corrected 2026-09-25; the census now prints the XDK build and the engine and
+  middleware strings): Banjo XDK 7645 Havok/Bink, Gears 3529 UE3/PhysX 2.5.1/Bink/FaceFX,
+  Blue Dragon 5759 CRI ADX (Mistwalker/Artoon), MC2 7978 UE3/PhysX 2.6.3/SpeedTree. The
+  Gears-Blue Dragon overlap is the XDK microcode (HLSL) shader compiler, the same build in
+  both ("Microcode Compiler", `mcl`, XGMicrocode options, ps_1_4 errors), plus the STL; all
+  four link a shader compiler, Banjo and MC2 another build. If a title compiles shaders
+  at load, that runs in the JIT on the Thor - a load-time lead for a profile. Banjo's `memset` (a hooked function in `guest_crt_hooks.cc`) is in
   all three other titles and its `memcpy` in MC2, found by the masked-prefix search - the
   per-title hook table can become a signature table. reNut's 4,969 Banjo names find 489
   functions in Gears, 278 in Blue Dragon, 468 in MC2, but only 4-7 D3D functions (the
