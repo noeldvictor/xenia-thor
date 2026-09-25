@@ -230,7 +230,7 @@ def ensure_lab():
         sys.exit(r.stdout + r.stderr)
 
 
-def run_jobs(blocks, work, ir_dir):
+def run_jobs(blocks, work, ir_dir, no_robust=False):
     """Runs the lab over the job blocks (name -> text); a job that crashes the
     driver is recorded and the run goes on from the next job."""
     results = collections.OrderedDict()
@@ -240,7 +240,8 @@ def run_jobs(blocks, work, ir_dir):
         part = os.path.join(work, 'jobs.txt')
         with open(part, 'w', encoding='utf-8', newline='\n') as f:
             f.write(''.join(blocks[n] for n in remaining))
-        cmd = ('MESA_SHADER_CACHE_DISABLE=true FD_GPU_ID=740 LD_PRELOAD=%s VK_DRIVER_FILES=%s '
+        cmd = (('LAB_NO_ROBUST=1 ' if no_robust else '') +
+               'MESA_SHADER_CACHE_DISABLE=true FD_GPU_ID=740 LD_PRELOAD=%s VK_DRIVER_FILES=%s '
                'VK_ICD_FILENAMES=%s %s %s %s' % (SHIM, ICD, ICD, LAB, to_wsl(part),
                                                  to_wsl(ir_dir) if ir_dir else ''))
         r = wsl(cmd)
@@ -276,6 +277,9 @@ def main():
     ap.add_argument('--baseline', default='')
     ap.add_argument('--top', type=int, default=15)
     ap.add_argument('--ir', action='store_true')
+    ap.add_argument('--no-robust', action='store_true',
+                    help='device without robustBufferAccess and robustImageAccess '
+                         '(xenia enables them): the cost of robustness')
     ap.add_argument('--only', default='', help='comma-separated name parts (shader hashes)')
     ap.add_argument('--color-format', type=int, default=37,
                     help='VkFormat of every color output (default R8G8B8A8_UNORM)')
@@ -346,7 +350,7 @@ def main():
     ir_dir = os.path.join(OUT, args.label + '-ir') if args.ir else None
     if ir_dir:
         os.makedirs(ir_dir, exist_ok=True)
-    results, errors = run_jobs(jobs, work, ir_dir)
+    results, errors = run_jobs(jobs, work, ir_dir, args.no_robust)
 
     # The module's own executable: Turnip names them by stage; the vertex
     # stage also has a binning-pass variant.

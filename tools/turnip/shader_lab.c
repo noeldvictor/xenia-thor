@@ -411,6 +411,14 @@ static int create_device(void) {
     fprintf(stderr, "no pipelineExecutableInfo\n");
     return 0;
   }
+  // LAB_NO_ROBUST=1: the device without robust buffer and image access (the
+  // cost of robustness in the compiled shaders).
+  const char* no_robust = getenv("LAB_NO_ROBUST");
+  if (no_robust && no_robust[0] == '1') {
+    features.features.robustBufferAccess = VK_FALSE;
+    features13.robustImageAccess = VK_FALSE;
+    fprintf(stderr, "robust buffer and image access off\n");
+  }
 
   uint32_t ext_count = 0;
   vkEnumerateDeviceExtensionProperties(physical, NULL, &ext_count, NULL);

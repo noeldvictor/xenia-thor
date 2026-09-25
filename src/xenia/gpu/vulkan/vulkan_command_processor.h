@@ -1284,6 +1284,19 @@ class VulkanCommandProcessor : public CommandProcessor {
   // supported, function loaded). Decided in SetupContext before any descriptor
   // set layout is created, since push-descriptor layouts need a creation flag.
   bool push_descriptors_active_ = false;
+  // maxPushDescriptors. A pixel texture set with more bindings is not pushed
+  // but uses a transient set (VUID-VkDescriptorSetLayoutCreateInfo-flags-00281:
+  // 33 bindings in Gears and Banjo on NVIDIA and Turnip, both with 32 -
+  // tools/pc/vk_validate.py, 2026-09-24).
+  uint32_t max_push_descriptors_ = 0;
+  bool IsPixelTextureSetPushed(size_t texture_count,
+                               size_t sampler_count) const {
+    return push_descriptors_active_ &&
+           texture_count + sampler_count <= max_push_descriptors_;
+  }
+  // IsPixelTextureSetPushed of the latest UpdateBindings (the field capture
+  // re-emits that draw's bindings).
+  bool last_draw_pixel_textures_pushed_ = false;
 
   // Currently used samplers.
   std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>

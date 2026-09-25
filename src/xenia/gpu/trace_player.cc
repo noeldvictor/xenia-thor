@@ -9,6 +9,7 @@
 
 #include "xenia/gpu/trace_player.h"
 
+#include <cstring>
 #include <memory>
 
 #include "xenia/gpu/command_processor.h"
@@ -79,6 +80,15 @@ void TracePlayer::SeekCommand(int target_command) {
     PlayTrace(frame->start_ptr, command.end_ptr - frame->start_ptr,
               TracePlaybackMode::kBreakOnSwap, true);
   }
+}
+
+void TracePlayer::ReplayCurrentFrame() {
+  auto frame = current_frame();
+  if (!frame) {
+    return;
+  }
+  PlayTrace(frame->start_ptr, frame->end_ptr - frame->start_ptr,
+            TracePlaybackMode::kBreakOnSwap, false);
 }
 
 void TracePlayer::WaitOnPlayback() {
@@ -171,9 +181,26 @@ void TracePlayer::PlayTraceOnThread(const uint8_t* trace_data,
       case TraceCommandType::kMemoryRead: {
         auto cmd = reinterpret_cast<const MemoryCommand*>(trace_ptr);
         trace_ptr += sizeof(*cmd);
+        uint8_t* memory_destination = memory->TranslatePhysical(cmd->base_ptr);
+        if (skip_unchanged_memory_) {
+          // Only the bytes that differ are written and invalidated: a warm
+          // replay then reloads what the frame changed (resolve targets,
+          // dynamic data), not every texture it reads.
+          memory_scratch_.resize(cmd->decoded_length);
+          DecompressMemory(cmd->encoding_format, trace_ptr, cmd->encoded_length,
+                           memory_scratch_.data(), cmd->decoded_length);
+          if (std::memcmp(memory_destination, memory_scratch_.data(),
+                          cmd->decoded_length)) {
+            std::memcpy(memory_destination, memory_scratch_.data(),
+                        cmd->decoded_length);
+            command_processor->TracePlaybackWroteMemory(cmd->base_ptr,
+                                                        cmd->decoded_length);
+          }
+          trace_ptr += cmd->encoded_length;
+          break;
+        }
         DecompressMemory(cmd->encoding_format, trace_ptr, cmd->encoded_length,
-                         memory->TranslatePhysical(cmd->base_ptr),
-                         cmd->decoded_length);
+                         memory_destination, cmd->decoded_length);
         trace_ptr += cmd->encoded_length;
         command_processor->TracePlaybackWroteMemory(cmd->base_ptr,
                                                     cmd->decoded_length);

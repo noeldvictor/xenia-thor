@@ -363,8 +363,11 @@ bool VulkanCommandProcessor::SetupContext() {
       cvars::vulkan_push_descriptors &&
       vulkan_device->extensions().ext_KHR_push_descriptor &&
       vulkan_device->functions().vkCmdPushDescriptorSetKHR != nullptr;
-  XELOGGPU("VulkanCommandProcessor: push descriptors {} (pixel texture set)",
-           push_descriptors_active_ ? "ENABLED" : "disabled");
+  max_push_descriptors_ = vulkan_device->extensions().max_push_descriptors;
+  XELOGGPU(
+      "VulkanCommandProcessor: push descriptors {} (pixel texture set, up to {} "
+      "bindings)",
+      push_descriptors_active_ ? "ENABLED" : "disabled", max_push_descriptors_);
 
   // GPU-side frame-time timestamp queries (Thor/Adreno bring-up diagnostic).
   gpu_timestamp_period_ns_ = device_properties.timestampPeriod;
@@ -3301,6 +3304,19 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         draw_cpu_prep_ns_ / 1000, draw_cpu_textures_ns_ / 1000,
         draw_cpu_rt_ns_ / 1000, draw_cpu_pipeline_ns_ / 1000,
         draw_cpu_state_ns_ / 1000);
+    // Inside tex_us (RequestTextures): how many bindings were recomputed from
+    // their fetch constants, changed, and loaded, and the time of the loads
+    // and of the binding update.
+    if (texture_cache_) {
+      TextureCache::RequestStats tex_stats = texture_cache_->TakeRequestStats();
+      XELOGI(
+          "GPU tex cpu/frame: calls={} checked={} changed={} loads={} "
+          "load_us={} update_us={}",
+          tex_stats.calls, tex_stats.checked, tex_stats.changed,
+          tex_stats.loads, tex_stats.load_ns / 1000,
+          tex_stats.update_ns / 1000);
+      texture_cache_->SetRequestStatsEnabled(true);
+    }
     if (SharedMemory::StatsEnabled() && shared_memory_) {
       SharedMemory::Stats sm = shared_memory_->TakeStats();
       XELOGI(
@@ -5774,7 +5790,7 @@ VkDescriptorSetLayout VulkanCommandProcessor::GetTextureDescriptorSetLayout(
   // the set is never allocated from a pool or bound normally. The vertex set
   // never gets the flag: one push descriptor set per pipeline layout.
   descriptor_set_layout_create_info.flags =
-      (!is_vertex && push_descriptors_active_)
+      (!is_vertex && IsPixelTextureSetPushed(texture_count, sampler_count))
           ? VK_DESCRIPTOR_SET_LAYOUT_CREATE_PUSH_DESCRIPTOR_BIT_KHR
           : 0;
   descriptor_set_layout_create_info.bindingCount = uint32_t(binding_count);
@@ -10975,7 +10991,7 @@ void VulkanCommandProcessor::EmitBdFieldCaptureDraw(
   // re-emit the pushed pixel descriptors below. Otherwise bind all sets (the
   // transient-set path).
   uint32_t bound_set_count =
-      push_descriptors_active_
+      last_draw_pixel_textures_pushed_
           ? uint32_t(SpirvShaderTranslator::kDescriptorSetTexturesPixel)
           : uint32_t(SpirvShaderTranslator::kDescriptorSetCount);
   pb.CmdVkBindDescriptorSets(
@@ -10988,7 +11004,8 @@ void VulkanCommandProcessor::EmitBdFieldCaptureDraw(
   // image infos live in descriptor_write_image_info_, valid through this draw; the
   // push deep-copies them). Makes the packet self-contained with push descriptors
   // ON (no global vulkan_push_descriptors=false CPU cost).
-  if (push_descriptors_active_ && bd_cap_push_layout_ != VK_NULL_HANDLE) {
+  if (last_draw_pixel_textures_pushed_ &&
+      bd_cap_push_layout_ != VK_NULL_HANDLE) {
     if (bd_cap_have_ppush_) {
       std::array<VkWriteDescriptorSet, 2 * kMaxTextureSamplerBindings> pw;
       uint32_t n = WritePushTextureBindings(
@@ -12486,6 +12503,9 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
     sampler_count_pixel = 0;
     texture_count_pixel = 0;
   }
+  const bool pixel_textures_pushed =
+      IsPixelTextureSetPushed(texture_count_pixel, sampler_count_pixel);
+  last_draw_pixel_textures_pushed_ = pixel_textures_pushed;
 
   // BRICK 1 native bindless render path: instead of allocating + writing +
   // binding a transient per-draw texture descriptor set, push this draw's
@@ -12824,7 +12844,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   // incompatible pipeline layout), the values must be pushed again, so the
   // value bit follows the bound bit for it. Without this the bind loop rebound
   // a stale handle from the transient path (2026-09-21).
-  if (push_descriptors_active_) {
+  if (pixel_textures_pushed) {
     const uint32_t pushed_sets =
         UINT32_C(1) << SpirvShaderTranslator::kDescriptorSetTexturesPixel;
     current_graphics_descriptor_set_values_up_to_date_ &=
@@ -13020,7 +13040,7 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
   }
   // Pixel shader textures and samplers.
   if (write_pixel_textures) {
-    if (push_descriptors_active_) {
+    if (pixel_textures_pushed) {
       std::array<VkWriteDescriptorSet, 2 * kMaxTextureSamplerBindings> push_writes;
       uint32_t push_write_count = WritePushTextureBindings(
           texture_count_pixel, sampler_count_pixel,

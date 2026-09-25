@@ -10,6 +10,7 @@
 #include "xenia/gpu/trace_dump.h"
 
 #include <algorithm>
+#include <chrono>
 
 #include "third_party/stb/stb_image_write.h"
 #include "xenia/base/filesystem.h"
@@ -38,6 +39,14 @@ DEFINE_int32(trace_dump_frame, 0,
              "The frame of the trace to render: an index, or -1 for the last "
              "frame (a streamed trace of a title that stopped swapping ends on "
              "the frame that stays on the panel).",
+             "GPU");
+DEFINE_int32(trace_dump_bench_iterations, 0,
+             "After the capture, play the frame this many times more with warm "
+             "caches and log the wall time of each (\"Trace bench:\"): the "
+             "command processor's CPU cost of a frame without the device "
+             "(tools/pc/trace_bench.py). With "
+             "vulkan_trace_draw_outcomes_per_frame, each replay also logs the "
+             "per-draw CPU buckets.",
              "GPU");
 
 namespace xe {
@@ -159,6 +168,17 @@ int TraceDump::Run() {
     fclose(handle);
   } else {
     result = 1;
+  }
+
+  player_->set_skip_unchanged_memory(true);
+  for (int32_t i = 0; i < cvars::trace_dump_bench_iterations; ++i) {
+    auto bench_start = std::chrono::steady_clock::now();
+    player_->ReplayCurrentFrame();
+    player_->WaitOnPlayback();
+    XELOGI("Trace bench: replay {} {} us", i,
+           std::chrono::duration_cast<std::chrono::microseconds>(
+               std::chrono::steady_clock::now() - bench_start)
+               .count());
   }
 
   player_.reset();

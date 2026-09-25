@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <cstring>
 #include <utility>
@@ -293,12 +294,19 @@ void TextureCache::RequestTextures(uint32_t used_texture_mask) {
   }
 
   // Update the texture keys and the textures.
+  const bool stats = request_stats_enabled_;
+  if (stats) {
+    ++request_stats_.calls;
+  }
   uint32_t bindings_changed = 0;
   uint32_t textures_remaining = used_texture_mask & ~texture_bindings_in_sync_;
   uint32_t index = 0;
   while (xe::bit_scan_forward(textures_remaining, &index)) {
     uint32_t index_bit = UINT32_C(1) << index;
     textures_remaining &= ~index_bit;
+    if (stats) {
+      ++request_stats_.checked;
+    }
     TextureBinding& binding = texture_bindings_[index];
     xenos::xe_gpu_texture_fetch_t fetch = regs.GetTextureFetch(index);
     TextureKey old_key = binding.key;
@@ -368,15 +376,42 @@ void TextureCache::RequestTextures(uint32_t used_texture_mask) {
       }
       binding.texture_signed = nullptr;
     }
+    std::chrono::steady_clock::time_point load_start;
+    if (stats) {
+      load_start = std::chrono::steady_clock::now();
+    }
     if (load_unsigned_data && binding.texture != nullptr) {
       LoadTextureData(*binding.texture);
+      if (stats) {
+        ++request_stats_.loads;
+      }
     }
     if (load_signed_data && binding.texture_signed != nullptr) {
       LoadTextureData(*binding.texture_signed);
+      if (stats) {
+        ++request_stats_.loads;
+      }
+    }
+    if (stats && (load_unsigned_data || load_signed_data)) {
+      request_stats_.load_ns += uint64_t(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - load_start)
+              .count());
     }
   }
   if (bindings_changed) {
+    std::chrono::steady_clock::time_point update_start;
+    if (stats) {
+      request_stats_.changed += xe::bit_count(bindings_changed);
+      update_start = std::chrono::steady_clock::now();
+    }
     UpdateTextureBindingsImpl(bindings_changed);
+    if (stats) {
+      request_stats_.update_ns += uint64_t(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(
+              std::chrono::steady_clock::now() - update_start)
+              .count());
+    }
   }
 }
 

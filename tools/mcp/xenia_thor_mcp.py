@@ -1267,6 +1267,41 @@ def xenia_cvar_ab(traces: str, a: str, b: str, cvars: str = '',
 
 
 @mcp.tool()
+def xenia_trace_bench(traces: str, iterations: int = 30, cvars: str = '',
+                      a: str = '', b: str = '', thor_profile: bool = False) -> str:
+    """The command processor's CPU cost per draw on the PC (tools/pc/
+    trace_bench.py): the trace's frame replayed `iterations` times with warm
+    caches on the Vulkan trace dump; medians of the draw-path buckets (issue,
+    emit, bindings, prep, textures, render targets, pipeline, state) and the
+    texture-request split. a/b: an A/B of two cvar sets (A B A B). x64 gives
+    the direction and size of a CPU change; the Thor judges the speed. PC
+    only."""
+    args = [t for t in traces.split() if t] + ['--iterations', str(iterations)]
+    if cvars:
+        args += ['--cvars', cvars]
+    if a and b:
+        args += ['--a', a, '--b', b]
+    if thor_profile:
+        args.append('--thor-profile')
+    return _run_tool_script('tools/pc/trace_bench.py', args, timeout=3600)
+
+
+@mcp.tool()
+def xenia_vk_validate(traces: str, cvars: str = '', thor_profile: bool = False) -> str:
+    """The Khronos validation layer (with synchronization validation) over GPU
+    trace replays on the Vulkan trace dump (tools/pc/vk_validate.py): the
+    messages grouped by ID with counts and an example. Turnip is strict; a
+    misuse the desktop driver forgives can glitch or hang the Thor. Needs the
+    layer built in scratch/tools/vvl. PC only."""
+    args = [t for t in traces.split() if t]
+    if cvars:
+        args += ['--cvars', cvars]
+    if thor_profile:
+        args.append('--thor-profile')
+    return _run_tool_script('tools/pc/vk_validate.py', args, timeout=3600)
+
+
+@mcp.tool()
 def xenia_ppc_tests_arm64(cvars: str = '', baseline: str = '') -> str:
     """The 169,117-case PPC hardware corpus on the Thor's a64 JIT, on the PC
     under qemu-aarch64 (tools/qemu/ppc_tests_arm64.py): links a static ARM64

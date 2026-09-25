@@ -98,6 +98,28 @@ class TextureCache {
 
   virtual void RequestTextures(uint32_t used_texture_mask);
 
+  // Counters of RequestTextures for the per-frame CPU trace (the Vulkan "GPU
+  // tex cpu/frame" line, tools/pc/trace_bench.py). Off by default.
+  struct RequestStats {
+    uint64_t calls = 0;
+    // Bindings recomputed from their fetch constant (not in sync).
+    uint64_t checked = 0;
+    // Bindings whose key, host swizzle or signedness changed.
+    uint64_t changed = 0;
+    uint64_t loads = 0;
+    uint64_t load_ns = 0;
+    // UpdateTextureBindingsImpl.
+    uint64_t update_ns = 0;
+  };
+  void SetRequestStatsEnabled(bool enabled) {
+    request_stats_enabled_ = enabled;
+  }
+  RequestStats TakeRequestStats() {
+    RequestStats stats = request_stats_;
+    request_stats_ = RequestStats();
+    return stats;
+  }
+
   // "ActiveTexture" means as of the latest RequestTextures call.
 
   uint32_t GetActiveTextureHostSwizzle(uint32_t fetch_constant_index) const {
@@ -557,6 +579,9 @@ class TextureCache {
   virtual void UpdateTextureBindingsImpl(uint32_t fetch_constant_mask) {}
 
  private:
+  bool request_stats_enabled_ = false;
+  RequestStats request_stats_;
+
   void UpdateTexturesTotalHostMemoryUsage(uint64_t add, uint64_t subtract);
 
   // Shared memory callback for texture data invalidation.

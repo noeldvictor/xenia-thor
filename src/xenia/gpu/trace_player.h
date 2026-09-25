@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <string>
+#include <vector>
 
 #include "xenia/base/threading.h"
 #include "xenia/gpu/trace_protocol.h"
@@ -43,6 +44,13 @@ class TracePlayer : public TraceReader {
 
   void SeekFrame(int target_frame);
   void SeekCommand(int target_command);
+  // Plays the whole current frame again with the caches kept (a warm frame,
+  // for the trace dump's CPU bench).
+  void ReplayCurrentFrame();
+  // Memory commands then write and invalidate only the bytes that differ from
+  // guest memory (warm replays for the CPU bench; a live game does not rewrite
+  // its static textures every frame).
+  void set_skip_unchanged_memory(bool skip) { skip_unchanged_memory_ = skip; }
 
   void WaitOnPlayback();
 
@@ -58,6 +66,8 @@ class TracePlayer : public TraceReader {
   bool playing_trace_ = false;
   std::atomic<uint32_t> playback_percent_ = {0};
   std::unique_ptr<xe::threading::Event> playback_event_;
+  bool skip_unchanged_memory_ = false;
+  std::vector<uint8_t> memory_scratch_;
 };
 
 }  // namespace gpu

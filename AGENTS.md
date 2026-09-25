@@ -491,6 +491,27 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   converting variants (a per-fetch-constant key needs more modification bits than the 3 left),
   the per-fetch LOD and exponent decode, and the 7,116-instruction vertex shader
   C79240F6B152599B.
+- **Validation layer over the traces (2026-09-24, `tools/pc/vk_validate.py`):** one error ID in
+  every title: the pushed pixel texture set had 33 bindings where `maxPushDescriptors` is 32
+  (NVIDIA and Turnip both; `VUID-VkDescriptorSetLayoutCreateInfo-flags-00281`, undefined on the
+  Thor). Fixed: a pixel texture set is pushed only when it fits (`IsPixelTextureSetPushed`),
+  else a transient set; the Blue Dragon field capture follows the same choice per draw. After
+  the fix, 20 traces of 4 titles with the Thor profile: 0 errors and 0 synchronization hazards
+  (sync validation forced on through `VK_KHRONOS_VALIDATION_VALIDATE_SYNC`), 6 frames
+  pixel-identical. `--best-practices` (ARM tiler set) leads for the Adreno: the D32S8
+  attachment loads and stores its stencil plane in passes that never touch stencil (GMEM
+  bandwidth; `loadOp/storeOp NONE` would need the pass contents in advance); depth bias
+  enabled with zero factors; alpha-tested draws in depth-only passes compute color that no
+  attachment takes (`gpu_depth_only_alpha_shader`, off: frame time unchanged on Blue Dragon).
+  The "disable robustBufferAccess" advice does not apply: the shader lab with robustness off
+  changed 0 of 580 shaders (`shader_lab.py --no-robust`).
+- **Command processor CPU per draw on the PC (2026-09-24, `tools/pc/trace_bench.py`):** warm
+  replays of one frame: 2.9 us per draw on Gears, 3.7 on Banjo, 3.3 on Blue Dragon, 3.7 on MC2
+  (x64). Largest buckets: prep 18-19% (shader modifications, translation lookups), bind 14%,
+  textures 11-14%, state, emit. A replay first reloaded every texture the frame reads (the
+  trace player rewrote and invalidated its memory: textures looked like 46% of the draw
+  cost); bench replays now write only the bytes that differ. On the Thor's cores Banjo's 2,565
+  draws are likely 13-20 ms of a 33 ms frame - the Thor measures it (`GPU draw cpu/frame`).
 - `scratch/gears/gears2.iso` is 1.76 GB against 7.8 GB for Gears 1 - an incomplete pull; it does
   not mount ("Failed to read all GDFX entries"). Under `--cdb` every write-watch fault is a
   debugger event and the run slows several times over; use it on a crash, not for the whole
@@ -722,6 +743,8 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `tools/pc/spirv_validate.py`, `xenia_spirv_validate` | every SPIR-V module a trace translates through spirv-val (WSL), the failures grouped by rule with an example shader. Turnip is strict: run it after a translator change |
 | `tools/turnip/shader_lab.py`, `xenia_shader_lab` | the Thor's shader compiler on the PC: host Turnip over the freedreno drm-shim (`FD_GPU_ID=740`) builds a pipeline per translated module (a generated partner stage writes or reads every varying, so linking removes nothing) and reads `VK_KHR_pipeline_executable_properties`: instructions, waves per core, registers, nops. `--baseline LABEL` diffs a translator change per shader, `--ir` writes the NIR and ir3 assembly, `--traces` replays first with `--cvars`. Build the host driver once: `wsl -d Ubuntu -- bash tools/turnip/build_host_shim.sh` |
 | `tools/pc/cvar_ab.py`, `xenia_cvar_ab` | a lever A/B on one trace dump: each trace replayed with `--a` and `--b` cvars, changed pixels per trace. A lever that must not change the picture shows 0 on every trace |
+| `tools/pc/trace_bench.py`, `xenia_trace_bench` | the command processor's CPU cost per draw without the device: the trace dump replays the captured frame `--iterations` times with warm caches (`trace_dump_bench_iterations`) and logs the draw-path buckets per frame (`vulkan_trace_draw_outcomes_per_frame`) and the texture-request split (`GPU tex cpu/frame`); medians per frame and per draw. `--a/--b` runs an A/B as A B A B. x64 gives the direction and the size; the Thor judges the speed |
+| `tools/pc/vk_validate.py`, `xenia_vk_validate` | the Khronos validation layer (synchronization validation on) over trace replays, messages grouped by ID with counts and an example. The layer is built from source once in `scratch/tools/vvl` (tag `vulkan-sdk-1.4.357.0`, `cmake -D UPDATE_DEPS=ON`, build with `/m:2`: with more jobs next to another build the compiler runs out of heap) |
 | `tools/pc/draw_bisect.py`, `xenia_draw_bisect` | which draws make a trace's Vulkan frame differ from D3D12: skips draw lists (`gpu_debug_skip_draws`, the same numbers on every backend) on Vulkan, D3D12 or both and splits the lists that explain the mismatch down to single draws, with their state from `gpu_debug_log_draws` (shader hashes, RB_DEPTHCONTROL, RB_COLORCONTROL). In the one-backend modes give candidates with `--filter` (for example `colorcontrol & 0x10`, alpha to mask): skipping every draw leaves a black frame that explains nothing |
 | `tools/pc/pc_matrix.py` | the PC regression matrix: Banjo, Gears, Gears 2, MagnaCarta 2, Blue Dragon one after another in the Thor configuration (`--android-defaults`), a contact sheet per title and a JSON summary in `scratch/matrix/`; a crash reruns under cdb for its stack. Run it after every change set and look at the sheets |
 | `pc_run.py` sticky presses (`"45:start+"`) | pressed again every `--retry-every` s until the picture changes; later presses wait. Titles ignore presses while they load and the load time varies - fixed-time routes stuck Gears on its main menu |
