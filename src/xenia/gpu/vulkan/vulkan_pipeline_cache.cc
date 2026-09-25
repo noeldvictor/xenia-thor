@@ -37,7 +37,6 @@
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/spirv_shader_translator.h"
-#include "xenia/gpu/texture_util.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 #include "xenia/gpu/xenos.h"
@@ -524,19 +523,21 @@ VulkanPipelineCache::GetCurrentPixelShaderModification(
   }
 
   // Texture fetch sign conversion only if a bound texture has an unsigned
-  // biased or gamma component (bit 1 of a 2-bit TextureSign): the same
-  // swizzled signs the texture cache gives the shader for this draw.
+  // biased or gamma component (bit 1 of a 2-bit TextureSign). The raw sign
+  // fields of the fetch constant (dword 0 bits 2-9), not the swizzled ones:
+  // one load per texture instead of SwizzleSigns (which cost 0.1 us per draw
+  // on the PC, tools/pc/trace_bench.py 2026-09-25). A component the swizzle
+  // drops may select the converting variant, which is correct for every
+  // texture.
   if (cvars::vulkan_tfetch_sign_specialize) {
-    bool sign_conversion = false;
+    uint32_t sign_conversion = 0;
     for (const Shader::TextureBinding& binding : shader.texture_bindings()) {
-      if (texture_util::SwizzleSigns(
-              regs.GetTextureFetch(binding.fetch_constant)) &
-          0b10101010) {
-        sign_conversion = true;
-        break;
-      }
+      sign_conversion |=
+          regs.values[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0 +
+                      binding.fetch_constant * 6] &
+          (0b10101010 << 2);
     }
-    modification.pixel.texture_sign_conversion = uint32_t(sign_conversion);
+    modification.pixel.texture_sign_conversion = uint32_t(sign_conversion != 0);
   }
 
   if (render_target_cache_.GetPath() ==

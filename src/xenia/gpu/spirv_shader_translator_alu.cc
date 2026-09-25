@@ -33,12 +33,24 @@ DEFINE_bool(
     "shaders fail to compile that way.",
     "GPU");
 
+DEFINE_bool(
+    spirv_debug_ieee_multiply, false,
+    "Research-only shader lab probe: plain IEEE multiplies, without the Shader "
+    "Model 3 rule that +0 times anything (Inf, NaN) is +0. Wrong where a game "
+    "multiplies zero by Inf or NaN. Measures what the rule costs on the Adreno "
+    "(tools/turnip/shader_lab.py) and how many pixels depend on it "
+    "(tools/pc/cvar_ab.py).",
+    "GPU");
+
 namespace xe {
 namespace gpu {
 
 spv::Id SpirvShaderTranslator::ZeroIfAnyOperandIsZero(spv::Id value,
                                                       spv::Id operand_0_abs,
                                                       spv::Id operand_1_abs) {
+  if (cvars::spirv_debug_ieee_multiply) {
+    return value;
+  }
   EnsureBuildPointAvailable();
   int num_components = builder_->getNumComponents(value);
   assert_true(builder_->getNumComponents(operand_0_abs) == num_components);
@@ -240,6 +252,9 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
           used_result_components &
           ~instr.vector_operands[0].GetIdenticalComponents(
               instr.vector_operands[1]);
+      if (cvars::spirv_debug_ieee_multiply) {
+        multiplicands_different = 0;
+      }
       if (multiplicands_different) {
         // Shader Model 3: +0 or denormal * anything = +-0.
         spv::Id different_operands[2] = {multiplicands[0], multiplicands[1]};
