@@ -151,6 +151,85 @@ def reflect(path):
     return info
 
 
+# Float arithmetic results that spirv_to_nir lowers to 16-bit when decorated
+# RelaxedPrecision (Turnip: mediump_16bit_alu): FNegate, FAdd, FSub, FMul,
+# FDiv, FRem, FMod, VectorTimesScalar, the matrix products, Dot, Select.
+RELAX_ALU_OPS = {127, 129, 131, 133, 136, 140, 141, 142, 143, 144, 145, 146, 148, 169}
+# Image sample and fetch results.
+RELAX_TEX_OPS = {87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97}
+
+
+def relax_module(path, modes, out_dir):
+    """A copy of a SPIR-V module with RelaxedPrecision on its float results:
+    'alu' the float arithmetic (and GLSL.std.450 float calls), 'tex' the image
+    sample results. The upper bound of what fp16 gives on the Adreno before
+    the translator decides which values may be 16-bit."""
+    words = array.array('I', open(path, 'rb').read())
+    swap = words[0] != 0x07230203
+    if swap:
+        words.byteswap()
+    float_types = set()
+    floatish = set()  # float, float vectors and arrays of them
+    pointers = {}  # pointer type -> (storage class, pointee)
+    decorated = set()
+    targets = []
+    decorate_end = None
+    i = 5
+    while i < len(words):
+        count, op = words[i] >> 16, words[i] & 0xFFFF
+        ops = words[i + 1:i + count]
+        if op == 71:  # OpDecorate
+            decorate_end = i + count
+            if ops[1] == 0:
+                decorated.add(ops[0])
+        elif op == 72 and decorate_end is not None:  # OpMemberDecorate
+            decorate_end = i + count
+        elif op == 22 and ops[1] == 32:  # OpTypeFloat 32
+            float_types.add(ops[0])
+            floatish.add(ops[0])
+        elif op == 23 and ops[1] in float_types:  # OpTypeVector of float
+            float_types.add(ops[0])
+            floatish.add(ops[0])
+        elif op == 28 and ops[1] in floatish:  # OpTypeArray of float values
+            floatish.add(ops[0])
+        elif op == 32:  # OpTypePointer
+            pointers[ops[0]] = (ops[1], ops[2])
+        elif op == 59:  # OpVariable: result type, result, storage class
+            storage, pointee = pointers.get(ops[0], (None, None))
+            if pointee in floatish and (
+                    ('vars' in modes and storage == 7) or  # Function
+                    ('in' in modes and storage == 1)):  # Input
+                targets.append(ops[1])
+        elif 'cmp' in modes and 180 <= op <= 191 and len(ops) >= 2:
+            # OpFOrd/FUnord comparisons (bool results): relaxed, their float
+            # operands need no conversion back to 32 bits.
+            targets.append(ops[1])
+        elif len(ops) >= 2 and ops[0] in float_types:
+            result = ops[1]
+            if (('alu' in modes and (op in RELAX_ALU_OPS or op == 12)) or
+                    ('tex' in modes and op in RELAX_TEX_OPS)):
+                targets.append(result)
+        if count == 0:
+            break
+        i += count
+    if decorate_end is None:
+        # No decorations yet: put them before the first type declaration.
+        i = 5
+        while i < len(words) and not 19 <= (words[i] & 0xFFFF) <= 39:
+            i += words[i] >> 16
+        decorate_end = i
+    extra = array.array('I')
+    for result in targets:
+        if result not in decorated:
+            extra.extend([(3 << 16) | 71, result, 0])
+    out = words[:decorate_end] + extra + words[decorate_end:]
+    if swap:
+        out.byteswap()
+    new_path = os.path.join(out_dir, os.path.basename(path))
+    open(new_path, 'wb').write(out.tobytes())
+    return new_path, len(extra) // 3
+
+
 def glsl_type(v):
     if v['comps'] == 1:
         return v['base']
@@ -277,6 +356,10 @@ def main():
     ap.add_argument('--baseline', default='')
     ap.add_argument('--top', type=int, default=15)
     ap.add_argument('--ir', action='store_true')
+    ap.add_argument('--relax', default='',
+                    help='alu, tex or alu,tex: decorate the fragment modules\' float '
+                         'results RelaxedPrecision (16-bit on the Adreno) - the upper bound '
+                         'of an fp16 translation')
     ap.add_argument('--no-robust', action='store_true',
                     help='device without robustBufferAccess and robustImageAccess '
                          '(xenia enables them): the cost of robustness')
@@ -297,6 +380,7 @@ def main():
     os.makedirs(work, exist_ok=True)
     partners = {}  # glsl text -> (path, stage)
     jobs, meta, skipped = collections.OrderedDict(), {}, []
+    relaxed_total = 0
     for path in modules:
         name = os.path.basename(path).replace('shader_', '').replace('.vulkan.bin', '')
         if args.only and not any(o in name for o in args.only.split(',')):
@@ -305,6 +389,11 @@ def main():
         if info['model'] not in STAGE_BITS:
             skipped.append(name)
             continue
+        if args.relax and info['model'] == 4:
+            relax_dir = os.path.join(work, 'relaxed')
+            os.makedirs(relax_dir, exist_ok=True)
+            path, relaxed = relax_module(path, args.relax.split(','), relax_dir)
+            relaxed_total += relaxed
         bindings = {}
         for s, b, kind, count in info['bindings']:
             bindings[(s, b)] = (kind, count)

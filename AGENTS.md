@@ -525,6 +525,18 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   ends) and the segments restart. Gears past the cell block: 0 failed draws, 16 overflows in
   400 s, the corridors render. A dark triangle near the weapon pickup (shot 20 of the run) is
   still to be checked with a trace.
+- **fp16 on the Adreno, upper bound (2026-09-25, `shader_lab.py --relax`):** RelaxedPrecision
+  added to the translated pixel modules (Turnip: `mediump_16bit_alu`). All float math: waves
+  +854 over 343 shaders, registers -760, instructions +48%; plus the register variables (Turnip
+  `nir_lower_mediump_vars`): waves +1,468; plus the comparisons: waves +1,540 (about +4.5 per
+  shader), registers -1,139, instructions +34%. Texture results: no change (Turnip ignores
+  the hint there). The added instructions are 16/32-bit conversions forced by the emulation:
+  32-bit constants and the Shader Model 3 zero rule (`min`, `cmps`, `sel` per multiply -
+  about 24% of the costliest shader). Blanket fp16 also made texture coordinates 16-bit;
+  a real version keeps coordinates, depth and position 32-bit. A trade, not a PC-proven win:
+  the device frame time decides. Adreno idea parked for a device test: `sel.f32` may test
+  its middle operand as a float, which would drop the `cmps` of every zero test (ir3 never
+  emits `sel.f32`; its condition is undocumented).
 - **Deep sweep (2026-09-24, `trace_sweep.py gears banjo --deep --thor-profile`):** Gears in the
   prison corridors: Vulkan against D3D12 0.02-0.13% on 5 gameplay frames; Banjo walking
   Spiral Mountain 0.03-4.3% (the known floating-point class); 0 failed draws on both backends.
