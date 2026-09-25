@@ -1336,6 +1336,12 @@ DEFINE_bool(vulkan_debug_texture_fetch_disable_exp_adjust, false,
             "2_10_10_10_FLOAT resolve/fetch fallback darkening.",
             "GPU");
 DEFINE_bool(
+    vulkan_shader_storage_android, false,
+    "Android: initialize the shader and pipeline storage (not blocking the "
+    "launch): the stored pipelines are created while the guest boots, so they "
+    "do not compile in play. Off until a device session verifies it.",
+    "GPU");
+DEFINE_bool(
     vulkan_tfetch_sign_specialize, true,
     "Translate a pixel shader without the texture fetch sign conversion "
     "(unsigned biased and gamma) when no texture it binds needs it. Mesa ir3 "

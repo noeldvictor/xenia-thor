@@ -172,6 +172,7 @@ DECLARE_bool(gpu_foliage_lrz_feedback);
 DECLARE_bool(gpu_foliage_force_early_z);
 DECLARE_bool(vulkan_debug_texture_fetch_disable_exp_adjust);
 DECLARE_bool(vulkan_tfetch_sign_specialize);
+DECLARE_bool(vulkan_shader_storage_android);
 DECLARE_bool(vulkan_cache_texture_descriptors);
 DECLARE_bool(vulkan_push_descriptors);
 DECLARE_bool(vulkan_coalesce_edram_transfers);

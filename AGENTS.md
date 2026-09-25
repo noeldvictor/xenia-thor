@@ -533,10 +533,15 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   PC, 300 s: run 1 created about 760 pipelines in play (10.6 s of compiles); run 2 created
   759 of 759 stored at launch in 4.4 s and about 9 in play (1.2 s, -88%), 0 failed draws, the
   picture correct. The records are guest microcode and Xenos state, so a file recorded on the
-  PC gives the Thor its pipelines with its own translation and driver. Open for the Thor:
-  `emulator.cc` skips storage initialization on Android (a bring-up note); the launch-time
-  creation is single-threaded (4.4 s on the PC, far longer on Adreno without the driver
-  cache) - parallel creation and a non-blocking start come before enabling it there.
+  PC gives the Thor its pipelines with its own translation and driver. Launch-time creation
+  is parallel: translation, layouts and render passes on the command processor thread, the
+  driver compiles on all cores (`vulkan_shader_storage_threads`, 0 = one per core): 765
+  pipelines in 2.8 s on the PC (1.8 s translation, 1.1 s on 16 threads; was 4.4 s). Android:
+  `vulkan_shader_storage_android` (default off until a device session) starts it without
+  blocking the launch - the command processor thread creates while the guest boots. Thor
+  test: record on the PC (`pc_matrix --deep`), push `<cache_root>/shaders/vulkan/<title>.xvs`,
+  launch with the cvar on, read the "Vulkan shader storage" line and the in-play pipeline
+  count.
 - **fp16 on the Adreno, upper bound (2026-09-25, `shader_lab.py --relax`):** RelaxedPrecision
   added to the translated pixel modules (Turnip: `mediump_16bit_alu`). All float math: waves
   +854 over 343 shaders, registers -760, instructions +48%; plus the register variables (Turnip

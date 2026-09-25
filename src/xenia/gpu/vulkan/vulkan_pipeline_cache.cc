@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -57,6 +58,10 @@ DEFINE_bool(
     "pipelines at the next launch, before the game draws. The records are "
     "platform-independent, so a file recorded on the PC works on the Thor.",
     "Vulkan");
+DEFINE_int32(vulkan_shader_storage_threads, 0,
+             "Threads that create the stored pipelines at launch "
+             "(vulkan_shader_storage). 0 = one per CPU core.",
+             "Vulkan");
 DEFINE_string(
     vulkan_pipeline_cache_path, "",
     "Directory for the persistent Vulkan pipeline cache blob (set by the Android "
@@ -3279,6 +3284,9 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
     }
   }
 
+  // The stored pipelines are created on several threads at launch
+  // (InitializeShaderStorage); the rest above touches no shared state.
+  std::lock_guard<std::mutex> creation_lock(creation_stats_mutex_);
   creation_arguments.pipeline->second.pipeline = pipeline;
   ++pipeline_create_count_;
   const uint64_t create_ms =
@@ -3435,18 +3443,60 @@ void VulkanPipelineCache::InitializeShaderStorage(
       position += 8 + size;
       valid_end = position;
     }
-    uint32_t created = 0, failed = 0;
+    // Translation, layouts and render passes on this thread; the driver's
+    // pipeline compiles (the long part, tens of ms each on the Adreno) on
+    // all cores.
+    std::vector<PipelineCreationArguments> prepared;
+    prepared.reserve(descriptions.size());
+    uint32_t failed = 0;
     for (const PipelineDescription& description : descriptions) {
       if (pipelines_.find(description) != pipelines_.end()) {
         continue;
       }
-      if (CreateStoredPipeline(description)) {
-        ++created;
+      PipelineCreationArguments arguments;
+      if (PrepareStoredPipeline(description, arguments)) {
+        prepared.push_back(arguments);
       } else {
         ++failed;
       }
     }
+    const uint64_t prepared_ms = xe::Clock::QueryHostUptimeMillis();
+    uint32_t thread_count = uint32_t(cvars::vulkan_shader_storage_threads);
+    if (!thread_count) {
+      thread_count = std::max(1u, std::thread::hardware_concurrency());
+    }
+    thread_count = std::min(thread_count, uint32_t(prepared.size()));
+    std::atomic<size_t> next_index{0};
+    auto create_worker = [this, &prepared, &next_index]() {
+      for (size_t i = next_index.fetch_add(1); i < prepared.size();
+           i = next_index.fetch_add(1)) {
+        EnsurePipelineCreated(prepared[i]);
+      }
+    };
+    std::vector<std::thread> workers;
+    for (uint32_t i = 1; i < thread_count; ++i) {
+      workers.emplace_back(create_worker);
+    }
+    create_worker();
+    for (std::thread& worker : workers) {
+      worker.join();
+    }
+    uint32_t created = 0;
+    for (const PipelineCreationArguments& arguments : prepared) {
+      if (arguments.pipeline->second.pipeline != VK_NULL_HANDLE) {
+        ++created;
+      } else {
+        // Not left as an empty entry for a later draw to find.
+        ++failed;
+        pipelines_.erase(arguments.pipeline->first);
+      }
+    }
     storage_replaying_ = false;
+    XELOGI(
+        "Vulkan shader storage: prepared in {} ms, pipelines on {} threads "
+        "in {} ms",
+        prepared_ms - start_ms, std::max(thread_count, 1u),
+        xe::Clock::QueryHostUptimeMillis() - prepared_ms);
     XELOGI(
         "Vulkan shader storage {}: {} shaders and {} pipelines stored, {} "
         "pipelines created in {} ms ({} not created)",
@@ -3529,8 +3579,9 @@ void VulkanPipelineCache::FlushShaderStorage(bool force) {
   storage_last_flush_ms_ = now_ms;
 }
 
-bool VulkanPipelineCache::CreateStoredPipeline(
-    const PipelineDescription& description) {
+bool VulkanPipelineCache::PrepareStoredPipeline(
+    const PipelineDescription& description,
+    PipelineCreationArguments& creation_arguments) {
   // The special render passes (Blue Dragon's custom resolve, the feedback
   // merge, the hybrid post-process) are never stored.
   if (description.bd_custom_resolve ||
@@ -3606,7 +3657,6 @@ bool VulkanPipelineCache::CreateStoredPipeline(
   if (render_pass == VK_NULL_HANDLE) {
     return false;
   }
-  PipelineCreationArguments creation_arguments;
   auto& pipeline =
       *pipelines_.emplace(description, Pipeline(pipeline_layout)).first;
   creation_arguments.pipeline = &pipeline;
@@ -3615,11 +3665,6 @@ bool VulkanPipelineCache::CreateStoredPipeline(
   creation_arguments.geometry_shader = geometry_shader;
   creation_arguments.render_pass = render_pass;
   creation_arguments.feedback_merge = false;
-  if (!EnsurePipelineCreated(creation_arguments)) {
-    // Not left as an empty entry for a later draw to find.
-    pipelines_.erase(description);
-    return false;
-  }
   return true;
 }
 

@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -459,8 +460,14 @@ class VulkanPipelineCache {
                    const uint32_t* host_address, uint32_t dword_count);
   void StorePipeline(const PipelineDescription& description);
   void FlushShaderStorage(bool force);
-  // Creates a stored pipeline as ConfigurePipeline would for its description.
-  bool CreateStoredPipeline(const PipelineDescription& description);
+  // Everything ConfigurePipeline does for a stored description except the
+  // driver compile: translation, layout, render pass, the map entry. Then
+  // EnsurePipelineCreated can run on any thread.
+  bool PrepareStoredPipeline(const PipelineDescription& description,
+                             PipelineCreationArguments& creation_arguments);
+  // Guards the creation statistics and saves at the end of
+  // EnsurePipelineCreated.
+  std::mutex creation_stats_mutex_;
   FILE* storage_file_ = nullptr;
   std::vector<uint8_t> storage_pending_;
   uint64_t storage_last_flush_ms_ = 0;

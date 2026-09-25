@@ -37,6 +37,7 @@
 #include "xenia/cpu/backend/null_backend.h"
 #include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/thread_state.h"
+#include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/graphics_system.h"
 #include "xenia/hid/input_driver.h"
 #include "xenia/hid/hid_flags.h"
@@ -2009,9 +2010,17 @@ X_STATUS Emulator::CompleteLaunch(const std::filesystem::path& path,
   }
 
 #if XE_PLATFORM_ANDROID
-  // The Android ARM64 bring-up currently needs to reach guest CPU translation
-  // before spending time in prelaunch GPU cache work.
-  XELOGW("Skipping blocking shader storage initialization on Android");
+  // The Android ARM64 bring-up needed to reach guest CPU translation before
+  // spending time in prelaunch GPU cache work, so the storage was skipped.
+  // With vulkan_shader_storage_android the stored pipelines are created on
+  // the command processor thread while the guest boots (not blocking the
+  // launch) - a file recorded on the PC works (vulkan_shader_storage).
+  if (cvars::vulkan_shader_storage_android) {
+    graphics_system_->InitializeShaderStorage(cache_root_, title_id_.value(),
+                                              false);
+  } else {
+    XELOGW("Skipping shader storage initialization on Android");
+  }
 #else
   // Initializing the shader storage in a blocking way so the user doesn't miss
   // the initial seconds - for instance, sound from an intro video may start
