@@ -512,6 +512,13 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   trace player rewrote and invalidated its memory: textures looked like 46% of the draw
   cost); bench replays now write only the bytes that differ. On the Thor's cores Banjo's 2,565
   draws are likely 13-20 ms of a 33 ms frame - the Thor measures it (`GPU draw cpu/frame`).
+- **Deeper routes (2026-09-24, open):** the nop HID trigger file takes sticks, triggers and
+  stick clicks (`ls_up`, `ls_down`, `ls_left`, `ls_right`, `rs_...`, `lt`, `rt`, `ls`, `rs`),
+  and a `pc_run` press takes its own hold (`"200:ls_up,rt/4000"`), so a route can walk and
+  fire. The first deeper Gears route (walk out of the cell block, fire at 265 s) went black at
+  270 s: every draw after it logged "Failed in backend" (7 million lines, no reason). Each
+  `IssueDraw` failure exit now logs its source line (`DrawFailed`); the cause is being
+  traced.
 - `scratch/gears/gears2.iso` is 1.76 GB against 7.8 GB for Gears 1 - an incomplete pull; it does
   not mount ("Failed to read all GDFX entries"). Under `--cdb` every write-watch fault is a
   debugger event and the run slows several times over; use it on a crash, not for the whole

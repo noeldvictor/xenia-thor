@@ -401,6 +401,12 @@ class VulkanCommandProcessor : public CommandProcessor {
   bool IssueDraw(xenos::PrimitiveType prim_type, uint32_t index_count,
                  IndexBufferInfo* index_buffer_info,
                  bool major_mode_explicit) override;
+  // IssueDraw's failure exits: logs the source line of the first failures and
+  // then at every power of two, with a count per line. Gears went black past
+  // its cell block with millions of "Failed in backend" and no reason
+  // (2026-09-24).
+  bool DrawFailed(int line);
+  std::unordered_map<int, uint64_t> draw_failure_counts_;
   bool IssueCopy() override;
 
   // Blue Dragon native-draw HLE: mirror of the D3D12 IssueDraw-entry counter so

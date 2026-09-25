@@ -189,7 +189,11 @@ def main():
         # until the picture changes, and the later presses wait for it
         # (2026-09-23: Gears ignores presses while its title loads, and the
         # load time varies run to run, so fixed-time routes stuck on menus).
-        presses.append((float(t), button.rstrip('+'), button.endswith('+')))
+        # "90:ls_up,rt/3000": a per-press hold in ms (default --hold) - walk
+        # and fire for 3 s. Sticks and triggers: ls_up/down/left/right, rs_...,
+        # lt, rt (the nop HID trigger file, 2026-09-24).
+        name, _, hold = button.rstrip('+').partition('/')
+        presses.append((float(t), name, button.endswith('+'), int(hold) if hold else args.hold))
     sticky = None  # {button, scheduled, before, next, tries}
     print('run:', os.path.basename(exe), ' '.join('--' + c for c in cvars) if not args.oracle else '(oracle)',
           flush=True)
@@ -232,24 +236,25 @@ def main():
                         now, sticky['button'], 'took' if changed else 'GAVE UP',
                         sticky['tries']), flush=True)
                     if shift > 0:
-                        presses = [(t + shift, b_, s_) for t, b_, s_ in presses]
+                        presses = [(t + shift, b_, s_, h_) for t, b_, s_, h_ in presses]
                     sticky = None
                 else:
                     with open(trigger, 'w') as f:
-                        f.write('%s:%d\n' % (sticky['button'], args.hold))
+                        f.write('%s:%d\n' % (sticky['button'], sticky['hold']))
                     sticky['tries'] += 1
                     sticky['next'] = now + args.retry_every
                     print('+%5.1f s press %s (again)' % (now, sticky['button']), flush=True)
             while not sticky and presses and presses[0][0] <= now:
-                scheduled, button, is_sticky = presses.pop(0)
+                scheduled, button, is_sticky, hold_ms = presses.pop(0)
                 if is_sticky:
                     hwnd = pc_screens.find_window(emulator_pid(proc, args.cdb))
                     before = os.path.join(storage, 'probe_before.png')
                     if hwnd and pc_screens.capture(hwnd, before):
-                        sticky = {'button': button, 'scheduled': scheduled, 'before': before,
+                        sticky = {'button': button, 'hold': hold_ms, 'scheduled': scheduled,
+                                  'before': before,
                                   'next': now + args.retry_every, 'tries': 1}
                 with open(trigger, 'w') as f:
-                    f.write('%s:%d\n' % (button, args.hold))
+                    f.write('%s:%d\n' % (button, hold_ms))
                 print('+%5.1f s press %s%s' % (now, button, ' (sticky)' if sticky else ''),
                       flush=True)
             if now >= next_shot:

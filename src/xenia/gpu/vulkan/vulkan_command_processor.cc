@@ -6363,6 +6363,15 @@ void VulkanCommandProcessor::BdArmDecoupledCapture(bool armed) {
   bd_capture_armed_ = armed;
 }
 
+bool VulkanCommandProcessor::DrawFailed(int line) {
+  uint64_t count = ++draw_failure_counts_[line];
+  if (count <= 4 || !(count & (count - 1))) {
+    XELOGE("IssueDraw failed at vulkan_command_processor.cc:{} ({} times)",
+           line, count);
+  }
+  return false;
+}
+
 bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                                        uint32_t index_count,
                                        IndexBufferInfo* index_buffer_info,
@@ -6465,7 +6474,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           "edram_mode={}",
           uint32_t(prim_type), index_count, uint32_t(edram_mode));
     }
-    return false;
+    return DrawFailed(__LINE__);
   }
   pipeline_cache_->AnalyzeShaderUcode(*vertex_shader);
   uint64_t vertex_shader_hash = vertex_shader->ucode_data_hash();
@@ -6561,7 +6570,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       bs_t0 = std::chrono::steady_clock::now();
     }
     if (!BeginSubmission(true)) {
-      return false;
+      return DrawFailed(__LINE__);
     }
     if (trace_draw_cpu) {
       // BeginSubmission carries the frame-await throttle-wait; time it apart from
@@ -6592,7 +6601,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
               .count());
     }
     if (!process_ok) {
-      return false;
+      return DrawFailed(__LINE__);
     }
     // Tessellation: on the host, every draw with a domain shader is a patch
     // list, also a tessellated triangle or quad list (patches of 3 or 4
@@ -6640,14 +6649,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
               PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA &&
           primitive_processing_result.host_index_format ==
               xenos::IndexFormat::kInt32))) {
-      return false;
+      return DrawFailed(__LINE__);
     }
     if (!tessellated &&
         primitive_processing_result.host_vertex_shader_type !=
             Shader::HostVertexShaderType::kVertex &&
         primitive_processing_result.host_vertex_shader_type !=
             Shader::HostVertexShaderType::kPointListAsTriangleStrip) {
-      return false;
+      return DrawFailed(__LINE__);
     }
 
     // BD input-attachment merge (detection): before computing the pixel shader
@@ -6731,7 +6740,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
                      : nullptr;
     if (!pipeline_cache_->EnsureShadersTranslated(vertex_shader_translation,
                                                   pixel_shader_translation)) {
-      return false;
+      return DrawFailed(__LINE__);
     }
 
     // Obtain the samplers. Note that the bindings don't depend on the shader
@@ -6803,7 +6812,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             shader_sampler_pair.second = shader_sampler;
             if (shader_sampler == VK_NULL_HANDLE) {
               if (!sampler_overflowed) {
-                return false;
+                return DrawFailed(__LINE__);
               }
               ++samplers_overflowed_count;
             }
@@ -6849,7 +6858,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             // anymore (would enter an infinite loop otherwise if the number of
             // attempts was not limited to 2). Possibly too many unique samplers
             // in one draw, or failed to await submission completion.
-            return false;
+            return DrawFailed(__LINE__);
           }
           ++samplers_overflowed_count;
         }
@@ -7030,12 +7039,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     if (used_texture_mask_vertex &&
         !TraceTextureSourceChecksums(used_texture_mask_vertex, "vertex",
                                      vertex_shader->ucode_data_hash())) {
-      return false;
+      return DrawFailed(__LINE__);
     }
     if (used_texture_mask_pixel &&
         !TraceTextureSourceChecksums(used_texture_mask_pixel, "pixel",
                                      pixel_shader->ucode_data_hash())) {
-      return false;
+      return DrawFailed(__LINE__);
     }
   }
 
@@ -7202,7 +7211,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             .count());
   }
   if (!rt_update_ok) {
-    return false;
+    return DrawFailed(__LINE__);
   }
 
   // Create the pipeline using the render pass selected by the render target
@@ -7246,7 +7255,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             .count());
   }
   if (!configure_pipeline_ok) {
-    return false;
+    return DrawFailed(__LINE__);
   }
 
   // Update the graphics pipeline, and if the new graphics pipeline has a
@@ -7763,7 +7772,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             .count());
   }
   if (!update_bindings_ok) {
-    return false;
+    return DrawFailed(__LINE__);
   }
 
   // Hoist the SharedMemory global lock across the vertex + memexport
@@ -7824,12 +7833,12 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             "is incorrect behavior, but you can try bypassing this by "
             "launching Xenia with --gpu_allow_invalid_fetch_constants=true.",
             vfetch_index, vfetch_constant.dword_0, vfetch_constant.dword_1);
-        return false;
+        return DrawFailed(__LINE__);
       default:
         XELOGW(
             "Vertex fetch constant {} ({:08X} {:08X}) is completely invalid!",
             vfetch_index, vfetch_constant.dword_0, vfetch_constant.dword_1);
-        return false;
+        return DrawFailed(__LINE__);
     }
     uint32_t vf_address = vfetch_constant.address << 2;
     uint32_t vf_size = vfetch_constant.size << 2;
@@ -7848,7 +7857,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             "Failed to request vertex buffer at 0x{:08X} (size {}) in the "
             "shared memory",
             vf_address, vf_size);
-        return false;
+        return DrawFailed(__LINE__);
       }
       vertex_residency_cache_.insert(vf_key);
       vertex_buffers_resident[vfetch_index >> 6] |= uint64_t(1)
@@ -7860,7 +7869,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           "Failed to request vertex buffer at 0x{:08X} (size {}) in the shared "
           "memory",
           vf_address, vf_size);
-      return false;
+      return DrawFailed(__LINE__);
     }
     vertex_buffers_resident[vfetch_index >> 6] |= uint64_t(1)
                                                   << (vfetch_index & 63);
@@ -7888,7 +7897,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
           "Failed to request memexport stream at 0x{:08X} (size {}) in the "
           "shared memory",
           memexport_range_base_bytes, memexport_range.size_bytes);
-      return false;
+      return DrawFailed(__LINE__);
     }
     memexport_extent_start =
         std::min(memexport_extent_start, memexport_range_base_bytes);
@@ -8251,7 +8260,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         break;
       default:
         assert_unhandled_case(primitive_processing_result.index_buffer_type);
-        return false;
+        return DrawFailed(__LINE__);
     }
     VkIndexType index_type = primitive_processing_result.host_index_format ==
                                      xenos::IndexFormat::kInt16

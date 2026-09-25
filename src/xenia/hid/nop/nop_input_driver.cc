@@ -142,6 +142,10 @@ uint16_t NopInputDriver::GetButtonsFromString(std::string buttons) {
       result |= X_INPUT_GAMEPAD_LEFT_SHOULDER;
     } else if (token == "rb") {
       result |= X_INPUT_GAMEPAD_RIGHT_SHOULDER;
+    } else if (token == "ls") {
+      result |= X_INPUT_GAMEPAD_LEFT_THUMB;
+    } else if (token == "rs") {
+      result |= X_INPUT_GAMEPAD_RIGHT_THUMB;
     }
 
     if (token_end == buttons.size()) {
@@ -150,6 +154,46 @@ uint16_t NopInputDriver::GetButtonsFromString(std::string buttons) {
     token_start = token_end + 1;
   }
   return result;
+}
+
+NopInputDriver::Analog NopInputDriver::GetAnalogFromString(
+    const std::string& buttons) {
+  Analog analog;
+  size_t token_start = 0;
+  while (token_start <= buttons.size()) {
+    size_t token_end = buttons.find(',', token_start);
+    if (token_end == std::string::npos) {
+      token_end = buttons.size();
+    }
+    std::string token = TrimString(
+        buttons.substr(token_start, token_end - token_start));
+    if (token == "ls_up") {
+      analog.thumb_ly = INT16_MAX;
+    } else if (token == "ls_down") {
+      analog.thumb_ly = -INT16_MAX;
+    } else if (token == "ls_left") {
+      analog.thumb_lx = -INT16_MAX;
+    } else if (token == "ls_right") {
+      analog.thumb_lx = INT16_MAX;
+    } else if (token == "rs_up") {
+      analog.thumb_ry = INT16_MAX;
+    } else if (token == "rs_down") {
+      analog.thumb_ry = -INT16_MAX;
+    } else if (token == "rs_left") {
+      analog.thumb_rx = -INT16_MAX;
+    } else if (token == "rs_right") {
+      analog.thumb_rx = INT16_MAX;
+    } else if (token == "lt") {
+      analog.left_trigger = UINT8_MAX;
+    } else if (token == "rt") {
+      analog.right_trigger = UINT8_MAX;
+    }
+    if (token_end == buttons.size()) {
+      break;
+    }
+    token_start = token_end + 1;
+  }
+  return analog;
 }
 
 uint16_t NopInputDriver::GetConfiguredButtons() {
@@ -219,6 +263,7 @@ uint16_t NopInputDriver::GetActiveButtons() const {
                 : std::max(1, ParseIntOrDefault(
                                   TrimString(entry.substr(colon + 1)), 200));
         trigger_buttons_ = GetButtonsFromString(entry.substr(0, colon));
+        trigger_analog_ = GetAnalogFromString(entry.substr(0, colon));
         trigger_until_ = now + std::chrono::milliseconds(hold_ms);
         active_buttons |= trigger_buttons_;
       }
@@ -319,12 +364,26 @@ X_RESULT NopInputDriver::GetState(uint32_t user_index,
   if (out_state) {
     std::memset(out_state, 0, sizeof(*out_state));
     uint16_t buttons = GetActiveButtons();
-    if (buttons != previous_buttons_) {
+    // The trigger file's sticks and triggers, while its entry is held.
+    Analog analog;
+    if (std::chrono::steady_clock::now() < trigger_until_) {
+      analog = trigger_analog_;
+    }
+    const bool analog_changed =
+        std::memcmp(&analog, &previous_analog_, sizeof(analog)) != 0;
+    if (buttons != previous_buttons_ || analog_changed) {
       ++packet_number_;
     }
     out_state->packet_number = packet_number_;
     out_state->gamepad.buttons = buttons;
+    out_state->gamepad.left_trigger = analog.left_trigger;
+    out_state->gamepad.right_trigger = analog.right_trigger;
+    out_state->gamepad.thumb_lx = analog.thumb_lx;
+    out_state->gamepad.thumb_ly = analog.thumb_ly;
+    out_state->gamepad.thumb_rx = analog.thumb_rx;
+    out_state->gamepad.thumb_ry = analog.thumb_ry;
     previous_buttons_ = buttons;
+    previous_analog_ = analog;
   }
   return X_ERROR_SUCCESS;
 }
