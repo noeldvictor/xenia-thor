@@ -550,8 +550,11 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   the hint there). The added instructions are 16/32-bit conversions forced by the emulation:
   32-bit constants and the Shader Model 3 zero rule (`min`, `cmps`, `sel` per multiply -
   about 24% of the costliest shader). Blanket fp16 also made texture coordinates 16-bit;
-  a real version keeps coordinates, depth and position 32-bit. A trade, not a PC-proven win:
-  the device frame time decides. Adreno idea parked for a device test: `sel.f32` may test
+  a real version keeps coordinates, depth and position 32-bit. Closed: this explains the
+  July device result for the older translator lever `gpu_fp16_shaders` (ledger: "fp16-relaxed
+  color +11 ms regression, DEAD") - the conversions cost more than the occupancy gives.
+  Only native 16-bit chains in the translator (16-bit constants, no per-op conversion)
+  could change that. Adreno idea parked for a device test: `sel.f32` may test
   its middle operand as a float, which would drop the `cmps` of every zero test (ir3 never
   emits `sel.f32`; its condition is undocumented).
 - **Deep sweep (2026-09-24, `trace_sweep.py gears banjo --deep --thor-profile`):** Gears in the
