@@ -161,6 +161,8 @@ class Processor {
   // DemandFunction compile is a runtime JIT-on-demand AOT miss (see the
   // aot_* counters). Called once when the title's main thread launches.
   void EnterRuntimePhase();
+  // cpu_log_jit_ranges: log a newly defined guest function in the ranges.
+  void LogJitRangeDefine(uint32_t address);
 
   // True once the title's main thread has launched (gameplay). Backends use
   // this to refuse risky compile paths after launch (cpu_llvm_no_runtime_

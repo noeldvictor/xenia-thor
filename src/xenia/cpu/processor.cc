@@ -9,10 +9,14 @@
 
 #include "xenia/cpu/processor.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdlib>
 #include <mutex>
 #include <string>
 #include <unordered_set>
+#include <utility>
+#include <vector>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/atomic.h"
@@ -98,6 +102,13 @@ DEFINE_bool(cpu_d3d_hle_diag_endtiling, false,
             "translating EndTiling -> native Vulkan. Requires cpu_d3d_hle_signatures. "
             "Default off (gated, safe).",
             "CPU");
+DEFINE_string(cpu_log_jit_ranges, "",
+              "Log each guest function in these address ranges when the JIT "
+              "first defines it, with the time since start: \"START-END,...\" "
+              "in hex. Tells whether library code found by signature (the XDK "
+              "shader compiler, memcpy) runs at all and when "
+              "(tools/xex/xdk_sigs.py). Empty disables.",
+              "CPU");
 DEFINE_bool(cpu_log_aot_coverage, false,
             "Log AOT-coverage stats (the hybrid AOT-primary metric): the running "
             "count of guest functions compiled BEFORE the title's main thread "
@@ -1521,6 +1532,8 @@ bool Processor::DemandFunction(Function* function) {
     function->set_status(Symbol::Status::kDefined);
     symbol_status = function->status();
 
+    LogJitRangeDefine(function->address());
+
     // AOT-coverage metric: a compile before the main thread launches is AOT
     // (precompile); after, it is a runtime JIT-on-demand AOT miss.
     if (aot_runtime_phase_.load(std::memory_order_relaxed)) {
@@ -1541,6 +1554,51 @@ bool Processor::DemandFunction(Function* function) {
   }
 
   return true;
+}
+
+void Processor::LogJitRangeDefine(uint32_t address) {
+  if (cvars::cpu_log_jit_ranges.empty()) {
+    return;
+  }
+  // "START-END,START-END" in hex, parsed once.
+  static const std::vector<std::pair<uint32_t, uint32_t>> ranges = [] {
+    std::vector<std::pair<uint32_t, uint32_t>> out;
+    std::string spec = cvars::cpu_log_jit_ranges;
+    size_t pos = 0;
+    while (pos < spec.size()) {
+      size_t end = spec.find(',', pos);
+      std::string item =
+          spec.substr(pos, end == std::string::npos ? std::string::npos
+                                                    : end - pos);
+      size_t dash = item.find('-');
+      if (dash != std::string::npos) {
+        out.emplace_back(
+            uint32_t(std::strtoul(item.substr(0, dash).c_str(), nullptr, 16)),
+            uint32_t(std::strtoul(item.substr(dash + 1).c_str(), nullptr, 16)));
+      }
+      if (end == std::string::npos) {
+        break;
+      }
+      pos = end + 1;
+    }
+    return out;
+  }();
+  static const auto start_time = std::chrono::steady_clock::now();
+  static std::atomic<uint32_t> in_range{0};
+  for (const auto& range : ranges) {
+    if (address >= range.first && address < range.second) {
+      uint32_t n = in_range.fetch_add(1, std::memory_order_relaxed) + 1;
+      if (n <= 65536 || !(n & 255)) {
+        XELOGI("JIT range: defined guest function {:08X} at {} ms ({} in range)",
+               address,
+               std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now() - start_time)
+                   .count(),
+               n);
+      }
+      return;
+    }
+  }
 }
 
 void Processor::EnterRuntimePhase() {

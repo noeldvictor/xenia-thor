@@ -539,8 +539,12 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   Blue Dragon 5759 CRI ADX (Mistwalker/Artoon), MC2 7978 UE3/PhysX 2.6.3/SpeedTree. The
   Gears-Blue Dragon overlap is the XDK microcode (HLSL) shader compiler, the same build in
   both ("Microcode Compiler", `mcl`, XGMicrocode options, ps_1_4 errors), plus the STL; all
-  four link a shader compiler, Banjo and MC2 another build. If a title compiles shaders
-  at load, that runs in the JIT on the Thor - a load-time lead for a profile. Banjo's `memset` (a hooked function in `guest_crt_hooks.cc`) is in
+  four link a shader compiler, Banjo and MC2 another build. It does not run: with
+  `cpu_log_jit_ranges` (each first JIT compile of a guest function in the ranges, with the
+  time), Blue Dragon over 270 s ran 704 of the 3,621 functions it shares with Gears (683 in
+  the first 15 s: runtime and XDK startup) and Gears over 300 s ran 763 (744 in the first
+  30 s); no compiler function ran in menus, loads or gameplay. Linked-in dead code - no
+  lever there. Gears compiles 10,784 guest functions in its first 30 s (a JIT/AOT lead). Banjo's `memset` (a hooked function in `guest_crt_hooks.cc`) is in
   all three other titles and its `memcpy` in MC2, found by the masked-prefix search - the
   per-title hook table can become a signature table. reNut's 4,969 Banjo names find 489
   functions in Gears, 278 in Blue Dragon, 468 in MC2, but only 4-7 D3D functions (the
