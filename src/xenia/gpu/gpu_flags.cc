@@ -1336,6 +1336,14 @@ DEFINE_bool(vulkan_debug_texture_fetch_disable_exp_adjust, false,
             "2_10_10_10_FLOAT resolve/fetch fallback darkening.",
             "GPU");
 DEFINE_bool(
+    vulkan_tfetch_sign_specialize, true,
+    "Translate a pixel shader without the texture fetch sign conversion "
+    "(unsigned biased and gamma) when no texture it binds needs it. Mesa ir3 "
+    "flattens the conversion into about 25 Adreno instructions per component "
+    "that run for every fetch. A pixel shader used with both kinds of texture "
+    "gets two pipelines. False: always convert (the old code, for an A/B).",
+    "GPU");
+DEFINE_bool(
     vulkan_cache_texture_descriptors, true,
     "Reuse the texture/sampler descriptor sets across consecutive draws when "
     "the bound image views and samplers have not changed, instead of "

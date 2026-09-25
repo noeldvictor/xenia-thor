@@ -470,6 +470,27 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   lighting draws. Distribution in that resolve: 57% of pixels differ at all, 4.1% by more than 8,
   1.3% by more than 16, 0.16% by more than 32 - the shape of floating-point variance in long
   lighting math (rsq, contraction, filtering), not a missing feature. Low priority.
+- **The Thor's shader compiler on the PC (2026-09-24, `tools/turnip/shader_lab.py`):** host
+  Turnip (Mesa `885dd3a17a`, the Thor's ref, `tools/turnip/build_host_shim.sh`, WSL) over the
+  freedreno drm-shim as an Adreno 740 compiles every translated module (580 from one trace per
+  title in 45 s) and gives ir3's statistics. First picture: pixel shaders average 2,500 Adreno
+  instructions (Banjo 4,300, up to 6,000), about 20% nops. The costliest Banjo shader has 39
+  `tfetch`es and about 150 instructions for each: ir3 flattened the texture sign switch
+  (signed, unsigned biased, PWL gamma per component) into `cmps`/`sel` chains, about 25
+  instructions per component that ran on every fetch, also for plain textures.
+- **Texture sign specialization (2026-09-24, `vulkan_tfetch_sign_specialize`, default on, app
+  toggle `opt_tfetch_sign_specialize`):** pixel modification bit `texture_sign_conversion`
+  (version 9), set when a fetch constant the shader binds has an unsigned biased or gamma
+  component (`texture_util::SwizzleSigns`); without it the fetch only selects the unsigned or
+  the signed sample. Pixel shader instructions over the 4 titles 913,521 -> 782,980 (-14.3%),
+  largest 5,972 -> 4,915, waves +66, registers -80; 161 of 361 pixel variants still convert
+  (gamma textures are common) and none of these traces needed a second variant. `cvar_ab` on 6
+  traces of 4 titles: 0 changed pixels. Tried first and dropped: one uniform branch around the
+  switch - the common path fell the same, but the unused branch kept its registers and 32
+  small shaders lost waves (16 -> 12). Thor fps check owed. Next in the same class: the 161
+  converting variants (a per-fetch-constant key needs more modification bits than the 3 left),
+  the per-fetch LOD and exponent decode, and the 7,116-instruction vertex shader
+  C79240F6B152599B.
 - `scratch/gears/gears2.iso` is 1.76 GB against 7.8 GB for Gears 1 - an incomplete pull; it does
   not mount ("Failed to read all GDFX entries"). Under `--cdb` every write-watch fault is a
   debugger event and the run slows several times over; use it on a crash, not for the whole
@@ -699,6 +720,8 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `pc_run.py` / `pc_matrix.py --thor-profile` | the Thor's whole configuration on the PC: the Android defaults and every default-on app toggle that runs on x64 (kernel handle cache and fast path, lock-free global lock check, XMA idle lock skip, timer idle sleep, readable zero page, the PPC/HIR front-end folds, the Vulkan toggles, VRS). `--android-defaults` alone missed the toggles. 2026-09-24: Banjo and MC2 run their routes clean with it |
 | `tools/pc/trace_sweep.py` | Vulkan-only glitches across titles in one call: each title on its `pc_matrix` route with the Android defaults and GPU traces at five times, then `backend_ab` on every trace; rows sorted by the share of pixels that differ from D3D12. Name the draws with `draw_bisect` |
 | `tools/pc/spirv_validate.py`, `xenia_spirv_validate` | every SPIR-V module a trace translates through spirv-val (WSL), the failures grouped by rule with an example shader. Turnip is strict: run it after a translator change |
+| `tools/turnip/shader_lab.py`, `xenia_shader_lab` | the Thor's shader compiler on the PC: host Turnip over the freedreno drm-shim (`FD_GPU_ID=740`) builds a pipeline per translated module (a generated partner stage writes or reads every varying, so linking removes nothing) and reads `VK_KHR_pipeline_executable_properties`: instructions, waves per core, registers, nops. `--baseline LABEL` diffs a translator change per shader, `--ir` writes the NIR and ir3 assembly, `--traces` replays first with `--cvars`. Build the host driver once: `wsl -d Ubuntu -- bash tools/turnip/build_host_shim.sh` |
+| `tools/pc/cvar_ab.py`, `xenia_cvar_ab` | a lever A/B on one trace dump: each trace replayed with `--a` and `--b` cvars, changed pixels per trace. A lever that must not change the picture shows 0 on every trace |
 | `tools/pc/draw_bisect.py`, `xenia_draw_bisect` | which draws make a trace's Vulkan frame differ from D3D12: skips draw lists (`gpu_debug_skip_draws`, the same numbers on every backend) on Vulkan, D3D12 or both and splits the lists that explain the mismatch down to single draws, with their state from `gpu_debug_log_draws` (shader hashes, RB_DEPTHCONTROL, RB_COLORCONTROL). In the one-backend modes give candidates with `--filter` (for example `colorcontrol & 0x10`, alpha to mask): skipping every draw leaves a black frame that explains nothing |
 | `tools/pc/pc_matrix.py` | the PC regression matrix: Banjo, Gears, Gears 2, MagnaCarta 2, Blue Dragon one after another in the Thor configuration (`--android-defaults`), a contact sheet per title and a JSON summary in `scratch/matrix/`; a crash reruns under cdb for its stack. Run it after every change set and look at the sheets |
 | `pc_run.py` sticky presses (`"45:start+"`) | pressed again every `--retry-every` s until the picture changes; later presses wait. Titles ignore presses while they load and the load time varies - fixed-time routes stuck Gears on its main menu |

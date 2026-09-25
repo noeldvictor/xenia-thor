@@ -2361,7 +2361,34 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         // to gamma-correct.
         spv::Id const_float_2 = builder_->makeFloatConstant(2.0f);
         spv::Id const_float_minus_1 = builder_->makeFloatConstant(-1.0f);
-        {
+        // Mesa ir3 (the Thor) flattens the sign switch below into selects, so
+        // the unsigned biased and gamma cases run for every fetch: about 25
+        // Adreno instructions per component (tools/turnip/shader_lab.py,
+        // 2026-09-24; a uniform branch around the switch cost waves in small
+        // shaders instead). A pixel shader is specialized on whether a texture
+        // it binds has an unsigned biased or gamma component; without one,
+        // only the unsigned or the signed sample is selected.
+        if (!IsTextureSignConversionNeeded()) {
+          if (features_.image_view_format_swizzle) {
+            uint32_t result_remaining_components =
+                used_result_nonzero_components;
+            uint32_t result_component_index;
+            while (xe::bit_scan_forward(result_remaining_components,
+                                        &result_component_index)) {
+              result_remaining_components &=
+                  ~(UINT32_C(1) << result_component_index);
+              result[result_component_index] = builder_->createTriOp(
+                  spv::OpSelect, type_float_,
+                  result_is_signed[result_component_index],
+                  builder_->createCompositeExtract(
+                      sample_result_signed, type_float_,
+                      result_component_index),
+                  builder_->createCompositeExtract(
+                      sample_result_unsigned, type_float_,
+                      result_component_index));
+            }
+          }
+        } else {
           uint32_t result_remaining_components = used_result_nonzero_components;
           uint32_t result_component_index;
           while (xe::bit_scan_forward(result_remaining_components,

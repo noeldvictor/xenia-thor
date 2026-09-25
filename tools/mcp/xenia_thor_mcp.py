@@ -1225,6 +1225,48 @@ def xenia_resolve_ab(trace: str, prefix: str = '', cvars: str = '',
 
 
 @mcp.tool()
+def xenia_shader_lab(traces: str = '', cvars: str = '', label: str = 'latest',
+                     baseline: str = '', only: str = '', ir: bool = False,
+                     top: int = 15) -> str:
+    """The Thor's shader compiler on the PC (tools/turnip/shader_lab.py): host
+    Turnip over the freedreno drm-shim as an Adreno 740 builds a pipeline for
+    every translated SPIR-V module and returns ir3's statistics - instructions,
+    waves per core, registers, nops - with the costliest shaders per stage.
+    traces: space-separated .xtr paths to replay first with cvars (default: the
+    last spirv_validate dump). baseline: an earlier label to diff against (a
+    translator change measured without the device). only: comma-separated
+    shader hashes; ir: also write the NIR and ir3 assembly. Found the texture
+    sign conversion cost (2026-09-24). PC only (WSL)."""
+    args = ['--label', label, '--top', str(top)]
+    if traces:
+        args += ['--traces'] + [t for t in traces.split() if t]
+    if cvars:
+        args += ['--cvars', cvars]
+    if baseline:
+        args += ['--baseline', baseline]
+    if only:
+        args += ['--only', only]
+    if ir:
+        args.append('--ir')
+    return _run_tool_script('tools/turnip/shader_lab.py', args, timeout=3600)
+
+
+@mcp.tool()
+def xenia_cvar_ab(traces: str, a: str, b: str, cvars: str = '',
+                  thor_profile: bool = False, gpu: str = 'vulkan') -> str:
+    """Does a lever change the picture? Replays each trace twice on one trace
+    dump (tools/pc/cvar_ab.py), with the cvars a and then b, and returns the
+    changed pixels per trace (0 on every trace = exact). Run it for every
+    translator or pipeline lever that must not change the output. PC only."""
+    args = [t for t in traces.split() if t] + ['--a', a, '--b', b, '--gpu', gpu]
+    if cvars:
+        args += ['--cvars', cvars]
+    if thor_profile:
+        args.append('--thor-profile')
+    return _run_tool_script('tools/pc/cvar_ab.py', args, timeout=3600)
+
+
+@mcp.tool()
 def xenia_ppc_tests_arm64(cvars: str = '', baseline: str = '') -> str:
     """The 169,117-case PPC hardware corpus on the Thor's a64 JIT, on the PC
     under qemu-aarch64 (tools/qemu/ppc_tests_arm64.py): links a static ARM64

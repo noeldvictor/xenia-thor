@@ -35,6 +35,7 @@
 #include "xenia/gpu/registers.h"
 #include "xenia/gpu/spirv_builder.h"
 #include "xenia/gpu/spirv_shader_translator.h"
+#include "xenia/gpu/texture_util.h"
 #include "xenia/gpu/vulkan/vulkan_command_processor.h"
 #include "xenia/gpu/vulkan/vulkan_shader.h"
 #include "xenia/gpu/xenos.h"
@@ -502,6 +503,22 @@ VulkanPipelineCache::GetCurrentPixelShaderModification(
     modification.pixel.param_gen_enable = 0;
     modification.pixel.param_gen_interpolator = 0;
     modification.pixel.param_gen_point = 0;
+  }
+
+  // Texture fetch sign conversion only if a bound texture has an unsigned
+  // biased or gamma component (bit 1 of a 2-bit TextureSign): the same
+  // swizzled signs the texture cache gives the shader for this draw.
+  if (cvars::vulkan_tfetch_sign_specialize) {
+    bool sign_conversion = false;
+    for (const Shader::TextureBinding& binding : shader.texture_bindings()) {
+      if (texture_util::SwizzleSigns(
+              regs.GetTextureFetch(binding.fetch_constant)) &
+          0b10101010) {
+        sign_conversion = true;
+        break;
+      }
+    }
+    modification.pixel.texture_sign_conversion = uint32_t(sign_conversion);
   }
 
   if (render_target_cache_.GetPath() ==

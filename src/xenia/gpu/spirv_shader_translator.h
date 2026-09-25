@@ -34,7 +34,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // TODO(Triang3l): Change to 0xYYYYMMDD once it's out of the rapid
     // prototyping stage (easier to do small granular updates with an
     // incremental counter).
-    static constexpr uint32_t kVersion = 8;
+    static constexpr uint32_t kVersion = 9;
 
     enum class DepthStencilMode : uint32_t {
       kNoModifiers,
@@ -135,6 +135,12 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // without early fragment tests), instead of the host's alpha to
       // coverage.
       uint32_t alpha_to_mask : 1;
+      // A texture fetch constant this shader binds has an unsigned biased or
+      // gamma component (texture_util::SwizzleSigns): the texture fetches
+      // convert them. Without it only unsigned or signed is selected - Mesa
+      // ir3 flattens the conversion into about 25 instructions per component
+      // that run for every fetch (tools/turnip/shader_lab.py, 2026-09-24).
+      uint32_t texture_sign_conversion : 1;
     } pixel;
     uint64_t value = 0;
 
@@ -724,6 +730,14 @@ class SpirvShaderTranslator : public ShaderTranslator {
            GetSpirvShaderModification().pixel.alpha_to_mask &&
            (current_shader().writes_color_targets() & 0b1) &&
            !IsExecutionModeEarlyFragmentTests();
+  }
+
+  // Whether texture fetches convert unsigned biased and gamma components. The
+  // pixel shader modification says it; vertex shaders always convert (vertex
+  // textures are rare, and the vertex modification has no free bit).
+  bool IsTextureSignConversionNeeded() const {
+    return !is_pixel_shader() ||
+           GetSpirvShaderModification().pixel.texture_sign_conversion;
   }
 
   bool IsExecutionModeEarlyFragmentTests() const {

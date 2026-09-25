@@ -681,6 +681,23 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("vulkan_gate_rt_update")}, null));
 
         list.add(new Optimization(
+                "opt_tfetch_sign_specialize",
+                "Lean texture fetches",
+                "Leaves the texture gamma conversion out of shaders that do not need it.",
+                "Every texture fetch in a translated pixel shader could convert "
+                        + "gamma and biased textures. The Adreno compiler turns that "
+                        + "conversion into about 25 instructions per color component that "
+                        + "run on every fetch, also for plain textures. With this, a "
+                        + "pixel shader drawn with no gamma or biased texture is "
+                        + "translated without the conversion: 14% fewer pixel shader "
+                        + "instructions over Banjo, Gears, Blue Dragon and Magna Carta 2, "
+                        + "up to 20% in texture-heavy shaders. The picture is identical "
+                        + "(PC trace A/B, 0 changed pixels). A shader drawn with both "
+                        + "kinds of texture compiles twice.",
+                CATEGORY_GPU, true, true,
+                new BoolCvar[]{new BoolCvar("vulkan_tfetch_sign_specialize")}, null));
+
+        list.add(new Optimization(
                 "opt_pipeline_cache",
                 "Persistent shader pipeline cache",
                 "Saves compiled GPU pipelines to disk so later launches skip the stutter.",

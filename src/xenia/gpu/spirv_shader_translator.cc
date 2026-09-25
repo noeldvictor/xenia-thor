@@ -180,6 +180,8 @@ uint64_t SpirvShaderTranslator::GetDefaultPixelShaderModification(
   Modification shader_modification;
   shader_modification.pixel.dynamic_addressable_register_count =
       dynamic_addressable_register_count;
+  // Correct for every texture; the pipeline cache clears it per draw.
+  shader_modification.pixel.texture_sign_conversion = 1;
   return shader_modification.value;
 }
 
