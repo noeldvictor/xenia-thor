@@ -749,7 +749,13 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   Thor runs this path by default. Now the direct path waits on the fence only
   (`AwaitSubmissionFenceOnly`), and `TextureCache::CompletedSubmissionUpdated` defers eviction
   while `RequestTextures` runs (logs "eviction deferred"): 3 of 3 forced-eviction runs clean,
-  0 deferrals.
+  0 deferrals. **The upload barrier (`gpu_uma_direct_upload_barrier`, default on):** in a frame
+  that uploads much (a trace's first replay = streaming, loading), the HOST_WRITE -> read
+  barrier after each direct write ends the pass: Gears 363 breaks (549 of the barriers are this
+  one) -> 143 with it off; a steady frame 58 -> 56. Off is spec-correct (host writes before
+  vkQueueSubmit are visible to it) and pixel-exact on the PC twin: `cvar_ab` 29 of 30 traces
+  identical, Gears 13183 noisy. The second device A/B, after `gpu_uma_smart_sync_pages` (the
+  direct path had GPU hangs in 2026-05 with it off, before smart-sync existed).
 - **Blue Dragon (4D5307DF).** Low priority (re:Blue exists). GPU frame 79 -> 64.5 ms in the field
   (about 10 -> 12.7 presented fps) since the 21-bit rounding became a lever, off on Android; the
   August build ran about 17.5 fps; the two scene passes take 47 of the 64 ms.
