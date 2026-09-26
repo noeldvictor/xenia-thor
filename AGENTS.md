@@ -850,6 +850,17 @@ Standing facts:
 - Retro 2026-09-25 (3, reflex): a new measurement is checked against a live-game fact before it
   is believed (the bench's `loads` equalled `changed`: every replay reloaded every texture).
 
+- Retro 2026-09-26 (1, slow): finding why MagnaCarta 2 is slow took six PC runs. Each per-frame
+  question was a new throwaway script over the "GPU draw outcomes/frame" lines, one read the
+  wrong log (pc_matrix names its runs matrix_<title>), and the 11.5 ms fence wait hid behind
+  the PC's 30 fps cap until the Thor's upload path ran on the PC.
+- Retro 2026-09-26 (2, tool, exists now): `tools/pc/frame_timeline.py` and `pc_run --timeline`
+  (MCP `xenia_pc_run(timeline=True, profile_at=...)`): per 10 s of guest time the draws, pass
+  breaks, GPU, command processor and fence-wait time, flagged WAITS-GPU / BREAKS / CP-HEAVY.
+- Retro 2026-09-26 (3, reflex): before a speed theory about the Thor, run the PC twin of its
+  upload path (`gpu_uma_direct_shared_memory=true gpu_uma_direct_system_memory=true`) with
+  `--timeline`; the PC's frame cap hides a stall that the Thor pays every frame.
+
 ## 9. Device control: the debug server inside the emulator, and the MCP client
 
 **The server is inside the emulator (user, 2026-09-20).** `DebugServer.java` runs in the emulator

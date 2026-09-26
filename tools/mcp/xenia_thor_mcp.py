@@ -1121,7 +1121,8 @@ def xenia_trace_ab(trace: str, arms: str = '', snapshot: str = '') -> str:
 @mcp.tool()
 def xenia_pc_run(iso: str, seconds: int = 120, cvars: str = '', presses: str = '',
                  snapshot: str = '', trace_at: str = '', name: str = '',
-                 android_defaults: bool = False, cdb: bool = False) -> str:
+                 android_defaults: bool = False, cdb: bool = False,
+                 timeline: bool = False, profile_at: str = '') -> str:
     """Run a title on the Windows build (Vulkan) with the device's settings and
     watch it (tools/pc/pc_run.py): parked-window captures, a frozen-screen flag,
     the log's stall markers, the pipeline compile rate (cold driver cache) and
@@ -1130,8 +1131,16 @@ def xenia_pc_run(iso: str, seconds: int = 120, cvars: str = '', presses: str = '
     snapshot: a xenia_cvars JSON (its GPU/Vulkan settings apply).
     android_defaults: the Android build defaults the PC can run. cdb: run under
     the debugger and print the stack of a crash (a second-chance fault) - the
-    tool that named the texture watch double free. PC only."""
+    tool that named the texture watch double free. timeline: per 10 s of guest
+    time the draws, render pass breaks, GPU, command processor and fence-wait
+    time, flagged (WAITS-GPU found the Thor upload path's 11.5 ms stall).
+    profile_at "SECONDS:DURATION": the hottest guest and host functions per
+    thread (tools/pc/guest_profile.py). PC only."""
     args = [iso, '--seconds', seconds]
+    if timeline:
+        args.append('--timeline')
+    if profile_at:
+        args += ['--profile-at', profile_at]
     if android_defaults:
         args.append('--android-defaults')
     if cdb:

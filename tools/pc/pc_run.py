@@ -150,6 +150,11 @@ def main():
     ap.add_argument('--cdb', action='store_true',
                     help='run under cdb: first-chance access violations (the write watches) pass, '
                          'a second-chance one prints the crash stack at the end')
+    ap.add_argument('--timeline', action='store_true',
+                    help='turn on the per-frame lines (vulkan_trace_draw_outcomes_per_frame) and '
+                         'print tools/pc/frame_timeline.py at the end: per 10 s of guest time the '
+                         'draws, render pass breaks, GPU, command processor and fence-wait time, '
+                         'flagged (WAITS-GPU, BREAKS, CP-HEAVY)')
     ap.add_argument('--profile-at', default='',
                     help='"SECONDS:DURATION": sample where xenia spends its CPU (guest functions and '
                          'host functions per thread, tools/pc/guest_profile.py) from that second on; '
@@ -174,6 +179,8 @@ def main():
     cvars += [c for c in args.cvars.split() if c]
     if args.profile_at:
         cvars.append('cpu_emit_jit_perf_map=true')
+    if args.timeline:
+        cvars.append('vulkan_trace_draw_outcomes_per_frame=true')
     exe = ORACLE if args.oracle else args.exe
     # --gpu=vulkan: on Windows Xenia picks D3D12 by default, and the device
     # runs Vulkan - without this the device's GPU settings never apply
@@ -393,6 +400,10 @@ def main():
             for l in lines[hit:hit + 24]:
                 if 'first chance' not in l:
                     print('  ' + l[:160])
+    if args.timeline and os.path.exists(log):
+        sys.stdout.flush()
+        subprocess.run([sys.executable, os.path.join(ROOT, 'tools', 'pc', 'frame_timeline.py'),
+                        log], cwd=ROOT)
     print('verdict:', verdict, '| log', log)
     return 0 if verdict == 'RUNNING' else 1
 
