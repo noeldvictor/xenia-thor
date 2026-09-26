@@ -30,6 +30,9 @@
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/spirv_shader.h"
 
+DECLARE_bool(spirv_zero_rule_hybrid);
+DECLARE_int32(spirv_zero_rule_hybrid_stages);
+
 namespace xe {
 namespace gpu {
 
@@ -265,6 +268,18 @@ uint32_t SpirvShaderTranslator::GetModificationRegisterCount() const {
 }
 
 void SpirvShaderTranslator::StartTranslation() {
+  {
+    Modification modification = GetSpirvShaderModification();
+    zero_rule_hybrid_ =
+        cvars::spirv_zero_rule_hybrid &&
+        (cvars::spirv_zero_rule_hybrid_stages &
+         (is_pixel_shader() ? 0b10 : 0b01)) &&
+        !(is_vertex_shader() ? modification.vertex.zero_rule_exact
+                             : modification.pixel.zero_rule_exact);
+    zero_rule_infinite_interpolators_ =
+        is_pixel_shader() &&
+        modification.pixel.zero_rule_infinite_interpolators;
+  }
   // TODO(Triang3l): Logger.
   builder_ = std::make_unique<SpirvBuilder>(
       features_.spirv_version, (kSpirvMagicToolId << 16) | 1, nullptr);

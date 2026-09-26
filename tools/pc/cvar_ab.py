@@ -11,6 +11,11 @@ difference. A translator or pipeline lever that must not change the output
 trace; a pair with changes goes to scratch/cvar_ab/ (A above, B below).
 Exit code 1 if any trace changed.
 
+A trace that changed is replayed with A once more (--noise, default 1): if A
+against A changes too, the replay is not deterministic and the trace counts as
+noisy, not changed - compare its A/A row with the A/B row (Gears 13183 has
+1.6% A/A noise, 2026-09-25).
+
 2026-09-24: vulkan_tfetch_sign_specialize (pixel shaders without the texture
 sign conversion when no bound texture needs it) - the proof that it is exact.
 """
@@ -98,6 +103,8 @@ def main():
     ap.add_argument('--thor-profile', action='store_true',
                     help='both replays with the Thor GPU settings (backend_ab.py)')
     ap.add_argument('--gpu', default='vulkan', choices=('vulkan', 'd3d12'))
+    ap.add_argument('--noise', type=int, default=1,
+                    help='extra A replays of a changed trace (0: none)')
     args = ap.parse_args()
     common = [c for c in args.cvars.split() if c]
     if args.thor_profile:
@@ -106,6 +113,7 @@ def main():
         return prefix_search(args.traces[0], common, [c for c in args.a.split() if c],
                              [c for c in args.b.split() if c], args.threshold)
     changed = 0
+    noisy = 0
     print('%-28s %10s %10s %6s  %s' % ('trace', 'changed', 'off>8', 'max', 'failed a/b'))
     for trace in args.traces:
         name = os.path.splitext(os.path.basename(trace))[0]
@@ -136,13 +144,31 @@ def main():
         print('%-28s %9.4f%% %9.4f%% %6d  %d/%d' % (
             name, 100.0 * any_off / len(values), 100.0 * off8 / len(values),
             max(values), failed[0], failed[1]))
-        if any_off:
+        noise_any = 0
+        for k in range(args.noise if any_off else 0):
+            out = os.path.join(OUT, name, 'a%d' % (k + 2))
+            for f in os.listdir(out) if os.path.isdir(out) else []:
+                os.remove(os.path.join(out, f))
+            png, _ = backend_ab.replay(args.gpu, trace, out,
+                                       common + [c for c in args.a.split() if c])
+            if not png:
+                continue
+            noise = list(ImageChops.difference(
+                a, Image.open(png).convert('RGB')).convert('L').getdata())
+            noise_any = max(noise_any, sum(1 for v in noise if v))
+            print('%-28s %9.4f%% %9.4f%% %6d  (A/A noise)' % (
+                '', 100.0 * sum(1 for v in noise if v) / len(noise),
+                100.0 * sum(1 for v in noise if v > 8) / len(noise), max(noise)))
+        if any_off and noise_any:
+            noisy += 1
+        elif any_off:
             changed += 1
             pair = Image.new('RGB', (a.width, a.height * 2))
             pair.paste(a, (0, 0))
             pair.paste(b, (0, a.height))
             pair.save(os.path.join(OUT, name + '_pair.png'))
-    print('%d of %d traces changed' % (changed, len(args.traces)))
+    print('%d of %d traces changed' % (changed, len(args.traces)) +
+          (', %d noisy (A/A differs too)' % noisy if noisy else ''))
     return 1 if changed else 0
 
 

@@ -34,7 +34,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // TODO(Triang3l): Change to 0xYYYYMMDD once it's out of the rapid
     // prototyping stage (easier to do small granular updates with an
     // incremental counter).
-    static constexpr uint32_t kVersion = 9;
+    static constexpr uint32_t kVersion = 10;
 
     enum class DepthStencilMode : uint32_t {
       kNoModifiers,
@@ -75,6 +75,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // cull distances. Set only with the device feature for that.
       uint32_t user_clip_plane_count : 3;
       uint32_t user_clip_plane_cull : 1;
+      // spirv_zero_rule_hybrid: a float constant the shader reads is an Inf
+      // or a NaN, so every multiply keeps the exact zero test.
+      uint32_t zero_rule_exact : 1;
     } vertex;
     struct PixelShaderModification {
       // uint32_t 0.
@@ -141,6 +144,14 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // ir3 flattens the conversion into about 25 instructions per component
       // that run for every fetch (tools/turnip/shader_lab.py, 2026-09-24).
       uint32_t texture_sign_conversion : 1;
+      // spirv_zero_rule_hybrid: a float constant the shader reads is an Inf
+      // or a NaN, so every multiply keeps the exact zero test.
+      uint32_t zero_rule_exact : 1;
+      // spirv_zero_rule_hybrid: the vertex shader may export an Inf or a NaN
+      // to an interpolator this shader reads
+      // (Shader::zero_rule_infinite_interpolators), so the interpolator
+      // registers count as possibly infinite.
+      uint32_t zero_rule_infinite_interpolators : 1;
     } pixel;
     uint64_t value = 0;
 
@@ -856,6 +867,17 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // For Shader Model 3 multiplication (+-0 or denormal * anything = +0),
   // replaces the value with +0 if the minimum of the two operands is 0. This
   // must be called with absolute values of operands - use GetAbsoluteOperand!
+  // spirv_zero_rule_hybrid and not the zero_rule_exact modification: the
+  // zero test only where Shader::GetZeroRuleExactOperations.
+  bool zero_rule_hybrid_ = false;
+  // The zero_rule_infinite_interpolators pixel shader modification.
+  bool zero_rule_infinite_interpolators_ = false;
+  // Whether the multiplies of the ALU operation being translated need the
+  // exact Shader Model 3 zero test (an operand may hold an Inf or a NaN).
+  // True outside ALU operations and without the hybrid.
+  bool zero_rule_exact_ = true;
+  // The vector operation lanes (xyzw of the result) that need it.
+  uint32_t zero_rule_exact_lanes_ = 0b1111;
   // spirv_fast_zero_rule: min(value, FLT_MAX) and/or max(value, -FLT_MAX),
   // a NaN becoming the bound.
   spv::Id ClampToFiniteForZeroRule(spv::Id value, bool low, bool high);

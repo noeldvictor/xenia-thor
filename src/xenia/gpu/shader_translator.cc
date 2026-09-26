@@ -180,6 +180,9 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
           // order over-taints (never under-taints) - conservative-safe, no bail.
           if (cf.cond_jmp.address() <= cf_index) {
             uses_backward_jump_ = true;
+          } else {
+            zero_rule_forward_jump_end_ = std::max(
+                zero_rule_forward_jump_end_, cf.cond_jmp.address());
           }
         } break;
         case ControlFlowOpcode::kAlloc: {
@@ -344,6 +347,8 @@ void Shader::AnalyzeUcode(StringBuffer& ucode_disasm_buffer) {
   // analysis hoist for the de-interleaved binning position stream). Read-only.
   ComputePositionVfetchTag();
 
+  ComputeZeroRuleTaint();
+
   is_ucode_analyzed_ = true;
 
   // An empty shader can be created internally by shader translators as a dummy,
@@ -378,6 +383,9 @@ void Shader::GatherExecInformation(
     ucode::VertexFetchInstruction& previous_vfetch_full,
     uint32_t& unique_texture_bindings, StringBuffer& ucode_disasm_buffer) {
   instr.Disassemble(&ucode_disasm_buffer);
+  zero_rule_exec_always_executed_ =
+      instr.type == ParsedExecInstruction::Type::kUnconditional &&
+      instr.dword_index >= zero_rule_forward_jump_end_;
   uint32_t sequence = instr.sequence;
   for (uint32_t instr_offset = instr.instruction_address;
        instr_offset < instr.instruction_address + instr.instruction_count;
@@ -387,6 +395,7 @@ void Shader::GatherExecInformation(
       ucode_disasm_buffer.Append("         serialize\n             ");
     }
     const uint32_t* op_ptr = ucode_data_.data() + instr_offset * 3;
+    zero_rule_instruction_address_ = instr_offset;
     if (sequence & 0b01) {
       auto& op = *reinterpret_cast<const FetchInstruction*>(op_ptr);
       if (op.opcode() == FetchOpcode::kVertexFetch) {
@@ -415,6 +424,7 @@ void Shader::GatherVertexFetchInformation(
   fetch_instr.Disassemble(&ucode_disasm_buffer);
 
   GatherFetchResultInformation(fetch_instr.result);
+  AddZeroRuleFetch(fetch_instr.result, fetch_instr.is_predicated);
   // A vertex fetch is a clean MVP input (the position/attribute the cull would
   // re-fetch and transform) - clear taint on the components it writes.
   PositionSliceMarkFetchResult(fetch_instr.result, kPositionSliceClean);
@@ -484,6 +494,8 @@ void Shader::GatherTextureFetchInformation(const TextureFetchInstruction& op,
   binding.fetch_instr.Disassemble(&ucode_disasm_buffer);
 
   GatherFetchResultInformation(binding.fetch_instr.result);
+  AddZeroRuleFetch(binding.fetch_instr.result,
+                   binding.fetch_instr.is_predicated);
   // A texture fetch feeding the position slice = vertex-texture displacement,
   // which is not an affine MVP - taint the components it writes.
   PositionSliceMarkFetchResult(binding.fetch_instr.result, kPositionSliceTexfetch);
@@ -530,6 +542,14 @@ void Shader::GatherAluInstructionInformation(
   ParsedAluInstruction instr;
   ParseAluInstruction(op, type(), instr);
   instr.Disassemble(&ucode_disasm_buffer);
+  {
+    ZeroRuleOp& zero_rule_op = zero_rule_ops_.emplace_back();
+    zero_rule_op.address = zero_rule_instruction_address_;
+    zero_rule_op.always_executed =
+        zero_rule_exec_always_executed_ && !instr.is_predicated;
+    zero_rule_op.is_fetch = false;
+    zero_rule_op.alu = instr;
+  }
 
   // Step 2b: record every vertex-shader ALU op (in program order) and mark the
   // gl_Position writers, for the backward position slice computed after the pass
@@ -786,6 +806,264 @@ static bool IsPositionSliceOpReplayable(const ParsedAluInstruction& op) {
     default:
       return true;
   }
+}
+
+void Shader::AddZeroRuleFetch(const InstructionResult& result,
+                              bool is_predicated) {
+  ZeroRuleOp& zero_rule_op = zero_rule_ops_.emplace_back();
+  zero_rule_op.address = zero_rule_instruction_address_;
+  zero_rule_op.always_executed =
+      zero_rule_exec_always_executed_ && !is_predicated;
+  zero_rule_op.is_fetch = true;
+  zero_rule_op.fetch_result = result;
+}
+
+void Shader::ComputeZeroRuleTaint() {
+  zero_rule_infinite_interpolators_ = 0;
+  // Addresses not analyzed keep every test.
+  zero_rule_exact_operations_.assign(ucode_data_.size() / 3, 0b1111111111);
+  for (const ZeroRuleOp& op : zero_rule_ops_) {
+    if (op.address < zero_rule_exact_operations_.size()) {
+      zero_rule_exact_operations_[op.address] = 0;
+    }
+  }
+  // Without loops, calls and backward jumps the instructions run in program
+  // order, so a write that always runs replaces the taint of the components
+  // it writes (registers are reused all the time - with taint that only
+  // accumulates, 1.2% of the pixel instructions went, 2026-09-25). Otherwise
+  // taint only accumulates, repeated until nothing changes.
+  bool in_order = !uses_control_flow_loop_ && !uses_subroutine_call_ &&
+                  !uses_backward_jump_;
+  bool is_pixel_shader = type() == xenos::ShaderType::kPixel;
+  for (uint32_t variant = 0; variant < (is_pixel_shader ? 2u : 1u);
+       ++variant) {
+    // Per temporary register a bit per xyzw component that may be Inf or NaN.
+    uint8_t registers[128] = {};
+    // Whether any register may be (for dynamically addressed operands).
+    bool any_register = false;
+    bool previous_scalar = false;
+    if (variant) {
+      // Pixel shader registers start as the interpolators.
+      std::memset(registers, 0b1111, xenos::kMaxInterpolators);
+      any_register = true;
+    }
+    // The lanes (xyzw after the swizzle) of an operand that may be Inf or NaN.
+    auto operand_taint = [&](const InstructionOperand& operand) -> uint8_t {
+      if (operand.storage_source != InstructionStorageSource::kRegister) {
+        return 0;
+      }
+      if (operand.storage_addressing_mode !=
+          InstructionStorageAddressingMode::kAbsolute) {
+        return any_register ? 0b1111 : 0;
+      }
+      uint8_t taint = registers[operand.storage_index & 127];
+      uint8_t lanes = 0;
+      for (uint32_t i = 0; i < 4; ++i) {
+        SwizzleSource component = operand.GetComponent(i);
+        if (component >= SwizzleSource::kX && component <= SwizzleSource::kW &&
+            (taint >> (uint32_t(component) - uint32_t(SwizzleSource::kX))) &
+                1) {
+          lanes |= uint8_t(1) << i;
+        }
+      }
+      return lanes;
+    };
+    // Stores the taint of the result lanes; returns whether anything
+    // changed. Saturated results are finite (NaN -> 0).
+    auto write = [&](const InstructionResult& result, uint8_t lane_taint,
+                     bool replace) -> bool {
+      uint32_t used_write_mask = result.GetUsedWriteMask();
+      if (!used_write_mask) {
+        return false;
+      }
+      if (result.is_clamped) {
+        lane_taint = 0;
+      }
+      if (result.storage_target == InstructionStorageTarget::kInterpolator) {
+        if (lane_taint) {
+          zero_rule_infinite_interpolators_ |=
+              result.storage_addressing_mode ==
+                      InstructionStorageAddressingMode::kAbsolute
+                  ? UINT32_C(1) << (result.storage_index &
+                                    (xenos::kMaxInterpolators - 1))
+                  : (UINT32_C(1) << xenos::kMaxInterpolators) - 1;
+        }
+        return false;
+      }
+      if (result.storage_target != InstructionStorageTarget::kRegister) {
+        return false;
+      }
+      uint8_t written = 0;
+      uint8_t tainted = 0;
+      for (uint32_t i = 0; i < 4; ++i) {
+        if (!(used_write_mask & (1 << i))) {
+          continue;
+        }
+        written |= uint8_t(1) << i;
+        // Constant 0 and 1 components are finite.
+        if (result.components[i] >= SwizzleSource::kX &&
+            result.components[i] <= SwizzleSource::kW &&
+            ((lane_taint >> (uint32_t(result.components[i]) -
+                             uint32_t(SwizzleSource::kX))) &
+             1)) {
+          tainted |= uint8_t(1) << i;
+        }
+      }
+      if (result.storage_addressing_mode !=
+          InstructionStorageAddressingMode::kAbsolute) {
+        // Dynamically addressed: any register may receive it.
+        if (!tainted) {
+          return false;
+        }
+        bool changed = false;
+        for (uint8_t& register_taint : registers) {
+          changed |= (register_taint | tainted) != register_taint;
+          register_taint |= tainted;
+        }
+        any_register = true;
+        return changed;
+      }
+      uint8_t& register_taint = registers[result.storage_index & 127];
+      uint8_t new_taint =
+          replace ? uint8_t((register_taint & ~written) | tainted)
+                  : uint8_t(register_taint | tainted);
+      bool changed = new_taint != register_taint;
+      register_taint = new_taint;
+      any_register |= tainted != 0;
+      return changed;
+    };
+    for (uint32_t pass = 0; pass < (in_order ? 1u : 64u); ++pass) {
+      bool changed = false;
+      for (const ZeroRuleOp& op : zero_rule_ops_) {
+        bool replace = in_order && op.always_executed;
+        if (op.is_fetch) {
+          // Texture and vertex data count as finite.
+          changed |= write(op.fetch_result, 0, replace);
+          continue;
+        }
+        const ParsedAluInstruction& instr = op.alu;
+        // Both operations read their operands before either writes.
+        uint8_t vector_operand_taint[3] = {};
+        for (uint32_t i = 0; i < instr.vector_operand_count; ++i) {
+          vector_operand_taint[i] = operand_taint(instr.vector_operands[i]);
+        }
+        bool scalar_operand_taint = false;
+        for (uint32_t i = 0; i < instr.scalar_operand_count; ++i) {
+          scalar_operand_taint |= operand_taint(instr.scalar_operands[i]) != 0;
+        }
+        uint8_t vector_lanes_taint = vector_operand_taint[0] |
+                                     vector_operand_taint[1] |
+                                     vector_operand_taint[2];
+        uint8_t vector_taint = 0;
+        switch (instr.vector_opcode) {
+          case ucode::AluVectorOpcode::kSeq:
+          case ucode::AluVectorOpcode::kSgt:
+          case ucode::AluVectorOpcode::kSge:
+          case ucode::AluVectorOpcode::kSne:
+            break;  // 0 or 1
+          // Per lane.
+          case ucode::AluVectorOpcode::kAdd:
+          case ucode::AluVectorOpcode::kMul:
+          case ucode::AluVectorOpcode::kMax:
+          case ucode::AluVectorOpcode::kMin:
+          case ucode::AluVectorOpcode::kFrc:
+          case ucode::AluVectorOpcode::kTrunc:
+          case ucode::AluVectorOpcode::kFloor:
+          case ucode::AluVectorOpcode::kMad:
+          case ucode::AluVectorOpcode::kCndEq:
+          case ucode::AluVectorOpcode::kCndGe:
+          case ucode::AluVectorOpcode::kCndGt:
+            vector_taint = vector_lanes_taint;
+            break;
+          // Dot products and the others mix the lanes.
+          default:
+            vector_taint = vector_lanes_taint ? 0b1111 : 0;
+            break;
+        }
+        bool scalar_reads_previous = false;
+        bool scalar_taint = false;
+        switch (instr.scalar_opcode) {
+          // The sources: Inf or NaN from a finite value.
+          case ucode::AluScalarOpcode::kExp:
+          case ucode::AluScalarOpcode::kLog:
+          case ucode::AluScalarOpcode::kLogc:
+          case ucode::AluScalarOpcode::kRcp:
+          case ucode::AluScalarOpcode::kRcpc:
+          case ucode::AluScalarOpcode::kRsq:
+          case ucode::AluScalarOpcode::kRsqc:
+          case ucode::AluScalarOpcode::kRsqf:
+          case ucode::AluScalarOpcode::kSqrt:
+            scalar_taint = true;
+            break;
+          // 0 or 1, predicates, kills.
+          case ucode::AluScalarOpcode::kSeqs:
+          case ucode::AluScalarOpcode::kSgts:
+          case ucode::AluScalarOpcode::kSges:
+          case ucode::AluScalarOpcode::kSnes:
+          case ucode::AluScalarOpcode::kSetpEq:
+          case ucode::AluScalarOpcode::kSetpNe:
+          case ucode::AluScalarOpcode::kSetpGt:
+          case ucode::AluScalarOpcode::kSetpGe:
+          case ucode::AluScalarOpcode::kSetpInv:
+          case ucode::AluScalarOpcode::kSetpPop:
+          case ucode::AluScalarOpcode::kSetpClr:
+          case ucode::AluScalarOpcode::kSetpRstr:
+          case ucode::AluScalarOpcode::kKillsEq:
+          case ucode::AluScalarOpcode::kKillsGt:
+          case ucode::AluScalarOpcode::kKillsGe:
+          case ucode::AluScalarOpcode::kKillsNe:
+          case ucode::AluScalarOpcode::kKillsOne:
+            break;
+          case ucode::AluScalarOpcode::kAddsPrev:
+          case ucode::AluScalarOpcode::kMulsPrev:
+          case ucode::AluScalarOpcode::kMulsPrev2:
+          case ucode::AluScalarOpcode::kSubsPrev:
+          case ucode::AluScalarOpcode::kRetainPrev:
+            scalar_reads_previous = true;
+            scalar_taint = previous_scalar || scalar_operand_taint;
+            break;
+          default:
+            scalar_taint = scalar_operand_taint;
+            break;
+        }
+        // The multiplies: the lanes of vector operands 0 and 1 (mul, mad,
+        // dp4, dp3, dp2add, dst), the scalar operands and the previous
+        // scalar result.
+        uint32_t exact = vector_operand_taint[0] | vector_operand_taint[1];
+        if (scalar_operand_taint ||
+            (scalar_reads_previous && previous_scalar)) {
+          exact |= 0b10000;
+        }
+        if (op.address < zero_rule_exact_operations_.size()) {
+          zero_rule_exact_operations_[op.address] |=
+              uint16_t(exact << (variant * 5));
+        }
+        changed |=
+            write(instr.vector_and_constant_result, vector_taint, replace);
+        changed |= write(instr.scalar_result, scalar_taint ? 0b1111 : 0,
+                         replace);
+        // The translator stores every scalar result but retain_prev's as the
+        // previous scalar result.
+        if (replace && instr.scalar_result.GetUsedWriteMask() &&
+            instr.scalar_opcode != ucode::AluScalarOpcode::kRetainPrev) {
+          previous_scalar = scalar_taint;
+        } else if (scalar_taint && !previous_scalar) {
+          previous_scalar = true;
+          changed = true;
+        }
+      }
+      if (!changed) {
+        break;
+      }
+    }
+  }
+  if (!is_pixel_shader) {
+    for (uint16_t& exact : zero_rule_exact_operations_) {
+      exact = uint16_t((exact & 0b11111) | ((exact & 0b11111) << 5));
+    }
+  }
+  zero_rule_ops_.clear();
+  zero_rule_ops_.shrink_to_fit();
 }
 
 void Shader::ComputePositionSlice() {
@@ -1395,6 +1673,7 @@ void ShaderTranslator::TranslateExecInstructions(
       auto& op = *reinterpret_cast<const AluInstruction*>(op_ptr);
       ParsedAluInstruction alu_instr;
       ParseAluInstruction(op, current_shader().type(), alu_instr);
+      current_alu_instruction_address_ = instr_offset;
       ProcessAluInstruction(alu_instr, eM_potentially_written_before);
       if (alu_instr.vector_and_constant_result.storage_target ==
               InstructionStorageTarget::kExportData &&

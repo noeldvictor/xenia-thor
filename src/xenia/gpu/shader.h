@@ -931,6 +931,30 @@ class Shader {
     return uses_register_dynamic_addressing_;
   }
 
+  // Shader Model 3 zero rule, hybrid (spirv_zero_rule_hybrid): whether the
+  // vector operation lanes (bits 0-3, xyzw of the result) and the scalar
+  // operation (bit 4) of the ALU instruction at the ucode instruction
+  // address may multiply an Inf or a NaN made by rcp,
+  // rsq, exp, log or sqrt, or a value computed from one. Only those need the
+  // exact +0 * x = +0 test; the other multiplies can be IEEE. Constants and
+  // texture and vertex fetches count as finite, interpolators too unless
+  // infinite_interpolators (the vertex shader may export an Inf or a NaN,
+  // zero_rule_infinite_interpolators); a finite overflow is not tracked.
+  uint32_t GetZeroRuleExactOperations(uint32_t instruction_address,
+                                      bool infinite_interpolators) const {
+    if (instruction_address >= zero_rule_exact_operations_.size()) {
+      return 0b11111;
+    }
+    return (zero_rule_exact_operations_[instruction_address] >>
+            (infinite_interpolators ? 5 : 0)) &
+           0b11111;
+  }
+  // Vertex shaders: the interpolators that an export may write an Inf or a
+  // NaN to (a value from rcp, rsq, exp, log or sqrt).
+  uint32_t zero_rule_infinite_interpolators() const {
+    return zero_rule_infinite_interpolators_;
+  }
+
   // For building shader modification bits (and also for normalization of them),
   // returns the amount of temporary registers that need to be allocated
   // explicitly - if not using register dynamic addressing, the shader
@@ -1191,6 +1215,28 @@ class Shader {
   // order (with position_export_op_indices_ marking the gl_Position writers), then
   // ComputePositionSlice() reduces it in place to the backward slice.
   std::vector<ParsedAluInstruction> position_slice_ops_;
+  // ComputeZeroRuleTaint input: the ALU instructions and the fetch results
+  // in program order.
+  struct ZeroRuleOp {
+    uint32_t address;
+    // Not predicated, in an unconditional exec that no forward jump may
+    // skip.
+    bool always_executed;
+    bool is_fetch;
+    ParsedAluInstruction alu;
+    InstructionResult fetch_result;
+  };
+  std::vector<ZeroRuleOp> zero_rule_ops_;
+  // While gathering: the current exec and instruction.
+  bool zero_rule_exec_always_executed_ = true;
+  uint32_t zero_rule_instruction_address_ = 0;
+  // The largest forward jump target seen so far (control flow index).
+  uint32_t zero_rule_forward_jump_end_ = 0;
+  void AddZeroRuleFetch(const InstructionResult& result, bool is_predicated);
+  // GetZeroRuleExactOperations per ucode instruction address: bits 0-4 with
+  // finite interpolators, 5-9 with possibly infinite ones.
+  std::vector<uint16_t> zero_rule_exact_operations_;
+  uint32_t zero_rule_infinite_interpolators_ = 0;
   std::vector<uint32_t> position_export_op_indices_;
   bool position_slice_replayable_ = false;
   PositionVfetchTag position_vfetch_tag_;
@@ -1248,6 +1294,7 @@ class Shader {
   // Reduces position_slice_ops_ (all VS ALU ops) to the backward slice feeding
   // gl_Position and sets position_slice_replayable_ (Step 2b). Read-only.
   void ComputePositionSlice();
+  void ComputeZeroRuleTaint();
   // Derives position_vfetch_tag_ from the reduced slice + vertex bindings (the
   // G1-lite analysis hoist). Must run after ComputePositionSlice. Read-only.
   void ComputePositionVfetchTag();

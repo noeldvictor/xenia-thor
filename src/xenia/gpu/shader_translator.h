@@ -146,8 +146,15 @@ class ShaderTranslator {
   virtual void ProcessAluInstruction(
       const ParsedAluInstruction& instr,
       uint8_t memexport_eM_potentially_written_before) {}
+  // The ucode instruction address of the ALU instruction in
+  // ProcessAluInstruction.
+  uint32_t current_alu_instruction_address() const {
+    return current_alu_instruction_address_;
+  }
 
  private:
+  uint32_t current_alu_instruction_address_ = 0;
+
   void TranslateControlFlowInstruction(const ucode::ControlFlowInstruction& cf);
   void TranslateExecInstructions(const ParsedExecInstruction& instr);
 

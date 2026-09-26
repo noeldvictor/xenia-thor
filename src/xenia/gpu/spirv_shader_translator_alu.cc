@@ -43,6 +43,19 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    spirv_zero_rule_hybrid, false,
+    "The Shader Model 3 zero rule (+0 times anything, Inf or NaN, is +0) "
+    "tested only where an operand can hold an Inf or a NaN from rcp, rsq, "
+    "exp, log or sqrt (Shader::GetZeroRuleExactOperations); other "
+    "multiplies are IEEE, as in DXVK's d3d9 default on Turnip. A draw whose "
+    "shader reads an Inf or NaN float constant uses the exact variant "
+    "(zero_rule_exact modification).",
+    "GPU");
+DEFINE_int32(spirv_zero_rule_hybrid_stages, 3,
+             "spirv_zero_rule_hybrid: the shader stages it applies to (1 "
+             "vertex, 2 pixel, 3 both); the other stages keep every test.",
+             "GPU");
+DEFINE_bool(
     spirv_fast_zero_rule, false,
     "Research: the Shader Model 3 zero rule the way DXVK's default d3d9 "
     "float emulation does it on drivers without a native legacy multiply "
@@ -85,7 +98,8 @@ spv::Id SpirvShaderTranslator::ClampToFiniteForZeroRule(spv::Id value,
 spv::Id SpirvShaderTranslator::ZeroIfAnyOperandIsZero(spv::Id value,
                                                       spv::Id operand_0_abs,
                                                       spv::Id operand_1_abs) {
-  if (cvars::spirv_debug_ieee_multiply || cvars::spirv_fast_zero_rule) {
+  if (cvars::spirv_debug_ieee_multiply || cvars::spirv_fast_zero_rule ||
+      !zero_rule_exact_) {
     return value;
   }
   EnsureBuildPointAvailable();
@@ -170,12 +184,23 @@ void SpirvShaderTranslator::ProcessAluInstruction(
   // Whether the instruction has changed the predicate, and it needs to be
   // checked again later.
   bool predicate_written_vector = false;
+  uint32_t zero_rule_exact_operations =
+      zero_rule_hybrid_ ? current_shader().GetZeroRuleExactOperations(
+                              current_alu_instruction_address(),
+                              zero_rule_infinite_interpolators_)
+                        : 0b11111;
+  zero_rule_exact_lanes_ = zero_rule_exact_operations & 0b1111;
+  zero_rule_exact_ = zero_rule_exact_lanes_ != 0;
   spv::Id vector_result = ProcessVectorAluOperation(
       instr, memexport_eM_potentially_written_before, predicate_written_vector);
 
   bool predicate_written_scalar = false;
+  zero_rule_exact_ = (zero_rule_exact_operations & 0b10000) != 0;
+  zero_rule_exact_lanes_ = zero_rule_exact_ ? 0b1111 : 0;
   spv::Id scalar_result = ProcessScalarAluOperation(
       instr, memexport_eM_potentially_written_before, predicate_written_scalar);
+  zero_rule_exact_ = true;
+  zero_rule_exact_lanes_ = 0b1111;
   if (scalar_result != spv::NoResult) {
     EnsureBuildPointAvailable();
     builder_->createStore(scalar_result, var_main_previous_scalar_);
@@ -292,6 +317,9 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
       if (cvars::spirv_debug_ieee_multiply || cvars::spirv_fast_zero_rule) {
         multiplicands_different = 0;
       }
+      // spirv_zero_rule_hybrid: only the lanes that may multiply an Inf or
+      // a NaN.
+      multiplicands_different &= zero_rule_exact_lanes_;
       if (multiplicands_different) {
         // Shader Model 3: +0 or denormal * anything = +-0.
         spv::Id different_operands[2] = {multiplicands[0], multiplicands[1]};
@@ -595,8 +623,10 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
             operand_storage[i], instr.vector_operands[i], component_mask);
       }
       uint32_t different =
-          component_mask & ~instr.vector_operands[0].GetIdenticalComponents(
-                               instr.vector_operands[1]);
+          component_mask &
+          ~instr.vector_operands[0].GetIdenticalComponents(
+              instr.vector_operands[1]) &
+          zero_rule_exact_lanes_;
       spv::Id result = spv::NoResult;
       for (uint32_t i = 0; i < component_count; ++i) {
         spv::Id operand_components[2];

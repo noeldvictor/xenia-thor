@@ -898,11 +898,12 @@ DEFINE_bool(vulkan_trace_pipeline_creation, false,
             "Trace Vulkan graphics pipeline creation. Noisy during bring-up.",
             "GPU");
 DEFINE_bool(vulkan_trace_shader_constants, false,
-            "Trace active pixel shader constant maps and values around Vulkan "
+            "Trace active vertex and pixel shader constant maps and values around "
+            "Vulkan "
             "draws. Research-only Android GPU bring-up probe.",
             "GPU");
 DEFINE_int32(vulkan_trace_shader_constants_budget, 32,
-             "Maximum active pixel shader constant trace groups.", "GPU");
+             "Maximum active shader constant trace groups.", "GPU");
 DEFINE_string(vulkan_trace_shader_constants_shader_filter, "",
               "Comma-separated shader ucode hashes to include in "
               "vulkan_trace_shader_constants; empty traces all.",

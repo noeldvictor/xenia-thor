@@ -74,6 +74,7 @@ const RENDERDOC_API_1_0_0* BdGetRenderDocApi() {
 }  // namespace
 
 DECLARE_bool(spirv_fast_zero_rule);
+DECLARE_bool(spirv_zero_rule_hybrid);
 
 namespace xe {
 namespace gpu {
@@ -337,17 +338,58 @@ std::string VulkanCommandProcessor::GetWindowTitleText() const {
 
 namespace {
 // spirv_fast_zero_rule: a NaN float constant becomes 0 (as DXVK's d3d9 fast
-// float emulation does), so 0 times a constant stays 0 without a test.
+// float emulation does) and an Inf one +-2^64, so 0 times a constant stays 0
+// without a test. Not exact: Inf * 2 is Inf, 2^64 * 2 is not - Gears has a
+// +Inf vertex constant (spirv_zero_rule_hybrid scans instead).
 void FlushNanFloatConstants(uint8_t* begin, uint8_t* end) {
   for (uint8_t* p = begin; p + sizeof(uint32_t) <= end; p += sizeof(uint32_t)) {
     uint32_t bits;
     std::memcpy(&bits, p, sizeof(bits));
-    if ((bits & 0x7F800000u) == 0x7F800000u && (bits & 0x007FFFFFu)) {
-      std::memset(p, 0, sizeof(bits));
+    if ((bits & 0x7F800000u) != 0x7F800000u) {
+      continue;
     }
+    if (bits & 0x007FFFFFu) {
+      bits = 0;
+    } else {
+      bits = (bits & 0x80000000u) | 0x5F800000u;  // +-2^64
+    }
+    std::memcpy(p, &bits, sizeof(bits));
   }
 }
 }  // namespace
+
+bool VulkanCommandProcessor::ShaderReadsNonFiniteFloatConstant(
+    const Shader& shader) {
+  size_t stage = shader.type() == xenos::ShaderType::kPixel ? 1 : 0;
+  uint32_t up_to_date_bit =
+      UINT32_C(1)
+      << (stage ? SpirvShaderTranslator::kConstantBufferFloatPixel
+                : SpirvShaderTranslator::kConstantBufferFloatVertex);
+  if (zero_rule_scanned_shader_[stage] == &shader &&
+      (current_constant_buffers_up_to_date_ & up_to_date_bit)) {
+    return zero_rule_non_finite_[stage];
+  }
+  const uint32_t* constants =
+      &register_file_->values[stage ? XE_GPU_REG_SHADER_CONSTANT_256_X
+                                    : XE_GPU_REG_SHADER_CONSTANT_000_X];
+  const Shader::ConstantRegisterMap& map = shader.constant_register_map();
+  // Exponent all ones: Inf or NaN.
+  uint32_t non_finite = 0;
+  for (uint32_t i = 0; i < 4; ++i) {
+    uint64_t map_entry = map.float_bitmap[i];
+    uint32_t index;
+    while (xe::bit_scan_forward(map_entry, &index)) {
+      map_entry &= ~(UINT64_C(1) << index);
+      const uint32_t* constant = constants + (((i << 6) + index) << 2);
+      for (uint32_t j = 0; j < 4; ++j) {
+        non_finite |= uint32_t((constant[j] & 0x7F800000u) == 0x7F800000u);
+      }
+    }
+  }
+  zero_rule_scanned_shader_[stage] = &shader;
+  zero_rule_non_finite_[stage] = non_finite != 0;
+  return non_finite != 0;
+}
 
 void VulkanCommandProcessor::InitializeShaderStorage(
     const std::filesystem::path& cache_root, uint32_t title_id,
@@ -6753,6 +6795,17 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         pixel_shader ? pipeline_cache_->GetCurrentPixelShaderModification(
                            *pixel_shader, interpolator_mask, ps_param_gen_pos)
                      : SpirvShaderTranslator::Modification(0);
+    if (cvars::spirv_zero_rule_hybrid) {
+      vertex_shader_modification.vertex.zero_rule_exact =
+          uint32_t(ShaderReadsNonFiniteFloatConstant(*vertex_shader));
+      if (pixel_shader) {
+        pixel_shader_modification.pixel.zero_rule_exact =
+            uint32_t(ShaderReadsNonFiniteFloatConstant(*pixel_shader));
+        pixel_shader_modification.pixel.zero_rule_infinite_interpolators =
+            uint32_t((vertex_shader->zero_rule_infinite_interpolators() &
+                      interpolator_mask) != 0);
+      }
+    }
     // BD input-attachment merge (4a): when this draw is the merge consumer, flag
     // its pixel shader to read the producer fetch constant as a Vulkan INPUT
     // ATTACHMENT (subpassLoad). Selects the variant shader (subpassInput), the
@@ -7639,9 +7692,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     d.ps_writes_depth = pixel_shader && pixel_shader->writes_depth() ? 1u : 0u;
     d.ps_kills = pixel_shader && pixel_shader->kills_pixels() ? 1u : 0u;
   }
-  if (pixel_shader && normalized_color_mask &&
-      cvars::vulkan_trace_shader_constants) {
-    TraceShaderConstants(*pixel_shader, "pixel", true);
+  if (cvars::vulkan_trace_shader_constants) {
+    TraceShaderConstants(*vertex_shader, "vertex", false);
+    if (pixel_shader && normalized_color_mask) {
+      TraceShaderConstants(*pixel_shader, "pixel", true);
+    }
   }
 
   // Whether to load the guest 32-bit (usually big-endian) vertex index

@@ -1253,12 +1253,17 @@ def xenia_shader_lab(traces: str = '', cvars: str = '', label: str = 'latest',
 
 @mcp.tool()
 def xenia_cvar_ab(traces: str, a: str, b: str, cvars: str = '',
-                  thor_profile: bool = False, gpu: str = 'vulkan') -> str:
+                  thor_profile: bool = False, gpu: str = 'vulkan',
+                  noise: int = 1) -> str:
     """Does a lever change the picture? Replays each trace twice on one trace
     dump (tools/pc/cvar_ab.py), with the cvars a and then b, and returns the
     changed pixels per trace (0 on every trace = exact). Run it for every
-    translator or pipeline lever that must not change the output. PC only."""
-    args = [t for t in traces.split() if t] + ['--a', a, '--b', b, '--gpu', gpu]
+    translator or pipeline lever that must not change the output. A changed
+    trace is replayed with a `noise` more times: if A against A changes too,
+    the trace is noisy, not changed (Gears 13183: 1.6-17% A/A). Cvars are
+    separated by spaces. PC only."""
+    args = [t for t in traces.split() if t] + ['--a', a, '--b', b, '--gpu', gpu,
+                                               '--noise', str(noise)]
     if cvars:
         args += ['--cvars', cvars]
     if thor_profile:

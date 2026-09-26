@@ -565,14 +565,38 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   FLT_MAX (Xenos rsq/rcp of a negative is NaN and lighting relies on it saturating to 0 - a
   FLT_MAX clamp lit Gears' cell ceiling, 36% of the pixels), and the clamp must be 2^64, not
   FLT_MAX (a clamped far-plane rcp times a matrix entry overflowed back to Inf). The one
-  trace left (Gears 13183, 0.44% of the pixels off > 8) is a deferred light volume
-  (`cvar_ab --prefix` names draw 1298, PS 7C81373CE5EC6949): rcp of the far-plane depth,
-  whose exact Inf arithmetic finite clamps cannot repeat. The sign of zero is not the cause
-  (a +0.0 after each product made it worse). (3) Hybrid, estimated with `--taint`: keep the
-  exact test only where rcp/rsq/exp/log results reach an operand, IEEE elsewhere - 52.6% of
-  the pixel tests and 94.3% of the vertex tests go (about -14% pixel, -30% vertex
-  instructions), exact for the light-volume case. Parallel: Azahar (3DS, the same rule)
+  trace left (Gears 13183) is replay noise, not the rule: the same cvars twice change 1.6-17%
+  of its pixels, first at draw 1298 (a deferred light volume) - see the item below. (3)
+  Hybrid, estimated with `--taint`: keep the exact test only where rcp/rsq/exp/log results
+  reach an operand, IEEE elsewhere - 52.6% of the pixel tests and 94.3% of the vertex tests
+  go (about -14% pixel, -30% vertex instructions). Parallel: Azahar (3DS, the same rule)
   defaults "accurate multiplication" off on Android and it drew Froakie white on an AYN Thor.
+- **Zero rule hybrid, built (2026-09-25, `spirv_zero_rule_hybrid`, default off until a
+  device A/B):** the exact test only on the lanes that may multiply an Inf or a NaN from
+  rcp, rsq(c/f), exp, log(c) or sqrt (`Shader::GetZeroRuleExactOperations`, per ucode
+  instruction address). The analysis goes in program order: a write that always runs (not
+  predicated, unconditional exec, no forward jump over it) replaces the taint of its
+  components; with loops, calls or backward jumps the taint only accumulates. The first
+  version accumulated everywhere and saved 1.2% of the pixel instructions - registers are
+  reused all the time. Guards: (a) a draw whose shader reads an Inf or NaN float constant
+  uses the exact variant (`zero_rule_exact` modification, a scan of the used constants only
+  when the shader or its constant buffer changed) - no constant flush, because Inf -> 2^64
+  is not exact (Inf * 2 is Inf; Gears has a +Inf vertex constant); (b) a pixel shader whose
+  vertex shader may export an Inf or NaN interpolator takes a variant with the interpolator
+  registers tainted (`zero_rule_infinite_interpolators`; 69 of 199 vertex shaders can).
+  Texture and vertex data count as finite, as in DXVK. Shader lab, 6 traces: vertex -26.6%
+  (IEEE ceiling -30.7%), pixel -10.2% (ceiling -26.7%; 178 of 394 pixel variants have
+  tainted interpolators). `cvar_ab` on 30 traces: 29 exact, Gears 13183 noisy (A/B 0.7% vs
+  A/A 4.9%). Android NativeCore builds. `spirv_zero_rule_hybrid_stages` (1 vertex, 2 pixel, 3 both) is the per-title
+  lever. Next: the device frame time (the user's go), then a per-interpolator taint mask
+  (the pixel modification has 1 free bit).
+- **Gears 13183 draw 1298 is not deterministic in the replay (2026-09-25):** `cvar_ab` with
+  the same cvars on both sides changes 1.6-17% of the pixels, and `--prefix` names draw 1298
+  (VS A11D62699D304CB7, PS 7C81373CE5EC6949, a light volume that reads the scene depth).
+  Every earlier A/B of this trace was noise. Open: find the race (a texture read of a render
+  target still being written, or the resolve order) - it may be an in-game flicker.
+  `cvar_ab` now replays A a second time for a changed trace and counts it as noisy when A/A
+  changes too.
 - **Sign specialization CPU cost (2026-09-25, `trace_bench --a/--b`):** `SwizzleSigns` per
   bound texture per draw cost prep +266 us per frame on Banjo; the raw sign fields of dword 0
   (one load) leave +82 us, the rest within the bench noise; 0 changed pixels on 6 traces.
@@ -858,8 +882,10 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `tools/pc/spirv_validate.py`, `xenia_spirv_validate` | every SPIR-V module a trace translates through spirv-val (WSL), the failures grouped by rule with an example shader. Turnip is strict: run it after a translator change |
 | `tools/turnip/shader_lab.py`, `xenia_shader_lab` | the Thor's shader compiler on the PC: host Turnip over the freedreno drm-shim (`FD_GPU_ID=740`) builds a pipeline per translated module (a generated partner stage writes or reads every varying, so linking removes nothing) and reads `VK_KHR_pipeline_executable_properties`: instructions, waves per core, registers, nops. `--baseline LABEL` diffs a translator change per shader, `--ir` writes the NIR and ir3 assembly, `--traces` replays first with `--cvars`. Build the host driver once: `wsl -d Ubuntu -- bash tools/turnip/build_host_shim.sh` |
 | `tools/pc/cvar_ab.py`, `xenia_cvar_ab` | a lever A/B on one trace dump: each trace replayed with `--a` and `--b` cvars, changed pixels per trace. A lever that must not change the picture shows 0 on every trace |
+| `cvar_ab.py --noise N` | for a changed trace, N more A replays (default 1): A/A changes too = noisy, not changed; the A/A row prints under the A/B row |
 | `cvar_ab.py --prefix` | the first draw after which the A and B frames differ, by binary search over `gpu_debug_skip_draws` (resolves never skipped), with its `gpu_debug_log_draws` line (primitive, count, VS and PS hashes) |
-| `tools/pc/zero_rule_coverage.py` | research: over the microcode dumps, the Shader Model 3 zero tests whose operands are provably bounded (`--taint`: only rcp/rsq/exp/log results can be Inf - the hybrid) |
+| `tools/pc/zero_rule_coverage.py` | research: over the microcode dumps, the Shader Model 3 zero tests whose operands are provably bounded (`--taint`: only rcp/rsq/exp/log results can be Inf - the hybrid; `--taint-interpolators`: interpolators too) |
+| `vulkan_trace_shader_constants` (+ `_shader_filter`, `_budget`) | logs the float constants a vertex or pixel shader reads at each draw (raw bits and values) - finds an Inf or NaN constant in one replay |
 | `tools/pc/trace_bench.py`, `xenia_trace_bench` | the command processor's CPU cost per draw without the device: the trace dump replays the captured frame `--iterations` times with warm caches (`trace_dump_bench_iterations`) and logs the draw-path buckets per frame (`vulkan_trace_draw_outcomes_per_frame`) and the texture-request split (`GPU tex cpu/frame`); medians per frame and per draw. `--a/--b` runs an A/B as A B A B. x64 gives the direction and the size; the Thor judges the speed |
 | `tools/pc/vk_validate.py`, `xenia_vk_validate` | the Khronos validation layer (synchronization validation on) over trace replays, messages grouped by ID with counts and an example. The layer is built from source once in `scratch/tools/vvl` (tag `vulkan-sdk-1.4.357.0`, `cmake -D UPDATE_DEPS=ON`, build with `/m:2`: with more jobs next to another build the compiler runs out of heap) |
 | `tools/xex/xdk_sigs.py` | library code shared across titles: each XEX decrypted and split by its `.pdata` into functions, each function hashed with the address fields masked; the census of functions shared by 2, 3, 4 titles, the largest with a guess (memory routine, VMX128, FPU, syscall). `--seed banjo=renut_funcs.toml,...` finds the reNut-named Banjo functions in the other titles (exact hash, else a 16-instruction masked prefix) |

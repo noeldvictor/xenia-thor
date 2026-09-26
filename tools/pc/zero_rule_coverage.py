@@ -245,7 +245,8 @@ def analyze(path, args):
         instructions.append((op, split_operands(rest), rest, coissue))
     analysis = Analysis(0 if args.taint else args.const_bits,
                         args.taint or not args.no_tex_bounded,
-                        args.taint or args.interp_bounded, pixel, args.taint)
+                        (args.taint and not args.taint_interpolators) or
+                        args.interp_bounded, pixel, args.taint)
     # Repeat until no bound grows (loops); a growing bound becomes unbounded.
     previous = None
     for _ in range(4):
@@ -286,6 +287,9 @@ def main():
                     help='the hybrid: only values from rcp, rsq, exp, log can be Inf '
                          '(constants, textures, interpolators, vertex data finite; '
                          'overflow ignored) - the tests a hybrid would keep')
+    ap.add_argument('--taint-interpolators', action='store_true',
+                    help='--taint with every interpolator possibly infinite (a vertex '
+                         'shader can export an rcp/rsq/exp/log result: 69 of 199 do)')
     ap.add_argument('--interp-bounded', action='store_true',
                     help='assume interpolated inputs are bounded (not provable)')
     args = ap.parse_args()
@@ -299,9 +303,14 @@ def main():
         totals[kind][0] += 1
         totals[kind][1] += sites
         totals[kind][2] += bounded
-    print('assumptions: constants < 2^%d, textures %s, interpolators %s' % (
-        args.const_bits, 'unbounded' if args.no_tex_bounded else 'fixed-point (bounded)',
-        'bounded' if args.interp_bounded else 'unbounded'))
+    if args.taint:
+        print('assumptions (--taint): constants, textures and vertex data finite, '
+              'interpolators %s' % ('possibly infinite' if args.taint_interpolators
+                                    else 'finite'))
+    else:
+        print('assumptions: constants < 2^%d, textures %s, interpolators %s' % (
+            args.const_bits, 'unbounded' if args.no_tex_bounded else 'fixed-point (bounded)',
+            'bounded' if args.interp_bounded else 'unbounded'))
     for kind, (count, sites, bounded) in totals.items():
         print('%-6s %4d shaders: %6d zero tests, %6d (%.1f%%) with both operands bounded' % (
             kind, count, sites, bounded, 100.0 * bounded / max(sites, 1)))

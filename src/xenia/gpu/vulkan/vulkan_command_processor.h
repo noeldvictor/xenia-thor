@@ -1312,6 +1312,14 @@ class VulkanCommandProcessor : public CommandProcessor {
   // re-emits that draw's bindings).
   bool last_draw_pixel_textures_pushed_ = false;
 
+  // spirv_zero_rule_hybrid: whether a float constant the shader reads is an
+  // Inf or a NaN (then the draw uses the zero_rule_exact variant). Scanned
+  // again only when the shader or its float constants changed (the
+  // current_constant_buffers_up_to_date_ bit), [0] vertex, [1] pixel.
+  bool ShaderReadsNonFiniteFloatConstant(const Shader& shader);
+  const Shader* zero_rule_scanned_shader_[2] = {};
+  bool zero_rule_non_finite_[2] = {};
+
   // Currently used samplers.
   std::vector<std::pair<VulkanTextureCache::SamplerParameters, VkSampler>>
       current_samplers_vertex_;
