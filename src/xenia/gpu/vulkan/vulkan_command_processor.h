@@ -208,6 +208,20 @@ class VulkanCommandProcessor : public CommandProcessor {
   void AwaitSubmissionCompletion(uint64_t await_submission) {
     CheckSubmissionCompletionAndDeviceLoss(await_submission);
   }
+  // The same wait without the completion processing: the UMA direct-write
+  // path waits from inside SharedMemory::RequestRange, often in the middle of
+  // a texture load, where the texture cache's CompletedSubmissionUpdated may
+  // destroy textures - the one being loaded too (Banjo on the PC twin of the
+  // Thor's upload path: a crash in WatchMemoryRange from
+  // MakeUpToDateAndWatch, 2026-09-26). The next
+  // CheckSubmissionCompletionAndDeviceLoss reclaims. Never waits on the open
+  // submission.
+  void AwaitSubmissionFenceOnly(uint64_t await_submission) {
+    if (await_submission >= GetCurrentSubmission()) {
+      return;
+    }
+    completion_timeline_.AwaitSubmissionAndUpdateCompleted(await_submission);
+  }
 
   // Sparse binds are:
   // - In a single submission, all submitted in one vkQueueBindSparse.

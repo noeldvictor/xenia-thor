@@ -3451,9 +3451,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       TextureCache::RequestStats tex_stats = texture_cache_->TakeRequestStats();
       XELOGI(
           "GPU tex cpu/frame: calls={} checked={} changed={} loads={} "
-          "load_us={} update_us={}",
+          "decoded={} load_us={} update_us={}",
           tex_stats.calls, tex_stats.checked, tex_stats.changed,
-          tex_stats.loads, tex_stats.load_ns / 1000,
+          tex_stats.loads, tex_stats.decoded, tex_stats.load_ns / 1000,
           tex_stats.update_ns / 1000);
       texture_cache_->SetRequestStatsEnabled(true);
     }

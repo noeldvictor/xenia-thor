@@ -1212,7 +1212,7 @@ bool VulkanSharedMemory::UploadRangesDirect(
     if (current_submission > 1 &&
         command_processor_.GetCompletedSubmission() < current_submission - 1) {
       // Wait for everything submitted so far (current_submission - 1) to drain.
-      command_processor_.AwaitSubmissionCompletion(current_submission - 1);
+      command_processor_.AwaitSubmissionFenceOnly(current_submission - 1);
     }
   } else if (cvars::gpu_uma_smart_sync) {
     // TDR FIX: wait ONLY for the last submission that read this buffer, and only
@@ -1246,7 +1246,7 @@ bool VulkanSharedMemory::UploadRangesDirect(
     }
     if (wait_submission != 0 && wait_submission < current_submission &&
         command_processor_.GetCompletedSubmission() < wait_submission) {
-      command_processor_.AwaitSubmissionCompletion(wait_submission);
+      command_processor_.AwaitSubmissionFenceOnly(wait_submission);
     }
   }
 
@@ -1370,7 +1370,7 @@ void VulkanSharedMemory::MaybeSwitchVersionForWrite() {
   // reader (correctness; rare). After the wait the current version is safe to
   // overwrite in place; keep using it.
   if (version_has_closed_inflight_reader(other)) {
-    command_processor_.AwaitSubmissionCompletion(
+    command_processor_.AwaitSubmissionFenceOnly(
         version_last_read_submission_[cur]);
     return;
   }

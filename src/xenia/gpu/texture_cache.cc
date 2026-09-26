@@ -166,6 +166,19 @@ void TextureCache::ClearCache() { DestroyAllTextures(); }
 
 void TextureCache::CompletedSubmissionUpdated(
     uint64_t completed_submission_index) {
+  if (requesting_textures_) {
+    // Re-entered from a texture load: destroying textures now could free the
+    // one being loaded. The next completion update evicts.
+    ++eviction_deferred_count_;
+    if (eviction_deferred_count_ <= 4 ||
+        !(eviction_deferred_count_ & (eviction_deferred_count_ - 1))) {
+      XELOGW(
+          "Texture cache: completion processing re-entered during a texture "
+          "request - eviction deferred ({} times)",
+          eviction_deferred_count_);
+    }
+    return;
+  }
   // If memory usage is too high, destroy unused textures.
   uint64_t current_time = xe::Clock::QueryHostUptimeMillis();
   // texture_cache_memory_limit_render_to_texture is assumed to be included in
@@ -285,6 +298,13 @@ uint32_t TextureCache::GuestToHostSwizzle(uint32_t guest_swizzle,
 
 void TextureCache::RequestTextures(uint32_t used_texture_mask) {
   const auto& regs = register_file();
+  struct RequestingTextures {
+    uint32_t& depth;
+    explicit RequestingTextures(uint32_t& depth_in) : depth(depth_in) {
+      ++depth;
+    }
+    ~RequestingTextures() { --depth; }
+  } requesting_textures(requesting_textures_);
 
   if (texture_became_outdated_.exchange(false, std::memory_order_acquire)) {
     // A texture has become outdated - make sure whether textures are outdated
@@ -698,6 +718,9 @@ bool TextureCache::LoadTextureData(Texture& texture) {
   }
   if (!base_outdated && !mips_outdated) {
     return true;
+  }
+  if (request_stats_enabled_) {
+    ++request_stats_.decoded;
   }
 
   TextureKey texture_key = texture.key();

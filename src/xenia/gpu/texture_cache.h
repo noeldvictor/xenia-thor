@@ -107,6 +107,10 @@ class TextureCache {
     // Bindings whose key, host swizzle or signedness changed.
     uint64_t changed = 0;
     uint64_t loads = 0;
+    // Of the loads, the ones that decoded data (the texture was outdated) - on
+    // the Vulkan path each one is a compute dispatch and a copy, which end the
+    // render pass.
+    uint64_t decoded = 0;
     uint64_t load_ns = 0;
     // UpdateTextureBindingsImpl.
     uint64_t update_ns = 0;
@@ -580,6 +584,14 @@ class TextureCache {
 
  private:
   bool request_stats_enabled_ = false;
+  // Nonzero while RequestTextures runs. The UMA direct-write path waits for
+  // GPU completion from inside a texture load (SharedMemory::RequestRange),
+  // and completion processing that destroys textures then would free the
+  // texture being loaded (Banjo on the PC twin of the Thor's upload path:
+  // a crash in WatchMemoryRange from MakeUpToDateAndWatch, 2026-09-26) -
+  // CompletedSubmissionUpdated defers its eviction while it is set.
+  uint32_t requesting_textures_ = 0;
+  uint64_t eviction_deferred_count_ = 0;
   RequestStats request_stats_;
 
   void UpdateTexturesTotalHostMemoryUsage(uint64_t add, uint64_t subtract);

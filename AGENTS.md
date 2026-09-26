@@ -732,6 +732,24 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   visible to it) costs 4 of the title's 27 breaks. The guest CPU on the PC mostly waits: the
   render thread spins in 82368BE8 (a poll loop of `mr r31,r31` priority hints, 72% of its
   samples), the main thread sleeps in KeDelayExecutionThread (about 65%).
+- **The Thor's upload path, all titles (PC twin, 2026-09-26, `pc_matrix --thor-profile --cvars
+  "gpu_uma_direct_shared_memory=true gpu_uma_direct_system_memory=true
+  vulkan_trace_draw_outcomes_per_frame=true"` + `frame_timeline.py`):** the whole-buffer
+  smart-sync wait per frame: Gears 26.2 ms (command processor 30.4 ms of 33), Blue Dragon
+  13.4 ms, MagnaCarta 2 8 ms; Banjo only early. With `gpu_uma_smart_sync_pages=true`: 0-3 us,
+  command processor Gears 3.4 ms, Blue Dragon 2.5 ms, MC2 0.3 ms - the first device A/B to
+  run (user's go). Still on every title: render pass breaks (Gears 73, Banjo 76, Blue Dragon
+  47 a frame) and texture loads that decode data mid-frame (Gears 16, Blue Dragon 21 - each
+  one ends the pass; `tex` column of the timeline). **Crash found and fixed:** the direct
+  path's smart-sync wait ran the full completion processing from inside
+  SharedMemory::RequestRange, often in the middle of a texture load, and the texture cache's
+  eviction could free the texture being loaded - Banjo crashed in WatchMemoryRange from
+  MakeUpToDateAndWatch (1 of 2 runs; forced eviction `texture_cache_memory_limit_soft=8
+  texture_cache_memory_limit_hard=16 texture_cache_memory_limit_soft_lifetime=0` 1 of 2). The
+  Thor runs this path by default. Now the direct path waits on the fence only
+  (`AwaitSubmissionFenceOnly`), and `TextureCache::CompletedSubmissionUpdated` defers eviction
+  while `RequestTextures` runs (logs "eviction deferred"): 3 of 3 forced-eviction runs clean,
+  0 deferrals.
 - **Blue Dragon (4D5307DF).** Low priority (re:Blue exists). GPU frame 79 -> 64.5 ms in the field
   (about 10 -> 12.7 presented fps) since the 21-bit rounding became a lever, off on Android; the
   August build ran about 17.5 fps; the two scene passes take 47 of the 64 ms.

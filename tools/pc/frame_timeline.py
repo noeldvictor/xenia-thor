@@ -7,7 +7,8 @@ writes at each guest swap (pc_run.py --timeline turns it on and prints this at
 the end) and groups them by guest time (guest_ms) into buckets: frames per
 second, the median draws, vertices, render pass breaks (brk_open) and their
 buffer barriers, the GPU frame time, the command processor's time
-(cpu_real_us) and the time it waited on a GPU fence (fence_us). Flags:
+(cpu_real_us), the time it waited on a GPU fence (fence_us) and the texture
+loads that decoded data (tex; each one ends the render pass). Flags:
 - WAITS-GPU: the command processor waits on the GPU for more than 1 ms a frame
   - the recording and the GPU do not overlap (2026-09-25: the Thor upload
   path's whole-buffer smart-sync, 11.5 ms a frame on MagnaCarta 2's title);
@@ -25,8 +26,9 @@ import statistics
 import sys
 
 LINE = 'GPU draw outcomes/frame'
-FIELDS = ('rendered', 'total_vertices', 'copy', 'brk_open', 'brk_buf', 'gpu_frame_us',
-          'cpu_real_us', 'fence_us')
+TEX_LINE = 'GPU tex cpu/frame'
+FIELDS = ('rendered', 'total_vertices', 'copy', 'brk_open', 'brk_buf', 'tex_decoded',
+          'gpu_frame_us', 'cpu_real_us', 'fence_us')
 PAIR = re.compile(r'(\w+)=(-?\d+)')
 
 
@@ -37,6 +39,11 @@ def frames(log_path):
             if LINE in line:
                 d = {k: int(v) for k, v in PAIR.findall(line)}
                 out.append(d)
+            elif TEX_LINE in line and out:
+                # The texture line of the same frame follows its outcomes line.
+                m = re.search(r'decoded=(\d+)', line)
+                if m:
+                    out[-1]['tex_decoded'] = int(m.group(1))
     return out
 
 
@@ -71,14 +78,14 @@ def main():
               '(pc_run.py --timeline)' % LINE)
         return 1
     result = timeline(rows, args.bucket)
-    print('%7s %6s %5s %6s %8s %6s %7s %8s %8s %8s  %s' % (
-        'guest s', 'frames', 'fps', 'draws', 'vertices', 'breaks', 'brk_buf', 'gpu_us',
+    print('%7s %6s %5s %6s %8s %6s %7s %5s %8s %8s %8s  %s' % (
+        'guest s', 'frames', 'fps', 'draws', 'vertices', 'breaks', 'brk_buf', 'tex', 'gpu_us',
         'cp_us', 'fence_us', 'flags'))
     for t in result:
-        print('%3d-%-3d %6d %5.1f %6d %8d %6d %7d %8d %8d %8d  %s' % (
+        print('%3d-%-3d %6d %5.1f %6d %8d %6d %7d %5d %8d %8d %8d  %s' % (
             t['start_s'], t['start_s'] + args.bucket, t['frames'], t['fps'], t['rendered'],
-            t['total_vertices'], t['brk_open'], t['brk_buf'], t['gpu_frame_us'],
-            t['cpu_real_us'], t['fence_us'], ' '.join(t['flags'])))
+            t['total_vertices'], t['brk_open'], t['brk_buf'], t['tex_decoded'],
+            t['gpu_frame_us'], t['cpu_real_us'], t['fence_us'], ' '.join(t['flags'])))
     flagged = collections.Counter(f for t in result for f in t['flags'])
     print('%d frames; flagged buckets: %s' % (
         len(rows), ', '.join('%s %d' % kv for kv in flagged.items()) or 'none'))
