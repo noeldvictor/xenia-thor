@@ -932,6 +932,13 @@ DEFINE_string(vulkan_debug_barrier_before_draw_shaders, "",
               "with it reads something an earlier command writes without a "
               "barrier.",
               "GPU");
+DEFINE_int32(vulkan_trace_pass_break_causes, 0,
+             "Diagnostic: log this many render pass breaks (a live pass ended "
+             "to submit barriers - on a tiler each one stores and reloads the "
+             "framebuffer) with the draw index and every pending barrier: the "
+             "buffer (shared memory or another) with its range and access "
+             "masks, the image with its layouts. 0 disables.",
+             "GPU");
 DEFINE_bool(vulkan_trace_vertex_fetch_gpu_compare, false,
             "Before each draw of a vertex shader in "
             "vulkan_trace_vertex_fetch_shader_filter, read back its vertex "

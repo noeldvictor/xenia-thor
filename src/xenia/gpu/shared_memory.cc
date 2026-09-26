@@ -292,10 +292,48 @@ void SharedMemory::FireWatches(uint32_t page_first, uint32_t page_last,
   }
 }
 
+void SharedMemory::EnablePageGpuUseTracking() {
+  if (!page_gpu_use_) {
+    page_gpu_use_ =
+        std::make_unique<uint64_t[]>(kBufferSize >> page_size_log2_);
+  }
+}
+
+void SharedMemory::NoteGpuUseImpl(uint32_t start, uint32_t length) {
+  if (!length || start >= kBufferSize) {
+    return;
+  }
+  const uint64_t submission = HazardCurrentSubmission();
+  const uint32_t end = std::min(start + (length - 1), kBufferSize - 1);
+  for (uint32_t page = start >> page_size_log2_,
+                page_last = end >> page_size_log2_;
+       page <= page_last; ++page) {
+    page_gpu_use_[page] = submission;
+  }
+}
+
+uint64_t SharedMemory::PageGpuUseLatest(
+    const std::vector<std::pair<uint32_t, uint32_t>>& page_ranges) const {
+  uint64_t latest = 0;
+  if (!page_gpu_use_) {
+    return latest;
+  }
+  const uint32_t page_count = kBufferSize >> page_size_log2_;
+  for (const auto& range : page_ranges) {
+    for (uint32_t page = range.first,
+                  page_end = std::min(range.first + range.second, page_count);
+         page < page_end; ++page) {
+      latest = std::max(latest, page_gpu_use_[page]);
+    }
+  }
+  return latest;
+}
+
 void SharedMemory::RangeWrittenByGpu(uint32_t start, uint32_t length) {
   if (length == 0 || start >= kBufferSize) {
     return;
   }
+  NoteGpuUse(start, length);
   length = std::min(length, kBufferSize - start);
   uint32_t end = start + length - 1;
   uint32_t page_first = start >> page_size_log2_;
@@ -429,6 +467,8 @@ bool SharedMemory::RequestRange(uint32_t start, uint32_t length) {
   if (start > kBufferSize || (kBufferSize - start) < length) {
     return false;
   }
+
+  NoteGpuUse(start, length);
 
   SCOPE_profile_cpu_f("gpu");
 

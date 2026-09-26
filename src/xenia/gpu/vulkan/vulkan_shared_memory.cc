@@ -39,6 +39,12 @@ DEFINE_bool(vulkan_sparse_shared_memory, true,
 // arm64_offset_memory_address_fastpath), and reordering uploads relative to a
 // render pass fails as WRONG PIXELS rather than as a crash. Flip to true once
 // a title has been checked with it on.
+DEFINE_bool(vulkan_debug_hoist_all_shmem_uploads, false,
+            "Research (not exact): with vulkan_hoist_shmem_uploads, hoist every "
+            "shared-memory upload to the head of the submission, also pages the "
+            "guest wrote after an already-recorded command read them - the upper "
+            "bound of the render pass breaks hoisting can remove.",
+            "Vulkan");
 DEFINE_bool(vulkan_hoist_shmem_uploads, false,
             "Record shared-memory uploads whose pages were not invalidated "
             "since the current submission opened at the start of the "
@@ -54,6 +60,25 @@ DEFINE_bool(
     "vkCmdCopyBuffer transfer. Forces a non-sparse 512 MB buffer. "
     "Experimental - validate rendering per title on device before trusting it; "
     "a coherency bug here shows up as corrupted or black frames.",
+    "Vulkan");
+DEFINE_bool(
+    gpu_uma_direct_system_memory, false,
+    "PC twin of the Thor's upload path: let gpu_uma_direct_shared_memory use "
+    "host-visible system memory when no HOST_VISIBLE | DEVICE_LOCAL type can "
+    "hold the 512 MB buffer (a desktop GPU without resizable BAR has a 256 MB "
+    "window). The GPU then reads guest data over PCIe - slow, but the uploads, "
+    "barriers and render pass breaks are the device's. For PC checks of the "
+    "direct path (tools/pc, trace dumps), not for play.",
+    "Vulkan");
+DEFINE_bool(
+    gpu_uma_smart_sync_pages, false,
+    "gpu_uma_smart_sync per page: before a direct write, wait only for the "
+    "latest submission that used the written pages on the GPU (read or "
+    "written), not the latest that used any page. The whole-buffer wait "
+    "makes almost every frame's first upload wait for the previous frame's "
+    "GPU work - the recording and the GPU never overlap (PC twin of the "
+    "Thor path, MagnaCarta 2's title: 11.4 ms per frame in the fence, "
+    "2026-09-25). A page an in-flight submission uses still waits.",
     "Vulkan");
 DEFINE_bool(
     gpu_uma_serialize_before_write, false,
@@ -403,8 +428,23 @@ bool VulkanSharedMemory::Initialize() {
         memory_types.host_visible;
     buffer_host_visible_ = cvars::gpu_uma_direct_shared_memory &&
                            host_visible_device_local != 0;
+    // gpu_uma_direct_system_memory: a host-visible type in system memory
+    // (host-coherent preferred) instead.
+    uint32_t host_visible_system = 0;
+    if (cvars::gpu_uma_direct_shared_memory &&
+        cvars::gpu_uma_direct_system_memory) {
+      host_visible_system =
+          buffer_memory_requirements.memoryTypeBits &
+          memory_types.host_visible & ~memory_types.device_local;
+      if (host_visible_system & memory_types.host_coherent) {
+        host_visible_system &= memory_types.host_coherent;
+      }
+      buffer_host_visible_ = host_visible_system != 0;
+    }
     if (buffer_host_visible_) {
-      xe::bit_scan_forward(host_visible_device_local, &buffer_memory_type_);
+      xe::bit_scan_forward(host_visible_system ? host_visible_system
+                                               : host_visible_device_local,
+                           &buffer_memory_type_);
       buffer_host_coherent_ =
           (memory_types.host_coherent & (uint32_t(1) << buffer_memory_type_)) !=
           0;
@@ -467,6 +507,10 @@ bool VulkanSharedMemory::Initialize() {
       XELOGE("Shared memory: Failed to bind memory to the Vulkan buffer");
       Shutdown();
       return false;
+    }
+    if (buffer_host_visible_ && cvars::gpu_uma_smart_sync &&
+        cvars::gpu_uma_smart_sync_pages) {
+      EnablePageGpuUseTracking();
     }
     if (buffer_host_visible_) {
       if (dfn.vkMapMemory(device, buffer_memory, 0, VK_WHOLE_SIZE, 0,
@@ -1004,9 +1048,10 @@ bool VulkanSharedMemory::UploadRanges(
   // at the head of the submission's command buffer without breaking the
   // current render pass (a pass break is a GMEM store+reload on a TBDR).
   bool hoist = cvars::vulkan_hoist_shmem_uploads &&
-               !AnyPageInvalidatedSinceSubmissionOpen(
+               (cvars::vulkan_debug_hoist_all_shmem_uploads ||
+                !AnyPageInvalidatedSinceSubmissionOpen(
                    upload_page_ranges.data(),
-                   uint32_t(upload_page_ranges.size()));
+                   uint32_t(upload_page_ranges.size())));
 
   if (!hoist) {
     // upload_page_ranges are sorted, use them to determine the range for the
@@ -1190,7 +1235,12 @@ bool VulkanSharedMemory::UploadRangesDirect(
         double_buffer_enabled_
             ? version_last_read_submission_[current_version_]
             : uma_last_read_submission_;
-    if (cvars::gpu_uma_smart_sync_writes &&
+    // gpu_uma_smart_sync_pages: the pages being written, reads and writes.
+    const bool per_page = !double_buffer_enabled_ && IsPageGpuUseTracked();
+    if (per_page) {
+      wait_submission = PageGpuUseLatest(upload_page_ranges);
+    }
+    if (!per_page && cvars::gpu_uma_smart_sync_writes &&
         uma_last_write_submission_ > wait_submission) {
       wait_submission = uma_last_write_submission_;
     }

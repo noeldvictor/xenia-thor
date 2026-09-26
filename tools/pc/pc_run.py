@@ -150,6 +150,10 @@ def main():
     ap.add_argument('--cdb', action='store_true',
                     help='run under cdb: first-chance access violations (the write watches) pass, '
                          'a second-chance one prints the crash stack at the end')
+    ap.add_argument('--profile-at', default='',
+                    help='"SECONDS:DURATION": sample where xenia spends its CPU (guest functions and '
+                         'host functions per thread, tools/pc/guest_profile.py) from that second on; '
+                         'adds cpu_emit_jit_perf_map=true; the report lands in <storage>/profile.txt')
     ap.add_argument('--trace-at', default='', help='"seconds ..." at which to trace the frame on screen '
                     '(trace_gpu_request_file); the .xtr files land in <storage>/traces for tools/pc/trace_ab.py')
     args = ap.parse_args()
@@ -168,6 +172,8 @@ def main():
     if args.from_snapshot:
         cvars += trace_ab.arms_from_snapshot(args.from_snapshot)[1][1]  # the "device" arm
     cvars += [c for c in args.cvars.split() if c]
+    if args.profile_at:
+        cvars.append('cpu_emit_jit_perf_map=true')
     exe = ORACLE if args.oracle else args.exe
     # --gpu=vulkan: on Windows Xenia picks D3D12 by default, and the device
     # runs Vulkan - without this the device's GPU settings never apply
@@ -212,6 +218,11 @@ def main():
     else:
         proc = subprocess.Popen(cmd, cwd=ROOT)
     t0 = time.time()
+    profile_at = None
+    profile_proc = None
+    if args.profile_at:
+        at, _, duration = args.profile_at.partition(':')
+        profile_at = (float(at), float(duration or 20))
     parked = set()
     prev = None
     still = 0
@@ -222,6 +233,15 @@ def main():
     try:
         while time.time() - t0 < args.seconds and proc.poll() is None:
             now = time.time() - t0
+            if profile_at and now >= profile_at[0] and profile_proc is None:
+                report = open(os.path.join(storage, 'profile.txt'), 'w')
+                profile_proc = subprocess.Popen(
+                    [sys.executable, os.path.join(ROOT, 'tools', 'pc', 'guest_profile.py'),
+                     '--pid', str(emulator_pid(proc, args.cdb)), '--log', log,
+                     '--seconds', str(profile_at[1]),
+                     '--json', os.path.join(storage, 'profile.json')],
+                    cwd=ROOT, stdout=report, stderr=subprocess.STDOUT)
+                print('+%5.1f s profiling for %.0f s' % (now, profile_at[1]), flush=True)
             while trace_times and trace_times[0] <= now:
                 trace_times.pop(0)
                 open(trace_request, 'w').close()
@@ -279,6 +299,11 @@ def main():
                         prev = path
             time.sleep(0.5)
     finally:
+        if profile_proc is not None:
+            try:
+                profile_proc.wait(timeout=profile_at[1] + 120)
+            except subprocess.TimeoutExpired:
+                profile_proc.kill()
         exited = proc.poll()
         if exited is None:
             proc.kill()

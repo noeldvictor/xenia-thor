@@ -709,6 +709,29 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   GPU-readback titles, plus 512 MB of RAM - the device decides.
 - **MagnaCarta 2 (4E4D080B).** On the PC with the device's settings it reaches the in-engine castle
   scene; every device setting is neutral on its frame. It needs the a64 backend on the device.
+  **Slow (user, 2026-09-25) - found on the PC twin of the Thor's upload path:** the direct-write
+  path (`gpu_uma_direct_shared_memory`, the Android default) runs `gpu_uma_smart_sync` before
+  a write, and its whole-buffer rule (wait for the latest submission that used ANY page) makes
+  almost every frame's first upload wait for the previous frame's GPU work: the command
+  processor sat in the fence for 11.5 ms of each title frame (7.8 ms per video frame) - the
+  recording and the GPU never overlap, so a GPU-bound frame costs GPU + recording time.
+  `gpu_uma_smart_sync_pages` waits only for the latest submission that used the written
+  pages (read or written; RequestRange and RangeWrittenByGpu note them): fence 3 us, command
+  processor 11.8 -> 0.3 ms per frame, GPU time unchanged, the 6 MC2 traces pixel-identical,
+  no Vulkan errors. At least as safe as the whole-buffer rule (that one never waits again
+  after the first read of a submission). Default off until the Thor A/B (user's go). The PC
+  twin: `gpu_uma_direct_system_memory` lets the direct path use host-visible system memory
+  (a desktop GPU without resizable BAR has only a 256 MB device-local window).
+  Other MC2 costs, for the Thor: a gameplay frame (village trace 19799) has 170 draws, about
+  770,000 vertices and 33 render pass breaks - 27 for shared-memory uploads on the copy path,
+  the rest resolves and render target reads; hoisting the uploads
+  (`vulkan_hoist_shmem_uploads`, even every upload with the research
+  `vulkan_debug_hoist_all_shmem_uploads`) leaves 25 - the texture loads through the scratch
+  buffer then break the pass instead. On the Thor path the upload barrier
+  (`gpu_uma_direct_upload_barrier`, spec-redundant: host writes before vkQueueSubmit are
+  visible to it) costs 4 of the title's 27 breaks. The guest CPU on the PC mostly waits: the
+  render thread spins in 82368BE8 (a poll loop of `mr r31,r31` priority hints, 72% of its
+  samples), the main thread sleeps in KeDelayExecutionThread (about 65%).
 - **Blue Dragon (4D5307DF).** Low priority (re:Blue exists). GPU frame 79 -> 64.5 ms in the field
   (about 10 -> 12.7 presented fps) since the 21-bit rounding became a lever, off on Android; the
   August build ran about 17.5 fps; the two scene passes take 47 of the 64 ms.
@@ -900,6 +923,9 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `gpu_debug_log_index_range` | per indexed draw: indices past a vertex fetch constant, Inf/NaN 32-bit float attributes, and the CPU clip positions of the vertices (not finite, w near 0; with `gpu_debug_log_draws` the index range and the vertices behind the eye) |
 | `vulkan_trace_vertex_fetch_gpu_compare` | reads back a draw's vertex and index buffers from the Vulkan shared memory and compares every word with guest memory |
 | `vulkan_debug_barrier_before_draw_shaders` | a full shared-memory barrier (render pass ended) before the draws of the named vertex shaders - does a varying draw read an unsynchronized write? |
+| `tools/pc/guest_profile.py`, `pc_run.py --profile-at S:D` | a sampling profiler for the PC build: per thread (by name) the share of CPU and the hottest guest functions (JIT code, from `cpu_emit_jit_perf_map` JITSYM lines, now also logged by the x64 backend) and host functions (dbghelp + PDB); only threads that used CPU are sampled |
+| `vulkan_trace_pass_break_causes N` | the first N render pass breaks with the draw index and every pending barrier (shared memory or other buffer, access masks, image layouts) - what ends the passes a tiler pays for |
+| `gpu_uma_direct_system_memory` | the PC twin of the Thor's direct-write upload path (host-visible system memory) for the trace dump and `pc_run` |
 | `cvar_ab.py --noise N` | for a changed trace, N more A replays (default 1): A/A changes too = noisy, not changed; the A/A row prints under the A/B row |
 | `cvar_ab.py --prefix` | the first draw after which the A and B frames differ, by binary search over `gpu_debug_skip_draws` (resolves never skipped), with its `gpu_debug_log_draws` line (primitive, count, VS and PS hashes) |
 | `tools/pc/zero_rule_coverage.py` | research: over the microcode dumps, the Shader Model 3 zero tests whose operands are provably bounded (`--taint`: only rcp/rsq/exp/log results can be Inf - the hybrid; `--taint-interpolators`: interpolators too) |

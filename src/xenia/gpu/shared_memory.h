@@ -160,6 +160,16 @@ class SharedMemory {
   // regions in those pages.
   void RangeWrittenByGpu(uint32_t start, uint32_t length);
 
+  // Per-page GPU use tracking (gpu_uma_smart_sync_pages): the submission
+  // that last read or wrote each page on the GPU. RequestRange and
+  // RangeWrittenByGpu note it; a caller that skips RequestRange for a range
+  // the GPU reads must call NoteGpuUse.
+  void NoteGpuUse(uint32_t start, uint32_t length) {
+    if (page_gpu_use_) {
+      NoteGpuUseImpl(start, length);
+    }
+  }
+
  protected:
   SharedMemory(Memory& memory);
   // For gpu_uma_hazard_check: the submission being recorded now, and the last
@@ -169,6 +179,12 @@ class SharedMemory {
   virtual bool IsTraceRecording() const { return false; }
   virtual uint64_t HazardCurrentSubmission() const { return 0; }
   virtual uint64_t HazardCompletedSubmission() const { return 0; }
+  void EnablePageGpuUseTracking();
+  bool IsPageGpuUseTracked() const { return page_gpu_use_ != nullptr; }
+  // The latest submission that used any page of the page ranges
+  // ({first page, page count}) on the GPU, 0 if none.
+  uint64_t PageGpuUseLatest(
+      const std::vector<std::pair<uint32_t, uint32_t>>& page_ranges) const;
   // Set by the implementation when its GPU buffer is bound to the guest's
   // physical memory itself (gpu_uma_zero_copy): an upload copies nothing.
   bool zero_copy_ = false;
@@ -293,6 +309,9 @@ class SharedMemory {
   // gpu_uma_hazard_check: per page, the submission that last requested it and
   // the kind of request (1 buffer, 2 other). Made on the first use.
   std::unique_ptr<uint64_t[]> hazard_page_use_;
+  // NoteGpuUse; allocated by EnablePageGpuUseTracking.
+  std::unique_ptr<uint64_t[]> page_gpu_use_;
+  void NoteGpuUseImpl(uint32_t start, uint32_t length);
   std::unique_ptr<uint8_t[]> hazard_page_kind_;
   // The byte range within the page that the requests of hazard_page_use_'s
   // submission covered (their envelope), so a write elsewhere in the page -

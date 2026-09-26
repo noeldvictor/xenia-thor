@@ -20,12 +20,15 @@
 #include "third_party/fmt/include/fmt/format.h"
 #include "xenia/base/assert.h"
 #include "xenia/base/clock.h"
+#include "xenia/base/cvar.h"
 #include "xenia/base/literals.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
 #include "xenia/base/memory.h"
 #include "xenia/cpu/function.h"
 #include "xenia/cpu/module.h"
+
+DECLARE_bool(cpu_emit_jit_perf_map);
 
 namespace xe {
 namespace cpu {
@@ -256,6 +259,14 @@ void X64CodeCache::PlaceGuestCode(uint32_t guest_address, void* machine_code,
     // Notify subclasses of placed code.
     PlaceCode(guest_address, machine_code, func_info, code_execute_address,
               unwind_reservation);
+  }
+
+  // The host range of each guest function for tools/pc/guest_profile.py, as
+  // CodeCacheBase logs it on the device (cpu_emit_jit_perf_map).
+  if (cvars::cpu_emit_jit_perf_map && guest_address) {
+    XELOGI("JITSYM {:X} {:X} {:08X}",
+           reinterpret_cast<uint64_t>(code_execute_address),
+           uint64_t(func_info.code_size.total), guest_address);
   }
 
 #if ENABLE_VTUNE

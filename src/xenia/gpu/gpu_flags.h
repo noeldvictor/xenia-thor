@@ -123,6 +123,7 @@ DECLARE_bool(vulkan_trace_vertex_fetch_checksum);
 DECLARE_int32(vulkan_trace_vertex_fetch_checksum_budget);
 DECLARE_string(vulkan_trace_vertex_fetch_shader_filter);
 DECLARE_bool(vulkan_trace_vertex_fetch_gpu_compare);
+DECLARE_int32(vulkan_trace_pass_break_causes);
 DECLARE_string(vulkan_debug_barrier_before_draw_shaders);
 DECLARE_bool(vulkan_trace_swap_shared_memory_checksum);
 DECLARE_int32(vulkan_trace_swap_shared_memory_checksum_budget);

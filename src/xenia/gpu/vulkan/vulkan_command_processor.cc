@@ -4588,6 +4588,32 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
     }
     return false;
   }
+  if (cvars::vulkan_trace_pass_break_causes > 0 &&
+      current_render_pass_ != VK_NULL_HANDLE) {
+    static int32_t breaks_logged = 0;
+    if (breaks_logged < cvars::vulkan_trace_pass_break_causes) {
+      ++breaks_logged;
+      XELOGI("GPU pass break: draw {} - {} buffer, {} image barriers",
+             debug_current_draw_index_,
+             pending_barriers_buffer_memory_barriers_.size(),
+             pending_barriers_image_memory_barriers_.size());
+      for (const VkBufferMemoryBarrier& bmb :
+           pending_barriers_buffer_memory_barriers_) {
+        XELOGI(
+            "GPU pass break:   buffer {} offset {:08X} size {:X} access "
+            "{:X} -> {:X}",
+            bmb.buffer == shared_memory_->buffer() ? "shared-memory" : "other",
+            uint64_t(bmb.offset), uint64_t(bmb.size),
+            uint32_t(bmb.srcAccessMask), uint32_t(bmb.dstAccessMask));
+      }
+      for (const VkImageMemoryBarrier& imb :
+           pending_barriers_image_memory_barriers_) {
+        XELOGI("GPU pass break:   image layout {} -> {} access {:X} -> {:X}",
+               uint32_t(imb.oldLayout), uint32_t(imb.newLayout),
+               uint32_t(imb.srcAccessMask), uint32_t(imb.dstAccessMask));
+      }
+    }
+  }
   // Attribution: this SubmitBarriers is ending a LIVE render pass to flush
   // barriers (a tiler break). Tally what kinds of barriers forced it so the
   // tiler rewrite targets the real cause (buffer/shared-memory vs texture
@@ -8028,7 +8054,9 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       if (vertex_residency_cache_.find(vf_key) !=
           vertex_residency_cache_.end()) {
         // Already made resident earlier this frame - skip the redundant
-        // RequestRange (its per-call dirty-page check + bookkeeping).
+        // RequestRange (its per-call dirty-page check + bookkeeping). The GPU
+        // still reads it in this submission (gpu_uma_smart_sync_pages).
+        shared_memory_->NoteGpuUse(vf_address, vf_size);
         vertex_buffers_resident[vfetch_index >> 6] |= uint64_t(1)
                                                       << (vfetch_index & 63);
         continue;
