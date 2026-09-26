@@ -46,11 +46,16 @@ DEFINE_bool(
     spirv_zero_rule_hybrid, false,
     "The Shader Model 3 zero rule (+0 times anything, Inf or NaN, is +0) "
     "tested only where an operand can hold an Inf or a NaN from rcp, rsq, "
-    "exp, log or sqrt (Shader::GetZeroRuleExactOperations); other "
+    "exp, log or sqrt (Shader::GetZeroRuleExactOperation); other "
     "multiplies are IEEE, as in DXVK's d3d9 default on Turnip. A draw whose "
     "shader reads an Inf or NaN float constant uses the exact variant "
     "(zero_rule_exact modification).",
     "GPU");
+DEFINE_bool(spirv_debug_zero_rule_finite_interpolators, false,
+            "Research (not exact): spirv_zero_rule_hybrid treats interpolators "
+            "as finite even when the vertex shader may export an Inf or a NaN - "
+            "the upper bound of a per-interpolator taint.",
+            "GPU");
 DEFINE_int32(spirv_zero_rule_hybrid_stages, 3,
              "spirv_zero_rule_hybrid: the shader stages it applies to (1 "
              "vertex, 2 pixel, 3 both); the other stages keep every test.",
@@ -106,15 +111,27 @@ spv::Id SpirvShaderTranslator::ZeroIfAnyOperandIsZero(spv::Id value,
   int num_components = builder_->getNumComponents(value);
   assert_true(builder_->getNumComponents(operand_0_abs) == num_components);
   assert_true(builder_->getNumComponents(operand_1_abs) == num_components);
+  // spirv_zero_rule_hybrid: only under the interpolator condition.
+  auto conditioned = [&](spv::Id is_zero) -> spv::Id {
+    if (zero_rule_condition_ == spv::NoResult) {
+      return is_zero;
+    }
+    return builder_->createBinOp(
+        spv::OpLogicalAnd, type_bool_vectors_[num_components - 1], is_zero,
+        num_components > 1
+            ? builder_->smearScalar(spv::NoPrecision, zero_rule_condition_,
+                                    type_bool_vectors_[num_components - 1])
+            : zero_rule_condition_);
+  };
   if (!cvars::spirv_multiply_zero_test_on_bits) {
     return builder_->createTriOp(
         spv::OpSelect, type_float_,
-        builder_->createBinOp(
+        conditioned(builder_->createBinOp(
             spv::OpFOrdEqual, type_bool_vectors_[num_components - 1],
             builder_->createBinBuiltinCall(
                 type_float_vectors_[num_components - 1], ext_inst_glsl_std_450_,
                 GLSLstd450NMin, operand_0_abs, operand_1_abs),
-            const_float_vectors_0_[num_components - 1]),
+            const_float_vectors_0_[num_components - 1])),
         const_float_vectors_0_[num_components - 1], value);
   }
   // Equivalent to min(|a|, |b|) == 0.0 - the operands are already absolute, so
@@ -136,10 +153,35 @@ spv::Id SpirvShaderTranslator::ZeroIfAnyOperandIsZero(spv::Id value,
   }
   return builder_->createTriOp(
       spv::OpSelect, type_float_,
-      builder_->createBinOp(spv::OpIEqual,
-                            type_bool_vectors_[num_components - 1], min_bits,
-                            const_uint_zero),
+      conditioned(builder_->createBinOp(
+          spv::OpIEqual, type_bool_vectors_[num_components - 1], min_bits,
+          const_uint_zero)),
       const_float_vectors_0_[num_components - 1], value);
+}
+
+spv::Id SpirvShaderTranslator::GetZeroRuleInterpolatorCondition(
+    uint32_t interpolators) {
+  auto it = zero_rule_interpolator_conditions_.find(interpolators);
+  if (it != zero_rule_interpolator_conditions_.end()) {
+    return it->second;
+  }
+  if (zero_rule_spec_interpolators_ == spv::NoResult) {
+    zero_rule_spec_interpolators_ = builder_->makeUintConstant(0, true);
+    builder_->addDecoration(zero_rule_spec_interpolators_,
+                            spv::DecorationSpecId,
+                            int(kSpecConstantZeroRuleInterpolators));
+    builder_->addName(zero_rule_spec_interpolators_,
+                      "xe_zero_rule_interpolators");
+  }
+  spv::Id masked = builder_->createSpecConstantOp(
+      spv::OpBitwiseAnd, type_uint_,
+      {zero_rule_spec_interpolators_,
+       builder_->makeUintConstant(interpolators)},
+      {});
+  spv::Id condition = builder_->createSpecConstantOp(
+      spv::OpINotEqual, type_bool_, {masked, const_uint_0_}, {});
+  zero_rule_interpolator_conditions_.emplace(interpolators, condition);
+  return condition;
 }
 
 void SpirvShaderTranslator::KillPixel(
@@ -184,23 +226,37 @@ void SpirvShaderTranslator::ProcessAluInstruction(
   // Whether the instruction has changed the predicate, and it needs to be
   // checked again later.
   bool predicate_written_vector = false;
-  uint32_t zero_rule_exact_operations =
-      zero_rule_hybrid_ ? current_shader().GetZeroRuleExactOperations(
-                              current_alu_instruction_address(),
-                              zero_rule_infinite_interpolators_)
-                        : 0b11111;
-  zero_rule_exact_lanes_ = zero_rule_exact_operations & 0b1111;
-  zero_rule_exact_ = zero_rule_exact_lanes_ != 0;
+  Shader::ZeroRuleExactOperation zero_rule_operation = {0b11111, 0, 0};
+  if (zero_rule_hybrid_) {
+    zero_rule_operation = current_shader().GetZeroRuleExactOperation(
+        current_alu_instruction_address());
+  }
+  zero_rule_interpolators_ = zero_rule_operation.interpolators;
+  zero_rule_exact_lanes_ = zero_rule_operation.always & 0b1111;
+  zero_rule_conditional_lanes_ =
+      zero_rule_operation.if_interpolators & 0b1111;
+  zero_rule_exact_ =
+      (zero_rule_exact_lanes_ | zero_rule_conditional_lanes_) != 0;
+  zero_rule_condition_ = spv::NoResult;
   spv::Id vector_result = ProcessVectorAluOperation(
       instr, memexport_eM_potentially_written_before, predicate_written_vector);
 
   bool predicate_written_scalar = false;
-  zero_rule_exact_ = (zero_rule_exact_operations & 0b10000) != 0;
-  zero_rule_exact_lanes_ = zero_rule_exact_ ? 0b1111 : 0;
+  zero_rule_exact_lanes_ = (zero_rule_operation.always & 0b10000) ? 0b1111 : 0;
+  zero_rule_conditional_lanes_ =
+      (zero_rule_operation.if_interpolators & 0b10000) ? 0b1111 : 0;
+  zero_rule_exact_ =
+      (zero_rule_exact_lanes_ | zero_rule_conditional_lanes_) != 0;
+  zero_rule_condition_ =
+      zero_rule_conditional_lanes_
+          ? GetZeroRuleInterpolatorCondition(zero_rule_interpolators_)
+          : spv::NoResult;
   spv::Id scalar_result = ProcessScalarAluOperation(
       instr, memexport_eM_potentially_written_before, predicate_written_scalar);
   zero_rule_exact_ = true;
   zero_rule_exact_lanes_ = 0b1111;
+  zero_rule_conditional_lanes_ = 0;
+  zero_rule_condition_ = spv::NoResult;
   if (scalar_result != spv::NoResult) {
     EnsureBuildPointAvailable();
     builder_->createStore(scalar_result, var_main_previous_scalar_);
@@ -318,8 +374,9 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
         multiplicands_different = 0;
       }
       // spirv_zero_rule_hybrid: only the lanes that may multiply an Inf or
-      // a NaN.
-      multiplicands_different &= zero_rule_exact_lanes_;
+      // a NaN - some of them only under the interpolator condition.
+      multiplicands_different &=
+          zero_rule_exact_lanes_ | zero_rule_conditional_lanes_;
       if (multiplicands_different) {
         // Shader Model 3: +0 or denormal * anything = +-0.
         spv::Id different_operands[2] = {multiplicands[0], multiplicands[1]};
@@ -390,6 +447,31 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
                   different_type, ext_inst_glsl_std_450_, GLSLstd450NMin,
                   different_operands[0], different_operands[1]),
               const_float_vectors_0_[different_count - 1]);
+        }
+        // spirv_zero_rule_hybrid: the conditional lanes test only under the
+        // interpolator condition (a specialization constant).
+        if (multiplicands_different & zero_rule_conditional_lanes_ &
+            ~zero_rule_exact_lanes_) {
+          spv::Id condition =
+              GetZeroRuleInterpolatorCondition(zero_rule_interpolators_);
+          spv::Id always = builder_->makeBoolConstant(true);
+          id_vector_temp_.clear();
+          uint32_t lanes_remaining = multiplicands_different;
+          uint32_t lane;
+          while (xe::bit_scan_forward(lanes_remaining, &lane)) {
+            lanes_remaining &= ~(uint32_t(1) << lane);
+            id_vector_temp_.push_back(
+                (zero_rule_exact_lanes_ & (1 << lane)) ? always : condition);
+          }
+          spv::Id lane_conditions =
+              different_count > 1
+                  ? builder_->createCompositeConstruct(
+                        type_bool_vectors_[different_count - 1],
+                        id_vector_temp_)
+                  : id_vector_temp_[0];
+          different_zero = builder_->createBinOp(
+              spv::OpLogicalAnd, type_bool_vectors_[different_count - 1],
+              different_zero, lane_conditions);
         }
         // Replace with +0.
         different_result = builder_->createTriOp(
@@ -626,7 +708,7 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
           component_mask &
           ~instr.vector_operands[0].GetIdenticalComponents(
               instr.vector_operands[1]) &
-          zero_rule_exact_lanes_;
+          (zero_rule_exact_lanes_ | zero_rule_conditional_lanes_);
       spv::Id result = spv::NoResult;
       for (uint32_t i = 0; i < component_count; ++i) {
         spv::Id operand_components[2];
@@ -638,6 +720,11 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
             spv::OpFMul, type_float_, operand_components[0],
             operand_components[1]);
         if (different & (1 << i)) {
+          zero_rule_condition_ =
+              (zero_rule_exact_lanes_ & (1 << i))
+                  ? spv::NoResult
+                  : GetZeroRuleInterpolatorCondition(
+                        zero_rule_interpolators_);
           // Shader Model 3: +0 or denormal * anything = +-0.
           product = ZeroIfAnyOperandIsZero(
               product,
@@ -965,7 +1052,14 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
             spv::OpFMul, type_float_, operands_y[0], operands_y[1]);
         if (!(instr.vector_operands[0].GetIdenticalComponents(
                   instr.vector_operands[1]) &
-              0b0010)) {
+              0b0010) &&
+            ((zero_rule_exact_lanes_ | zero_rule_conditional_lanes_) &
+             0b0010)) {
+          zero_rule_condition_ =
+              (zero_rule_exact_lanes_ & 0b0010)
+                  ? spv::NoResult
+                  : GetZeroRuleInterpolatorCondition(
+                        zero_rule_interpolators_);
           // Shader Model 3: +0 or denormal * anything = +-0.
           result_y = ZeroIfAnyOperandIsZero(
               result_y,

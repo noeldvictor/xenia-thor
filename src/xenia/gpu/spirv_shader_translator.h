@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 #include "xenia/gpu/shader_translator.h"
@@ -27,6 +28,10 @@ namespace gpu {
 
 class SpirvShaderTranslator : public ShaderTranslator {
  public:
+  // spirv_zero_rule_hybrid: pixel shaders, the interpolators the vertex
+  // shader may export an Inf or a NaN to (a uint, SpecId).
+  static constexpr uint32_t kSpecConstantZeroRuleInterpolators = 0;
+
   union Modification {
     // If anything in this is structure is changed in a way not compatible with
     // the previous layout, invalidate the pipeline storages by increasing this
@@ -34,7 +39,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
     // TODO(Triang3l): Change to 0xYYYYMMDD once it's out of the rapid
     // prototyping stage (easier to do small granular updates with an
     // incremental counter).
-    static constexpr uint32_t kVersion = 10;
+    static constexpr uint32_t kVersion = 11;
 
     enum class DepthStencilMode : uint32_t {
       kNoModifiers,
@@ -147,11 +152,6 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // spirv_zero_rule_hybrid: a float constant the shader reads is an Inf
       // or a NaN, so every multiply keeps the exact zero test.
       uint32_t zero_rule_exact : 1;
-      // spirv_zero_rule_hybrid: the vertex shader may export an Inf or a NaN
-      // to an interpolator this shader reads
-      // (Shader::zero_rule_infinite_interpolators), so the interpolator
-      // registers count as possibly infinite.
-      uint32_t zero_rule_infinite_interpolators : 1;
     } pixel;
     uint64_t value = 0;
 
@@ -868,10 +868,22 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // replaces the value with +0 if the minimum of the two operands is 0. This
   // must be called with absolute values of operands - use GetAbsoluteOperand!
   // spirv_zero_rule_hybrid and not the zero_rule_exact modification: the
-  // zero test only where Shader::GetZeroRuleExactOperations.
+  // zero test only where Shader::GetZeroRuleExactOperation.
   bool zero_rule_hybrid_ = false;
-  // The zero_rule_infinite_interpolators pixel shader modification.
-  bool zero_rule_infinite_interpolators_ = false;
+  // Of the ALU operation being translated, the multiply lanes that need the
+  // test only if an interpolator in zero_rule_interpolators_ may be Inf or
+  // NaN (Shader::GetZeroRuleExactOperation).
+  uint32_t zero_rule_conditional_lanes_ = 0;
+  uint32_t zero_rule_interpolators_ = 0;
+  // ZeroIfAnyOperandIsZero: the test only under this specialization
+  // constant condition; spv::NoResult - always.
+  spv::Id zero_rule_condition_ = spv::NoResult;
+  // The uint specialization constant kSpecConstantZeroRuleInterpolators
+  // (the interpolators the vertex shader may export an Inf or a NaN to),
+  // and the bool conditions made from it, per interpolator mask.
+  spv::Id zero_rule_spec_interpolators_ = spv::NoResult;
+  std::unordered_map<uint32_t, spv::Id> zero_rule_interpolator_conditions_;
+  spv::Id GetZeroRuleInterpolatorCondition(uint32_t interpolators);
   // Whether the multiplies of the ALU operation being translated need the
   // exact Shader Model 3 zero test (an operand may hold an Inf or a NaN).
   // True outside ALU operations and without the hybrid.

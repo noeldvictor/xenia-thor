@@ -246,6 +246,11 @@ class VulkanPipelineCache {
     // Xenos alpha to mask (RB_COLORCONTROL.alpha_to_mask_enable) as the host's
     // alpha to coverage, host render target path only.
     uint32_t alpha_to_coverage : 1;  // 11
+    // spirv_zero_rule_hybrid: the interpolators the vertex shader may export
+    // an Inf or a NaN to, of those whose value could reach a multiply of the
+    // pixel shader (the fragment specialization constant
+    // SpirvShaderTranslator::kSpecConstantZeroRuleInterpolators).
+    uint32_t zero_rule_interpolators : 16;  // 27
 
     // Filled only for the attachments present in the render pass object.
     PipelineRenderTarget render_targets[xenos::kMaxColorRenderTargets];

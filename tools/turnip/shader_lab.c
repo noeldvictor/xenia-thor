@@ -72,6 +72,10 @@ struct job {
   uint32_t attributes;
   int color_count;
   VkFormat colors[kMaxColors];
+  // K: specialization constant 0 of the fragment stage (the zero rule
+  // hybrid's interpolator mask).
+  int has_fragment_constant;
+  uint32_t fragment_constant;
 };
 
 static void* read_file(const char* path, size_t* size) {
@@ -183,6 +187,9 @@ static void run_job(const struct job* job) {
   fflush(stdout);
   VkShaderModule modules[kMaxStages] = {0};
   VkPipelineShaderStageCreateInfo stages[kMaxStages];
+  VkSpecializationMapEntry fragment_entry = {0, 0, sizeof(uint32_t)};
+  VkSpecializationInfo fragment_specialization = {
+      1, &fragment_entry, sizeof(uint32_t), &job->fragment_constant};
   VkDescriptorSetLayout set_layouts[kMaxSets] = {0};
   VkPipelineLayout layout = VK_NULL_HANDLE;
   VkPipeline pipeline = VK_NULL_HANDLE;
@@ -209,6 +216,10 @@ static void run_job(const struct job* job) {
     stages[i].stage = job->stages[i];
     stages[i].module = modules[i];
     stages[i].pName = "main";
+    if (job->has_fragment_constant &&
+        job->stages[i] == VK_SHADER_STAGE_FRAGMENT_BIT) {
+      stages[i].pSpecializationInfo = &fragment_specialization;
+    }
   }
 
   uint32_t set_count = 0;
@@ -521,6 +532,12 @@ int main(int argc, char** argv) {
       case 'C':
         if (n > 1 && job.color_count < kMaxColors) {
           job.colors[job.color_count++] = (VkFormat)atoi(fields[1]);
+        }
+        break;
+      case 'K':
+        if (n > 1) {
+          job.has_fragment_constant = 1;
+          job.fragment_constant = (uint32_t)strtoul(fields[1], NULL, 0);
         }
         break;
       case 'E':

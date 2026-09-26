@@ -573,7 +573,7 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   defaults "accurate multiplication" off on Android and it drew Froakie white on an AYN Thor.
 - **Zero rule hybrid, built (2026-09-25, `spirv_zero_rule_hybrid`, default off until a
   device A/B):** the exact test only on the lanes that may multiply an Inf or a NaN from
-  rcp, rsq(c/f), exp, log(c) or sqrt (`Shader::GetZeroRuleExactOperations`, per ucode
+  rcp, rsq(c/f), exp, log(c) or sqrt (`Shader::GetZeroRuleExactOperation`, per ucode
   instruction address). The analysis goes in program order: a write that always runs (not
   predicated, unconditional exec, no forward jump over it) replaces the taint of its
   components; with loops, calls or backward jumps the taint only accumulates. The first
@@ -581,15 +581,20 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   reused all the time. Guards: (a) a draw whose shader reads an Inf or NaN float constant
   uses the exact variant (`zero_rule_exact` modification, a scan of the used constants only
   when the shader or its constant buffer changed) - no constant flush, because Inf -> 2^64
-  is not exact (Inf * 2 is Inf; Gears has a +Inf vertex constant); (b) a pixel shader whose
-  vertex shader may export an Inf or NaN interpolator takes a variant with the interpolator
-  registers tainted (`zero_rule_infinite_interpolators`; 69 of 199 vertex shaders can).
-  Texture and vertex data count as finite, as in DXVK. Shader lab, 6 traces: vertex -26.6%
-  (IEEE ceiling -30.7%), pixel -10.2% (ceiling -26.7%; 178 of 394 pixel variants have
-  tainted interpolators). `cvar_ab` on 30 traces: 29 exact, Gears 13183 noisy (A/B 0.7% vs
-  A/A 4.9%). Android NativeCore builds. `spirv_zero_rule_hybrid_stages` (1 vertex, 2 pixel, 3 both) is the per-title
-  lever. Next: the device frame time (the user's go), then a per-interpolator taint mask
-  (the pixel modification has 1 free bit).
+  is not exact (Inf * 2 is Inf; Gears has a +Inf vertex constant); (b) per interpolator:
+  the analysis carries, per register component, the interpolators whose value may reach
+  it, and a pixel shader multiply that only an interpolator can make infinite keeps its
+  test under a specialization constant (`kSpecConstantZeroRuleInterpolators`: the
+  interpolators the vertex shader may export an Inf or a NaN to, per pipeline in
+  `PipelineDescription::zero_rule_interpolators`) - one SPIR-V module, the driver folds
+  the tests away (69 of 199 vertex shaders can export one). Texture and vertex data count
+  as finite, as in DXVK. Shader lab, 6 traces (`--traces` compiles each pixel shader once
+  more per mask the dump logged, `<name>@T<mask>`): vertex -26.6% (IEEE ceiling -30.7%),
+  pixel -11.8% with the worst mask per shader (ceiling -26.5%; one bit for all
+  interpolators gave -10.2%, none at all -12.5%, not exact). `cvar_ab` on 30 traces: 29
+  exact, Gears 13183 noisy (A/B 0.7% vs A/A 1.5%). Validation layer: 0 errors. Android
+  NativeCore builds. `spirv_zero_rule_hybrid_stages` (1 vertex, 2 pixel, 3 both) is the
+  per-title lever. Next: the device frame time (the user's go).
 - **Gears 13183 replay noise: draw 333, a skinned character through the near plane
   (2026-09-25, open):** the noise the light volume (draw 1298) showed starts at draw 333
   (VS 70CE10DB85614760, 30,876 indices, depth only): draws 0-332 give the same depth 6 of 6

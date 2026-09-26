@@ -819,12 +819,20 @@ void Shader::AddZeroRuleFetch(const InstructionResult& result,
 }
 
 void Shader::ComputeZeroRuleTaint() {
+  // Per register component: bit 31 - an Inf or a NaN from rcp, rsq, exp, log
+  // or sqrt may be there; bits 0-15 - one from that interpolator (pixel
+  // shaders, if the vertex shader exports one).
+  constexpr uint32_t kSource = UINT32_C(1) << 31;
+  constexpr uint32_t kInterpolators =
+      (UINT32_C(1) << xenos::kMaxInterpolators) - 1;
   zero_rule_infinite_interpolators_ = 0;
+  zero_rule_interpolators_read_ = 0;
   // Addresses not analyzed keep every test.
-  zero_rule_exact_operations_.assign(ucode_data_.size() / 3, 0b1111111111);
+  zero_rule_exact_operations_.assign(ucode_data_.size() / 3,
+                                     ZeroRuleExactOperation{0b11111, 0, 0});
   for (const ZeroRuleOp& op : zero_rule_ops_) {
     if (op.address < zero_rule_exact_operations_.size()) {
-      zero_rule_exact_operations_[op.address] = 0;
+      zero_rule_exact_operations_[op.address] = ZeroRuleExactOperation{0, 0, 0};
     }
   }
   // Without loops, calls and backward jumps the instructions run in program
@@ -835,232 +843,263 @@ void Shader::ComputeZeroRuleTaint() {
   bool in_order = !uses_control_flow_loop_ && !uses_subroutine_call_ &&
                   !uses_backward_jump_;
   bool is_pixel_shader = type() == xenos::ShaderType::kPixel;
-  for (uint32_t variant = 0; variant < (is_pixel_shader ? 2u : 1u);
-       ++variant) {
-    // Per temporary register a bit per xyzw component that may be Inf or NaN.
-    uint8_t registers[128] = {};
-    // Whether any register may be (for dynamically addressed operands).
-    bool any_register = false;
-    bool previous_scalar = false;
-    if (variant) {
-      // Pixel shader registers start as the interpolators.
-      std::memset(registers, 0b1111, xenos::kMaxInterpolators);
-      any_register = true;
+  uint32_t registers[128][4] = {};
+  // Everything any register may hold (for dynamically addressed operands).
+  uint32_t any_register = 0;
+  uint32_t previous_scalar = 0;
+  if (is_pixel_shader) {
+    // Pixel shader registers start as the interpolators.
+    for (uint32_t i = 0; i < xenos::kMaxInterpolators; ++i) {
+      for (uint32_t j = 0; j < 4; ++j) {
+        registers[i][j] = UINT32_C(1) << i;
+      }
     }
-    // The lanes (xyzw after the swizzle) of an operand that may be Inf or NaN.
-    auto operand_taint = [&](const InstructionOperand& operand) -> uint8_t {
-      if (operand.storage_source != InstructionStorageSource::kRegister) {
-        return 0;
-      }
-      if (operand.storage_addressing_mode !=
-          InstructionStorageAddressingMode::kAbsolute) {
-        return any_register ? 0b1111 : 0;
-      }
-      uint8_t taint = registers[operand.storage_index & 127];
-      uint8_t lanes = 0;
+    any_register = kInterpolators;
+  }
+  // The taint of each lane (xyzw after the swizzle) of an operand.
+  auto operand_taint = [&](const InstructionOperand& operand,
+                           uint32_t lanes[4]) {
+    for (uint32_t i = 0; i < 4; ++i) {
+      lanes[i] = 0;
+    }
+    if (operand.storage_source != InstructionStorageSource::kRegister) {
+      return;
+    }
+    if (operand.storage_addressing_mode !=
+        InstructionStorageAddressingMode::kAbsolute) {
       for (uint32_t i = 0; i < 4; ++i) {
-        SwizzleSource component = operand.GetComponent(i);
-        if (component >= SwizzleSource::kX && component <= SwizzleSource::kW &&
-            (taint >> (uint32_t(component) - uint32_t(SwizzleSource::kX))) &
-                1) {
-          lanes |= uint8_t(1) << i;
-        }
+        lanes[i] = any_register;
       }
-      return lanes;
-    };
-    // Stores the taint of the result lanes; returns whether anything
-    // changed. Saturated results are finite (NaN -> 0).
-    auto write = [&](const InstructionResult& result, uint8_t lane_taint,
-                     bool replace) -> bool {
-      uint32_t used_write_mask = result.GetUsedWriteMask();
-      if (!used_write_mask) {
+      return;
+    }
+    const uint32_t* taint = registers[operand.storage_index & 127];
+    for (uint32_t i = 0; i < 4; ++i) {
+      SwizzleSource component = operand.GetComponent(i);
+      if (component >= SwizzleSource::kX && component <= SwizzleSource::kW) {
+        lanes[i] =
+            taint[uint32_t(component) - uint32_t(SwizzleSource::kX)];
+      }
+    }
+  };
+  // Stores the taint of the result lanes; returns whether anything changed.
+  // Saturated results are finite (NaN -> 0), constant 0 and 1 components too.
+  auto write = [&](const InstructionResult& result,
+                   const uint32_t lane_taint[4], bool replace) -> bool {
+    uint32_t used_write_mask = result.GetUsedWriteMask();
+    if (!used_write_mask) {
+      return false;
+    }
+    uint32_t taint[4] = {};
+    uint32_t union_taint = 0;
+    for (uint32_t i = 0; i < 4; ++i) {
+      if (!(used_write_mask & (1 << i)) || result.is_clamped) {
+        continue;
+      }
+      SwizzleSource component = result.components[i];
+      if (component >= SwizzleSource::kX && component <= SwizzleSource::kW) {
+        taint[i] =
+            lane_taint[uint32_t(component) - uint32_t(SwizzleSource::kX)];
+      }
+      union_taint |= taint[i];
+    }
+    if (result.storage_target == InstructionStorageTarget::kInterpolator) {
+      if (union_taint) {
+        zero_rule_infinite_interpolators_ |=
+            result.storage_addressing_mode ==
+                    InstructionStorageAddressingMode::kAbsolute
+                ? UINT32_C(1) << (result.storage_index &
+                                  (xenos::kMaxInterpolators - 1))
+                : kInterpolators;
+      }
+      return false;
+    }
+    if (result.storage_target != InstructionStorageTarget::kRegister) {
+      return false;
+    }
+    bool changed = false;
+    if (result.storage_addressing_mode !=
+        InstructionStorageAddressingMode::kAbsolute) {
+      // Dynamically addressed: any register may receive it.
+      if (!union_taint) {
         return false;
       }
-      if (result.is_clamped) {
-        lane_taint = 0;
-      }
-      if (result.storage_target == InstructionStorageTarget::kInterpolator) {
-        if (lane_taint) {
-          zero_rule_infinite_interpolators_ |=
-              result.storage_addressing_mode ==
-                      InstructionStorageAddressingMode::kAbsolute
-                  ? UINT32_C(1) << (result.storage_index &
-                                    (xenos::kMaxInterpolators - 1))
-                  : (UINT32_C(1) << xenos::kMaxInterpolators) - 1;
-        }
-        return false;
-      }
-      if (result.storage_target != InstructionStorageTarget::kRegister) {
-        return false;
-      }
-      uint8_t written = 0;
-      uint8_t tainted = 0;
-      for (uint32_t i = 0; i < 4; ++i) {
-        if (!(used_write_mask & (1 << i))) {
-          continue;
-        }
-        written |= uint8_t(1) << i;
-        // Constant 0 and 1 components are finite.
-        if (result.components[i] >= SwizzleSource::kX &&
-            result.components[i] <= SwizzleSource::kW &&
-            ((lane_taint >> (uint32_t(result.components[i]) -
-                             uint32_t(SwizzleSource::kX))) &
-             1)) {
-          tainted |= uint8_t(1) << i;
+      for (auto& register_taint : registers) {
+        for (uint32_t i = 0; i < 4; ++i) {
+          uint32_t new_taint = register_taint[i] | taint[i];
+          changed |= new_taint != register_taint[i];
+          register_taint[i] = new_taint;
         }
       }
-      if (result.storage_addressing_mode !=
-          InstructionStorageAddressingMode::kAbsolute) {
-        // Dynamically addressed: any register may receive it.
-        if (!tainted) {
-          return false;
-        }
-        bool changed = false;
-        for (uint8_t& register_taint : registers) {
-          changed |= (register_taint | tainted) != register_taint;
-          register_taint |= tainted;
-        }
-        any_register = true;
-        return changed;
-      }
-      uint8_t& register_taint = registers[result.storage_index & 127];
-      uint8_t new_taint =
-          replace ? uint8_t((register_taint & ~written) | tainted)
-                  : uint8_t(register_taint | tainted);
-      bool changed = new_taint != register_taint;
-      register_taint = new_taint;
-      any_register |= tainted != 0;
+      any_register |= union_taint;
       return changed;
-    };
-    for (uint32_t pass = 0; pass < (in_order ? 1u : 64u); ++pass) {
-      bool changed = false;
-      for (const ZeroRuleOp& op : zero_rule_ops_) {
-        bool replace = in_order && op.always_executed;
-        if (op.is_fetch) {
-          // Texture and vertex data count as finite.
-          changed |= write(op.fetch_result, 0, replace);
-          continue;
+    }
+    uint32_t* register_taint = registers[result.storage_index & 127];
+    for (uint32_t i = 0; i < 4; ++i) {
+      if (!(used_write_mask & (1 << i))) {
+        continue;
+      }
+      uint32_t new_taint = replace ? taint[i] : (register_taint[i] | taint[i]);
+      changed |= new_taint != register_taint[i];
+      register_taint[i] = new_taint;
+    }
+    any_register |= union_taint;
+    return changed;
+  };
+  static const uint32_t kClean[4] = {};
+  for (uint32_t pass = 0; pass < (in_order ? 1u : 64u); ++pass) {
+    bool changed = false;
+    for (const ZeroRuleOp& op : zero_rule_ops_) {
+      bool replace = in_order && op.always_executed;
+      if (op.is_fetch) {
+        // Texture and vertex data count as finite.
+        changed |= write(op.fetch_result, kClean, replace);
+        continue;
+      }
+      const ParsedAluInstruction& instr = op.alu;
+      // Both operations read their operands before either writes.
+      uint32_t vector_operand_taint[3][4] = {};
+      for (uint32_t i = 0; i < instr.vector_operand_count; ++i) {
+        operand_taint(instr.vector_operands[i], vector_operand_taint[i]);
+      }
+      uint32_t scalar_operand_taint = 0;
+      for (uint32_t i = 0; i < instr.scalar_operand_count; ++i) {
+        uint32_t lanes[4];
+        operand_taint(instr.scalar_operands[i], lanes);
+        scalar_operand_taint |= lanes[0] | lanes[1] | lanes[2] | lanes[3];
+      }
+      uint32_t vector_taint[4] = {};
+      switch (instr.vector_opcode) {
+        case ucode::AluVectorOpcode::kSeq:
+        case ucode::AluVectorOpcode::kSgt:
+        case ucode::AluVectorOpcode::kSge:
+        case ucode::AluVectorOpcode::kSne:
+          break;  // 0 or 1
+        // Per lane.
+        case ucode::AluVectorOpcode::kAdd:
+        case ucode::AluVectorOpcode::kMul:
+        case ucode::AluVectorOpcode::kMax:
+        case ucode::AluVectorOpcode::kMin:
+        case ucode::AluVectorOpcode::kFrc:
+        case ucode::AluVectorOpcode::kTrunc:
+        case ucode::AluVectorOpcode::kFloor:
+        case ucode::AluVectorOpcode::kMad:
+        case ucode::AluVectorOpcode::kCndEq:
+        case ucode::AluVectorOpcode::kCndGe:
+        case ucode::AluVectorOpcode::kCndGt:
+          for (uint32_t i = 0; i < 4; ++i) {
+            vector_taint[i] = vector_operand_taint[0][i] |
+                              vector_operand_taint[1][i] |
+                              vector_operand_taint[2][i];
+          }
+          break;
+        // Dot products and the others mix the lanes.
+        default: {
+          uint32_t all = 0;
+          for (uint32_t i = 0; i < 3; ++i) {
+            for (uint32_t j = 0; j < 4; ++j) {
+              all |= vector_operand_taint[i][j];
+            }
+          }
+          for (uint32_t i = 0; i < 4; ++i) {
+            vector_taint[i] = all;
+          }
+        } break;
+      }
+      bool scalar_reads_previous = false;
+      uint32_t scalar_taint = 0;
+      switch (instr.scalar_opcode) {
+        // The sources: Inf or NaN from a finite value.
+        case ucode::AluScalarOpcode::kExp:
+        case ucode::AluScalarOpcode::kLog:
+        case ucode::AluScalarOpcode::kLogc:
+        case ucode::AluScalarOpcode::kRcp:
+        case ucode::AluScalarOpcode::kRcpc:
+        case ucode::AluScalarOpcode::kRsq:
+        case ucode::AluScalarOpcode::kRsqc:
+        case ucode::AluScalarOpcode::kRsqf:
+        case ucode::AluScalarOpcode::kSqrt:
+          scalar_taint = kSource;
+          break;
+        // 0 or 1, predicates, kills.
+        case ucode::AluScalarOpcode::kSeqs:
+        case ucode::AluScalarOpcode::kSgts:
+        case ucode::AluScalarOpcode::kSges:
+        case ucode::AluScalarOpcode::kSnes:
+        case ucode::AluScalarOpcode::kSetpEq:
+        case ucode::AluScalarOpcode::kSetpNe:
+        case ucode::AluScalarOpcode::kSetpGt:
+        case ucode::AluScalarOpcode::kSetpGe:
+        case ucode::AluScalarOpcode::kSetpInv:
+        case ucode::AluScalarOpcode::kSetpPop:
+        case ucode::AluScalarOpcode::kSetpClr:
+        case ucode::AluScalarOpcode::kSetpRstr:
+        case ucode::AluScalarOpcode::kKillsEq:
+        case ucode::AluScalarOpcode::kKillsGt:
+        case ucode::AluScalarOpcode::kKillsGe:
+        case ucode::AluScalarOpcode::kKillsNe:
+        case ucode::AluScalarOpcode::kKillsOne:
+          break;
+        case ucode::AluScalarOpcode::kAddsPrev:
+        case ucode::AluScalarOpcode::kMulsPrev:
+        case ucode::AluScalarOpcode::kMulsPrev2:
+        case ucode::AluScalarOpcode::kSubsPrev:
+        case ucode::AluScalarOpcode::kRetainPrev:
+          scalar_reads_previous = true;
+          scalar_taint = previous_scalar | scalar_operand_taint;
+          break;
+        default:
+          scalar_taint = scalar_operand_taint;
+          break;
+      }
+      // The multiplies: the lanes of vector operands 0 and 1 (mul, mad, dp4,
+      // dp3, dp2add, dst), the scalar operands and the previous scalar result.
+      if (op.address < zero_rule_exact_operations_.size()) {
+        ZeroRuleExactOperation& exact = zero_rule_exact_operations_[op.address];
+        for (uint32_t i = 0; i < 4; ++i) {
+          uint32_t lane =
+              vector_operand_taint[0][i] | vector_operand_taint[1][i];
+          if (lane & kSource) {
+            exact.always |= uint8_t(1) << i;
+          } else if (lane & kInterpolators) {
+            exact.if_interpolators |= uint8_t(1) << i;
+            exact.interpolators |= uint16_t(lane & kInterpolators);
+          }
         }
-        const ParsedAluInstruction& instr = op.alu;
-        // Both operations read their operands before either writes.
-        uint8_t vector_operand_taint[3] = {};
-        for (uint32_t i = 0; i < instr.vector_operand_count; ++i) {
-          vector_operand_taint[i] = operand_taint(instr.vector_operands[i]);
-        }
-        bool scalar_operand_taint = false;
-        for (uint32_t i = 0; i < instr.scalar_operand_count; ++i) {
-          scalar_operand_taint |= operand_taint(instr.scalar_operands[i]) != 0;
-        }
-        uint8_t vector_lanes_taint = vector_operand_taint[0] |
-                                     vector_operand_taint[1] |
-                                     vector_operand_taint[2];
-        uint8_t vector_taint = 0;
-        switch (instr.vector_opcode) {
-          case ucode::AluVectorOpcode::kSeq:
-          case ucode::AluVectorOpcode::kSgt:
-          case ucode::AluVectorOpcode::kSge:
-          case ucode::AluVectorOpcode::kSne:
-            break;  // 0 or 1
-          // Per lane.
-          case ucode::AluVectorOpcode::kAdd:
-          case ucode::AluVectorOpcode::kMul:
-          case ucode::AluVectorOpcode::kMax:
-          case ucode::AluVectorOpcode::kMin:
-          case ucode::AluVectorOpcode::kFrc:
-          case ucode::AluVectorOpcode::kTrunc:
-          case ucode::AluVectorOpcode::kFloor:
-          case ucode::AluVectorOpcode::kMad:
-          case ucode::AluVectorOpcode::kCndEq:
-          case ucode::AluVectorOpcode::kCndGe:
-          case ucode::AluVectorOpcode::kCndGt:
-            vector_taint = vector_lanes_taint;
-            break;
-          // Dot products and the others mix the lanes.
-          default:
-            vector_taint = vector_lanes_taint ? 0b1111 : 0;
-            break;
-        }
-        bool scalar_reads_previous = false;
-        bool scalar_taint = false;
-        switch (instr.scalar_opcode) {
-          // The sources: Inf or NaN from a finite value.
-          case ucode::AluScalarOpcode::kExp:
-          case ucode::AluScalarOpcode::kLog:
-          case ucode::AluScalarOpcode::kLogc:
-          case ucode::AluScalarOpcode::kRcp:
-          case ucode::AluScalarOpcode::kRcpc:
-          case ucode::AluScalarOpcode::kRsq:
-          case ucode::AluScalarOpcode::kRsqc:
-          case ucode::AluScalarOpcode::kRsqf:
-          case ucode::AluScalarOpcode::kSqrt:
-            scalar_taint = true;
-            break;
-          // 0 or 1, predicates, kills.
-          case ucode::AluScalarOpcode::kSeqs:
-          case ucode::AluScalarOpcode::kSgts:
-          case ucode::AluScalarOpcode::kSges:
-          case ucode::AluScalarOpcode::kSnes:
-          case ucode::AluScalarOpcode::kSetpEq:
-          case ucode::AluScalarOpcode::kSetpNe:
-          case ucode::AluScalarOpcode::kSetpGt:
-          case ucode::AluScalarOpcode::kSetpGe:
-          case ucode::AluScalarOpcode::kSetpInv:
-          case ucode::AluScalarOpcode::kSetpPop:
-          case ucode::AluScalarOpcode::kSetpClr:
-          case ucode::AluScalarOpcode::kSetpRstr:
-          case ucode::AluScalarOpcode::kKillsEq:
-          case ucode::AluScalarOpcode::kKillsGt:
-          case ucode::AluScalarOpcode::kKillsGe:
-          case ucode::AluScalarOpcode::kKillsNe:
-          case ucode::AluScalarOpcode::kKillsOne:
-            break;
-          case ucode::AluScalarOpcode::kAddsPrev:
-          case ucode::AluScalarOpcode::kMulsPrev:
-          case ucode::AluScalarOpcode::kMulsPrev2:
-          case ucode::AluScalarOpcode::kSubsPrev:
-          case ucode::AluScalarOpcode::kRetainPrev:
-            scalar_reads_previous = true;
-            scalar_taint = previous_scalar || scalar_operand_taint;
-            break;
-          default:
-            scalar_taint = scalar_operand_taint;
-            break;
-        }
-        // The multiplies: the lanes of vector operands 0 and 1 (mul, mad,
-        // dp4, dp3, dp2add, dst), the scalar operands and the previous
-        // scalar result.
-        uint32_t exact = vector_operand_taint[0] | vector_operand_taint[1];
-        if (scalar_operand_taint ||
-            (scalar_reads_previous && previous_scalar)) {
-          exact |= 0b10000;
-        }
-        if (op.address < zero_rule_exact_operations_.size()) {
-          zero_rule_exact_operations_[op.address] |=
-              uint16_t(exact << (variant * 5));
-        }
-        changed |=
-            write(instr.vector_and_constant_result, vector_taint, replace);
-        changed |= write(instr.scalar_result, scalar_taint ? 0b1111 : 0,
-                         replace);
-        // The translator stores every scalar result but retain_prev's as the
-        // previous scalar result.
-        if (replace && instr.scalar_result.GetUsedWriteMask() &&
-            instr.scalar_opcode != ucode::AluScalarOpcode::kRetainPrev) {
-          previous_scalar = scalar_taint;
-        } else if (scalar_taint && !previous_scalar) {
-          previous_scalar = true;
-          changed = true;
+        uint32_t scalar = scalar_operand_taint |
+                          (scalar_reads_previous ? previous_scalar : 0);
+        if (scalar & kSource) {
+          exact.always |= 0b10000;
+        } else if (scalar & kInterpolators) {
+          exact.if_interpolators |= 0b10000;
+          exact.interpolators |= uint16_t(scalar & kInterpolators);
         }
       }
-      if (!changed) {
-        break;
+      changed |=
+          write(instr.vector_and_constant_result, vector_taint, replace);
+      const uint32_t scalar_lanes[4] = {scalar_taint, scalar_taint,
+                                        scalar_taint, scalar_taint};
+      changed |= write(instr.scalar_result, scalar_lanes, replace);
+      // The translator stores every scalar result but retain_prev's as the
+      // previous scalar result.
+      if (replace && instr.scalar_result.GetUsedWriteMask() &&
+          instr.scalar_opcode != ucode::AluScalarOpcode::kRetainPrev) {
+        previous_scalar = scalar_taint;
+      } else {
+        uint32_t new_previous_scalar = previous_scalar | scalar_taint;
+        changed |= new_previous_scalar != previous_scalar;
+        previous_scalar = new_previous_scalar;
       }
+    }
+    if (!changed) {
+      break;
     }
   }
-  if (!is_pixel_shader) {
-    for (uint16_t& exact : zero_rule_exact_operations_) {
-      exact = uint16_t((exact & 0b11111) | ((exact & 0b11111) << 5));
+  for (ZeroRuleExactOperation& exact : zero_rule_exact_operations_) {
+    exact.if_interpolators &= uint8_t(~exact.always);
+    if (!exact.if_interpolators) {
+      exact.interpolators = 0;
     }
+    zero_rule_interpolators_read_ |= exact.interpolators;
   }
   zero_rule_ops_.clear();
   zero_rule_ops_.shrink_to_fit();

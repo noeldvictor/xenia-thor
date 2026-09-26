@@ -16,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <mutex>
 #include <memory>
 #include <system_error>
 #include <thread>
@@ -42,6 +43,9 @@
 #include "xenia/gpu/xenos.h"
 #include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
+
+DECLARE_bool(spirv_zero_rule_hybrid);
+DECLARE_bool(spirv_debug_zero_rule_finite_interpolators);
 
 DEFINE_bool(
     vulkan_persistent_pipeline_cache, true,
@@ -1116,6 +1120,16 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
     description_out.pixel_shader_modification = pixel_shader->modification();
   }
   description_out.render_pass_key = render_pass_key;
+
+  if (pixel_shader && cvars::spirv_zero_rule_hybrid &&
+      !cvars::spirv_debug_zero_rule_finite_interpolators) {
+    description_out.zero_rule_interpolators =
+        vertex_shader->shader().zero_rule_infinite_interpolators() &
+        pixel_shader->shader().zero_rule_interpolators_read() &
+        SpirvShaderTranslator::Modification(
+            description_out.pixel_shader_modification)
+            .pixel.interpolator_mask;
+  }
 
   // Alpha to mask (2026-09-23): the DXBC translator emulates it with the Xenos
   // dither pattern (CompletePixelShader_AlphaToMask); the SPIR-V path had
@@ -2587,6 +2601,18 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   }
 
   const PipelineDescription& description = creation_arguments.pipeline->first;
+  // tools/turnip/shader_lab.py compiles each pixel shader once more with each
+  // zero rule interpolator mask a pipeline specialized it with.
+  if (description.zero_rule_interpolators && !cvars::dump_shaders.empty()) {
+    static std::mutex masks_mutex;
+    std::lock_guard<std::mutex> lock(masks_mutex);
+    std::ofstream masks(cvars::dump_shaders / "zero_rule_interpolators.txt",
+                        std::ios::app);
+    masks << fmt::format("shader_{:016X}_{:016X}.vulkan.bin.frag {}\n",
+                         description.pixel_shader_hash,
+                         description.pixel_shader_modification,
+                         uint32_t(description.zero_rule_interpolators));
+  }
   if (!ArePipelineRequirementsMet(description)) {
     assert_always(
         "When creating a new pipeline, the description must not require "
@@ -2728,6 +2754,22 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   shader_stage_fragment.module = VK_NULL_HANDLE;
   shader_stage_fragment.pName = "main";
   shader_stage_fragment.pSpecializationInfo = nullptr;
+  // spirv_zero_rule_hybrid: the pixel shader's multiplies whose operands
+  // only an interpolator may make infinite keep the test for these.
+  const uint32_t zero_rule_interpolators = description.zero_rule_interpolators;
+  VkSpecializationMapEntry zero_rule_map_entry;
+  zero_rule_map_entry.constantID =
+      SpirvShaderTranslator::kSpecConstantZeroRuleInterpolators;
+  zero_rule_map_entry.offset = 0;
+  zero_rule_map_entry.size = sizeof(uint32_t);
+  VkSpecializationInfo zero_rule_specialization;
+  zero_rule_specialization.mapEntryCount = 1;
+  zero_rule_specialization.pMapEntries = &zero_rule_map_entry;
+  zero_rule_specialization.dataSize = sizeof(uint32_t);
+  zero_rule_specialization.pData = &zero_rule_interpolators;
+  if (zero_rule_interpolators) {
+    shader_stage_fragment.pSpecializationInfo = &zero_rule_specialization;
+  }
   if (creation_arguments.pixel_shader) {
     assert_true(creation_arguments.pixel_shader->is_translated());
     if (!creation_arguments.pixel_shader->is_valid()) {
@@ -3358,7 +3400,7 @@ namespace {
 // guest memory}; a pipeline record is a PipelineDescription. A header that does
 // not match (another version, another render target path) starts a new file.
 constexpr uint32_t kShaderStorageMagic = 0x53564558;  // 'XEVS'
-constexpr uint32_t kShaderStorageVersion = 1;
+constexpr uint32_t kShaderStorageVersion = 2;
 constexpr uint32_t kShaderStorageRecordShader = 1;
 constexpr uint32_t kShaderStorageRecordPipeline = 2;
 struct ShaderStorageHeader {

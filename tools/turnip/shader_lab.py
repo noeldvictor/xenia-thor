@@ -379,6 +379,13 @@ def main():
     work = os.path.join(OUT, 'work')
     os.makedirs(work, exist_ok=True)
     partners = {}  # glsl text -> (path, stage)
+    zero_rule_masks = collections.defaultdict(set)
+    masks_file = os.path.join(args.shaders, 'zero_rule_interpolators.txt')
+    if os.path.isfile(masks_file):
+        for line in open(masks_file):
+            f = line.split()
+            if len(f) == 2:
+                zero_rule_masks[f[0]].add(int(f[1]))
     jobs, meta, skipped = collections.OrderedDict(), {}, []
     relaxed_total = 0
     for path in modules:
@@ -429,6 +436,14 @@ def main():
                       'module': os.path.relpath(path, ROOT).replace('\\', '/'),
                       'inputs': len(info['inputs']), 'outputs': len(info['outputs']),
                       'bindings': len(bindings), 'depth': info['depth']}
+        # The zero rule hybrid's pixel shaders once more per interpolator mask a
+        # pipeline of the traces specialized them with (the dump's
+        # zero_rule_interpolators.txt): "<name>@T<mask>".
+        for mask in sorted(zero_rule_masks.get(os.path.basename(path), ())):
+            variant = '%s@T%X' % (name, mask)
+            jobs[variant] = ('\n'.join(['J\t' + variant] + lines[1:]) +
+                             '\nK\t%d\nE\n' % mask)
+            meta[variant] = dict(meta[name])
     # One WSL call compiles every partner stage.
     r = wsl('cd %s && for f in partner_*.vert partner_*.frag; do [ -f "$f" ] || continue; '
             '[ -f "$f.spv" ] && [ "$f.spv" -nt "$f" ] && continue; '

@@ -931,23 +931,32 @@ class Shader {
     return uses_register_dynamic_addressing_;
   }
 
-  // Shader Model 3 zero rule, hybrid (spirv_zero_rule_hybrid): whether the
-  // vector operation lanes (bits 0-3, xyzw of the result) and the scalar
-  // operation (bit 4) of the ALU instruction at the ucode instruction
-  // address may multiply an Inf or a NaN made by rcp,
-  // rsq, exp, log or sqrt, or a value computed from one. Only those need the
-  // exact +0 * x = +0 test; the other multiplies can be IEEE. Constants and
-  // texture and vertex fetches count as finite, interpolators too unless
-  // infinite_interpolators (the vertex shader may export an Inf or a NaN,
-  // zero_rule_infinite_interpolators); a finite overflow is not tracked.
-  uint32_t GetZeroRuleExactOperations(uint32_t instruction_address,
-                                      bool infinite_interpolators) const {
+  // Shader Model 3 zero rule, hybrid (spirv_zero_rule_hybrid): for the ALU
+  // instruction at a ucode instruction address, the multiplies that need the
+  // exact +0 * x = +0 test - the vector operation lanes (bits 0-3, xyzw of
+  // the result) and the scalar operation (bit 4). `always`: an Inf or a NaN
+  // from rcp, rsq, exp, log or sqrt, or a value computed from one, may reach
+  // them. `if_interpolators`: only an interpolator in `interpolators` may
+  // bring one (pixel shaders; the vertex shader's
+  // zero_rule_infinite_interpolators decide, through a specialization
+  // constant). The others can be IEEE. Constants and texture and vertex
+  // fetches count as finite; a finite overflow is not tracked.
+  struct ZeroRuleExactOperation {
+    uint8_t always;
+    uint8_t if_interpolators;
+    uint16_t interpolators;
+  };
+  ZeroRuleExactOperation GetZeroRuleExactOperation(
+      uint32_t instruction_address) const {
     if (instruction_address >= zero_rule_exact_operations_.size()) {
-      return 0b11111;
+      return {0b11111, 0, 0};
     }
-    return (zero_rule_exact_operations_[instruction_address] >>
-            (infinite_interpolators ? 5 : 0)) &
-           0b11111;
+    return zero_rule_exact_operations_[instruction_address];
+  }
+  // Pixel shaders: the interpolators whose Inf or NaN could reach a
+  // multiply (the ones the specialization constant needs).
+  uint32_t zero_rule_interpolators_read() const {
+    return zero_rule_interpolators_read_;
   }
   // Vertex shaders: the interpolators that an export may write an Inf or a
   // NaN to (a value from rcp, rsq, exp, log or sqrt).
@@ -1233,9 +1242,9 @@ class Shader {
   // The largest forward jump target seen so far (control flow index).
   uint32_t zero_rule_forward_jump_end_ = 0;
   void AddZeroRuleFetch(const InstructionResult& result, bool is_predicated);
-  // GetZeroRuleExactOperations per ucode instruction address: bits 0-4 with
-  // finite interpolators, 5-9 with possibly infinite ones.
-  std::vector<uint16_t> zero_rule_exact_operations_;
+  // GetZeroRuleExactOperation per ucode instruction address.
+  std::vector<ZeroRuleExactOperation> zero_rule_exact_operations_;
+  uint32_t zero_rule_interpolators_read_ = 0;
   uint32_t zero_rule_infinite_interpolators_ = 0;
   std::vector<uint32_t> position_export_op_indices_;
   bool position_slice_replayable_ = false;

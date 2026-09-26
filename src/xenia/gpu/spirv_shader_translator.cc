@@ -276,9 +276,8 @@ void SpirvShaderTranslator::StartTranslation() {
          (is_pixel_shader() ? 0b10 : 0b01)) &&
         !(is_vertex_shader() ? modification.vertex.zero_rule_exact
                              : modification.pixel.zero_rule_exact);
-    zero_rule_infinite_interpolators_ =
-        is_pixel_shader() &&
-        modification.pixel.zero_rule_infinite_interpolators;
+    zero_rule_spec_interpolators_ = spv::NoResult;
+    zero_rule_interpolator_conditions_.clear();
   }
   // TODO(Triang3l): Logger.
   builder_ = std::make_unique<SpirvBuilder>(

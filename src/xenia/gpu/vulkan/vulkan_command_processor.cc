@@ -6873,9 +6873,6 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       if (pixel_shader) {
         pixel_shader_modification.pixel.zero_rule_exact =
             uint32_t(ShaderReadsNonFiniteFloatConstant(*pixel_shader));
-        pixel_shader_modification.pixel.zero_rule_infinite_interpolators =
-            uint32_t((vertex_shader->zero_rule_infinite_interpolators() &
-                      interpolator_mask) != 0);
       }
     }
     // BD input-attachment merge (4a): when this draw is the merge consumer, flag
