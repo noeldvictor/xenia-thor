@@ -756,6 +756,12 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   vkQueueSubmit are visible to it) and pixel-exact on the PC twin: `cvar_ab` 29 of 30 traces
   identical, Gears 13183 noisy. The second device A/B, after `gpu_uma_smart_sync_pages` (the
   direct path had GPU hangs in 2026-05 with it off, before smart-sync existed).
+  **What still breaks the passes (`pc_run --timeline`, the "GPU pass breaks/frame" line):**
+  Gears in-game on the PC twin with both levers on (`gpu_uma_smart_sync_pages=true
+  gpu_uma_direct_upload_barrier=false`): 54 a frame - depth buffer sampled 22, shader writes
+  to the shared memory (resolves) 16, texture loads (scratch buffer) 13, render target
+  sampled 2, other 1; uploads 0. The next tiler targets: depth sampling inside the pass,
+  then texture loads at the head of the submission.
 - **Blue Dragon (4D5307DF).** Low priority (re:Blue exists). GPU frame 79 -> 64.5 ms in the field
   (about 10 -> 12.7 presented fps) since the 21-bit rounding became a lever, off on Android; the
   August build ran about 17.5 fps; the two scene passes take 47 of the 64 ms.
@@ -959,6 +965,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `vulkan_trace_vertex_fetch_gpu_compare` | reads back a draw's vertex and index buffers from the Vulkan shared memory and compares every word with guest memory |
 | `vulkan_debug_barrier_before_draw_shaders` | a full shared-memory barrier (render pass ended) before the draws of the named vertex shaders - does a varying draw read an unsynchronized write? |
 | `tools/pc/guest_profile.py`, `pc_run.py --profile-at S:D` | a sampling profiler for the PC build: per thread (by name) the share of CPU and the hottest guest functions (JIT code, from `cpu_emit_jit_perf_map` JITSYM lines, now also logged by the x64 backend) and host functions (dbghelp + PDB); only threads that used CPU are sampled |
+| `GPU pass breaks/frame` (with `vulkan_trace_draw_outcomes_per_frame`) | each frame's render pass breaks by cause - upload, gpuwrite, scratch (texture loads), rt, depth, img, other; `frame_timeline.py` prints the medians per 10 s |
 | `vulkan_trace_pass_break_causes N` | the first N render pass breaks with the draw index and every pending barrier (shared memory or other buffer, access masks, image layouts) - what ends the passes a tiler pays for |
 | `gpu_uma_direct_system_memory` | the PC twin of the Thor's direct-write upload path (host-visible system memory) for the trace dump and `pc_run` |
 | `cvar_ab.py --noise N` | for a changed trace, N more A replays (default 1): A/A changes too = noisy, not changed; the A/A row prints under the A/B row |

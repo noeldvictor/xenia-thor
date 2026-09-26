@@ -8,7 +8,9 @@ the end) and groups them by guest time (guest_ms) into buckets: frames per
 second, the median draws, vertices, render pass breaks (brk_open) and their
 buffer barriers, the GPU frame time, the command processor's time
 (cpu_real_us), the time it waited on a GPU fence (fence_us) and the texture
-loads that decoded data (tex; each one ends the render pass). Flags:
+loads that decoded data (tex; each one ends the render pass), and the
+render pass breaks by cause ("GPU pass breaks/frame": upload, gpuwrite, scratch
+= texture loads, rt = a render target sampled, depth, img, other). Flags:
 - WAITS-GPU: the command processor waits on the GPU for more than 1 ms a frame
   - the recording and the GPU do not overlap (2026-09-25: the Thor upload
   path's whole-buffer smart-sync, 11.5 ms a frame on MagnaCarta 2's title);
@@ -27,6 +29,8 @@ import sys
 
 LINE = 'GPU draw outcomes/frame'
 TEX_LINE = 'GPU tex cpu/frame'
+BREAK_LINE = 'GPU pass breaks/frame'
+CAUSES = ('upload', 'gpuwrite', 'scratch', 'rt', 'depth', 'img', 'other')
 FIELDS = ('rendered', 'total_vertices', 'copy', 'brk_open', 'brk_buf', 'tex_decoded',
           'gpu_frame_us', 'cpu_real_us', 'fence_us')
 PAIR = re.compile(r'(\w+)=(-?\d+)')
@@ -39,6 +43,9 @@ def frames(log_path):
             if LINE in line:
                 d = {k: int(v) for k, v in PAIR.findall(line)}
                 out.append(d)
+            elif BREAK_LINE in line and out and 'brk_causes' not in out[-1]:
+                d = dict(PAIR.findall(line))
+                out[-1]['brk_causes'] = {k: int(d.get(k, 0)) for k in CAUSES}
             elif TEX_LINE in line and out:
                 # The texture line of the same frame follows its outcomes line.
                 m = re.search(r'decoded=(\d+)', line)
@@ -61,7 +68,11 @@ def timeline(rows, bucket_s):
             flags.append('BREAKS')
         if med['cpu_real_us'] > 5000:
             flags.append('CP-HEAVY')
-        result.append(dict(start_s=b * bucket_s, frames=len(sel),
+        causes = {}
+        if any('brk_causes' in r for r in sel):
+            causes = {k: statistics.median([r.get('brk_causes', {}).get(k, 0)
+                                            for r in sel]) for k in CAUSES}
+        result.append(dict(start_s=b * bucket_s, frames=len(sel), causes=causes,
                            fps=len(sel) / float(bucket_s), flags=flags, **med))
     return result
 
@@ -86,6 +97,9 @@ def main():
             t['start_s'], t['start_s'] + args.bucket, t['frames'], t['fps'], t['rendered'],
             t['total_vertices'], t['brk_open'], t['brk_buf'], t['tex_decoded'],
             t['gpu_frame_us'], t['cpu_real_us'], t['fence_us'], ' '.join(t['flags'])))
+        if t['causes'] and any(t['causes'].values()):
+            print('        breaks by cause: ' + ' '.join(
+                '%s %g' % (k, v) for k, v in t['causes'].items() if v))
     flagged = collections.Counter(f for t in result for f in t['flags'])
     print('%d frames; flagged buckets: %s' % (
         len(rows), ', '.join('%s %d' % kv for kv in flagged.items()) or 'none'))

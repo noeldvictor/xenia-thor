@@ -3695,6 +3695,14 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     // block from these counters - and the resulting skew made every break report
     // zero draws. Keep per-pass state on a per-pass lifecycle.
     rt_pass_break_rt_change_ = 0;
+    XELOGI(
+        "GPU pass breaks/frame: upload={} gpuwrite={} scratch={} rt={} "
+        "depth={} img={} other={}",
+        brk_cause_[kBreakUpload], brk_cause_[kBreakGpuWrite],
+        brk_cause_[kBreakScratch], brk_cause_[kBreakRenderTargetSampled],
+        brk_cause_[kBreakDepthSampled], brk_cause_[kBreakImage],
+        brk_cause_[kBreakOther]);
+    std::memset(brk_cause_, 0, sizeof(brk_cause_));
     brk_open_breaks_ = 0;
     brk_buffer_barriers_ = 0;
     brk_img_shaderread_ = 0;
@@ -4621,6 +4629,58 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
   if (cvars::vulkan_trace_draw_outcomes_per_frame &&
       current_render_pass_ != VK_NULL_HANDLE) {
     ++brk_open_breaks_;
+    {
+      // One cause per break, the first that applies in this order.
+      BreakCause cause = kBreakOther;
+      bool upload = false, gpu_write = false, scratch = false;
+      for (const VkBufferMemoryBarrier& bmb :
+           pending_barriers_buffer_memory_barriers_) {
+        if (bmb.buffer != shared_memory_->buffer()) {
+          scratch = true;
+        } else if ((bmb.srcAccessMask & VK_ACCESS_HOST_WRITE_BIT) ||
+                   (bmb.dstAccessMask & VK_ACCESS_TRANSFER_WRITE_BIT)) {
+          upload = true;
+        } else if ((bmb.srcAccessMask | bmb.dstAccessMask) &
+                   VK_ACCESS_SHADER_WRITE_BIT) {
+          gpu_write = true;
+        }
+      }
+      bool rt_sampled = false, depth_sampled = false, image = false;
+      for (const VkImageMemoryBarrier& imb :
+           pending_barriers_image_memory_barriers_) {
+        bool depth_layout =
+            imb.oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL ||
+            imb.newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL ||
+            imb.oldLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL ||
+            imb.newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_READ_ONLY_OPTIMAL;
+        if (depth_layout &&
+            (imb.oldLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL ||
+             imb.newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)) {
+          depth_sampled = true;
+        } else if (imb.oldLayout ==
+                       VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL &&
+                   imb.newLayout ==
+                       VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) {
+          rt_sampled = true;
+        } else {
+          image = true;
+        }
+      }
+      if (upload) {
+        cause = kBreakUpload;
+      } else if (gpu_write) {
+        cause = kBreakGpuWrite;
+      } else if (scratch) {
+        cause = kBreakScratch;
+      } else if (rt_sampled) {
+        cause = kBreakRenderTargetSampled;
+      } else if (depth_sampled) {
+        cause = kBreakDepthSampled;
+      } else if (image) {
+        cause = kBreakImage;
+      }
+      ++brk_cause_[cause];
+    }
     brk_buffer_barriers_ +=
         uint32_t(pending_barriers_buffer_memory_barriers_.size());
     // gpu_vulkan_classify_img_sr_breaks: does THIS break's triggering guest draw

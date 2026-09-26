@@ -2501,6 +2501,23 @@ class VulkanCommandProcessor : public CommandProcessor {
   // layout: shader-read = texture sampling hazards, vs other = RT/transfer).
   // This tells the rewrite which barrier source to coalesce/hoist first.
   uint32_t brk_open_breaks_ = 0;
+  // The render pass breaks of the frame by cause ("GPU pass breaks/frame"
+  // line, tools/pc/frame_timeline.py): upload (a direct host write or a copy
+  // into the shared memory), gpuwrite (a shader write to the shared memory -
+  // resolve, memexport - or a read after one), scratch (another buffer: the
+  // texture load scratch buffer), rt (a render target sampled), depth (the
+  // depth buffer sampled or back), img (other image transitions), other.
+  enum BreakCause : uint32_t {
+    kBreakUpload,
+    kBreakGpuWrite,
+    kBreakScratch,
+    kBreakRenderTargetSampled,
+    kBreakDepthSampled,
+    kBreakImage,
+    kBreakOther,
+    kBreakCauseCount,
+  };
+  uint32_t brk_cause_[kBreakCauseCount] = {};
   uint32_t brk_buffer_barriers_ = 0;
   uint32_t brk_img_shaderread_ = 0;
   uint32_t brk_img_other_ = 0;
