@@ -924,6 +924,22 @@ DEFINE_bool(vulkan_trace_vertex_fetch_checksum, false,
             "GPU");
 DEFINE_int32(vulkan_trace_vertex_fetch_checksum_budget, 24,
              "Maximum active vertex fetch trace groups.", "GPU");
+DEFINE_string(vulkan_debug_barrier_before_draw_shaders, "",
+              "Diagnostic: comma-separated vertex shader ucode hashes; before "
+              "each of their draws, end the render pass and record a full "
+              "memory barrier over the shared memory (all commands, all "
+              "writes to all reads). A draw that stops varying from run to run "
+              "with it reads something an earlier command writes without a "
+              "barrier.",
+              "GPU");
+DEFINE_bool(vulkan_trace_vertex_fetch_gpu_compare, false,
+            "Before each draw of a vertex shader in "
+            "vulkan_trace_vertex_fetch_shader_filter, read back its vertex "
+            "buffers and guest index buffer from the Vulkan shared memory and "
+            "compare every word with guest memory (the GPU copy the draw "
+            "reads against the data the guest wrote). Research-only and very "
+            "slow.",
+            "GPU");
 DEFINE_string(vulkan_trace_vertex_fetch_shader_filter, "",
               "Comma-separated vertex shader ucode hashes to include in "
               "vulkan_trace_vertex_fetch_checksum; empty traces all.",

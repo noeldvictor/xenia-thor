@@ -307,6 +307,9 @@ class CommandProcessor {
   virtual void InitializeTrace();
 
   Memory* memory_ = nullptr;
+  // gpu_debug_log_index_range: warns when an indexed draw reads a vertex
+  // past the size of a vertex fetch constant.
+  void LogDebugIndexRange(uint32_t draw_index);
   kernel::KernelState* kernel_state_ = nullptr;
   GraphicsSystem* graphics_system_ = nullptr;
   RegisterFile* register_file_ = nullptr;

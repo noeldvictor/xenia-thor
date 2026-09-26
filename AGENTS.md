@@ -590,11 +590,20 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   A/A 4.9%). Android NativeCore builds. `spirv_zero_rule_hybrid_stages` (1 vertex, 2 pixel, 3 both) is the per-title
   lever. Next: the device frame time (the user's go), then a per-interpolator taint mask
   (the pixel modification has 1 free bit).
-- **Gears 13183 draw 1298 is not deterministic in the replay (2026-09-25):** `cvar_ab` with
-  the same cvars on both sides changes 1.6-17% of the pixels, and `--prefix` names draw 1298
-  (VS A11D62699D304CB7, PS 7C81373CE5EC6949, a light volume that reads the scene depth).
-  Every earlier A/B of this trace was noise. Open: find the race (a texture read of a render
-  target still being written, or the resolve order) - it may be an in-game flicker.
+- **Gears 13183 replay noise: draw 333, a skinned character through the near plane
+  (2026-09-25, open):** the noise the light volume (draw 1298) showed starts at draw 333
+  (VS 70CE10DB85614760, 30,876 indices, depth only): draws 0-332 give the same depth 6 of 6
+  times, 0-333 six different results. The character is at the camera - 131 of its 6,464
+  vertices are behind the eye (w down to -57.6, CPU `ShaderInterpreter`) - and on Vulkan
+  (NVIDIA) its near-plane triangles draw as spikes that change from run to run (reversed
+  depth, nearer than anything D3D12 draws); D3D12 draws one thin spike, the same every time.
+  Not the cause: vertex, index and constant data (identical on the CPU and, read back, on
+  the GPU), the SPIR-V (identical, valid, every register initialized), a missing barrier
+  (a full shared-memory barrier before the draw changes nothing), sparse shared memory, the
+  constants arena, 16 backend levers, MSAA, a CPU/GPU race (waiting after every submission
+  changes nothing). It needs the depth work before it: with draws 166-249 it varies, with
+  either half of them or none it does not. Next: the same test on Turnip (does the Thor
+  flicker at that camera?) and a draw-333-only capture with the preceding depth draws.
   `cvar_ab` now replays A a second time for a changed trace and counts it as noisy when A/A
   changes too.
 - **Sign specialization CPU cost (2026-09-25, `trace_bench --a/--b`):** `SwizzleSigns` per
@@ -882,6 +891,10 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `tools/pc/spirv_validate.py`, `xenia_spirv_validate` | every SPIR-V module a trace translates through spirv-val (WSL), the failures grouped by rule with an example shader. Turnip is strict: run it after a translator change |
 | `tools/turnip/shader_lab.py`, `xenia_shader_lab` | the Thor's shader compiler on the PC: host Turnip over the freedreno drm-shim (`FD_GPU_ID=740`) builds a pipeline per translated module (a generated partner stage writes or reads every varying, so linking removes nothing) and reads `VK_KHR_pipeline_executable_properties`: instructions, waves per core, registers, nops. `--baseline LABEL` diffs a translator change per shader, `--ir` writes the NIR and ir3 assembly, `--traces` replays first with `--cvars`. Build the host driver once: `wsl -d Ubuntu -- bash tools/turnip/build_host_shim.sh` |
 | `tools/pc/cvar_ab.py`, `xenia_cvar_ab` | a lever A/B on one trace dump: each trace replayed with `--a` and `--b` cvars, changed pixels per trace. A lever that must not change the picture shows 0 on every trace |
+| `resolve_ab.py --against vulkan` | every resolve of two Vulkan replays compared (A/A); with `--prefix` the first draw that makes a resolve vary between runs |
+| `gpu_debug_log_index_range` | per indexed draw: indices past a vertex fetch constant, Inf/NaN 32-bit float attributes, and the CPU clip positions of the vertices (not finite, w near 0; with `gpu_debug_log_draws` the index range and the vertices behind the eye) |
+| `vulkan_trace_vertex_fetch_gpu_compare` | reads back a draw's vertex and index buffers from the Vulkan shared memory and compares every word with guest memory |
+| `vulkan_debug_barrier_before_draw_shaders` | a full shared-memory barrier (render pass ended) before the draws of the named vertex shaders - does a varying draw read an unsynchronized write? |
 | `cvar_ab.py --noise N` | for a changed trace, N more A replays (default 1): A/A changes too = noisy, not changed; the A/A row prints under the A/B row |
 | `cvar_ab.py --prefix` | the first draw after which the A and B frames differ, by binary search over `gpu_debug_skip_draws` (resolves never skipped), with its `gpu_debug_log_draws` line (primitive, count, VS and PS hashes) |
 | `tools/pc/zero_rule_coverage.py` | research: over the microcode dumps, the Shader Model 3 zero tests whose operands are provably bounded (`--taint`: only rcp/rsq/exp/log results can be Inf - the hybrid; `--taint-interpolators`: interpolators too) |

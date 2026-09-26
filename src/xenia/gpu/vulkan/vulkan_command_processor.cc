@@ -2285,6 +2285,7 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
                                                        bool copy_to_guest,
                                                        SharedMemoryReadbackStats*
                                                            stats) {
+  bool compare_guest = stats && stats->compare_guest;
   if (stats) {
     *stats = SharedMemoryReadbackStats();
   }
@@ -2462,6 +2463,17 @@ bool VulkanCommandProcessor::ReadbackSharedMemoryRange(uint32_t address,
             lane_n ? lane_sum[3] / lane_n : 0,
             bd_swap_total_);
       }
+      if (compare_guest && memory_) {
+        const uint8_t* guest = memory_->TranslatePhysical(address);
+        for (uint32_t offset = 0; offset + 4 <= length; offset += 4) {
+          if (std::memcmp(bytes + offset, guest + offset, 4)) {
+            if (!stats->guest_mismatch_words) {
+              stats->first_guest_mismatch_offset = offset;
+            }
+            ++stats->guest_mismatch_words;
+          }
+        }
+      }
       if (copy_to_guest) {
         std::memcpy(memory_->TranslatePhysical(address), mapping, length);
       }
@@ -2563,7 +2575,10 @@ void VulkanCommandProcessor::TraceShaderConstants(
     return;
   }
 
-  constexpr uint32_t kMaxFloatConstantsLogged = 32;
+  // All of them for the shaders a filter names (a skinning palette goes up to
+  // c229); 32 otherwise.
+  const uint32_t kMaxFloatConstantsLogged =
+      cvars::vulkan_trace_shader_constants_shader_filter.empty() ? 32 : 256;
   const RegisterFile& regs = *register_file_;
   const Shader::ConstantRegisterMap& map = shader.constant_register_map();
   XELOGI(
@@ -2749,6 +2764,63 @@ void VulkanCommandProcessor::TraceVertexFetchSources(
           be_values[0], be_values[1], be_values[2], be_values[3]);
     }
   }
+}
+
+bool VulkanCommandProcessor::TraceVertexFetchGpuCompare(
+    const VulkanShader& shader,
+    const PrimitiveProcessor::ProcessingResult& primitive_processing_result) {
+  if (!memory_ || !TraceHashMatchesFilter(
+                     shader.ucode_data_hash(),
+                     cvars::vulkan_trace_vertex_fetch_shader_filter)) {
+    return true;
+  }
+  const RegisterFile& regs = *register_file_;
+  // (label, address, length) of every range the draw reads.
+  struct Range {
+    const char* label;
+    uint32_t fetch;
+    uint32_t address;
+    uint32_t length;
+  };
+  std::vector<Range> ranges;
+  for (const Shader::VertexBinding& binding : shader.vertex_bindings()) {
+    xenos::xe_gpu_vertex_fetch_t fetch =
+        regs.GetVertexFetch(binding.fetch_constant);
+    ranges.push_back({"vertex", binding.fetch_constant,
+                      uint32_t(fetch.address) << 2, uint32_t(fetch.size) << 2});
+  }
+  if (primitive_processing_result.index_buffer_type ==
+      PrimitiveProcessor::ProcessedIndexBufferType::kGuestDMA) {
+    uint32_t index_size =
+        primitive_processing_result.host_index_format ==
+                xenos::IndexFormat::kInt16
+            ? 2
+            : 4;
+    ranges.push_back(
+        {"index", 0, primitive_processing_result.guest_index_base,
+         primitive_processing_result.host_draw_vertex_count * index_size});
+  }
+  for (const Range& range : ranges) {
+    if (!range.length || range.address >= SharedMemory::kBufferSize ||
+        SharedMemory::kBufferSize - range.address < range.length) {
+      continue;
+    }
+    SharedMemoryReadbackStats stats;
+    stats.compare_guest = true;
+    bool read = ReadbackSharedMemoryRange(range.address, range.length,
+                                          "vertex-gpu", false, false,
+                                          &stats);
+    XELOGI(
+        "GPU vertex-gpu trace: shader={:016X} {} fetch={} address={:08X} "
+        "length={:08X} read={} guest_mismatch_words={} first_mismatch={}",
+        shader.ucode_data_hash(), range.label, range.fetch, range.address,
+        range.length, read, stats.guest_mismatch_words,
+        stats.first_guest_mismatch_offset);
+    if (!BeginSubmission(true)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
@@ -7995,6 +8067,21 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   if (cvars::vulkan_trace_vertex_fetch_checksum) {
     TraceVertexFetchSources(*vertex_shader,
                             primitive_processing_result.host_draw_vertex_count);
+  }
+  if (cvars::vulkan_trace_vertex_fetch_gpu_compare &&
+      !TraceVertexFetchGpuCompare(*vertex_shader,
+                                  primitive_processing_result)) {
+    return DrawFailed(__LINE__);
+  }
+  if (!cvars::vulkan_debug_barrier_before_draw_shaders.empty() &&
+      TraceHashMatchesFilter(vertex_shader->ucode_data_hash(),
+                             cvars::vulkan_debug_barrier_before_draw_shaders)) {
+    PushBufferMemoryBarrier(
+        shared_memory_->buffer(), 0, VK_WHOLE_SIZE,
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        VK_ACCESS_MEMORY_WRITE_BIT,
+        VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT);
+    SubmitBarriers(true);
   }
 
   // Synchronize the memory pages backing memory scatter export streams, and

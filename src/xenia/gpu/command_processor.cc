@@ -29,7 +29,9 @@
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/graphics_system.h"
+#include "xenia/base/string_buffer.h"
 #include "xenia/gpu/sampler_info.h"
+#include "xenia/gpu/shader_interpreter.h"
 #include "xenia/gpu/texture_info.h"
 #include "xenia/gpu/xenos.h"
 #include "xenia/kernel/kernel_state.h"
@@ -100,6 +102,15 @@ DEFINE_string(
 DEFINE_bool(gpu_debug_log_draws, false,
             "Diagnostic: log every draw with its index since the last swap, "
             "the primitive type, the index count and the shader hashes.",
+            "GPU");
+DEFINE_bool(gpu_debug_log_index_range, false,
+            "Diagnostic: for every indexed draw, read the guest indices and "
+            "log the vertex index range (offset and min/max clamps applied) "
+            "when a vertex fetch of the vertex shader reads past the size "
+            "of its fetch constant - the GPU then reads memory that was "
+            "never uploaded (a skinned mesh spike that differs from run to "
+            "run), and 32-bit float attributes of the referenced vertices "
+            "that are Inf or NaN. Slow.",
             "GPU");
 DEFINE_bool(gpu_hle_surface_trace, false,
             "GPU D3D-HLE: log BD's surface/tiling/copy register writes (RB_SURFACE_"
@@ -923,6 +934,242 @@ bool CommandProcessor::Initialize() {
 #endif  // XE_PLATFORM_ANDROID
 
   return true;
+}
+
+namespace {
+// gpu_debug_log_index_range: the position export of the vertex shader on the
+// CPU (ShaderInterpreter).
+class DebugPositionSink : public ShaderInterpreter::ExportSink {
+ public:
+  void Export(ucode::ExportRegister export_register, const float* value,
+              uint32_t value_mask) override {
+    if (export_register != ucode::ExportRegister::kVSPosition) {
+      return;
+    }
+    for (uint32_t i = 0; i < 4; ++i) {
+      if (value_mask & (1 << i)) {
+        position[i] = value[i];
+      }
+    }
+    has_position = true;
+  }
+  float position[4] = {};
+  bool has_position = false;
+};
+}  // namespace
+
+void CommandProcessor::LogDebugIndexRange(uint32_t draw_index) {
+  const RegisterFile& regs = *register_file_;
+  if (!active_vertex_shader_->is_ucode_analyzed()) {
+    // The first draw of a shader: the backend analyzes it later.
+    StringBuffer ucode_disasm_buffer;
+    active_vertex_shader_->AnalyzeUcode(ucode_disasm_buffer);
+  }
+  auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+  if (vgt_draw_initiator.source_select != xenos::SourceSelect::kDMA) {
+    if (cvars::gpu_debug_log_draws) {
+      XELOGI("GPU debug index range: draw {} not DMA-indexed (source {})",
+             draw_index, uint32_t(vgt_draw_initiator.source_select));
+    }
+    return;
+  }
+  auto vgt_dma_size = regs.Get<reg::VGT_DMA_SIZE>();
+  bool is_16bit = vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16;
+  uint32_t index_size = is_16bit ? 2 : 4;
+  uint32_t count =
+      std::min(uint32_t(vgt_draw_initiator.num_indices), vgt_dma_size.num_words);
+  uint32_t base = regs[XE_GPU_REG_VGT_DMA_BASE] & ~(index_size - 1);
+  if (!count || base >= 0x20000000u ||
+      0x20000000u - base < count * index_size) {
+    if (cvars::gpu_debug_log_draws) {
+      XELOGI("GPU debug index range: draw {} index buffer {:08X} x{} unusable",
+             draw_index, base, count);
+    }
+    return;
+  }
+  const uint8_t* indices = memory_->TranslatePhysical(base);
+  bool reset_enabled = regs.Get<reg::PA_SU_SC_MODE_CNTL>().multi_prim_ib_ena;
+  uint32_t reset_index =
+      regs.Get<reg::VGT_MULTI_PRIM_IB_RESET_INDX>().reset_indx;
+  uint32_t index_offset = regs.Get<reg::VGT_INDX_OFFSET>().indx_offset;
+  uint32_t min_clamp = regs.Get<reg::VGT_MIN_VTX_INDX>().min_indx;
+  uint32_t max_clamp = regs.Get<reg::VGT_MAX_VTX_INDX>().max_indx;
+  // As in DrawExtentEstimator: 24-bit indices, the offset, then the clamps.
+  uint32_t min_index = UINT32_MAX;
+  uint32_t max_index = 0;
+  uint32_t max_raw = 0;
+  for (uint32_t i = 0; i < count; ++i) {
+    uint32_t index;
+    if (is_16bit) {
+      uint16_t value;
+      std::memcpy(&value, indices + i * 2, sizeof(value));
+      index = xenos::GpuSwap(value, vgt_dma_size.swap_mode);
+    } else {
+      uint32_t value;
+      std::memcpy(&value, indices + i * 4, sizeof(value));
+      index = xenos::GpuSwap(value, vgt_dma_size.swap_mode) & 0xFFFFFF;
+    }
+    if (reset_enabled && index == reset_index) {
+      continue;
+    }
+    max_raw = std::max(max_raw, index);
+    index = std::min(max_clamp,
+                     std::max(min_clamp, (index + index_offset) & 0xFFFFFF));
+    min_index = std::min(min_index, index);
+    max_index = std::max(max_index, index);
+  }
+  if (min_index > max_index) {
+    if (cvars::gpu_debug_log_draws) {
+      XELOGI("GPU debug index range: draw {} all {} indices are the reset index",
+             draw_index, count);
+    }
+    return;
+  }
+  // The clip-space positions of the referenced vertices on the CPU: vertices
+  // at or behind the eye (w <= 0) or not finite make triangles a GPU may
+  // clip or rasterize differently.
+  if (max_index - min_index < 65536 &&
+      ShaderInterpreter::CanInterpretShader(*active_vertex_shader_)) {
+    ShaderInterpreter interpreter(*register_file_, *memory_);
+    DebugPositionSink sink;
+    interpreter.SetShader(*active_vertex_shader_);
+    interpreter.SetExportSink(&sink);
+    uint32_t behind = 0, tiny_w = 0, non_finite = 0, no_position = 0;
+    uint32_t first_bad = UINT32_MAX;
+    float first_bad_position[4] = {};
+    float min_w = FLT_MAX;
+    for (uint32_t vertex = min_index; vertex <= max_index; ++vertex) {
+      sink.has_position = false;
+      interpreter.temp_registers()[0] = float(vertex);
+      interpreter.Execute();
+      if (!sink.has_position) {
+        ++no_position;
+        continue;
+      }
+      const float* p = sink.position;
+      bool bad = false;
+      if (!std::isfinite(p[0]) || !std::isfinite(p[1]) ||
+          !std::isfinite(p[2]) || !std::isfinite(p[3])) {
+        ++non_finite;
+        bad = true;
+      } else {
+        min_w = std::min(min_w, p[3]);
+        if (p[3] <= 0.0f) {
+          ++behind;
+          bad = true;
+        } else if (p[3] < 1.0e-3f) {
+          ++tiny_w;
+          bad = true;
+        }
+      }
+      if (bad && first_bad == UINT32_MAX) {
+        first_bad = vertex;
+        std::memcpy(first_bad_position, p, sizeof(first_bad_position));
+      }
+    }
+    // Vertices behind the eye are normal (geometry crossing the near plane);
+    // warn only for the ones no clipper handles well.
+    if (non_finite || tiny_w || cvars::gpu_debug_log_draws) {
+      XELOGW(
+          "GPU debug index range: draw {} vs {:016X} CPU positions of vertices "
+          "{}-{}: {} not finite, {} with w <= 0, {} with 0 < w < 0.001, {} "
+          "without a position, min w {} (first: vertex {} = {}, {}, {}, {})",
+          draw_index, active_vertex_shader_->ucode_data_hash(), min_index,
+          max_index, non_finite, behind, tiny_w, no_position, min_w,
+          first_bad == UINT32_MAX ? -1 : int64_t(first_bad),
+          first_bad_position[0], first_bad_position[1], first_bad_position[2],
+          first_bad_position[3]);
+    }
+  }
+  for (const Shader::VertexBinding& binding :
+       active_vertex_shader_->vertex_bindings()) {
+    if (!binding.stride_words) {
+      continue;
+    }
+    xenos::xe_gpu_vertex_fetch_t fetch =
+        regs.GetVertexFetch(binding.fetch_constant);
+    uint32_t vertex_count = fetch.size / binding.stride_words;
+    // 32-bit float attributes of the referenced vertices that are Inf or NaN
+    // (a vertex that flies off, or a triangle a GPU draws differently from
+    // run to run).
+    const uint8_t* vertex_data =
+        memory_->TranslatePhysical(uint32_t(fetch.address) << 2);
+    for (const Shader::VertexBinding::Attribute& attribute :
+         binding.attributes) {
+      uint32_t components = 0;
+      switch (attribute.fetch_instr.attributes.data_format) {
+        case xenos::VertexFormat::k_32_FLOAT:
+          components = 1;
+          break;
+        case xenos::VertexFormat::k_32_32_FLOAT:
+          components = 2;
+          break;
+        case xenos::VertexFormat::k_32_32_32_FLOAT:
+          components = 3;
+          break;
+        case xenos::VertexFormat::k_32_32_32_32_FLOAT:
+          components = 4;
+          break;
+        default:
+          break;
+      }
+      if (!components) {
+        continue;
+      }
+      uint32_t non_finite = 0;
+      uint32_t first_vertex = UINT32_MAX;
+      uint32_t first_bits = 0;
+      uint32_t last = std::min(max_index, vertex_count ? vertex_count - 1 : 0);
+      for (uint32_t vertex = min_index; vertex <= last && vertex_count;
+           ++vertex) {
+        for (uint32_t i = 0; i < components; ++i) {
+          uint32_t word;
+          std::memcpy(&word,
+                      vertex_data + (size_t(vertex) * binding.stride_words +
+                                     attribute.fetch_instr.attributes.offset +
+                                     i) *
+                                        4,
+                      sizeof(word));
+          word = xenos::GpuSwap(word, fetch.endian);
+          if ((word & 0x7F800000u) == 0x7F800000u) {
+            if (!non_finite) {
+              first_vertex = vertex;
+              first_bits = word;
+            }
+            ++non_finite;
+          }
+        }
+      }
+      if (non_finite) {
+        XELOGW(
+            "GPU debug index range: draw {} vs {:016X} fetch {} offset {} "
+            "format {}: {} Inf/NaN components in vertices {}-{} (first: "
+            "vertex {}, {:08X})",
+            draw_index, active_vertex_shader_->ucode_data_hash(),
+            binding.fetch_constant, attribute.fetch_instr.attributes.offset,
+            uint32_t(attribute.fetch_instr.attributes.data_format), non_finite,
+            min_index, last, first_vertex, first_bits);
+      }
+    }
+    if (cvars::gpu_debug_log_draws) {
+      XELOGI(
+          "GPU debug index range: draw {} fetch {} indices {}-{} (raw max {}), "
+          "{} vertices",
+          draw_index, binding.fetch_constant, min_index, max_index, max_raw,
+          vertex_count);
+    }
+    if (max_index < vertex_count) {
+      continue;
+    }
+    XELOGW(
+        "GPU debug index range: draw {} vs {:016X} fetch {} address {:08X} "
+        "size {} words, stride {} words = {} vertices, but indices reach {} "
+        "(range {}-{}, raw max {}, offset {}, clamp {}-{}, {} indices)",
+        draw_index, active_vertex_shader_->ucode_data_hash(),
+        binding.fetch_constant, fetch.address << 2, uint32_t(fetch.size),
+        binding.stride_words, vertex_count, max_index, min_index, max_index,
+        max_raw, index_offset, min_clamp, max_clamp, count);
+  }
 }
 
 void CommandProcessor::Shutdown() {
@@ -3100,6 +3347,10 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
                 : 0,
             debug_draw_is_copy ? " copy"
                                : (debug_draw_skipped ? " skipped" : ""));
+      }
+      if (cvars::gpu_debug_log_index_range && is_indexed &&
+          !debug_draw_is_copy && active_vertex_shader_) {
+        LogDebugIndexRange(debug_draw_index);
       }
       if (debug_draw_skipped) {
         draw_succeeded = true;

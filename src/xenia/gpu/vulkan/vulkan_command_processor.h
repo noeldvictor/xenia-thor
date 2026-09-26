@@ -459,6 +459,10 @@ class VulkanCommandProcessor : public CommandProcessor {
     bool clear_like = false;
     uint64_t checksum = 0;
     uint32_t score = 0;
+    // Set by the caller: compare every word with guest memory.
+    bool compare_guest = false;
+    uint32_t guest_mismatch_words = 0;
+    int64_t first_guest_mismatch_offset = -1;
   };
 
   bool ReadbackSharedMemoryRange(uint32_t address, uint32_t length,
@@ -472,6 +476,11 @@ class VulkanCommandProcessor : public CommandProcessor {
                             bool is_pixel_shader);
   void TraceVertexFetchSources(const VulkanShader& shader,
                                uint32_t host_draw_vertex_count);
+  // vulkan_trace_vertex_fetch_gpu_compare. False if the submission could
+  // not be reopened.
+  bool TraceVertexFetchGpuCompare(
+      const VulkanShader& shader,
+      const PrimitiveProcessor::ProcessingResult& primitive_processing_result);
 
   struct PresentResolveCandidate {
     uint32_t address = 0;

@@ -16,6 +16,10 @@ that ran the resolve; name the draws with draw_bisect.py). For k_8_8_8_8 and the
 the difference white where it exceeds 64 steps) land in
 scratch/resolve_ab/<trace>/.
 
+--against vulkan: compare two Vulkan replays instead (A/A) - a resolve that
+differs between two identical replays is not deterministic (2026-09-25: the
+Gears 13183 scene depth, read by a light volume at draw 1298).
+
 --prefix RESOLVE: then find the first draw that makes that resolve differ -
 every draw after N is skipped on both backends and a binary search over N
 (up to the resolve's draw) compares only that resolve. The partial render
@@ -40,6 +44,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import backend_ab  # noqa: E402
 
 OUT = os.path.join(backend_ab.ROOT, 'scratch', 'resolve_ab')
+# The reference replay's folder suffix (a second Vulkan replay needs its own).
+REF_TAG = {'d3d12': '', 'vulkan': '_ref'}
 LINE_RE = re.compile(r'(\w+)=(\S+)')
 
 
@@ -181,7 +187,8 @@ def prefix_search(args, out, cvars, rows):
         if n not in cache:
             skip = ['gpu_debug_skip_draws=%d-999999' % (n + 1)]
             tag = '_prefix_%d' % n
-            value = resolve_large(dump('d3d12', args.trace, out, cvars + skip, tag),
+            value = resolve_large(dump(args.against, args.trace, out, cvars + skip,
+                                       tag + REF_TAG[args.against]),
                                   dump('vulkan', args.trace, out, cvars + skip, tag),
                                   args.prefix)
             if value is None:
@@ -215,6 +222,8 @@ def main():
     ap.add_argument('--threshold', type=float, default=0.5)
     ap.add_argument('--images', choices=('all', 'first', 'none'), default='first')
     ap.add_argument('--prefix', default='')
+    ap.add_argument('--against', choices=('d3d12', 'vulkan'), default='d3d12',
+                    help='the reference replay: D3D12, or a second Vulkan replay (A/A)')
     ap.add_argument('--thor-profile', action='store_true',
                     help='Vulkan with the Thor GPU settings (backend_ab.thor_profile_cvars)')
     args = ap.parse_args()
@@ -224,9 +233,10 @@ def main():
     name = os.path.splitext(os.path.basename(args.trace))[0]
     out = os.path.join(OUT, name)
     os.makedirs(out, exist_ok=True)
-    d3d = dump('d3d12', args.trace, out, cvars)
+    d3d = dump(args.against, args.trace, out, cvars, REF_TAG[args.against])
     vk = dump('vulkan', args.trace, out, cvars)
-    print('%s: %d resolves on D3D12, %d on Vulkan' % (name, len(d3d), len(vk)))
+    print('%s: %d resolves on %s, %d on Vulkan' % (
+        name, len(d3d), 'D3D12' if args.against == 'd3d12' else 'Vulkan (A)', len(vk)))
     if not d3d or not vk:
         print('no resolves dumped - rebuild the trace dumps (gpu_debug_dump_resolves)')
         return 1
