@@ -3328,7 +3328,8 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
         XELOGI(
             "GPU debug draw {}: prim {} count {} indexed {} vs {:016X} ps "
             "{:016X} depthcontrol {:08X} colorcontrol {:08X} modecntl "
-            "{:08X} clipcntl {:08X} vskill {}{}",
+            "{:08X} clipcntl {:08X} surface {:08X} depthinfo {:08X} "
+            "color0info {:08X} vskill {}{}",
             debug_draw_index, uint32_t(vgt_draw_initiator.prim_type),
             uint32_t(vgt_draw_initiator.num_indices), is_indexed,
             active_vertex_shader_ ? active_vertex_shader_->ucode_data_hash()
@@ -3338,6 +3339,9 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
             register_file_->values[XE_GPU_REG_RB_COLORCONTROL],
             register_file_->values[XE_GPU_REG_PA_SU_SC_MODE_CNTL],
             register_file_->values[XE_GPU_REG_PA_CL_CLIP_CNTL],
+            register_file_->values[XE_GPU_REG_RB_SURFACE_INFO],
+            register_file_->values[XE_GPU_REG_RB_DEPTH_INFO],
+            register_file_->values[XE_GPU_REG_RB_COLOR_INFO],
             active_vertex_shader_ &&
                     active_vertex_shader_->is_ucode_analyzed()
                 ? uint32_t((active_vertex_shader_

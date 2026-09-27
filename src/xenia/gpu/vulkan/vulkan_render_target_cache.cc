@@ -2805,9 +2805,9 @@ bool VulkanRenderTargetCache::Update(
   // the sample count to the pipeline cache.
   // BD-30 foliage ROP lever: clamp the MSAA consistently with the RT-cache key and
   // the resolve path (gpu_force_max_msaa_samples) so the render pass + pipeline
-  // sample count match the (lowered) host RT image.
-  render_pass_key.msaa_samples =
-      draw_util::ClampForcedMsaaSamples(rb_surface_info.msaa_samples);
+  // sample count match the (lowered) host RT image. The 4x -> 1x depth clear
+  // fold (gpu_fold_msaa_depth_clears) binds the 1x render target.
+  render_pass_key.msaa_samples = GetUpdateMsaaSamples();
 
   switch (GetPath()) {
     case Path::kHostRenderTargets: {
@@ -2862,6 +2862,7 @@ bool VulkanRenderTargetCache::Update(
               ->extensions()
               .ext_EXT_fragment_density_map;
 
+      // The same tiles with the 4x -> 1x fold: 1x at twice the pitch in pixels.
       uint32_t pitch_tiles_at_32bpp =
           ((rb_surface_info.surface_pitch
             << uint32_t(draw_util::ClampForcedMsaaSamples(

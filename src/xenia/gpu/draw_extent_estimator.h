@@ -47,9 +47,14 @@ class DrawExtentEstimator {
   // Returns false - callers must assume nothing is covered - when the draw is
   // not a one-rect rectangle list, the shader can't be interpreted, or any
   // vertex position is unavailable/killed.
+  // out_pixel_aligned_flat (optional): true when all four edges of the
+  // rectangle are on pixel edges and the three vertices have the same Z and W
+  // - then the covered samples and their depth do not depend on where the
+  // samples are inside the pixel (gpu_fold_msaa_depth_clears).
   bool EstimateRectListCoverage(const Shader& vertex_shader, int32_t& out_x0,
                                 int32_t& out_y0, int32_t& out_x1,
-                                int32_t& out_y1);
+                                int32_t& out_y1,
+                                bool* out_pixel_aligned_flat = nullptr);
 
   // Front B cullable-triangle counter (gpu_trace_cullable_tris): replays the
   // guest VS positions on the CPU and counts how many triangles a CPU-side cull

@@ -299,7 +299,11 @@ bool DrawExtentEstimator::EstimateRectListCoverage(const Shader& vertex_shader,
                                                    int32_t& out_x0,
                                                    int32_t& out_y0,
                                                    int32_t& out_x1,
-                                                   int32_t& out_y1) {
+                                                   int32_t& out_y1,
+                                                   bool* out_pixel_aligned_flat) {
+  if (out_pixel_aligned_flat) {
+    *out_pixel_aligned_flat = false;
+  }
   SCOPE_profile_cpu_f("gpu");
 
   const RegisterFile& regs = register_file_;
@@ -374,6 +378,9 @@ bool DrawExtentEstimator::EstimateRectListCoverage(const Shader& vertex_shader,
 
   float min_x = FLT_MAX, min_y = FLT_MAX;
   float max_x = -FLT_MAX, max_y = -FLT_MAX;
+  // One Z and W for the whole rectangle (compared bit for bit).
+  bool flat_zw = true;
+  std::optional<float> first_z, first_w;
 
   shader_interpreter_.SetShader(vertex_shader);
   PositionExportSink position_export_sink;
@@ -417,6 +424,19 @@ bool DrawExtentEstimator::EstimateRectListCoverage(const Shader& vertex_shader,
         !position_export_sink.position_y().has_value()) {
       valid = false;
       break;
+    }
+    if (out_pixel_aligned_flat) {
+      const std::optional<float>& z = position_export_sink.position_z();
+      const std::optional<float>& w = position_export_sink.position_w();
+      if (!z.has_value() || !w.has_value()) {
+        flat_zw = false;
+      } else if (!i) {
+        first_z = z;
+        first_w = w;
+      } else if (std::memcmp(&*first_z, &*z, sizeof(float)) ||
+                 std::memcmp(&*first_w, &*w, sizeof(float))) {
+        flat_zw = false;
+      }
     }
     float vertex_x = position_export_sink.position_x().value();
     float vertex_y = position_export_sink.position_y().value();
@@ -471,6 +491,12 @@ bool DrawExtentEstimator::EstimateRectListCoverage(const Shader& vertex_shader,
     max_x_24p8 += window_x_offset_24p8;
     min_y_24p8 += window_y_offset_24p8;
     max_y_24p8 += window_y_offset_24p8;
+  }
+
+  if (out_pixel_aligned_flat) {
+    *out_pixel_aligned_flat =
+        flat_zw &&
+        !((min_x_24p8 | min_y_24p8 | max_x_24p8 | max_y_24p8) & 255);
   }
 
   // Round INWARD to fully-covered pixels. Without MSAA a pixel is covered iff

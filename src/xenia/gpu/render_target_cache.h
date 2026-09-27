@@ -159,6 +159,28 @@ class RenderTargetCache {
   // transfer. Set/cleared per Update() call.
   bool bd_perfmode_hdr_pass() const { return bd_perfmode_hdr_pass_; }
 
+  // gpu_fold_msaa_depth_clears: EDRAM stores a 4x MSAA pixel as 2x2
+  // single-sampled pixels, so a 4x MSAA draw can go into the 1x render target
+  // of the same EDRAM range at a 2x2 scale. Decides it for the current draw
+  // (call before Update, and ClearMsaaDepthClearFold after the draw's state is
+  // set): a 4x MSAA draw that writes only depth / stencil (no color, no
+  // shader depth, kill, alpha test or polygon offset), is one rectangle on
+  // pixel edges with one depth (so the result does not depend on the sample
+  // positions), into a range that the 1x depth render target with the same
+  // base, pitch and format owns - without the fold, the range moves to the 4x
+  // render target and back: two transfers and two render pass breaks.
+  // Gears of War clears each shadow depth region this way (4x rectangle, then
+  // the casters at 1x).
+  bool SetMsaaDepthClearFold(bool is_rasterization_done,
+                             reg::RB_DEPTHCONTROL normalized_depth_control,
+                             uint32_t normalized_color_mask,
+                             const Shader& vertex_shader,
+                             const Shader* pixel_shader);
+  void ClearMsaaDepthClearFold() { msaa_depth_clear_fold_ = false; }
+  bool msaa_depth_clear_fold() const { return msaa_depth_clear_fold_; }
+  // The sample count of the render targets that Update binds.
+  xenos::MsaaSamples GetUpdateMsaaSamples() const;
+
   // Resolution scaling on the EDRAM side is performed by multiplying the EDRAM
   // tile size by the resolution scale.
   // Note: Only integer scaling factors are provided because fractional ones,
@@ -840,6 +862,8 @@ class RenderTargetCache {
   bool are_accumulated_render_targets_valid_ = false;
   // BD PERFORMANCE MODE: set by Update() for the recognized 4x HDR effect pass.
   bool bd_perfmode_hdr_pass_ = false;
+  // gpu_fold_msaa_depth_clears: the current draw goes 4x -> 1x at 2x2 scale.
+  bool msaa_depth_clear_fold_ = false;
   // After an update (for simplicity, even an unsuccessful update invalidates
   // this), contains needed ownership transfer sources for each of the current
   // render targets. They are reordered so for one source, all transfers are

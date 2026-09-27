@@ -3697,11 +3697,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_pass_break_rt_change_ = 0;
     XELOGI(
         "GPU pass breaks/frame: upload={} gpuwrite={} scratch={} rt={} "
-        "depth={} img={} other={}",
+        "depth={} img={} other={} msaa_folds={}",
         brk_cause_[kBreakUpload], brk_cause_[kBreakGpuWrite],
         brk_cause_[kBreakScratch], brk_cause_[kBreakRenderTargetSampled],
         brk_cause_[kBreakDepthSampled], brk_cause_[kBreakImage],
-        brk_cause_[kBreakOther]);
+        brk_cause_[kBreakOther], msaa_depth_clear_folds_);
+    msaa_depth_clear_folds_ = 0;
     std::memset(brk_cause_, 0, sizeof(brk_cause_));
     brk_open_breaks_ = 0;
     brk_buffer_barriers_ = 0;
@@ -7399,6 +7400,16 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   if (trace_draw_cpu) {
     rt_t0 = std::chrono::steady_clock::now();
   }
+  // gpu_fold_msaa_depth_clears: a 4x MSAA depth clear rectangle into the 1x
+  // render target that owns the range (the render target cache decides).
+  msaa_depth_clear_fold_draw_ =
+      !hybrid_current_draw_composite_ &&
+      render_target_cache_->SetMsaaDepthClearFold(
+          is_rasterization_done, normalized_depth_control,
+          normalized_color_mask, *vertex_shader, pixel_shader);
+  if (msaa_depth_clear_fold_draw_) {
+    ++msaa_depth_clear_folds_;
+  }
   bool rt_update_ok;
   if (hybrid_current_draw_composite_) {
     // THE EDRAM SOLVE, hybrid form: a post-process composite renders PASS-LESS into
@@ -7444,7 +7455,8 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         rt_gate_color_info_[2] == gate_color_info[2] &&
         rt_gate_color_info_[3] == gate_color_info[3] &&
         rt_gate_vs_hash_ == gate_vs_hash &&
-        rt_gate_is_raster_done_ == is_rasterization_done;
+        rt_gate_is_raster_done_ == is_rasterization_done &&
+        rt_gate_msaa_depth_clear_fold_ == msaa_depth_clear_fold_draw_;
     if (snapshot_match) {
       rt_update_ok = rt_gate_last_ok_;
     } else {
@@ -7462,6 +7474,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       rt_gate_color_info_[3] = gate_color_info[3];
       rt_gate_vs_hash_ = gate_vs_hash;
       rt_gate_is_raster_done_ = is_rasterization_done;
+      rt_gate_msaa_depth_clear_fold_ = msaa_depth_clear_fold_draw_;
       rt_gate_last_ok_ = rt_update_ok;
     }
   } else {
@@ -7475,6 +7488,7 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             std::chrono::steady_clock::now() - rt_t0)
             .count());
   }
+  render_target_cache_->ClearMsaaDepthClearFold();
   if (!rt_update_ok) {
     return DrawFailed(__LINE__);
   }
@@ -7659,6 +7673,14 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
       previous_viewport_info_key_ = viewport_key;
       previous_viewport_info_ = viewport_info;
       previous_viewport_info_valid_ = true;
+    }
+    if (msaa_depth_clear_fold_draw_) {
+      // A 4x MSAA pixel is 2x2 pixels of the 1x render target.
+      draw_util::GetHostViewportInfo(
+          regs, 2, 2, false, device_properties.maxViewportDimensions[0],
+          device_properties.maxViewportDimensions[1], true,
+          normalized_depth_control, false, host_render_targets_used,
+          pixel_shader_writes_depth, viewport_info);
     }
   }
 
@@ -11428,6 +11450,13 @@ void VulkanCommandProcessor::UpdateDynamicState(
         RenderTargetCache::ApplyResolutionDownscale(scissor_rect.extent.width);
     scissor_rect.extent.height =
         RenderTargetCache::ApplyResolutionDownscale(scissor_rect.extent.height);
+  }
+  if (msaa_depth_clear_fold_draw_) {
+    // gpu_fold_msaa_depth_clears: 4x MSAA pixels to 1x pixels.
+    scissor_rect.offset.x *= 2;
+    scissor_rect.offset.y *= 2;
+    scissor_rect.extent.width *= 2;
+    scissor_rect.extent.height *= 2;
   }
   // gpu_flatten_predicated_tiling stage 2: during the frame's FIRST bin pass
   // (the one the flatten force-passes all predicated draws into), the guest's

@@ -1898,7 +1898,13 @@ class VulkanCommandProcessor : public CommandProcessor {
   // handles pass breaks / transfers / frame boundaries.
   bool rt_gate_valid_ = false;
   bool rt_gate_is_raster_done_ = false;
+  bool rt_gate_msaa_depth_clear_fold_ = false;
   bool rt_gate_last_ok_ = false;
+  // gpu_fold_msaa_depth_clears: the current draw is a 4x MSAA depth clear
+  // drawn into the 1x render target at a 2x2 scale (viewport and scissor x2).
+  bool msaa_depth_clear_fold_draw_ = false;
+  // Folded draws in the frame (the "GPU pass breaks/frame" line).
+  uint32_t msaa_depth_clear_folds_ = 0;
   uint32_t rt_gate_surface_info_ = 0;
   uint32_t rt_gate_depth_control_ = 0;
   uint32_t rt_gate_color_mask_ = 0;

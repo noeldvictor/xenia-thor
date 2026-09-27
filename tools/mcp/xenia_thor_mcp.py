@@ -1281,6 +1281,24 @@ def xenia_cvar_ab(traces: str, a: str, b: str, cvars: str = '',
 
 
 @mcp.tool()
+def xenia_rt_transfers(traces: str, cvars: str = '', thor_profile: bool = False,
+                       draws: int = 3) -> str:
+    """What moves EDRAM between render targets in a traced frame, and why
+    (tools/pc/rt_transfers.py): the ownership transfers grouped by destination
+    <- source render target (base, pitch, MSAA, format) with the draws that
+    caused them (surface pitch and MSAA, depth base), the render pass breaks
+    by cause, and the 4x MSAA depth clears folded into the 1x render target
+    (gpu_fold_msaa_depth_clears) or why not. Each transfer ends the render
+    pass on the Thor's tiler. Cvars are separated by spaces. PC only."""
+    args = [t for t in traces.split() if t] + ['--draws', str(draws)]
+    if cvars:
+        args += ['--cvars', cvars]
+    if thor_profile:
+        args.append('--thor-profile')
+    return _run_tool_script('tools/pc/rt_transfers.py', args, timeout=3600)
+
+
+@mcp.tool()
 def xenia_trace_bench(traces: str, iterations: int = 30, cvars: str = '',
                       a: str = '', b: str = '', thor_profile: bool = False) -> str:
     """The command processor's CPU cost per draw on the PC (tools/pc/

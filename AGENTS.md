@@ -762,6 +762,24 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   to the shared memory (resolves) 16, texture loads (scratch buffer) 13, render target
   sampled 2, other 1; uploads 0. The next tiler targets: depth sampling inside the pass,
   then texture loads at the head of the submission.
+  **The "depth" breaks were EDRAM ownership transfers (2026-09-27):** Gears (Unreal Engine
+  3) clears each shadow depth region with one 4x MSAA depth-only rectangle (pitch 440, EDRAM
+  mode depth-only) and then draws the casters at 1x (pitch 880) on the same EDRAM (base
+  1440 tiles, D24S8). Each switch moved the range to the other render target: a 1x -> 4x
+  transfer before the clear and a 4x -> 1x transfer after it, two pass breaks and two
+  full-region copies per shadow, 7 to 13 shadows a frame. EDRAM stores a 4x MSAA pixel as
+  2x2 single-sampled pixels, so `gpu_fold_msaa_depth_clears` draws such a clear into the
+  1x render target at a 2x2 viewport and scissor - only for one rectangle on pixel edges
+  with one Z and W (the CPU replays its vertex shader; then the result does not depend on
+  the sample positions), no color, shader depth, kill, alpha test or polygon offset, and
+  only when the 1x depth render target of the same tiles owns the range. Traces: Gears
+  transfers 30-46 -> 19-26 and pass breaks -7 to -22 a frame; Banjo 2, Blue Dragon 1,
+  MC2 1 fold a frame. `cvar_ab` 0 of 40 traces changed (13183 noisy), validation layer 0
+  errors, command processor CPU neutral. Live Gears gameplay on the PC twin (both upload
+  levers + the fold): 37-45 breaks a frame (was 54) - depth 7-10, gpuwrite 13-18, scratch
+  10-14, 9 folds. Default off until the device A/B. Not folded: 4x clears over a range the
+  2x main-scene depth or a color target owns (a fold there saves at most one transfer),
+  and a 4x color clear (the pixel shader output may vary inside the pixel).
 - **Blue Dragon (4D5307DF).** Low priority (re:Blue exists). GPU frame 79 -> 64.5 ms in the field
   (about 10 -> 12.7 presented fps) since the 21-bit rounding became a lever, off on Android; the
   August build ran about 17.5 fps; the two scene passes take 47 of the 64 ms.
@@ -968,6 +986,9 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `GPU pass breaks/frame` (with `vulkan_trace_draw_outcomes_per_frame`) | each frame's render pass breaks by cause - upload, gpuwrite, scratch (texture loads), rt, depth, img, other; `frame_timeline.py` prints the medians per 10 s |
 | `vulkan_trace_pass_break_causes N` | the first N render pass breaks with the draw index and every pending barrier (shared memory or other buffer, access masks, image layouts) - what ends the passes a tiler pays for |
 | `gpu_uma_direct_system_memory` | the PC twin of the Thor's direct-write upload path (host-visible system memory) for the trace dump and `pc_run` |
+| `tools/pc/rt_transfers.py`, `xenia_rt_transfers` | what moves EDRAM between render targets in a traced frame: the ownership transfers grouped by destination <- source (base, pitch, MSAA, format) with the draws that caused them, the pass breaks by cause, and the 4x MSAA depth clears folded or why not. 2026-09-27: named Gears' 4x shadow clears in one replay |
+| `gpu_trace_render_target_transfers N` | the first N ownership transfers ("RT transfer" lines) and, for 4x MSAA depth draws, why `gpu_fold_msaa_depth_clears` did not fold them ("MSAA fold: rejected") |
+| `gpu_debug_log_draws` | now also RB_SURFACE_INFO (pitch, MSAA), RB_DEPTH_INFO and RB_COLOR_INFO 0 per draw; `draw_bisect` filters can use `surface`, `depthinfo`, `color0info` |
 | `cvar_ab.py --noise N` | for a changed trace, N more A replays (default 1): A/A changes too = noisy, not changed; the A/A row prints under the A/B row |
 | `cvar_ab.py --prefix` | the first draw after which the A and B frames differ, by binary search over `gpu_debug_skip_draws` (resolves never skipped), with its `gpu_debug_log_draws` line (primitive, count, VS and PS hashes) |
 | `tools/pc/zero_rule_coverage.py` | research: over the microcode dumps, the Shader Model 3 zero tests whose operands are provably bounded (`--taint`: only rcp/rsq/exp/log results can be Inf - the hybrid; `--taint-interpolators`: interpolators too) |

@@ -45,6 +45,28 @@ DEFINE_bool(
     "GPU");
 
 DEFINE_bool(
+    gpu_fold_msaa_depth_clears, false,
+    "Draw a 4x MSAA depth / stencil-only clear rectangle into the 1x depth "
+    "render target that owns its EDRAM range, at a 2x2 scale (EDRAM stores "
+    "a 4x MSAA pixel as 2x2 single-sampled pixels), instead of moving the "
+    "range to a 4x render target and back (two EDRAM transfers and two "
+    "render pass breaks). Only for one rectangle on pixel edges with one "
+    "depth, no color, shader depth, kill, alpha test or polygon offset, so "
+    "the result does not depend on the sample positions. Gears of War "
+    "clears each shadow depth region this way. Default off until the "
+    "device A/B.",
+    "GPU");
+
+DEFINE_uint32(
+    gpu_trace_render_target_transfers, 0,
+    "Research: log the first N EDRAM ownership transfers (\"RT transfer\" "
+    "lines: the destination and source render targets, the tile range, the "
+    "host depth source). A "
+    "transfer ends the render pass and draws the old owner's pixels into "
+    "the new owner - on a tiler a GMEM store and reload.",
+    "GPU");
+
+DEFINE_bool(
     depth_transfer_not_equal_test, true,
     "When transferring data between depth render targets, use the \"not "
     "equal\" test to avoid writing rewriting depth via shader depth output if "
@@ -710,9 +732,15 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   if (bd_perfmode_hdr_pass_) {
     msaa_samples = xenos::MsaaSamples::k2X;
   }
+  // gpu_fold_msaa_depth_clears: the 1x render target of the same tiles - twice
+  // the pitch in pixels, the same pitch in tiles.
+  if (msaa_depth_clear_fold_) {
+    msaa_samples = xenos::MsaaSamples::k1X;
+  }
   uint32_t msaa_samples_x_log2 =
       uint32_t(msaa_samples >= xenos::MsaaSamples::k4X);
-  uint32_t pitch_pixels = rb_surface_info.surface_pitch;
+  uint32_t pitch_pixels = rb_surface_info.surface_pitch
+                          << uint32_t(msaa_depth_clear_fold_);
   // NOTE: a downstream pitch-widen (360->720) here to force the bin-once RT full-
   // width DESYNCS the EDRAM/resolve = 0fps black screen (the goal's warned "harder,
   // lossy way"). The clean bin-once must HLE FUN_82487cc8 @0x82487cc8 at the source
@@ -934,13 +962,16 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
 
   // Estimate height used by render targets (for color for writes, for depth /
   // stencil for both reads and writes) from various sources.
+  // With the 4x -> 1x fold, the estimate is in 4x pixels (the registers are
+  // the guest's) - a 4x pixel row is two 1x rows.
   uint32_t height_used = std::min(
       GetRenderTargetHeight(pitch_tiles_at_32bpp, msaa_samples),
       draw_extent_estimator_.EstimateMaxY(
           interlock_barrier_only
               ? cvars::execute_unclipped_draw_vs_on_cpu_for_psi_render_backend
               : true,
-          vertex_shader));
+          vertex_shader)
+          << uint32_t(msaa_depth_clear_fold_));
   // HLE BIN-ONCE: the single forced tile spans the FULL surface, but EstimateMaxY
   // only sees the top tile's scissored extent (~672) so the bottom tile's geometry
   // has no RT. Force the full-surface height (BD field = 1280) so the whole scene
@@ -1178,6 +1209,31 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
   if (interlock_barrier_only) {
     // No copying transfers or render target bindings - only needed the barrier.
     return true;
+  }
+
+  if (cvars::gpu_trace_render_target_transfers) {
+    static uint32_t traced_transfers = 0;
+    for (uint32_t i = 0; i < 1 + xenos::kMaxColorRenderTargets &&
+                         traced_transfers <
+                             cvars::gpu_trace_render_target_transfers;
+         ++i) {
+      for (const Transfer& transfer : last_update_transfers_[i]) {
+        if (traced_transfers >= cvars::gpu_trace_render_target_transfers) {
+          break;
+        }
+        ++traced_transfers;
+        XELOGI(
+            "RT transfer: slot {} dest {} <- source {} tiles [{}, {}){}{}", i,
+            rt_keys[i].GetDebugName(),
+            transfer.source ? transfer.source->key().GetDebugName()
+                            : std::string("none"),
+            transfer.start_tiles, transfer.end_tiles,
+            transfer.host_depth_source ? " host depth " : "",
+            transfer.host_depth_source
+                ? transfer.host_depth_source->key().GetDebugName()
+                : std::string());
+      }
+    }
   }
 
   // If everything succeeded, update the used render targets.
@@ -1852,6 +1908,106 @@ RenderTargetCache::RenderTarget* RenderTargetCache::GetOrCreateRenderTarget(
     render_targets_.emplace(key, render_target);
   }
   return render_target;
+}
+
+bool RenderTargetCache::SetMsaaDepthClearFold(
+    bool is_rasterization_done, reg::RB_DEPTHCONTROL normalized_depth_control,
+    uint32_t normalized_color_mask, const Shader& vertex_shader,
+    const Shader* pixel_shader) {
+  msaa_depth_clear_fold_ = false;
+  // With gpu_trace_render_target_transfers, one line per rejected 4x MSAA
+  // depth draw: the first condition that failed.
+  auto reject = [&](const char* reason) {
+    static uint32_t traced = 0;
+    if (cvars::gpu_trace_render_target_transfers &&
+        traced < cvars::gpu_trace_render_target_transfers &&
+        register_file().Get<reg::RB_SURFACE_INFO>().msaa_samples ==
+            xenos::MsaaSamples::k4X) {
+      ++traced;
+      XELOGI("MSAA fold: rejected - {}", reason);
+    }
+    return false;
+  };
+  if (!cvars::gpu_fold_msaa_depth_clears ||
+      GetPath() != Path::kHostRenderTargets || !is_rasterization_done ||
+      normalized_color_mask ||
+      !(normalized_depth_control.z_enable ||
+        normalized_depth_control.stencil_enable) ||
+      cvars::gpu_force_max_msaa_samples || cvars::gpu_bd_perfmode_hdr_2x ||
+      cvars::gpu_native_render_targets) {
+    return reject(normalized_color_mask ? "color written" : "state");
+  }
+  const RegisterFile& regs = register_file();
+  auto rb_surface_info = regs.Get<reg::RB_SURFACE_INFO>();
+  xenos::EdramMode edram_mode = regs.Get<reg::RB_MODECONTROL>().edram_mode;
+  if (rb_surface_info.msaa_samples != xenos::MsaaSamples::k4X ||
+      !rb_surface_info.surface_pitch ||
+      (edram_mode != xenos::EdramMode::kColorDepth &&
+       edram_mode != xenos::EdramMode::kDepthOnly)) {
+    return reject("not 4x or not a color-depth or depth-only draw");
+  }
+  // Nothing but the coverage may depend on where the samples are.
+  if (pixel_shader &&
+      (pixel_shader->writes_depth() || pixel_shader->kills_pixels() ||
+       pixel_shader->memexport_eM_written())) {
+    return reject("pixel shader writes depth, kills or exports");
+  }
+  auto rb_colorcontrol = regs.Get<reg::RB_COLORCONTROL>();
+  if (rb_colorcontrol.alpha_to_mask_enable ||
+      (rb_colorcontrol.alpha_test_enable &&
+       rb_colorcontrol.alpha_func != xenos::CompareFunction::kAlways)) {
+    return reject("alpha test or alpha to mask");
+  }
+  auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
+  if (pa_su_sc_mode_cntl.poly_offset_front_enable ||
+      pa_su_sc_mode_cntl.poly_offset_back_enable ||
+      pa_su_sc_mode_cntl.poly_offset_para_enable) {
+    return reject("polygon offset");
+  }
+  // Only where it saves the transfers: the 1x depth render target of the same
+  // tiles owns the first tile.
+  auto rb_depth_info = regs.Get<reg::RB_DEPTH_INFO>();
+  RenderTargetKey key_1x;
+  key_1x.base_tiles = rb_depth_info.depth_base;
+  key_1x.pitch_tiles_at_32bpp =
+      ((rb_surface_info.surface_pitch << 1) +
+       (xenos::kEdramTileWidthSamples - 1)) /
+      xenos::kEdramTileWidthSamples;
+  key_1x.msaa_samples = xenos::MsaaSamples::k1X;
+  key_1x.is_depth = 1;
+  key_1x.resource_format = uint32_t(rb_depth_info.depth_format);
+  auto it = ownership_ranges_.upper_bound(key_1x.base_tiles);
+  if (it == ownership_ranges_.begin()) {
+    return reject("no owner");
+  }
+  --it;
+  if (it->second.end_tiles <= key_1x.base_tiles ||
+      it->second.render_target != key_1x) {
+    return reject(
+        fmt::format("the owner of the first tile is {}, not {}",
+                    it->second.end_tiles <= key_1x.base_tiles
+                        ? std::string("none")
+                        : it->second.render_target.GetDebugName(),
+                    key_1x.GetDebugName())
+            .c_str());
+  }
+  int32_t x0, y0, x1, y1;
+  bool pixel_aligned_flat = false;
+  if (!draw_extent_estimator_.EstimateRectListCoverage(
+          vertex_shader, x0, y0, x1, y1, &pixel_aligned_flat) ||
+      !pixel_aligned_flat) {
+    return reject("not one pixel-aligned rectangle with one depth");
+  }
+  msaa_depth_clear_fold_ = true;
+  return true;
+}
+
+xenos::MsaaSamples RenderTargetCache::GetUpdateMsaaSamples() const {
+  if (msaa_depth_clear_fold_) {
+    return xenos::MsaaSamples::k1X;
+  }
+  return draw_util::ClampForcedMsaaSamples(
+      register_file().Get<reg::RB_SURFACE_INFO>().msaa_samples);
 }
 
 bool RenderTargetCache::WouldOwnershipChangeRequireTransfers(

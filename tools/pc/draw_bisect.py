@@ -29,7 +29,7 @@ The modes:
 In the vulkan and d3d12 modes, skipping every draw leaves a black frame that
 matches nothing, so give candidates: --filter is a Python expression over the
 draw log fields (prim, count, vs, ps, depthcontrol, colorcontrol, modecntl,
-clipcntl, vskill as integers, and index), for example "colorcontrol & 0x10"
+clipcntl, surface, depthinfo, color0info, vskill as integers, and index), for example "colorcontrol & 0x10"
 (alpha to mask), "prim == 4" or "index > 49" (past a draw that only removes
 the background);
 the search then splits the list of matching draws.
@@ -54,8 +54,9 @@ import backend_ab  # noqa: E402
 OUT = os.path.join(backend_ab.ROOT, 'scratch', 'draw_bisect')
 DRAW_RE = re.compile(r'GPU debug draw (\d+): (.*)$')
 FIELD_RE = re.compile(r'(prim|count|vs|ps|depthcontrol|colorcontrol|modecntl|'
-                      r'clipcntl|vskill) ([0-9A-Fa-f]+)')
-HEX_FIELDS = ('vs', 'ps', 'depthcontrol', 'colorcontrol', 'modecntl', 'clipcntl')
+                      r'clipcntl|surface|depthinfo|color0info|vskill) ([0-9A-Fa-f]+)')
+HEX_FIELDS = ('vs', 'ps', 'depthcontrol', 'colorcontrol', 'modecntl', 'clipcntl',
+              'surface', 'depthinfo', 'color0info')
 
 
 def draw_fields(text):

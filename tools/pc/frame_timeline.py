@@ -10,7 +10,8 @@ buffer barriers, the GPU frame time, the command processor's time
 (cpu_real_us), the time it waited on a GPU fence (fence_us) and the texture
 loads that decoded data (tex; each one ends the render pass), and the
 render pass breaks by cause ("GPU pass breaks/frame": upload, gpuwrite, scratch
-= texture loads, rt = a render target sampled, depth, img, other). Flags:
+= texture loads, rt = a render target sampled, depth, img, other; msaa_folds =
+the 4x MSAA depth clears drawn into the 1x render target). Flags:
 - WAITS-GPU: the command processor waits on the GPU for more than 1 ms a frame
   - the recording and the GPU do not overlap (2026-09-25: the Thor upload
   path's whole-buffer smart-sync, 11.5 ms a frame on MagnaCarta 2's title);
@@ -46,6 +47,7 @@ def frames(log_path):
             elif BREAK_LINE in line and out and 'brk_causes' not in out[-1]:
                 d = dict(PAIR.findall(line))
                 out[-1]['brk_causes'] = {k: int(d.get(k, 0)) for k in CAUSES}
+                out[-1]['msaa_folds'] = int(d.get('msaa_folds', 0))
             elif TEX_LINE in line and out:
                 # The texture line of the same frame follows its outcomes line.
                 m = re.search(r'decoded=(\d+)', line)
@@ -72,6 +74,9 @@ def timeline(rows, bucket_s):
         if any('brk_causes' in r for r in sel):
             causes = {k: statistics.median([r.get('brk_causes', {}).get(k, 0)
                                             for r in sel]) for k in CAUSES}
+            # 4x MSAA depth clears drawn into the 1x render target (each one
+            # saves two transfers and two breaks; gpu_fold_msaa_depth_clears).
+            causes['msaa_folds'] = statistics.median([r.get('msaa_folds', 0) for r in sel])
         result.append(dict(start_s=b * bucket_s, frames=len(sel), causes=causes,
                            fps=len(sel) / float(bucket_s), flags=flags, **med))
     return result
