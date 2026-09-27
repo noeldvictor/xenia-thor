@@ -2511,12 +2511,16 @@ class VulkanCommandProcessor : public CommandProcessor {
   // line, tools/pc/frame_timeline.py): upload (a direct host write or a copy
   // into the shared memory), gpuwrite (a shader write to the shared memory -
   // resolve, memexport - or a read after one), scratch (another buffer: the
-  // texture load scratch buffer), rt (a render target sampled), depth (the
-  // depth buffer sampled or back), img (other image transitions), other.
+  // texture load scratch buffer), transfer (an EDRAM ownership transfer between
+  // render targets - tools/pc/rt_transfers.py lists them), rt (a render target
+  // sampled), depth (the depth buffer sampled or back), img (other image
+  // transitions), other. 2026-09-27: Gears' 22 "depth" breaks a frame were
+  // transfers (4x MSAA shadow clears), so a transfer is its own cause now.
   enum BreakCause : uint32_t {
     kBreakUpload,
     kBreakGpuWrite,
     kBreakScratch,
+    kBreakTransfer,
     kBreakRenderTargetSampled,
     kBreakDepthSampled,
     kBreakImage,
@@ -2524,6 +2528,8 @@ class VulkanCommandProcessor : public CommandProcessor {
     kBreakCauseCount,
   };
   uint32_t brk_cause_[kBreakCauseCount] = {};
+  // Set by VulkanRenderTargetCache while it performs EDRAM transfers.
+  bool brk_in_rt_transfer_ = false;
   uint32_t brk_buffer_barriers_ = 0;
   uint32_t brk_img_shaderread_ = 0;
   uint32_t brk_img_other_ = 0;

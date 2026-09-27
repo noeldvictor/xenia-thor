@@ -908,6 +908,17 @@ Standing facts:
 - Retro 2026-09-26 (3, reflex): before a speed theory about the Thor, run the PC twin of its
   upload path (`gpu_uma_direct_shared_memory=true gpu_uma_direct_system_memory=true`) with
   `--timeline`; the PC's frame cap hides a stall that the Thor pays every frame.
+- Retro 2026-09-27 (1, slow): Gears' 22 "depth sampling" breaks a frame had the wrong name for
+  a day - the classifier guessed the cause from the image layouts (3 <-> 5), but they were EDRAM
+  transfers between a 4x and a 1x depth target. Naming them took a new transfer trace and the
+  surface registers in the draw log. Then the first fold build folded nothing (the gate wanted
+  the color-depth EDRAM mode; the clears are depth-only) until its rejection log said why.
+- Retro 2026-09-27 (2, tool, exists now): `tools/pc/rt_transfers.py` (MCP `xenia_rt_transfers`)
+  lists a frame's transfers by destination <- source with the draws that caused them and the
+  fold rejections, and the break classifier has a "transfer" cause (Gears 21135: transfer 19,
+  depth 3 - it said depth 18).
+- Retro 2026-09-27 (3, reflex): a new gate logs why it rejects from its first build; a break
+  cause read from barrier shapes is a guess until `rt_transfers` shows the transfers.
 
 ## 9. Device control: the debug server inside the emulator, and the MCP client
 
@@ -983,7 +994,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `vulkan_trace_vertex_fetch_gpu_compare` | reads back a draw's vertex and index buffers from the Vulkan shared memory and compares every word with guest memory |
 | `vulkan_debug_barrier_before_draw_shaders` | a full shared-memory barrier (render pass ended) before the draws of the named vertex shaders - does a varying draw read an unsynchronized write? |
 | `tools/pc/guest_profile.py`, `pc_run.py --profile-at S:D` | a sampling profiler for the PC build: per thread (by name) the share of CPU and the hottest guest functions (JIT code, from `cpu_emit_jit_perf_map` JITSYM lines, now also logged by the x64 backend) and host functions (dbghelp + PDB); only threads that used CPU are sampled |
-| `GPU pass breaks/frame` (with `vulkan_trace_draw_outcomes_per_frame`) | each frame's render pass breaks by cause - upload, gpuwrite, scratch (texture loads), rt, depth, img, other; `frame_timeline.py` prints the medians per 10 s |
+| `GPU pass breaks/frame` (with `vulkan_trace_draw_outcomes_per_frame`) | each frame's render pass breaks by cause - upload, gpuwrite, scratch (texture loads), transfer (EDRAM moved between render targets, 2026-09-27), rt, depth, img, other - and `msaa_folds`; `frame_timeline.py` prints the medians per 10 s |
 | `vulkan_trace_pass_break_causes N` | the first N render pass breaks with the draw index and every pending barrier (shared memory or other buffer, access masks, image layouts) - what ends the passes a tiler pays for |
 | `gpu_uma_direct_system_memory` | the PC twin of the Thor's direct-write upload path (host-visible system memory) for the trace dump and `pc_run` |
 | `tools/pc/rt_transfers.py`, `xenia_rt_transfers` | what moves EDRAM between render targets in a traced frame: the ownership transfers grouped by destination <- source (base, pitch, MSAA, format) with the draws that caused them, the pass breaks by cause, and the 4x MSAA depth clears folded or why not. 2026-09-27: named Gears' 4x shadow clears in one replay |

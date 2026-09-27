@@ -10056,6 +10056,17 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
     const Framebuffer* guest_framebuffer) {
   assert_true(GetPath() == Path::kHostRenderTargets);
 
+  // The render pass breaks inside count as "transfer" (the per-frame
+  // "GPU pass breaks/frame" line).
+  struct BreakCauseScope {
+    bool& flag;
+    bool previous;
+    explicit BreakCauseScope(bool& flag) : flag(flag), previous(flag) {
+      flag = true;
+    }
+    ~BreakCauseScope() { flag = previous; }
+  } break_cause_scope(command_processor_.brk_in_rt_transfer_);
+
   // Per-frame instrumentation: total EDRAM transfers processed this call (the
   // suspected source of per-draw render-pass breaks on the tiler).
   {

@@ -3696,10 +3696,11 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     // zero draws. Keep per-pass state on a per-pass lifecycle.
     rt_pass_break_rt_change_ = 0;
     XELOGI(
-        "GPU pass breaks/frame: upload={} gpuwrite={} scratch={} rt={} "
-        "depth={} img={} other={} msaa_folds={}",
+        "GPU pass breaks/frame: upload={} gpuwrite={} scratch={} "
+        "transfer={} rt={} depth={} img={} other={} msaa_folds={}",
         brk_cause_[kBreakUpload], brk_cause_[kBreakGpuWrite],
-        brk_cause_[kBreakScratch], brk_cause_[kBreakRenderTargetSampled],
+        brk_cause_[kBreakScratch], brk_cause_[kBreakTransfer],
+        brk_cause_[kBreakRenderTargetSampled],
         brk_cause_[kBreakDepthSampled], brk_cause_[kBreakImage],
         brk_cause_[kBreakOther], msaa_depth_clear_folds_);
     msaa_depth_clear_folds_ = 0;
@@ -4673,6 +4674,8 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
         cause = kBreakGpuWrite;
       } else if (scratch) {
         cause = kBreakScratch;
+      } else if (brk_in_rt_transfer_) {
+        cause = kBreakTransfer;
       } else if (rt_sampled) {
         cause = kBreakRenderTargetSampled;
       } else if (depth_sampled) {

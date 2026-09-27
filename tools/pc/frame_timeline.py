@@ -10,7 +10,8 @@ buffer barriers, the GPU frame time, the command processor's time
 (cpu_real_us), the time it waited on a GPU fence (fence_us) and the texture
 loads that decoded data (tex; each one ends the render pass), and the
 render pass breaks by cause ("GPU pass breaks/frame": upload, gpuwrite, scratch
-= texture loads, rt = a render target sampled, depth, img, other; msaa_folds =
+= texture loads, transfer = EDRAM moved between render targets (list them with
+rt_transfers.py), rt = a render target sampled, depth, img, other; msaa_folds =
 the 4x MSAA depth clears drawn into the 1x render target). Flags:
 - WAITS-GPU: the command processor waits on the GPU for more than 1 ms a frame
   - the recording and the GPU do not overlap (2026-09-25: the Thor upload
@@ -31,7 +32,7 @@ import sys
 LINE = 'GPU draw outcomes/frame'
 TEX_LINE = 'GPU tex cpu/frame'
 BREAK_LINE = 'GPU pass breaks/frame'
-CAUSES = ('upload', 'gpuwrite', 'scratch', 'rt', 'depth', 'img', 'other')
+CAUSES = ('upload', 'gpuwrite', 'scratch', 'transfer', 'rt', 'depth', 'img', 'other')
 FIELDS = ('rendered', 'total_vertices', 'copy', 'brk_open', 'brk_buf', 'tex_decoded',
           'gpu_frame_us', 'cpu_real_us', 'fence_us')
 PAIR = re.compile(r'(\w+)=(-?\d+)')
