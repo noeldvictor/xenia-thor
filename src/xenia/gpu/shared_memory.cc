@@ -333,7 +333,10 @@ void SharedMemory::RangeWrittenByGpu(uint32_t start, uint32_t length) {
   if (length == 0 || start >= kBufferSize) {
     return;
   }
-  NoteGpuUse(start, length);
+  // A write, not a read: page use only, no read probe.
+  if (page_gpu_use_) {
+    NoteGpuUseImpl(start, length);
+  }
   length = std::min(length, kBufferSize - start);
   uint32_t end = start + length - 1;
   uint32_t page_first = start >> page_size_log2_;

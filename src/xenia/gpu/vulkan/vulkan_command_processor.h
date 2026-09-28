@@ -2139,6 +2139,7 @@ class VulkanCommandProcessor : public CommandProcessor {
     rt_resolve_copy_bytes_ += edge.dest_length;
     if (frame_resolve_edges_.size() < 256 && edge.dest_length) {
       frame_resolve_edges_.push_back(edge);
+      frame_resolve_edge_sampled_.push_back(0);
     }
     // REAL-HLE resolve graph (persistent across frames): record src RT identity ->
     // dest guest address so the native render-redirect knows, BEFORE this frame's
@@ -2263,6 +2264,52 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t rt_skip_no_edge_ = 0;         // no resolve edge for that base
   uint32_t rt_skip_no_view_ = 0;         // RT not resident / format mismatch
   std::vector<ResolveEdge> frame_resolve_edges_;
+  // gpu_skip_dead_resolves. A slot is a resolve's index among the frame's
+  // copying resolves; its key is the destination, source and format.
+  struct DeadResolveSlot {
+    uint64_t key = 0;
+    uint32_t dead_streak = 0;
+    // The dead streak needed to skip: gpu_skip_dead_resolves, times 4 for each
+    // misprediction of the slot (backoff - a wrong skip shows one frame of
+    // the destination's previous contents).
+    uint32_t required_streak = 0;
+    uint32_t mispredictions = 0;
+  };
+  struct FrameResolve {
+    uint32_t slot = 0;
+    uint64_t key = 0;
+    uint32_t length = 0;
+    // Parts of the destination no later resolve of the frame covers yet.
+    std::vector<std::pair<uint32_t, uint32_t>> uncovered;
+    bool read = false;
+    bool skipped = false;
+    uint32_t dest_start = 0;
+    std::pair<uint32_t, uint32_t> first_read;
+  };
+  std::vector<DeadResolveSlot> dead_resolve_slots_;
+  std::vector<FrameResolve> frame_resolves_;
+  bool dead_resolve_pending_ = false;
+  FrameResolve dead_resolve_pending_resolve_;
+  uint32_t dead_resolve_stats_[4] = {};  // resolves, dead, skipped, mispredicted
+  uint64_t dead_resolve_skipped_bytes_ = 0;
+  static uint64_t DeadResolveKey(const ResolveEdge& edge) {
+    return ((uint64_t(edge.dest_start) << 32) | edge.dest_length) ^
+           (uint64_t(edge.src_rt_key) * UINT64_C(0x9E3779B97F4A7C15)) ^
+           (uint64_t(edge.dest_texture_format) << 56);
+  }
+  void UpdateDeadResolveProbes();
+  void CollectDeadResolveReads();
+  void EndFrameDeadResolves();
+
+ public:
+  // Called by the render target cache for each copying resolve: whether to
+  // skip its copy (gpu_skip_dead_resolves).
+  bool ShouldSkipDeadResolve(uint32_t slot, const ResolveEdge& edge);
+
+ private:
+  // vulkan_trace_resolve_resumes: per edge of the frame, the draws that
+  // sampled its destination before a later resolve wrote over it.
+  std::vector<uint32_t> frame_resolve_edge_sampled_;
   // Persistent (never cleared per-frame) src EDRAM RT -> resolve-dest edge map for
   // the native-HLE render-redirect (see AddResolveCopyStats / NativeSrcKey).
   std::unordered_map<uint32_t, ResolveEdge> persistent_resolve_edges_;
@@ -2545,6 +2592,30 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t last_ended_cause_ = kResumeUnattributed;
   uint32_t pass_begins_ = 0;
   uint32_t pass_resumes_[kBreakCauseCount + 2] = {};
+  // vulkan_trace_resolve_resumes: one resolve at a time, followed until the
+  // pass after it ends - whether that pass resumes the framebuffer the resolve
+  // ended, and whether its draws sample the resolve's destination.
+  struct ResolveWatch {
+    bool active = false;
+    bool next_pass_seen = false;
+    bool resumed = false;
+    bool pass_open_before = false;
+    bool src_bound = false;
+    uint32_t sequence = 0;
+    uint32_t dest_start = 0;
+    uint32_t dest_length = 0;
+    uint32_t dest_format = 0;
+    uint32_t src_rt_key = 0;
+    VkRenderPass render_pass_before = VK_NULL_HANDLE;
+    const void* framebuffer_before = nullptr;
+    uint32_t draws = 0;
+    uint32_t dest_sampling_draws = 0;
+    uint32_t first_dest_sampling_draw = UINT32_MAX;
+  };
+  ResolveWatch resolve_watch_;
+  uint32_t resolve_watch_sequence_ = 0;
+  int32_t resolve_watch_lines_ = 0;
+  void ResolveWatchFinish(const char* how);
   uint32_t brk_buffer_barriers_ = 0;
   uint32_t brk_img_shaderread_ = 0;
   uint32_t brk_img_other_ = 0;

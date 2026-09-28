@@ -51,6 +51,9 @@ Targets from these rows (2026-09-22, measured on Gears of War; `AGENTS.md` secti
 - A 4x MSAA depth clear goes into the 1x depth render target of the same EDRAM at 2x2 scale
   (`gpu_fold_msaa_depth_clears`): no transfer pair and no pass breaks per Gears shadow
   (live Gears on the PC twin: 54 -> about 40 breaks a frame; built, the device A/B is owed).
+- A resolve that a later resolve of the frame overwrites before any GPU read is skipped when
+  it was dead in the last N frames (`gpu_skip_dead_resolves`; MC2 village 3 of 7, GPU -30% on the
+  PC twin, pixel-identical; reads probed in the shared memory; built, the device A/B is owed).
 - A fence status poll never blocks (Turnip patch `0000`). Then eager completion polls
   (`vulkan_lazy_completion_polls=false`) can replace the app-side workaround; the device decides.
 - Every lever carries a per-title default from a one-launch live A/B (`tools/thor/live_ab.py`).

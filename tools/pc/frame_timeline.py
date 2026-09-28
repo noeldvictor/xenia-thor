@@ -36,6 +36,7 @@ LINE = 'GPU draw outcomes/frame'
 TEX_LINE = 'GPU tex cpu/frame'
 BREAK_LINE = 'GPU pass breaks/frame'
 RESUME_LINE = 'GPU pass resumes/frame'
+DEAD_LINE = 'GPU dead resolves/frame'
 CAUSES = ('upload', 'gpuwrite', 'scratch', 'transfer', 'rt', 'depth', 'img', 'other')
 FIELDS = ('rendered', 'total_vertices', 'copy', 'brk_open', 'brk_buf', 'tex_decoded',
           'gpu_frame_us', 'cpu_real_us', 'fence_us', 'begins', 'resumes')
@@ -53,6 +54,9 @@ def frames(log_path):
                 d = dict(PAIR.findall(line))
                 out[-1]['brk_causes'] = {k: int(d.get(k, 0)) for k in CAUSES}
                 out[-1]['msaa_folds'] = int(d.get('msaa_folds', 0))
+            elif DEAD_LINE in line and out and 'dead_resolves' not in out[-1]:
+                d = {k: int(v) for k, v in PAIR.findall(line)}
+                out[-1]['dead_resolves'] = d
             elif RESUME_LINE in line and out and 'begins' not in out[-1]:
                 d = {k: int(v) for k, v in PAIR.findall(line)}
                 out[-1]['begins'] = d.get('begins', 0)
@@ -89,11 +93,15 @@ def timeline(rows, bucket_s):
             # saves two transfers and two breaks; gpu_fold_msaa_depth_clears).
             causes['msaa_folds'] = statistics.median([r.get('msaa_folds', 0) for r in sel])
         resume_causes = collections.Counter()
+        dead = collections.Counter()
         for r in sel:
             resume_causes.update(r.get('resume_causes', {}))
+            dead.update(r.get('dead_resolves', {}))
         result.append(dict(start_s=b * bucket_s, frames=len(sel), causes=causes,
                            resume_causes={k: round(v / float(len(sel)), 1)
                                           for k, v in resume_causes.items()},
+                           dead_resolves={k: round(v / float(len(sel)), 2)
+                                          for k, v in dead.items() if k != 'skipped_kb'},
                            fps=len(sel) / float(bucket_s), flags=flags, **med))
     return result
 
@@ -119,6 +127,9 @@ def main():
             t['total_vertices'], t['begins'], t['resumes'], t['brk_open'], t['brk_buf'],
             t['tex_decoded'], t['gpu_frame_us'], t['cpu_real_us'], t['fence_us'],
             ' '.join(t['flags'])))
+        if t['dead_resolves']:
+            print('        resolves (mean a frame, gpu_skip_dead_resolves): ' + ' '.join(
+                '%s %g' % kv for kv in sorted(t['dead_resolves'].items())))
         if t['resume_causes']:
             print('        resumes by cause (mean a frame): ' + ' '.join(
                 '%s %g' % kv for kv in sorted(t['resume_causes'].items(), key=lambda kv: -kv[1])))

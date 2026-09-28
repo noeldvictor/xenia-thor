@@ -536,6 +536,31 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
   // SHADER_READ_ONLY_OPTIMAL for sampling. expected_texture_host_format is the
   // unsigned host VkFormat the texture cache would produce for the fetch; only a
   // 1:1 (non-converting) match is served.
+  // The index of the frame's copying resolves (vulkan_debug_drop_resolves);
+  // the command processor resets it at each frame end.
+  void ResetFrameResolveCopyIndex() { frame_resolve_copy_index_ = 0; }
+  uint32_t frame_resolve_copy_index_ = 0;
+
+  // vulkan_trace_resolve_resumes: whether the render target with this packed
+  // key is bound by the last update, and a key's debug name.
+  bool IsRenderTargetKeyBound(uint32_t key) const {
+    if (!key || GetPath() != Path::kHostRenderTargets) {
+      return false;
+    }
+    RenderTarget* const* bound = last_update_accumulated_render_targets();
+    for (uint32_t i = 0; i < 1 + xenos::kMaxColorRenderTargets; ++i) {
+      if (bound[i] && bound[i]->key().key == key) {
+        return true;
+      }
+    }
+    return false;
+  }
+  static std::string RenderTargetKeyDebugName(uint32_t key) {
+    RenderTargetKey render_target_key;
+    render_target_key.key = key;
+    return render_target_key.GetDebugName();
+  }
+
   VkImageView GetResolveSourceRenderTargetViewForSampling(
       uint32_t src_edram_base_tiles, uint32_t src_pitch_tiles,
       uint32_t src_format, uint8_t src_msaa, bool src_is_depth,

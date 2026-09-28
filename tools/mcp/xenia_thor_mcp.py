@@ -1284,15 +1284,20 @@ def xenia_cvar_ab(traces: str, a: str, b: str, cvars: str = '',
 
 @mcp.tool()
 def xenia_rt_transfers(traces: str, cvars: str = '', thor_profile: bool = False,
-                       draws: int = 3) -> str:
+                       draws: int = 3, warm: int = 0) -> str:
     """What moves EDRAM between render targets in a traced frame, and why
     (tools/pc/rt_transfers.py): the ownership transfers grouped by destination
     <- source render target (base, pitch, MSAA, format) with the draws that
     caused them (surface pitch and MSAA, depth base), the render pass breaks
     and resumes by cause, and the 4x MSAA depth clears folded into the 1x render target
     (gpu_fold_msaa_depth_clears) or why not. Each transfer ends the render
-    pass on the Thor's tiler. Cvars are separated by spaces. PC only."""
+    pass on the Thor's tiler. warm N: replay the frame N times and list the
+    last (warm) one, with every resolve - resumed or not, and whether the
+    resumed pass samples the destination (snapshot candidate or ping-pong).
+    Cvars are separated by spaces. PC only."""
     args = [t for t in traces.split() if t] + ['--draws', str(draws)]
+    if warm:
+        args += ['--warm', str(warm)]
     if cvars:
         args += ['--cvars', cvars]
     if thor_profile:

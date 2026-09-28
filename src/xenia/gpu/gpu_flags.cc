@@ -932,6 +932,38 @@ DEFINE_string(vulkan_debug_barrier_before_draw_shaders, "",
               "with it reads something an earlier command writes without a "
               "barrier.",
               "GPU");
+DEFINE_uint32(
+    gpu_skip_dead_resolves, 0,
+    "Skip the copy of a resolve that was dead in the last N frames (0 = "
+    "off): a later resolve of the same frame wrote over its whole "
+    "destination before any GPU read of it. A resolve is known by its "
+    "index in the frame, destination, source render target and format; "
+    "only 64 KB and larger. The GPU reads of every resolve's destination "
+    "are probed in the shared memory (texture loads, vertex and index "
+    "buffers); a skipped resolve that turns out read, or not overwritten, "
+    "shows one frame of the destination's previous contents, and its index "
+    "then needs a 4 times longer dead streak (backoff). CPU reads "
+    "of a resolve are not seen. MagnaCarta 2's village: 3 of 7 resolves "
+    "dead, dropping them GPU 12.5 -> 8.9 ms and 7 -> 4 pass resumes on the "
+    "PC, pixel-identical. Default off until the device A/B.",
+    "GPU");
+DEFINE_string(vulkan_debug_drop_resolves, "",
+              "Research: skip the copy of these resolves of every frame (1-based "
+              "index among the frame's copying resolves, comma-separated, as the "
+              "\"Resolve use\" lines of vulkan_trace_resolve_resumes number "
+              "them); the clear part still runs. Dropping a dead resolve must "
+              "leave the frame pixel-identical - the upper bound of what "
+              "skipping dead resolves saves.",
+              "GPU");
+DEFINE_int32(vulkan_trace_resolve_resumes, 0,
+             "Diagnostic: for the first N resolves, one \"Resolve resume\" "
+             "line: the source render target and whether the open pass had "
+             "it bound, the destination, whether the next render pass "
+             "resumes the framebuffer the resolve ended (a split on the "
+             "Thor's tiler), and how many draws of that pass sample the "
+             "destination (an in-pass resolve must then also give them "
+             "the data). 0 disables.",
+             "GPU");
 DEFINE_int32(vulkan_trace_pass_break_causes, 0,
              "Diagnostic: log this many render pass breaks (a live pass ended "
              "to submit barriers - on a tiler each one stores and reloads the "

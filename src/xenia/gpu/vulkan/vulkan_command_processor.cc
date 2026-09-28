@@ -2901,6 +2901,9 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
   // cancelled BD native-renderer project. It looked like a textbook CRC32
   // acceleration target right up until the gate was checked.)
 
+  EndFrameDeadResolves();
+  render_target_cache_->ResetFrameResolveCopyIndex();
+
   if (cvars::vulkan_trace_draw_outcomes_per_frame) {
     // Read back the newest GPU-timestamp pair from a frame that has completed
     // and whose slot hasn't been reused by an in-flight frame (no host stall).
@@ -3677,7 +3680,68 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
     rt_skip_guest_info_ = 0;
     rt_skip_no_edge_ = 0;
     rt_skip_no_view_ = 0;
+    if (cvars::vulkan_trace_resolve_resumes > 0 &&
+        !frame_resolve_edges_.empty()) {
+      // Resolves no draw sampled before a later resolve of the same frame
+      // wrote over their whole destination: dead copies (unless the CPU
+      // reads them in between).
+      uint32_t dead = 0;
+      uint64_t dead_bytes = 0;
+      // One character per resolve: D dead, s sampled then overwritten, L the
+      // last write of its destination this frame - the pattern a predictor of
+      // dead resolves would need to be stable from frame to frame.
+      std::string pattern;
+      for (size_t i = 0; i < frame_resolve_edges_.size(); ++i) {
+        const ResolveEdge& e = frame_resolve_edges_[i];
+        // Overwritten: the later resolves of the frame together cover all of
+        // its destination.
+        std::vector<std::pair<uint64_t, uint64_t>> uncovered{
+            {uint64_t(e.dest_start), uint64_t(e.dest_start) + e.dest_length}};
+        for (size_t j = i + 1; j < frame_resolve_edges_.size() &&
+                               !uncovered.empty();
+             ++j) {
+          const ResolveEdge& later = frame_resolve_edges_[j];
+          uint64_t l_start = later.dest_start;
+          uint64_t l_end = l_start + later.dest_length;
+          std::vector<std::pair<uint64_t, uint64_t>> next;
+          for (const auto& r : uncovered) {
+            if (r.first < l_end && l_start < r.second) {
+              if (r.first < l_start) {
+                next.emplace_back(r.first, l_start);
+              }
+              if (l_end < r.second) {
+                next.emplace_back(l_end, r.second);
+              }
+            } else {
+              next.push_back(r);
+            }
+          }
+          uncovered.swap(next);
+        }
+        bool overwritten = uncovered.empty();
+        uint32_t sampled = frame_resolve_edge_sampled_[i];
+        if (overwritten && !sampled) {
+          ++dead;
+          dead_bytes += e.dest_length;
+        }
+        pattern.push_back(!overwritten ? 'L' : (sampled ? 's' : 'D'));
+        if (resolve_watch_lines_ < cvars::vulkan_trace_resolve_resumes) {
+          ++resolve_watch_lines_;
+          XELOGI(
+              "Resolve use: {} of {}: dest {:08X}+{:X} format {}, sampled by "
+              "{} draws, {}",
+              i + 1, frame_resolve_edges_.size(), e.dest_start,
+              e.dest_length, uint32_t(e.dest_texture_format), sampled,
+              overwritten ? (sampled ? "overwritten later"
+                                     : "DEAD (overwritten, never sampled)")
+                          : "last write this frame");
+        }
+      }
+      XELOGI("Resolve uses/frame: resolves={} dead={} dead_kb={} pattern={}",
+             frame_resolve_edges_.size(), dead, dead_bytes >> 10, pattern);
+    }
     frame_resolve_edges_.clear();
+    frame_resolve_edge_sampled_.clear();
     rt_pass_break_barrier_ = 0;
     rt_change_fb_only_ = 0;
     rt_change_pass_cfg_ = 0;
@@ -5032,6 +5096,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     last_ended_render_pass_ = VK_NULL_HANDLE;
     last_ended_framebuffer_ = nullptr;
     pass_end_cause_ = kResumeUnattributed;
+    if (resolve_watch_.active && resolve_watch_.resumed) {
+      ResolveWatchFinish("resumed pass ended");
+    }
     // Classify the break and price the pass it is ending. See the counter block
     // in the header for why: this decides whether the dynamic-rendering port is
     // worth its ~115 sites, and it costs nothing but arithmetic on a path that
@@ -5080,6 +5147,17 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     FinalizeBdNativeColorMirrorAfterPass();
   }
   ++pass_begins_;
+  if (resolve_watch_.active && !resolve_watch_.next_pass_seen) {
+    resolve_watch_.next_pass_seen = true;
+    resolve_watch_.resumed =
+        resolve_watch_.pass_open_before &&
+        render_pass == resolve_watch_.render_pass_before &&
+        static_cast<const void*>(framebuffer) ==
+            resolve_watch_.framebuffer_before;
+    if (!resolve_watch_.resumed) {
+      ResolveWatchFinish("next pass on another framebuffer");
+    }
+  }
   if (render_pass == last_ended_render_pass_ &&
       static_cast<const void*>(framebuffer) == last_ended_framebuffer_) {
     ++pass_resumes_[last_ended_cause_];
@@ -5773,6 +5851,157 @@ void VulkanCommandProcessor::RecordBdCustomResolveIfActive() {
   bd_cr_bound_pass_ = VK_NULL_HANDLE;
 }
 
+bool VulkanCommandProcessor::ShouldSkipDeadResolve(uint32_t slot,
+                                                   const ResolveEdge& edge) {
+  if (!cvars::gpu_skip_dead_resolves || !edge.dest_length) {
+    return false;
+  }
+  FrameResolve resolve;
+  resolve.slot = slot;
+  resolve.key = DeadResolveKey(edge);
+  resolve.length = edge.dest_length;
+  resolve.dest_start = edge.dest_start;
+  resolve.uncovered.emplace_back(edge.dest_start,
+                                 edge.dest_start + edge.dest_length);
+  bool skip = false;
+  if (edge.dest_length >= (UINT32_C(64) << 10) &&
+      slot < dead_resolve_slots_.size()) {
+    const DeadResolveSlot& history = dead_resolve_slots_[slot];
+    skip = history.key == resolve.key &&
+           history.dead_streak >=
+               std::max(history.required_streak,
+                        uint32_t(cvars::gpu_skip_dead_resolves));
+  }
+  resolve.skipped = skip;
+  dead_resolve_pending_resolve_ = std::move(resolve);
+  dead_resolve_pending_ = true;
+  return skip;
+}
+
+void VulkanCommandProcessor::CollectDeadResolveReads() {
+  for (uint32_t i = 0; i < uint32_t(frame_resolves_.size()); ++i) {
+    if (shared_memory_->ReadProbeHit(i) && !frame_resolves_[i].read) {
+      frame_resolves_[i].read = true;
+      frame_resolves_[i].first_read = shared_memory_->ReadProbeFirstHit(i);
+    }
+  }
+  shared_memory_->ClearReadProbeHits();
+}
+
+void VulkanCommandProcessor::UpdateDeadResolveProbes() {
+  // Probe only what can still turn out dead: not read yet, not fully covered.
+  std::vector<SharedMemory::ReadProbe> probes;
+  for (uint32_t i = 0; i < uint32_t(frame_resolves_.size()); ++i) {
+    const FrameResolve& resolve = frame_resolves_[i];
+    if (resolve.read) {
+      continue;
+    }
+    for (const auto& r : resolve.uncovered) {
+      probes.push_back({r.first, r.second, i});
+    }
+  }
+  shared_memory_->SetReadProbes(probes);
+}
+
+void VulkanCommandProcessor::EndFrameDeadResolves() {
+  if (!cvars::gpu_skip_dead_resolves) {
+    return;
+  }
+  CollectDeadResolveReads();
+  for (const FrameResolve& resolve : frame_resolves_) {
+    bool dead = !resolve.read && resolve.uncovered.empty();
+    ++dead_resolve_stats_[0];
+    if (cvars::vulkan_trace_resolve_resumes > 0 &&
+        resolve_watch_lines_ < cvars::vulkan_trace_resolve_resumes) {
+      ++resolve_watch_lines_;
+      XELOGI(
+          "Dead resolve probe: resolve {} dest {:08X}+{:X}: {}{}", resolve.slot,
+          resolve.dest_start, resolve.length,
+          dead ? "dead" : (resolve.read ? "read by a request of " : "not overwritten"),
+          resolve.read ? fmt::format("{:08X}+{:X}", resolve.first_read.first,
+                                     resolve.first_read.second)
+                       : std::string());
+    }
+    if (dead) {
+      ++dead_resolve_stats_[1];
+    }
+    if (resolve.slot >= dead_resolve_slots_.size()) {
+      dead_resolve_slots_.resize(resolve.slot + 1);
+    }
+    DeadResolveSlot& slot = dead_resolve_slots_[resolve.slot];
+    if (resolve.skipped) {
+      ++dead_resolve_stats_[2];
+      dead_resolve_skipped_bytes_ += resolve.length;
+      if (!dead) {
+        // Read, or not written over: the prediction was wrong. Back off - the
+        // slot needs a 4 times longer dead streak before the next skip.
+        ++dead_resolve_stats_[3];
+        ++slot.mispredictions;
+        slot.required_streak =
+            std::min(std::max(slot.required_streak,
+                              uint32_t(cvars::gpu_skip_dead_resolves)) *
+                         4,
+                     UINT32_C(1) << 20);
+        XELOGW(
+            "gpu_skip_dead_resolves: resolve {} of the frame was skipped but "
+            "{} (misprediction {} of the slot) - it now needs {} dead frames",
+            resolve.slot, resolve.read ? "read" : "not overwritten",
+            slot.mispredictions, slot.required_streak);
+      }
+    }
+    if (slot.key == resolve.key) {
+      slot.dead_streak = dead ? slot.dead_streak + 1 : 0;
+    } else {
+      slot.key = resolve.key;
+      slot.dead_streak = dead ? 1 : 0;
+    }
+  }
+  frame_resolves_.clear();
+  shared_memory_->SetReadProbes({});
+  shared_memory_->ClearReadProbeHits();
+  if (cvars::vulkan_trace_draw_outcomes_per_frame) {
+    XELOGI(
+        "GPU dead resolves/frame: resolves={} dead={} skipped={} "
+        "mispredicted={} skipped_kb={}",
+        dead_resolve_stats_[0], dead_resolve_stats_[1],
+        dead_resolve_stats_[2], dead_resolve_stats_[3],
+        dead_resolve_skipped_bytes_ >> 10);
+  }
+  std::memset(dead_resolve_stats_, 0, sizeof(dead_resolve_stats_));
+  dead_resolve_skipped_bytes_ = 0;
+}
+
+void VulkanCommandProcessor::ResolveWatchFinish(const char* how) {
+  if (!resolve_watch_.active) {
+    return;
+  }
+  resolve_watch_.active = false;
+  if (resolve_watch_lines_ >= cvars::vulkan_trace_resolve_resumes) {
+    return;
+  }
+  ++resolve_watch_lines_;
+  XELOGI(
+      "Resolve resume #{}: src {} ({}), dest {:08X}+{:X} format {}; {}; "
+      "next pass {}; {} draws, {} sample the dest (first at draw {})",
+      resolve_watch_.sequence,
+      VulkanRenderTargetCache::RenderTargetKeyDebugName(
+          resolve_watch_.src_rt_key),
+      !resolve_watch_.pass_open_before
+          ? "no pass open"
+          : (resolve_watch_.src_bound ? "bound in the open pass"
+                                      : "not bound in the open pass"),
+      resolve_watch_.dest_start, resolve_watch_.dest_length,
+      resolve_watch_.dest_format, how,
+      !resolve_watch_.next_pass_seen
+          ? "not begun"
+          : (resolve_watch_.resumed ? "RESUMES the framebuffer"
+                                    : "is another framebuffer"),
+      resolve_watch_.draws, resolve_watch_.dest_sampling_draws,
+      resolve_watch_.dest_sampling_draws
+          ? int32_t(resolve_watch_.first_dest_sampling_draw)
+          : -1);
+}
+
 void VulkanCommandProcessor::EndRenderPass() {
   assert_true(submission_open_);
   // Sentinel, not 1x1: the fragment shading rate is treated as undefined at
@@ -5780,6 +6009,9 @@ void VulkanCommandProcessor::EndRenderPass() {
   current_shading_rate_ = UINT32_MAX;
   if (current_render_pass_ == VK_NULL_HANDLE) {
     return;
+  }
+  if (resolve_watch_.active && resolve_watch_.resumed) {
+    ResolveWatchFinish("resumed pass ended");
   }
   // For the resume count: the pass that ends and why.
   last_ended_render_pass_ = current_render_pass_;
@@ -7323,11 +7555,81 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
             .count());
   }
   texture_cache_->RequestTextures(used_texture_mask);
+  if (resolve_watch_.active) {
+    // vulkan_trace_resolve_resumes: does this draw sample the destination?
+    ++resolve_watch_.draws;
+    uint32_t fetch_remaining = used_texture_mask;
+    uint32_t fetch_index;
+    while (xe::bit_scan_forward(fetch_remaining, &fetch_index)) {
+      fetch_remaining &= ~(UINT32_C(1) << fetch_index);
+      uint32_t base_address = 0;
+      VkFormat unused_format = VK_FORMAT_UNDEFINED;
+      if (texture_cache_->GetActiveTextureGuestInfo(
+              fetch_index, &base_address, &unused_format) &&
+          base_address >= resolve_watch_.dest_start &&
+          base_address - resolve_watch_.dest_start <
+              resolve_watch_.dest_length) {
+        if (!resolve_watch_.dest_sampling_draws) {
+          resolve_watch_.first_dest_sampling_draw = resolve_watch_.draws;
+        }
+        ++resolve_watch_.dest_sampling_draws;
+        break;
+      }
+    }
+  }
   if (trace_draw_cpu) {
     draw_cpu_textures_ns_ += uint64_t(
         std::chrono::duration_cast<std::chrono::nanoseconds>(
             std::chrono::steady_clock::now() - tex_t0)
             .count());
+  }
+  // vulkan_trace_resolve_resumes: which resolve of this frame each sampled
+  // texture reads (the latest one whose destination overlaps its source).
+  if (cvars::vulkan_trace_resolve_resumes > 0 &&
+      !frame_resolve_edges_.empty()) {
+    std::vector<VulkanTextureCache::ActiveTextureSourceRange> sources;
+    texture_cache_->CollectActiveTextureSourceRanges(used_texture_mask,
+                                                     sources);
+    for (const VulkanTextureCache::ActiveTextureSourceRange& source :
+         sources) {
+      for (uint32_t part = 0; part < 2; ++part) {
+        uint32_t start = part ? source.mip_address : source.base_address;
+        uint32_t length = part ? source.mip_length : source.base_length;
+        if (!length) {
+          continue;
+        }
+        // Each byte comes from the latest resolve that wrote it: walk the
+        // resolves from the latest, crediting each with the part of the range
+        // no later resolve covers.
+        std::vector<std::pair<uint64_t, uint64_t>> remaining{
+            {uint64_t(start), uint64_t(start) + length}};
+        for (size_t i = frame_resolve_edges_.size();
+             i-- > 0 && !remaining.empty();) {
+          const ResolveEdge& e = frame_resolve_edges_[i];
+          uint64_t e_start = e.dest_start;
+          uint64_t e_end = e_start + e.dest_length;
+          bool hit = false;
+          std::vector<std::pair<uint64_t, uint64_t>> next;
+          for (const auto& r : remaining) {
+            if (r.first < e_end && e_start < r.second) {
+              hit = true;
+              if (r.first < e_start) {
+                next.emplace_back(r.first, e_start);
+              }
+              if (e_end < r.second) {
+                next.emplace_back(e_end, r.second);
+              }
+            } else {
+              next.push_back(r);
+            }
+          }
+          if (hit) {
+            ++frame_resolve_edge_sampled_[i];
+          }
+          remaining.swap(next);
+        }
+      }
+    }
   }
   // RT-as-texture detector (increment 1b): count texture fetches whose source falls
   // in a resolve dest written so far THIS frame = the re-sampled render-to-texture
@@ -10168,9 +10470,71 @@ bool VulkanCommandProcessor::IssueCopy() {
   }
 
   uint32_t written_address, written_length;
+  const bool watch_pass_open_before = current_render_pass_ != VK_NULL_HANDLE;
+  const VkRenderPass watch_render_pass_before = current_render_pass_;
+  const void* watch_framebuffer_before = current_framebuffer_;
+  const size_t watch_edges_before = frame_resolve_edges_.size();
+  if (cvars::gpu_skip_dead_resolves) {
+    // Reads before this resolve belong to the earlier resolves.
+    CollectDeadResolveReads();
+    shared_memory_->SetReadProbesSuppressed(true);
+  }
   bool resolved = render_target_cache_->Resolve(
       *memory_, *shared_memory_, *texture_cache_, written_address,
       written_length);
+  if (cvars::gpu_skip_dead_resolves) {
+    shared_memory_->SetReadProbesSuppressed(false);
+    if (dead_resolve_pending_) {
+      dead_resolve_pending_ = false;
+      FrameResolve& resolve = dead_resolve_pending_resolve_;
+      // This resolve covers its destination in the earlier ones.
+      uint32_t w_start = resolve.uncovered.front().first;
+      uint32_t w_end = resolve.uncovered.front().second;
+      for (FrameResolve& earlier : frame_resolves_) {
+        std::vector<std::pair<uint32_t, uint32_t>> next;
+        for (const auto& r : earlier.uncovered) {
+          if (r.first < w_end && w_start < r.second) {
+            if (r.first < w_start) {
+              next.emplace_back(r.first, w_start);
+            }
+            if (w_end < r.second) {
+              next.emplace_back(w_end, r.second);
+            }
+          } else {
+            next.push_back(r);
+          }
+        }
+        earlier.uncovered.swap(next);
+      }
+      if (frame_resolves_.size() < SharedMemory::kReadProbeTags) {
+        frame_resolves_.push_back(std::move(resolve));
+      }
+      UpdateDeadResolveProbes();
+    }
+  }
+  if (cvars::vulkan_trace_resolve_resumes > 0 && resolved &&
+      frame_resolve_edges_.size() > watch_edges_before &&
+      resolve_watch_lines_ < cvars::vulkan_trace_resolve_resumes) {
+    if (resolve_watch_.active) {
+      ResolveWatchFinish("another resolve first");
+    }
+    const ResolveEdge& edge = frame_resolve_edges_.back();
+    resolve_watch_ = ResolveWatch();
+    resolve_watch_.active = true;
+    resolve_watch_.sequence = ++resolve_watch_sequence_;
+    resolve_watch_.pass_open_before = watch_pass_open_before;
+    resolve_watch_.render_pass_before = watch_render_pass_before;
+    resolve_watch_.framebuffer_before = watch_framebuffer_before;
+    resolve_watch_.dest_start = edge.dest_start;
+    resolve_watch_.dest_length = edge.dest_length;
+    resolve_watch_.dest_format = edge.dest_texture_format;
+    resolve_watch_.src_rt_key = edge.src_rt_key;
+    // The resolve does not rebind render targets: the last update's are the
+    // ones the open pass had.
+    resolve_watch_.src_bound =
+        watch_pass_open_before &&
+        render_target_cache_->IsRenderTargetKeyBound(edge.src_rt_key);
+  }
   if (trace_copy_state) {
     XELOGI(
         "GPU copy trace: IssueCopy resolve_result={} copy_seq={} "

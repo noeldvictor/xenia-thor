@@ -13,7 +13,13 @@ lines, and prints for the frame:
   into the new one, a GMEM store and reload on the Thor;
 - the render pass breaks by cause and the 4x MSAA depth clears drawn into
   the 1x render target (gpu_fold_msaa_depth_clears), and why the others were
-  not (the first condition that failed).
+  not (the first condition that failed);
+- with --warm N (the frame replayed N times, the last one listed - warm
+  caches, as in the game): the render passes and resumes by cause and every
+  resolve (vulkan_trace_resolve_resumes): its source render target, whether
+  the next pass resumes the framebuffer it ended, and whether that pass's
+  draws sample the destination. A resume with no sampling draw is an in-pass
+  snapshot candidate; with one, a ping-pong chain (bloom, downsample).
 
 2026-09-27: Gears of War clears each shadow depth region with a 4x MSAA
 depth-only rectangle and draws the casters at 1x on the same EDRAM: two
@@ -37,6 +43,8 @@ XFER_RE = re.compile(r'RT transfer: slot (\d+) dest (.*?) <- source (.*?) tiles 
 FOLD_RE = re.compile(r'MSAA fold: rejected - (.*)$')
 BREAK_RE = re.compile(r'GPU pass breaks/frame: (.*)$')
 RESUME_RE = re.compile(r'GPU pass resumes/frame: (.*)$')
+RESOLVE_RE = re.compile(r'Resolve resume #\d+: src (.*?) \((.*?)\), dest (\w+)\+(\w+) format (\d+); '
+                        r'(.*?); next pass (.*?); (\d+) draws, (\d+) sample the dest')
 OUTCOME_RE = re.compile(r'GPU draw outcomes/frame: .*?rt_transfers=(\d+).*?brk_open=(\d+)')
 
 
@@ -45,15 +53,30 @@ def surface(value):
     return 'pitch %d %dx' % (v & 0x3FFF, 1 << ((v >> 16) & 3))
 
 
-def analyze(log_path, draws_shown):
+def last_frame_lines(log_path):
+    lines = open(log_path, encoding='utf-8', errors='replace').read().splitlines()
+    ends = [i for i, l in enumerate(lines) if RESUME_RE.search(l)]
+    if len(ends) < 2:
+        return lines
+    return lines[ends[-2] + 1:ends[-1] + 1]
+
+
+def analyze(log_path, draws_shown, warm=False):
     last_draw = None
+    resolves = []
     draws = {}
     pairs = collections.OrderedDict()
     rejections = collections.Counter()
     breaks = ''
     resumes = ''
     outcome = None
-    for line in open(log_path, encoding='utf-8', errors='replace'):
+    source = (last_frame_lines(log_path) if warm else
+              open(log_path, encoding='utf-8', errors='replace'))
+    for line in source:
+        m = RESOLVE_RE.search(line)
+        if m:
+            resolves.append(m.groups())
+            continue
         m = DRAW_RE.search(line)
         if m:
             last_draw = int(m.group(1))
@@ -98,6 +121,17 @@ def analyze(log_path, draws_shown):
         print('  4x MSAA depth draws not folded:')
         for reason, n in rejections.most_common():
             print('    %3d  %s' % (n, reason))
+    if resolves:
+        kinds = collections.Counter()
+        print('  resolves (%d):' % len(resolves))
+        for src, bound, dest, length, fmt, how, nxt, draws, sampling in resolves:
+            resumed = nxt.startswith('RESUMES')
+            kind = ('resume, snapshot candidate' if resumed and sampling == '0' else
+                    'resume, ping-pong' if resumed else 'no resume')
+            kinds[kind] += 1
+            print('    %-26s %s (%s) -> %s+%s fmt %s; %s draws, %s sample it' % (
+                kind, src, bound, dest, length, fmt, draws, sampling))
+        print('  resolve kinds: ' + ', '.join('%s %d' % kv for kv in kinds.most_common()))
 
 
 def main():
@@ -107,13 +141,18 @@ def main():
     ap.add_argument('--thor-profile', action='store_true',
                     help='the Thor GPU settings (Android defaults + default-on toggles)')
     ap.add_argument('--draws', type=int, default=3, help='draws shown per transfer pair')
+    ap.add_argument('--warm', type=int, default=0,
+                    help='replay the frame N times and list the last one (warm caches)')
     args = ap.parse_args()
     cvars = []
     if args.thor_profile:
         cvars += backend_ab.thor_profile_cvars(include_vrs=False)
     cvars += [c for c in args.cvars.split() if c]
     cvars += ['gpu_trace_render_target_transfers=100000', 'gpu_debug_log_draws=true',
-              'vulkan_trace_draw_outcomes_per_frame=true']
+              'vulkan_trace_draw_outcomes_per_frame=true',
+              'vulkan_trace_resolve_resumes=100000']
+    if args.warm > 1:
+        cvars.append('trace_dump_bench_iterations=%d' % args.warm)
     for trace in args.traces:
         name = os.path.splitext(os.path.basename(trace))[0]
         out = os.path.join(OUT, name)
@@ -126,7 +165,7 @@ def main():
         if not os.path.exists(log):
             print('  no log - the replay failed')
             continue
-        analyze(log, args.draws)
+        analyze(log, args.draws, warm=args.warm > 1)
     return 0
 
 

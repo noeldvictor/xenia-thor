@@ -793,6 +793,29 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   pass (the EDRAM copy is a compute dispatch) and the game draws on into the same framebuffer.
   An in-pass resolve (a fragment shader that reads the attachment as an input attachment and
   writes the guest texture layout into the shared memory) would remove these splits.
+  **The resolves behind the resumes (2026-09-27, `vulkan_trace_resolve_resumes`,
+  `rt_transfers --warm N`):** two kinds. (1) Snapshot: a full-size render target is resolved
+  and 22-32 more draws go into the same framebuffer, none samples the destination - only an
+  in-pass snapshot (input attachment read) could keep the pass (MC2 5 a frame, Banjo and Blue
+  Dragon 2-3, Gears 1). (2) Ping-pong: small render targets (bloom and downsample chains) are
+  resolved and the next draw samples the result - not tile-local; small, so cheap splits.
+  **Dead resolves:** a resolve that a later resolve of the same frame writes over completely,
+  with no GPU read of its destination in between. MC2 village trace 3 of 7 (full-frame 64 bpp,
+  22 MB a frame), Gears 2 of 20, Banjo 2 of 30, Blue Dragon 0. Dropping them
+  (`vulkan_debug_drop_resolves`) is pixel-identical: MC2 GPU 12.5 -> 8.9 ms, passes 13 -> 10,
+  resumes 7 -> 4; Gears about -3 ms, Banjo -0.3 ms (PC). **`gpu_skip_dead_resolves N`** (default 0
+  = off) skips the copy of a resolve that was dead in the last N frames (index in the frame,
+  destination, source, format; 64 KB and larger). Every resolve destination is a read probe in
+  the shared memory (`SetReadProbes`: RequestRange and NoteGpuUse - texture loads, vertex and
+  index buffers - not RangeWrittenByGpu; suppressed during the resolve itself). A skipped resolve
+  that turns out read or not overwritten is a misprediction: one frame of the destination's
+  previous contents, and the slot then needs a 4 times longer dead streak (backoff). CPU reads
+  are not seen. Warm trace replays with N=4: 0 of 40 traces changed, MC2 3 skipped (GPU 12.8 ->
+  8.4 ms), Gears 2, Banjo 2, 0 mispredictions; CPU neutral. Live Gears (N=8): 1.4 skipped of
+  about 20 resolves a frame (7 MB), 2 mispredictions in 8,700 frames (mid-gameplay: a resolve
+  sampled only when an effect shows). Live MC2 (castle): 0 dead - the big 64 bpp texture reads
+  the first resolve before the last one covers it (the probe finds it; the per-draw count first
+  missed it: credit each byte to the latest resolve that wrote it). The device A/B decides.
   **Texture loads, measured and rejected (2026-09-27):** Gears gameplay decodes about 17
   textures a frame; 0.2 of them could move to the submission head (the rest read pages a
   resolve wrote in this submission, or the texture was bound before in it - `decoded_unbound`,
@@ -1023,6 +1046,9 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `vulkan_trace_pass_break_causes N` | the first N render pass breaks with the draw index and every pending barrier (shared memory or other buffer, access masks, image layouts) - what ends the passes a tiler pays for |
 | `gpu_uma_direct_system_memory` | the PC twin of the Thor's direct-write upload path (host-visible system memory) for the trace dump and `pc_run` |
 | `GPU pass resumes/frame` (with `vulkan_trace_draw_outcomes_per_frame`) | per frame the render pass begins and the resumes (a pass on the same render pass and framebuffer right after one ended - the split the Thor pays), by the cause of the end; `frame_timeline.py` shows `passes` and `resumes` and flags SPLITS (more than 4). Use it, not the break count, to judge a tiler lever |
+| `vulkan_trace_resolve_resumes N` | per resolve: the source render target and whether the open pass had it bound, whether the next pass resumes the framebuffer, and how many of its draws sample the destination; per frame "Resolve use" lines (sampled, overwritten, DEAD) and "Resolve uses/frame" with the D/s/L pattern; with `gpu_skip_dead_resolves` the "Dead resolve probe" lines name the first read that hit each resolve |
+| `vulkan_debug_drop_resolves "i,j"` | research: skip the copy of these resolves of every frame (1-based among the copying resolves) - a dead one must leave the frame pixel-identical; the upper bound of `gpu_skip_dead_resolves` |
+| `GPU dead resolves/frame` (with `gpu_skip_dead_resolves` and `vulkan_trace_draw_outcomes_per_frame`) | resolves, dead, skipped, mispredicted and the skipped KB per frame; `frame_timeline.py` prints the means |
 | `tools/pc/rt_transfers.py`, `xenia_rt_transfers` | what moves EDRAM between render targets in a traced frame: the ownership transfers grouped by destination <- source (base, pitch, MSAA, format) with the draws that caused them, the pass breaks by cause, and the 4x MSAA depth clears folded or why not. 2026-09-27: named Gears' 4x shadow clears in one replay |
 | `gpu_trace_render_target_transfers N` | the first N ownership transfers ("RT transfer" lines) and, for 4x MSAA depth draws, why `gpu_fold_msaa_depth_clears` did not fold them ("MSAA fold: rejected") |
 | `gpu_debug_log_draws` | now also RB_SURFACE_INFO (pitch, MSAA), RB_DEPTH_INFO and RB_COLOR_INFO 0 per draw; `draw_bisect` filters can use `surface`, `depthinfo`, `color0info` |

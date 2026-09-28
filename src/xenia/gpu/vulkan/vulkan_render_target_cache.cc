@@ -2444,6 +2444,27 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
       }
     }
   }
+  // vulkan_debug_drop_resolves: drop the copy of the listed resolves of the
+  // frame (research - dead resolves, the upper bound of skipping them).
+  if (resolve_info.copy_dest_extent_length) {
+    ++frame_resolve_copy_index_;
+    const std::string& drop_list = cvars::vulkan_debug_drop_resolves;
+    if (!drop_list.empty()) {
+      size_t position = 0;
+      while (position < drop_list.size()) {
+        size_t comma = drop_list.find(',', position);
+        if (comma == std::string::npos) {
+          comma = drop_list.size();
+        }
+        if (uint32_t(std::strtoul(
+                drop_list.substr(position, comma - position).c_str(), nullptr,
+                10)) == frame_resolve_copy_index_) {
+          bd_drop_this_resolve = true;
+        }
+        position = comma + 1;
+      }
+    }
+  }
   // REAL-HLE EDRAM deletion (gpu_bd_native_aux_rt): SURGICALLY drop a color resolve
   // whose dest guest address is now backed by a LIVE native surface (the field
   // samples that native image via Brick B, so the EDRAM->RAM resolve is dead weight).
@@ -2486,6 +2507,17 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
     src_rt_key.resource_format = src_edram.format;
     resolve_edge.src_rt_key = src_rt_key.key;
     command_processor_.AddResolveCopyStats(resolve_edge);
+    // gpu_skip_dead_resolves: a resolve dead in the last frames - keep the
+    // memory tracking (invalidate the textures of the range), skip the GPU
+    // copy, which also keeps the render pass open.
+    if (command_processor_.ShouldSkipDeadResolve(frame_resolve_copy_index_,
+                                                 resolve_edge)) {
+      texture_cache.MarkRangeAsResolved(resolve_info.copy_dest_extent_start,
+                                        resolve_info.copy_dest_extent_length);
+      written_address_out = resolve_info.copy_dest_extent_start;
+      written_length_out = resolve_info.copy_dest_extent_length;
+      copied = true;
+    }
     // THE EDRAM SOLVE, hybrid form: while the post-process phase is active, EDRAM is
     // buffer-authoritative (BeginHybridPostprocessPhase dumped the main scene +
     // cleared ownership), so SKIP the host-RT dump - the resolve-copy reads
@@ -2493,7 +2525,7 @@ bool VulkanRenderTargetCache::Resolve(const Memory& memory,
     // renders BD CORRECTLY (device-proven). The per-range no-gate variant GARBLED
     // BD - composites read the EVOLVING main scene which interleaved main-scene
     // draws re-own host-side, so it must stay bridged in edram_buffer_. Global gate.
-    if (GetPath() == Path::kHostRenderTargets &&
+    if (!copied && GetPath() == Path::kHostRenderTargets &&
         !hybrid_postprocess_phase_active_) {
       // Dump the current contents of the render targets owning the affected
       // range to edram_buffer_.

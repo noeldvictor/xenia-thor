@@ -172,6 +172,45 @@ class SharedMemory {
     if (page_gpu_use_) {
       NoteGpuUseImpl(start, length);
     }
+    if (!read_probes_.empty() && !read_probes_suppressed_) {
+      CheckReadProbes(start, length);
+    }
+  }
+
+  // Read probes (gpu_skip_dead_resolves): a GPU read of a probed range -
+  // RequestRange or NoteGpuUse, not RangeWrittenByGpu - sets the bit of the
+  // probe's tag (up to kReadProbeTags). Command processor thread only.
+  static constexpr uint32_t kReadProbeTags = 256;
+  struct ReadProbe {
+    uint32_t start;
+    uint32_t end;
+    uint32_t tag;
+  };
+  void SetReadProbes(const std::vector<ReadProbe>& probes) {
+    read_probes_ = probes;
+    read_probes_min_ = UINT32_MAX;
+    read_probes_max_ = 0;
+    for (const ReadProbe& probe : read_probes_) {
+      read_probes_min_ = std::min(read_probes_min_, probe.start);
+      read_probes_max_ = std::max(read_probes_max_, probe.end);
+    }
+  }
+  // While set (a resolve requests its own destination before writing it),
+  // requests are not reads.
+  void SetReadProbesSuppressed(bool suppressed) {
+    read_probes_suppressed_ = suppressed;
+  }
+  // The first read that hit the probe (start, length), for the trace.
+  std::pair<uint32_t, uint32_t> ReadProbeFirstHit(uint32_t tag) const {
+    return tag < kReadProbeTags ? read_probe_first_hit_[tag]
+                                : std::pair<uint32_t, uint32_t>();
+  }
+  bool ReadProbeHit(uint32_t tag) const {
+    return tag < kReadProbeTags &&
+           (read_probe_hits_[tag >> 6] >> (tag & 63)) & 1;
+  }
+  void ClearReadProbeHits() {
+    std::memset(read_probe_hits_, 0, sizeof(read_probe_hits_));
   }
 
  protected:
@@ -321,6 +360,28 @@ class SharedMemory {
   // NoteGpuUse; allocated by EnablePageGpuUseTracking.
   std::unique_ptr<uint64_t[]> page_gpu_use_;
   void NoteGpuUseImpl(uint32_t start, uint32_t length);
+  void CheckReadProbes(uint32_t start, uint32_t length) {
+    uint32_t end = start + length;
+    if (end <= read_probes_min_ || start >= read_probes_max_) {
+      return;
+    }
+    for (const ReadProbe& probe : read_probes_) {
+      if (start < probe.end && probe.start < end &&
+          probe.tag < kReadProbeTags) {
+        uint64_t bit = uint64_t(1) << (probe.tag & 63);
+        if (!(read_probe_hits_[probe.tag >> 6] & bit)) {
+          read_probe_first_hit_[probe.tag] = {start, length};
+        }
+        read_probe_hits_[probe.tag >> 6] |= bit;
+      }
+    }
+  }
+  std::vector<ReadProbe> read_probes_;
+  uint32_t read_probes_min_ = UINT32_MAX;
+  uint32_t read_probes_max_ = 0;
+  bool read_probes_suppressed_ = false;
+  uint64_t read_probe_hits_[kReadProbeTags / 64] = {};
+  std::pair<uint32_t, uint32_t> read_probe_first_hit_[kReadProbeTags] = {};
   std::unique_ptr<uint8_t[]> hazard_page_kind_;
   // The byte range within the page that the requests of hazard_page_use_'s
   // submission covered (their envelope), so a write elsewhere in the page -
