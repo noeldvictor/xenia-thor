@@ -36,6 +36,7 @@ DRAW_RE = re.compile(r'GPU debug draw (\d+): prim (\d+) count (\d+).*?'
 XFER_RE = re.compile(r'RT transfer: slot (\d+) dest (.*?) <- source (.*?) tiles \[(\d+), (\d+)\)')
 FOLD_RE = re.compile(r'MSAA fold: rejected - (.*)$')
 BREAK_RE = re.compile(r'GPU pass breaks/frame: (.*)$')
+RESUME_RE = re.compile(r'GPU pass resumes/frame: (.*)$')
 OUTCOME_RE = re.compile(r'GPU draw outcomes/frame: .*?rt_transfers=(\d+).*?brk_open=(\d+)')
 
 
@@ -50,6 +51,7 @@ def analyze(log_path, draws_shown):
     pairs = collections.OrderedDict()
     rejections = collections.Counter()
     breaks = ''
+    resumes = ''
     outcome = None
     for line in open(log_path, encoding='utf-8', errors='replace'):
         m = DRAW_RE.search(line)
@@ -72,6 +74,10 @@ def analyze(log_path, draws_shown):
         if m:
             breaks = m.group(1).strip()
             continue
+        m = RESUME_RE.search(line)
+        if m:
+            resumes = m.group(1).strip()
+            continue
         m = OUTCOME_RE.search(line)
         if m:
             outcome = (int(m.group(1)), int(m.group(2)))
@@ -80,6 +86,8 @@ def analyze(log_path, draws_shown):
                                 '; frame line: rt_transfers=%d, render pass breaks %d' % outcome))
     if breaks:
         print('  pass breaks by cause: ' + breaks)
+    if resumes:
+        print('  render passes and resumes (same framebuffer again) by cause: ' + resumes)
     for (slot, dest, source), hits in sorted(pairs.items(), key=lambda kv: -len(kv[1])):
         tiles = sum(h[1] for h in hits)
         print('  %3d x %-5s %s <- %s (%d tiles)' % (len(hits), slot, dest, source, tiles))

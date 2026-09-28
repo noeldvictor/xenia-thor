@@ -16,8 +16,11 @@ the 4x MSAA depth clears drawn into the 1x render target). Flags:
 - WAITS-GPU: the command processor waits on the GPU for more than 1 ms a frame
   - the recording and the GPU do not overlap (2026-09-25: the Thor upload
   path's whole-buffer smart-sync, 11.5 ms a frame on MagnaCarta 2's title);
-- BREAKS: more than 16 render pass breaks a frame (each one stores and reloads
-  the framebuffer on the Thor's tiler);
+- SPLITS: more than 4 render pass resumes a frame ("GPU pass resumes/frame": a
+  pass that begins on the same render pass and framebuffer as the one that just
+  ended - each one stores and reloads the attachments on the Thor's tiler; most
+  "breaks" are passes that end for a render target change anyway - 2026-09-27,
+  Gears 21135: 43 breaks, 54 passes, 8 resumes);
 - CP-HEAVY: the command processor records for more than 5 ms a frame.
 The PC runs at the guest's frame cap, so its fps hides these; the flags are
 what the Thor pays.
@@ -32,9 +35,10 @@ import sys
 LINE = 'GPU draw outcomes/frame'
 TEX_LINE = 'GPU tex cpu/frame'
 BREAK_LINE = 'GPU pass breaks/frame'
+RESUME_LINE = 'GPU pass resumes/frame'
 CAUSES = ('upload', 'gpuwrite', 'scratch', 'transfer', 'rt', 'depth', 'img', 'other')
 FIELDS = ('rendered', 'total_vertices', 'copy', 'brk_open', 'brk_buf', 'tex_decoded',
-          'gpu_frame_us', 'cpu_real_us', 'fence_us')
+          'gpu_frame_us', 'cpu_real_us', 'fence_us', 'begins', 'resumes')
 PAIR = re.compile(r'(\w+)=(-?\d+)')
 
 
@@ -49,6 +53,12 @@ def frames(log_path):
                 d = dict(PAIR.findall(line))
                 out[-1]['brk_causes'] = {k: int(d.get(k, 0)) for k in CAUSES}
                 out[-1]['msaa_folds'] = int(d.get('msaa_folds', 0))
+            elif RESUME_LINE in line and out and 'begins' not in out[-1]:
+                d = {k: int(v) for k, v in PAIR.findall(line)}
+                out[-1]['begins'] = d.get('begins', 0)
+                out[-1]['resumes'] = d.get('resumes', 0)
+                out[-1]['resume_causes'] = {k: v for k, v in d.items()
+                                            if k not in ('begins', 'resumes') and v}
             elif TEX_LINE in line and out:
                 # The texture line of the same frame follows its outcomes line.
                 m = re.search(r'decoded=(\d+)', line)
@@ -67,8 +77,8 @@ def timeline(rows, bucket_s):
         flags = []
         if med['fence_us'] > 1000:
             flags.append('WAITS-GPU')
-        if med['brk_open'] > 16:
-            flags.append('BREAKS')
+        if med['resumes'] > 4:
+            flags.append('SPLITS')
         if med['cpu_real_us'] > 5000:
             flags.append('CP-HEAVY')
         causes = {}
@@ -78,7 +88,12 @@ def timeline(rows, bucket_s):
             # 4x MSAA depth clears drawn into the 1x render target (each one
             # saves two transfers and two breaks; gpu_fold_msaa_depth_clears).
             causes['msaa_folds'] = statistics.median([r.get('msaa_folds', 0) for r in sel])
+        resume_causes = collections.Counter()
+        for r in sel:
+            resume_causes.update(r.get('resume_causes', {}))
         result.append(dict(start_s=b * bucket_s, frames=len(sel), causes=causes,
+                           resume_causes={k: round(v / float(len(sel)), 1)
+                                          for k, v in resume_causes.items()},
                            fps=len(sel) / float(bucket_s), flags=flags, **med))
     return result
 
@@ -95,14 +110,18 @@ def main():
               '(pc_run.py --timeline)' % LINE)
         return 1
     result = timeline(rows, args.bucket)
-    print('%7s %6s %5s %6s %8s %6s %7s %5s %8s %8s %8s  %s' % (
-        'guest s', 'frames', 'fps', 'draws', 'vertices', 'breaks', 'brk_buf', 'tex', 'gpu_us',
-        'cp_us', 'fence_us', 'flags'))
+    print('%7s %6s %5s %6s %8s %6s %7s %6s %6s %5s %8s %8s %8s  %s' % (
+        'guest s', 'frames', 'fps', 'draws', 'vertices', 'passes', 'resumes', 'breaks',
+        'brkbuf', 'tex', 'gpu_us', 'cp_us', 'fence_us', 'flags'))
     for t in result:
-        print('%3d-%-3d %6d %5.1f %6d %8d %6d %7d %5d %8d %8d %8d  %s' % (
+        print('%3d-%-3d %6d %5.1f %6d %8d %6d %7d %6d %6d %5d %8d %8d %8d  %s' % (
             t['start_s'], t['start_s'] + args.bucket, t['frames'], t['fps'], t['rendered'],
-            t['total_vertices'], t['brk_open'], t['brk_buf'], t['tex_decoded'],
-            t['gpu_frame_us'], t['cpu_real_us'], t['fence_us'], ' '.join(t['flags'])))
+            t['total_vertices'], t['begins'], t['resumes'], t['brk_open'], t['brk_buf'],
+            t['tex_decoded'], t['gpu_frame_us'], t['cpu_real_us'], t['fence_us'],
+            ' '.join(t['flags'])))
+        if t['resume_causes']:
+            print('        resumes by cause (mean a frame): ' + ' '.join(
+                '%s %g' % kv for kv in sorted(t['resume_causes'].items(), key=lambda kv: -kv[1])))
         if t['causes'] and any(t['causes'].values()):
             print('        breaks by cause: ' + ' '.join(
                 '%s %g' % (k, v) for k, v in t['causes'].items() if v))

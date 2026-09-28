@@ -111,6 +111,12 @@ class TextureCache {
     // the Vulkan path each one is a compute dispatch and a copy, which end the
     // render pass.
     uint64_t decoded = 0;
+    // Of the decoded: the texture was not bound yet in this submission; of
+    // those, also no source page written by the GPU in this submission and
+    // not resolution-scaled - the loads that could run at the submission
+    // head instead of ending the render pass.
+    uint64_t decoded_unbound = 0;
+    uint64_t decoded_hoistable = 0;
     uint64_t load_ns = 0;
     // UpdateTextureBindingsImpl.
     uint64_t update_ns = 0;

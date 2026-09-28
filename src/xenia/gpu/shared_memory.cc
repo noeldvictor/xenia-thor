@@ -394,6 +394,7 @@ void SharedMemory::MakeRangeValid(uint32_t start, uint32_t length,
       block.valid |= valid_bits;
       if (written_by_gpu) {
         block.valid_and_gpu_written |= valid_bits;
+        block.gpu_written_in_submission |= valid_bits;
       } else {
         block.valid_and_gpu_written &= ~valid_bits;
       }
@@ -813,7 +814,33 @@ void SharedMemory::OnGpuSubmissionOpened() {
   auto global_lock = global_critical_region_.Acquire();
   for (SystemPageFlagsBlock& block : system_page_flags_) {
     block.invalidated_in_submission = 0;
+    block.gpu_written_in_submission = 0;
   }
+}
+
+bool SharedMemory::AnyPageGpuWrittenInSubmission(uint32_t start,
+                                                 uint32_t length) {
+  if (length == 0 || start >= kBufferSize) {
+    return false;
+  }
+  length = std::min(length, kBufferSize - start);
+  uint32_t page_first = start >> page_size_log2_;
+  uint32_t page_last = (start + length - 1) >> page_size_log2_;
+  auto global_lock = global_critical_region_.Acquire();
+  for (uint32_t block_index = page_first >> 6, block_last = page_last >> 6;
+       block_index <= block_last; ++block_index) {
+    uint64_t mask = UINT64_MAX;
+    if (block_index == (page_first >> 6)) {
+      mask &= ~((uint64_t(1) << (page_first & 63)) - 1);
+    }
+    if (block_index == block_last && (page_last & 63) != 63) {
+      mask &= (uint64_t(1) << ((page_last & 63) + 1)) - 1;
+    }
+    if (system_page_flags_[block_index].gpu_written_in_submission & mask) {
+      return true;
+    }
+  }
+  return false;
 }
 
 bool SharedMemory::AnyPageInvalidatedSinceSubmissionOpen(

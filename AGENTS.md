@@ -780,6 +780,26 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   10-14, 9 folds. Default off until the device A/B. Not folded: 4x clears over a range the
   2x main-scene depth or a color target owns (a fold there saves at most one transfer),
   and a 4x color clear (the pixel shader output may vary inside the pixel).
+  **Breaks overstate the tiler cost (2026-09-27):** most "breaks" end a pass that a render
+  target change ends anyway. The metric is the "GPU pass resumes/frame" line: render pass
+  begins, and resumes - a pass that begins on the same render pass and framebuffer as the pass
+  that ended just before it (a pure split: a GMEM store and reload of the same attachments),
+  by the cause of the end (the break causes, `resolve` = ended inside IssueCopy). Warm trace
+  replays (`trace_dump_bench_iterations`, both upload levers, the fold): Gears 21135 54 passes
+  and 8 resumes a frame (43 breaks) - resolve 4, other GPU writes 3, texture load 1; without
+  the fold 68 passes. Banjo 20647 74 passes, 27 resumes (resolve 15, GPU writes 6, texture
+  loads 6); Blue Dragon 19023 70 passes, 11 resumes (resolve 8, texture loads 3); MC2 19799 13
+  passes, 7 resumes (resolve 6). So the next tiler target is the resolve: a resolve ends the
+  pass (the EDRAM copy is a compute dispatch) and the game draws on into the same framebuffer.
+  An in-pass resolve (a fragment shader that reads the attachment as an input attachment and
+  writes the guest texture layout into the shared memory) would remove these splits.
+  **Texture loads, measured and rejected (2026-09-27):** Gears gameplay decodes about 17
+  textures a frame; 0.2 of them could move to the submission head (the rest read pages a
+  resolve wrote in this submission, or the texture was bound before in it - `decoded_unbound`,
+  `decoded_hoistable` in the "GPU tex cpu/frame" line). An eager reload right after the
+  resolve (the pass is already ended; learned per texture, stopped when wasted) removed 3-6
+  "scratch" breaks a frame but 0 passes and 0 resumes on Gears, 1-2 resumes on Banjo and Blue
+  Dragon: those loads ran where the pass ended for a render target change anyway. Not kept.
 - **Blue Dragon (4D5307DF).** Low priority (re:Blue exists). GPU frame 79 -> 64.5 ms in the field
   (about 10 -> 12.7 presented fps) since the 21-bit rounding became a lever, off on Android; the
   August build ran about 17.5 fps; the two scene passes take 47 of the 64 ms.
@@ -919,6 +939,11 @@ Standing facts:
   depth 3 - it said depth 18).
 - Retro 2026-09-27 (3, reflex): a new gate logs why it rejects from its first build; a break
   cause read from barrier shapes is a guess until `rt_transfers` shows the transfers.
+- Retro 2026-09-27 (4, reflex, tool exists now): judge a tiler lever by render pass begins and
+  resumes ("GPU pass resumes/frame", `frame_timeline` columns `passes` and `resumes`), not by
+  breaks - the eager texture reload removed 3-6 breaks a frame and 0 resumes, and a live A/B of
+  it read as a gain until a controlled trace A/B (`trace_dump_bench_iterations`) with the resume
+  count showed nothing.
 
 ## 9. Device control: the debug server inside the emulator, and the MCP client
 
@@ -997,6 +1022,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `GPU pass breaks/frame` (with `vulkan_trace_draw_outcomes_per_frame`) | each frame's render pass breaks by cause - upload, gpuwrite, scratch (texture loads), transfer (EDRAM moved between render targets, 2026-09-27), rt, depth, img, other - and `msaa_folds`; `frame_timeline.py` prints the medians per 10 s |
 | `vulkan_trace_pass_break_causes N` | the first N render pass breaks with the draw index and every pending barrier (shared memory or other buffer, access masks, image layouts) - what ends the passes a tiler pays for |
 | `gpu_uma_direct_system_memory` | the PC twin of the Thor's direct-write upload path (host-visible system memory) for the trace dump and `pc_run` |
+| `GPU pass resumes/frame` (with `vulkan_trace_draw_outcomes_per_frame`) | per frame the render pass begins and the resumes (a pass on the same render pass and framebuffer right after one ended - the split the Thor pays), by the cause of the end; `frame_timeline.py` shows `passes` and `resumes` and flags SPLITS (more than 4). Use it, not the break count, to judge a tiler lever |
 | `tools/pc/rt_transfers.py`, `xenia_rt_transfers` | what moves EDRAM between render targets in a traced frame: the ownership transfers grouped by destination <- source (base, pitch, MSAA, format) with the draws that caused them, the pass breaks by cause, and the 4x MSAA depth clears folded or why not. 2026-09-27: named Gears' 4x shadow clears in one replay |
 | `gpu_trace_render_target_transfers N` | the first N ownership transfers ("RT transfer" lines) and, for 4x MSAA depth draws, why `gpu_fold_msaa_depth_clears` did not fold them ("MSAA fold: rejected") |
 | `gpu_debug_log_draws` | now also RB_SURFACE_INFO (pitch, MSAA), RB_DEPTH_INFO and RB_COLOR_INFO 0 per draw; `draw_bisect` filters can use `surface`, `depthinfo`, `color0info` |

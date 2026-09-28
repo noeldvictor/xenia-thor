@@ -87,6 +87,10 @@ class SharedMemory {
   bool AnyPageInvalidatedSinceSubmissionOpen(
       const std::pair<uint32_t, uint32_t>* page_ranges, uint32_t count) const;
 
+  // True if the GPU wrote any page of [start, start + length) (a resolve or
+  // memexport, RangeWrittenByGpu) since the current submission opened.
+  bool AnyPageGpuWrittenInSubmission(uint32_t start, uint32_t length);
+
   typedef void (*GlobalWatchCallback)(
       const std::unique_lock<std::recursive_mutex>& global_lock, void* context,
       uint32_t address_first, uint32_t address_last, bool invalidated_by_gpu);
@@ -299,6 +303,11 @@ class SharedMemory {
     //
     // Cleared wholesale by OnGpuSubmissionOpened.
     uint64_t invalidated_in_submission;
+    // Whether the GPU wrote each page (a resolve, memexport) in the CURRENT
+    // submission - a command that reads such a page must stay after the
+    // write, so it cannot move to the submission head. Cleared by
+    // OnGpuSubmissionOpened.
+    uint64_t gpu_written_in_submission;
   };
   // Flags for each 64 system pages, interleaved as blocks, so bit scan can be
   // used to quickly extract ranges.

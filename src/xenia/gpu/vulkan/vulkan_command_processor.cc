@@ -3451,9 +3451,12 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
       TextureCache::RequestStats tex_stats = texture_cache_->TakeRequestStats();
       XELOGI(
           "GPU tex cpu/frame: calls={} checked={} changed={} loads={} "
-          "decoded={} load_us={} update_us={}",
+          "decoded={} decoded_unbound={} decoded_hoistable={} load_us={} "
+          "update_us={}",
           tex_stats.calls, tex_stats.checked, tex_stats.changed,
-          tex_stats.loads, tex_stats.decoded, tex_stats.load_ns / 1000,
+          tex_stats.loads, tex_stats.decoded, tex_stats.decoded_unbound,
+          tex_stats.decoded_hoistable,
+          tex_stats.load_ns / 1000,
           tex_stats.update_ns / 1000);
       texture_cache_->SetRequestStatsEnabled(true);
     }
@@ -3704,6 +3707,25 @@ void VulkanCommandProcessor::IssueSwap(uint32_t frontbuffer_ptr,
         brk_cause_[kBreakDepthSampled], brk_cause_[kBreakImage],
         brk_cause_[kBreakOther], msaa_depth_clear_folds_);
     msaa_depth_clear_folds_ = 0;
+    {
+      uint32_t resumes = 0;
+      for (uint32_t count : pass_resumes_) {
+        resumes += count;
+      }
+      XELOGI(
+          "GPU pass resumes/frame: begins={} resumes={} upload={} "
+          "gpuwrite={} scratch={} transfer={} rt={} depth={} img={} "
+          "other={} resolve={} unattributed={}",
+          pass_begins_, resumes, pass_resumes_[kBreakUpload],
+          pass_resumes_[kBreakGpuWrite], pass_resumes_[kBreakScratch],
+          pass_resumes_[kBreakTransfer],
+          pass_resumes_[kBreakRenderTargetSampled],
+          pass_resumes_[kBreakDepthSampled], pass_resumes_[kBreakImage],
+          pass_resumes_[kBreakOther], pass_resumes_[kResumeResolve],
+          pass_resumes_[kResumeUnattributed]);
+      pass_begins_ = 0;
+      std::memset(pass_resumes_, 0, sizeof(pass_resumes_));
+    }
     std::memset(brk_cause_, 0, sizeof(brk_cause_));
     brk_open_breaks_ = 0;
     brk_buffer_barriers_ = 0;
@@ -4684,6 +4706,8 @@ bool VulkanCommandProcessor::SubmitBarriers(bool force_end_render_pass) {
         cause = kBreakImage;
       }
       ++brk_cause_[cause];
+      // A pass that a resolve ends counts as "resolve" in the resume line.
+      pass_end_cause_ = brk_in_copy_ ? kResumeResolve : cause;
     }
     brk_buffer_barriers_ +=
         uint32_t(pending_barriers_buffer_memory_barriers_.size());
@@ -5005,6 +5029,9 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // the pending concatenation run (it belongs to the old pass) before ending it.
     FlushPendingMergeRun();
     ++rt_pass_break_rt_change_;
+    last_ended_render_pass_ = VK_NULL_HANDLE;
+    last_ended_framebuffer_ = nullptr;
+    pass_end_cause_ = kResumeUnattributed;
     // Classify the break and price the pass it is ending. See the counter block
     // in the header for why: this decides whether the dynamic-rendering port is
     // worth its ~115 sites, and it costs nothing but arithmetic on a path that
@@ -5051,6 +5078,11 @@ void VulkanCommandProcessor::SubmitBarriersAndEnterRenderTargetCacheRenderPass(
     // resolve/transfer it). Finalize saves/nulls/restores current_render_pass_
     // internally, so the still-old tracker value is safe.
     FinalizeBdNativeColorMirrorAfterPass();
+  }
+  ++pass_begins_;
+  if (render_pass == last_ended_render_pass_ &&
+      static_cast<const void*>(framebuffer) == last_ended_framebuffer_) {
+    ++pass_resumes_[last_ended_cause_];
   }
   current_render_pass_ = render_pass;
   current_framebuffer_ = framebuffer;
@@ -5749,6 +5781,14 @@ void VulkanCommandProcessor::EndRenderPass() {
   if (current_render_pass_ == VK_NULL_HANDLE) {
     return;
   }
+  // For the resume count: the pass that ends and why.
+  last_ended_render_pass_ = current_render_pass_;
+  last_ended_framebuffer_ = current_framebuffer_;
+  last_ended_cause_ = pass_end_cause_ != kResumeUnattributed
+                          ? pass_end_cause_
+                          : (brk_in_copy_ ? kResumeResolve
+                                          : kResumeUnattributed);
+  pass_end_cause_ = kResumeUnattributed;
   // Price the pass being torn down here (see the header). Placed after the
   // early-return so it counts real pass ends only, and before anything that
   // could itself end a pass.
@@ -10016,6 +10056,12 @@ bool VulkanCommandProcessor::IssueCopy() {
 #if XE_GPU_FINE_GRAINED_DRAW_SCOPES
   SCOPE_profile_cpu_f("gpu");
 #endif  // XE_GPU_FINE_GRAINED_DRAW_SCOPES
+  // Pass ends in here count as "resolve" in the resume line.
+  struct CopyScope {
+    bool& flag;
+    explicit CopyScope(bool& flag_in) : flag(flag_in) { flag = true; }
+    ~CopyScope() { flag = false; }
+  } copy_scope(brk_in_copy_);
 
   // BD field DECOUPLING: the field's captured draws are published here (the
   // publication edge, before the composite reads the field). Replay them

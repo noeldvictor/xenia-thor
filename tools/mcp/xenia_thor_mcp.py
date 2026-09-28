@@ -1132,7 +1132,9 @@ def xenia_pc_run(iso: str, seconds: int = 120, cvars: str = '', presses: str = '
     android_defaults: the Android build defaults the PC can run. cdb: run under
     the debugger and print the stack of a crash (a second-chance fault) - the
     tool that named the texture watch double free. timeline: per 10 s of guest
-    time the draws, render pass breaks, GPU, command processor and fence-wait
+    time the draws, render passes and resumes (a pass on the same framebuffer
+    right after one ended - the split the Thor's tiler pays; most "breaks" are
+    render target changes), breaks, GPU, command processor and fence-wait
     time, flagged (WAITS-GPU found the Thor upload path's 11.5 ms stall).
     profile_at "SECONDS:DURATION": the hottest guest and host functions per
     thread (tools/pc/guest_profile.py). PC only."""
@@ -1287,7 +1289,7 @@ def xenia_rt_transfers(traces: str, cvars: str = '', thor_profile: bool = False,
     (tools/pc/rt_transfers.py): the ownership transfers grouped by destination
     <- source render target (base, pitch, MSAA, format) with the draws that
     caused them (surface pitch and MSAA, depth base), the render pass breaks
-    by cause, and the 4x MSAA depth clears folded into the 1x render target
+    and resumes by cause, and the 4x MSAA depth clears folded into the 1x render target
     (gpu_fold_msaa_depth_clears) or why not. Each transfer ends the render
     pass on the Thor's tiler. Cvars are separated by spaces. PC only."""
     args = [t for t in traces.split() if t] + ['--draws', str(draws)]

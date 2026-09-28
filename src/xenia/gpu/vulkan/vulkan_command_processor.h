@@ -2530,6 +2530,21 @@ class VulkanCommandProcessor : public CommandProcessor {
   uint32_t brk_cause_[kBreakCauseCount] = {};
   // Set by VulkanRenderTargetCache while it performs EDRAM transfers.
   bool brk_in_rt_transfer_ = false;
+  // Pass resumes (the "GPU pass resumes/frame" line): a render pass that
+  // begins with the same render pass and framebuffer as the pass that ended
+  // just before it - a pure split, a GMEM store and reload of the same
+  // attachments on the Thor. A pass end for a render target change is not a
+  // resume. Attributed to the cause of the end: the break causes, then
+  // resolve (ended inside IssueCopy) and unattributed.
+  static constexpr uint32_t kResumeResolve = kBreakCauseCount;
+  static constexpr uint32_t kResumeUnattributed = kBreakCauseCount + 1;
+  uint32_t pass_end_cause_ = kResumeUnattributed;
+  bool brk_in_copy_ = false;
+  VkRenderPass last_ended_render_pass_ = VK_NULL_HANDLE;
+  const void* last_ended_framebuffer_ = nullptr;
+  uint32_t last_ended_cause_ = kResumeUnattributed;
+  uint32_t pass_begins_ = 0;
+  uint32_t pass_resumes_[kBreakCauseCount + 2] = {};
   uint32_t brk_buffer_barriers_ = 0;
   uint32_t brk_img_shaderread_ = 0;
   uint32_t brk_img_other_ = 0;

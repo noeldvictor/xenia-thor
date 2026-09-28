@@ -721,6 +721,19 @@ bool TextureCache::LoadTextureData(Texture& texture) {
   }
   if (request_stats_enabled_) {
     ++request_stats_.decoded;
+    if (texture.last_usage_submission_index() < current_submission_index_) {
+      ++request_stats_.decoded_unbound;
+      TextureKey stats_key = texture.key();
+      if (!stats_key.scaled_resolve &&
+          !(base_outdated && shared_memory().AnyPageGpuWrittenInSubmission(
+                                 stats_key.base_page << 12,
+                                 texture.GetGuestBaseSize())) &&
+          !(mips_outdated && shared_memory().AnyPageGpuWrittenInSubmission(
+                                 stats_key.mip_page << 12,
+                                 texture.GetGuestMipsSize()))) {
+        ++request_stats_.decoded_hoistable;
+      }
+    }
   }
 
   TextureKey texture_key = texture.key();
