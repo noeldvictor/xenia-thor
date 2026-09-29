@@ -1566,19 +1566,23 @@ PrecompileTemps ReadPrecompileTemps() {
 uint32_t WorkersForTemperature(uint32_t worker_count, PrecompileTemps t) {
   // The SoC throttles its own clocks near 95 to 100 C; these tiers only stop
   // the load from piling on top of that. First run with tiers at 85/92/97 and
-  // 42/45 C held the compile at one worker for nine minutes (2026-09-20).
+  // 42/45 C held the compile at one worker for nine minutes (2026-09-20). The
+  // next tiers (96/100/105, 47/50 C) kept all six workers at a 44 C case and
+  // let a Gears launch take the case from 34 C to 44.8 C in 47 s
+  // (2026-09-29): the case tiers now sit at the device-session limit (44 C),
+  // and the junction ones start under the SoC's own throttle.
   uint32_t by_junction = worker_count;
-  if (t.junction_c >= 105) {
+  if (t.junction_c >= 100) {
     by_junction = 0;
-  } else if (t.junction_c >= 100) {
-    by_junction = 1;
   } else if (t.junction_c >= 96) {
+    by_junction = 1;
+  } else if (t.junction_c >= 92) {
     by_junction = std::max<uint32_t>(1, worker_count / 2);
   }
   uint32_t by_case = worker_count;
-  if (t.case_c >= 50) {
+  if (t.case_c >= 44) {
     by_case = 1;
-  } else if (t.case_c >= 47) {
+  } else if (t.case_c >= 42) {
     by_case = std::max<uint32_t>(1, worker_count / 2);
   }
   return std::min(by_junction, by_case);

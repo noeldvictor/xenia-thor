@@ -938,6 +938,20 @@ Standing facts:
 
 - The device heats over consecutive runs: the case (`xo-therm`) at 44 C reaches the 70 C GPU
   abort within 45 s of play. `xenia_preflight` gates on case 41 C. Wait, do not lower the abort.
+- **2026-09-29, a cool start is not enough:** from 34 C case, a Gears launch reached 44.8 C
+  case and 94.8 C at the hottest CPU/GPU zone in 47 s (85 C at 15 s), before the title; the
+  session watchdog stopped it, so a full Gears scoreboard route (about 4.5 minutes) cannot run
+  under the 44 C session limit. Gears runs under its 30 fps cap (about 20 fps), so this is the
+  SoC at full load with real work, not idle spinning (vsync on, limiter 60, Gears profile 30;
+  the spin sites were swept before). Two protections did not use the device's own sensors
+  and reacted late: ThermalGuard (Android's thermal status said "none" at 94 C; the headroom
+  forecast) and the boot precompile governor (all 6 workers at a 44 C case). Fixed: ThermalGuard
+  reads the case (`xo-therm`) and the hottest `cpu*`/`gpu*` zone every 2 s - 30 fps at 41 C case
+  or 92 C junction, 20 fps at 43/96, pause at 45/100, continue under 41/92 - and the FPS badge
+  shows both; the precompile governor gives half the workers at 42 C case or 92 C junction, one
+  at 44/96, none at 100 (was 47/50 and 96/100/105). The device check of the new guard is owed.
+  The real answer to the heat is efficiency: today's shader work cut the Adreno instructions by
+  about a quarter.
 
 - PPC hardware corpus: 169,117 cases in `src/xenia/cpu/ppc/testing/`. a64 failures 7,907 to 3,038 on
   2026-08-18. x64 failures 17,851 to 14,591 on 2026-08-18. One class is 94% of what is left on a64.

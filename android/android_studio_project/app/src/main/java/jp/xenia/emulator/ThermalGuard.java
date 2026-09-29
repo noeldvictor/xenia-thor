@@ -8,6 +8,11 @@ import android.os.PowerManager;
 import android.util.Log;
 import android.widget.Toast;
 
+import java.io.BufferedReader;
+import java.io.FileReader;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 /**
@@ -16,8 +21,14 @@ import java.util.Locale;
  * on the case, and a short Banjo launch put the hottest CPU/GPU sensor at 94 C
  * within 35 s while Android still reported thermal status "none").
  *
- * <p>Two signals, the higher one wins:
+ * <p>Three signals, the highest one wins:
  * <ul>
+ *   <li>The device's own sensors, read every 2 s (2026-09-29: the case went
+ *       from 34 C to 44.8 C and the hottest CPU/GPU zone to 94.8 C in 47 s
+ *       of a Gears launch, with no reaction from the two signals below): the
+ *       case ("xo-therm", the skin proxy) at 41 / 43 / 45 C and the hottest
+ *       "cpu*" or "gpu*" zone at 92 / 96 / 100 C give levels 2 / 3 / 4. The
+ *       native precompile governor reads the same files.</li>
  *   <li>Android's thermal status (PowerManager listener, API 29+). It follows
  *       the skin temperature and reacts late on the Thor.</li>
  *   <li>The thermal headroom forecast (API 30+), polled every 2 s: the
@@ -48,7 +59,13 @@ final class ThermalGuard {
     private boolean mStarted;
     private int mOsStatus;
     private int mForecastLevel;
+    private int mSensorLevel;
     private int mLevel;
+    private boolean mZonesScanned;
+    private final List<Integer> mJunctionZones = new ArrayList<>();
+    private int mCaseZone = -1;
+    private int mCaseC = -1;
+    private int mJunctionC = -1;
     private boolean mPausedForHeat;
     private float mHeadroom = Float.NaN;
 
@@ -59,6 +76,7 @@ final class ThermalGuard {
                 return;
             }
             pollHeadroom();
+            pollSensors();
             mHandler.postDelayed(this, POLL_MS);
         }
     };
@@ -125,8 +143,62 @@ final class ThermalGuard {
         }
     }
 
+    private static String readLine(final String path) {
+        try (BufferedReader reader = new BufferedReader(new FileReader(path))) {
+            return reader.readLine();
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    /** Whole degrees C of a thermal zone, or -1 when it cannot be read. */
+    private static int readZoneC(final int zone) {
+        final String line = readLine("/sys/class/thermal/thermal_zone" + zone + "/temp");
+        if (line == null) {
+            return -1;
+        }
+        try {
+            return (int) (Long.parseLong(line.trim()) / 1000);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    private void pollSensors() {
+        if (!mZonesScanned) {
+            mZonesScanned = true;
+            for (int i = 0; i < 96; ++i) {
+                final String type = readLine("/sys/class/thermal/thermal_zone" + i + "/type");
+                if (type == null) {
+                    continue;
+                }
+                if (type.startsWith("cpu") || type.startsWith("gpu")) {
+                    mJunctionZones.add(i);
+                } else if (type.startsWith("xo-therm")) {
+                    mCaseZone = i;
+                }
+            }
+            Log.i(TAG, "sensors: case zone " + mCaseZone + ", "
+                    + mJunctionZones.size() + " cpu/gpu zones");
+        }
+        mCaseC = mCaseZone >= 0 ? readZoneC(mCaseZone) : -1;
+        int junction = -1;
+        for (final int zone : mJunctionZones) {
+            junction = Math.max(junction, readZoneC(zone));
+        }
+        mJunctionC = junction;
+        final int level = (mCaseC >= 45 || mJunctionC >= 100) ? 4
+                : (mCaseC >= 43 || mJunctionC >= 96) ? 3
+                : (mCaseC >= 41 || mJunctionC >= 92) ? 2 : 0;
+        if (level != mSensorLevel) {
+            mSensorLevel = level;
+            update(String.format(Locale.US, "sensors case %d C junction %d C",
+                    mCaseC, mJunctionC));
+        }
+    }
+
     private void update(final String cause) {
-        final int level = Math.max(mOsStatus, mForecastLevel);
+        final int level = Math.max(Math.max(mOsStatus, mForecastLevel), mSensorLevel);
         final int previous = mLevel;
         if (level == previous) {
             return;
@@ -160,11 +232,18 @@ final class ThermalGuard {
         }
     }
 
-    /** "   heat 72%" (the forecast, 100% = severe throttling) and the level word. */
+    /** "   heat 72%" (the forecast, 100% = severe throttling), the case and
+     * junction temperatures, and the level word. */
     String badgeSuffix() {
         final StringBuilder sb = new StringBuilder();
         if (!Float.isNaN(mHeadroom)) {
             sb.append(String.format(Locale.US, "   heat %d%%", Math.round(mHeadroom * 100f)));
+        }
+        if (mCaseC >= 0) {
+            sb.append(String.format(Locale.US, "   case %dC", mCaseC));
+        }
+        if (mJunctionC >= 0) {
+            sb.append(String.format(Locale.US, " soc %dC", mJunctionC));
         }
         if (mLevel >= 4) {
             sb.append("  TOO HOT");
