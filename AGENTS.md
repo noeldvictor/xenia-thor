@@ -312,8 +312,8 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   (live, default 0): back-to-back `Sleep(0)` sleeps instead of `sched_yield` (heat). Gears 2, 3 and
   Judgment: images on the device only, not yet run. The black wedges over the light shafts
   (PC, NVIDIA) were a driver fault with the translator's switch fallthrough; fixed
-  2026-09-29 (`spirv_no_switch_fallthrough`, section 8 entry "Gears' black light-shaft
-  wedges").
+  2026-09-29 (the translator reaches every label through its loop; section 8 entry "Gears'
+  black light-shaft wedges").
 - **Unified memory, zero-copy (user: "get UMA working").** Design and stages:
   `docs/research/20260923-uma-zero-copy-design.md`. `gpu_uma_zero_copy` (default off) makes the
   512 MB shared GPU buffer the guest's physical memory - nothing is copied; the GPU reads and
@@ -599,7 +599,7 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   NativeCore builds. `spirv_zero_rule_hybrid_stages` (1 vertex, 2 pixel, 3 both) is the
   per-title lever. Next: the device frame time (the user's go).
 - **Gears' black light-shaft wedges and the 13183 replay noise: an NVIDIA fault with a switch
-  case fallthrough (2026-09-29, fixed, `spirv_no_switch_fallthrough`, default on):** on the
+  case fallthrough (2026-09-29, fixed as the only behavior, no cvar - directive 17):** on the
   deep Gears route near the weapon pickup (320-330 s) the live PC game (Vulkan, NVIDIA) showed
   black wedges over the window's light shaft in about half of the frames; D3D12 never did. The
   Vulkan replays of one trace differed from each other from the skinned Marcus draw on (VS
@@ -631,8 +631,8 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   of a character behind the eye) was wrong. Also excluded on the way: every default-on Vulkan
   lever, float24 depth, MSAA, the FSI path, zeroed render targets and constant slots, storage
   buffer constants, the index cache, hardware vertex fetch, `gl_Position` kept in a local
-  variable, a per-vertex relative constant index. Device check owed (with the next Gears
-  session): the fps and the image at that spot. Found on the way and fixed: the load-DONT_CARE
+  variable, a per-vertex relative constant index. The next Gears device session shows the
+  image at that spot on Turnip. Found on the way and fixed: the load-DONT_CARE
   proof of `gpu_edram_passes_dont_care_safe` (off by default) dropped the stencil of a
   depth-only clear; it now requires an always-pass stencil replace of all 8 bits.
 - **Sign specialization CPU cost (2026-09-25, `trace_bench --a/--b`):** `SwizzleSigns` per

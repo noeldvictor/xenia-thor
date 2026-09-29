@@ -1131,7 +1131,7 @@ void SpirvShaderTranslator::ProcessLabel(uint32_t cf_index) {
   CloseExecConditionals();
 
   spv::Function& function = builder_->getBuildPoint()->getParent();
-  // Create the next switch case and fallthrough to it.
+  // Create the next switch case.
   spv::Block* new_case = new spv::Block(builder_->getUniqueId(), function);
   main_switch_op_->addImmediateOperand(cf_index);
   main_switch_op_->addIdOperand(new_case->getId());
@@ -1139,19 +1139,18 @@ void SpirvShaderTranslator::ProcessLabel(uint32_t cf_index) {
   // predecessor.
   new_case->addPredecessor(main_switch_header_);
   // The previous block may have already been terminated if was exece.
+  // Otherwise go to the new case through the loop continue block, as a jump
+  // does, not by a switch case fallthrough: when the invocations of a warp
+  // take both ways to the label, the NVIDIA Vulkan compiler gives some of them
+  // wrong results (Gears of War's skinned vertex shader 70CE10DB85614760: spike
+  // triangles, different on every run, 2026-09-29). The Adreno compiler also
+  // makes 2.3% fewer instructions from this form.
   if (!builder_->getBuildPoint()->isTerminated()) {
-    if (cvars::spirv_no_switch_fallthrough) {
-      // Go to the new case through the loop continue block, like a jump: the
-      // NVIDIA Vulkan compiler mishandles a fallthrough when the invocations
-      // diverge (spirv_no_switch_fallthrough).
-      main_switch_next_pc_phi_operands_.push_back(
-          builder_->makeIntConstant(int(cf_index)));
-      main_switch_next_pc_phi_operands_.push_back(
-          builder_->getBuildPoint()->getId());
-      builder_->createBranch(main_loop_continue_);
-    } else {
-      builder_->createBranch(new_case);
-    }
+    main_switch_next_pc_phi_operands_.push_back(
+        builder_->makeIntConstant(int(cf_index)));
+    main_switch_next_pc_phi_operands_.push_back(
+        builder_->getBuildPoint()->getId());
+    builder_->createBranch(main_loop_continue_);
   }
   function.addBlock(new_case);
   builder_->setBuildPoint(new_case);

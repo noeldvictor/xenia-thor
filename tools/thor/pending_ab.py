@@ -59,13 +59,6 @@ PLAN = [
         'of 30 traces). Shader translation - a relaunch per arm.'),
         arms=['base:spirv_zero_rule_hybrid=false',
               'hybrid:spirv_zero_rule_hybrid=true']),
-    dict(id='fallthrough', entry='gears1', relaunch=True, why=(
-        'Labels reached through the loop, not by a switch case fallthrough (default '
-        'on since 2026-09-29: the NVIDIA fault behind the Gears light-shaft wedges; '
-        'shader lab: -2.3% Adreno instructions). Check the fps and the image on '
-        'Turnip. Shader translation - a relaunch per arm.'),
-        arms=['old:spirv_no_switch_fallthrough=false',
-              'new:spirv_no_switch_fallthrough=true']),
 ]
 
 

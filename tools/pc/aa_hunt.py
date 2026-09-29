@@ -19,8 +19,8 @@ another varies names a driver-specific fault in one call.
 2026-09-29: Gears' black light-shaft wedges (the deep route, near the weapon
 pickup) - Vulkan replays of one trace differ from draw 270 on, D3D12 replays
 (RTV and ROV) never do, Intel Vulkan replays never do: the NVIDIA compiler
-mishandles a switch case fallthrough in divergent invocations
-(spirv_no_switch_fallthrough, default on since).
+mishandles a switch case fallthrough in divergent invocations (the
+translator reaches every label through its loop since).
 """
 import argparse
 import glob
