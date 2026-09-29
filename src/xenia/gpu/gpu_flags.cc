@@ -955,6 +955,19 @@ DEFINE_string(vulkan_debug_drop_resolves, "",
               "leave the frame pixel-identical - the upper bound of what "
               "skipping dead resolves saves.",
               "GPU");
+DEFINE_bool(vulkan_debug_full_barrier_each_draw, false,
+            "DIAGNOSTIC: end the render pass and put a full memory barrier "
+            "(all commands, all writes) before every guest draw. A replay that "
+            "stays nondeterministic with it has no race between GPU commands.",
+            "GPU");
+DEFINE_int32(vulkan_debug_dump_draw_state, -1,
+             "DIAGNOSTIC: log the full host state of this draw index (as "
+             "gpu_debug_log_draws numbers it) in every frame: shader "
+             "modifications, pipeline description, dynamic state, system "
+             "constants, constant and vertex, index data hashes. Compare the "
+             "lines of two replays to find state the CPU sets differently. -1 "
+             "is off.",
+             "GPU");
 DEFINE_bool(vulkan_debug_zero_constant_slots, false,
             "Research: zero every float-constant slot before it is filled - a "
             "shader that reads a constant its map does not list then reads 0, "
@@ -1078,6 +1091,17 @@ DEFINE_bool(vulkan_force_2101010_rgba8_fallback, false,
             "Research-only Android/Adreno probe: load 2_10_10_10 textures as "
             "raw R8G8B8A8 host textures. This is color-incorrect and only for "
             "isolating A2B10G10R10 sampling/upload failures.",
+            "GPU");
+DEFINE_bool(spirv_no_switch_fallthrough, true,
+            "Reach a label from the code before it through the main loop (like "
+            "a jump) instead of a switch case fallthrough in the translated "
+            "shader. With the fallthrough, the NVIDIA Vulkan driver gives some "
+            "vertices of a skinned mesh with per-vertex branches wrong "
+            "positions, different on every run (Gears of War, VS "
+            "70CE10DB85614760: spike triangles in the depth, black wedges over "
+            "the light shafts; Intel and D3D12 are correct). Without it the "
+            "Adreno compiler (Turnip ir3, shader lab) also needs 2.3% fewer "
+            "instructions over 4 titles (2026-09-29).",
             "GPU");
 DEFINE_bool(spirv_no_invariant_position_output, false,
             "Do not decorate the vertex-shader gl_Position / interpolator / point "

@@ -2,6 +2,7 @@
 
   python tools/pc/aa_hunt.py TRACE.xtr --flips "vulkan_push_descriptors=false a=b ..."
       [--runs 3] [--cvars "common=1"] [--thor-profile] [--region x0,y0,x1,y1]
+      [--devices 0,1]
 
 Replays the trace --runs times with the common cvars (the baseline), then
 --runs times for each flip (one cvar=value added to the common ones), and
@@ -11,9 +12,15 @@ that differ by more than 8 between any two of its replays. A row that goes to
 replay that differs from itself is a read of undefined data or a race on the
 GPU - the kind of glitch that also flickers in the live game.
 
+--devices: the baseline once per Vulkan device (vulkan_device=N; the PC has
+the NVIDIA card as 0 and the Intel iGPU as 1). A device that stays at 0 where
+another varies names a driver-specific fault in one call.
+
 2026-09-29: Gears' black light-shaft wedges (the deep route, near the weapon
 pickup) - Vulkan replays of one trace differ from draw 270 on, D3D12 replays
-(RTV and ROV) never do.
+(RTV and ROV) never do, Intel Vulkan replays never do: the NVIDIA compiler
+mishandles a switch case fallthrough in divergent invocations
+(spirv_no_switch_fallthrough, default on since).
 """
 import argparse
 import glob
@@ -62,6 +69,8 @@ def main():
     ap.add_argument('--cvars', default='')
     ap.add_argument('--thor-profile', action='store_true')
     ap.add_argument('--region', default='')
+    ap.add_argument('--devices', default='',
+                    help='Vulkan device indices for extra baselines, e.g. 0,1')
     args = ap.parse_args()
     common = [c for c in args.cvars.split() if c]
     if args.thor_profile:
@@ -71,6 +80,15 @@ def main():
     base = spread(images, region)
     print('%-48s %8d pixels differ between replays (%d of %d replays)' % (
         'baseline', base, len(images), args.runs), flush=True)
+    for device in [d for d in args.devices.split(',') if d.strip()]:
+        label = 'vulkan_device=%s' % device.strip()
+        images = replays(args.trace, common + [label], args.runs, label)
+        if len(images) < 2:
+            print('%-48s   FAILED (%d of %d replays wrote an image)' % (
+                'baseline ' + label, len(images), args.runs), flush=True)
+            continue
+        print('%-48s %8d' % ('baseline ' + label, spread(images, region)),
+              flush=True)
     for flip in [f for f in args.flips.split() if f]:
         images = replays(args.trace, common + [flip], args.runs, flip)
         if len(images) < 2:

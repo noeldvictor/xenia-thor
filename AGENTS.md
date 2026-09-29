@@ -310,7 +310,10 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   old 19.1, `global_lock_spin=128` 22.6/23.1, `rtl_critical_section_min_spin=256` 25.9/21.8, both
   25.9/25.9 - confirm in a short cool run, then make the winners default. `thor_sleep0_backoff_us`
   (live, default 0): back-to-back `Sleep(0)` sleeps instead of `sched_yield` (heat). Gears 2, 3 and
-  Judgment: images on the device only, not yet run.
+  Judgment: images on the device only, not yet run. The black wedges over the light shafts
+  (PC, NVIDIA) were a driver fault with the translator's switch fallthrough; fixed
+  2026-09-29 (`spirv_no_switch_fallthrough`, section 8 entry "Gears' black light-shaft
+  wedges").
 - **Unified memory, zero-copy (user: "get UMA working").** Design and stages:
   `docs/research/20260923-uma-zero-copy-design.md`. `gpu_uma_zero_copy` (default off) makes the
   512 MB shared GPU buffer the guest's physical memory - nothing is copied; the GPU reads and
@@ -595,48 +598,43 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   exact, Gears 13183 noisy (A/B 0.7% vs A/A 1.5%). Validation layer: 0 errors. Android
   NativeCore builds. `spirv_zero_rule_hybrid_stages` (1 vertex, 2 pixel, 3 both) is the
   per-title lever. Next: the device frame time (the user's go).
-- **Gears 13183 replay noise: draw 333, a skinned character through the near plane
-  (2026-09-25, open):** the noise the light volume (draw 1298) showed starts at draw 333
-  (VS 70CE10DB85614760, 30,876 indices, depth only): draws 0-332 give the same depth 6 of 6
-  times, 0-333 six different results. The character is at the camera - 131 of its 6,464
-  vertices are behind the eye (w down to -57.6, CPU `ShaderInterpreter`) - and on Vulkan
-  (NVIDIA) its near-plane triangles draw as spikes that change from run to run (reversed
-  depth, nearer than anything D3D12 draws); D3D12 draws one thin spike, the same every time.
-  Not the cause: vertex, index and constant data (identical on the CPU and, read back, on
-  the GPU), the SPIR-V (identical, valid, every register initialized), a missing barrier
-  (a full shared-memory barrier before the draw changes nothing), sparse shared memory, the
-  constants arena, 16 backend levers, MSAA, a CPU/GPU race (waiting after every submission
-  changes nothing). It needs the depth work before it: with draws 166-249 it varies, with
-  either half of them or none it does not. Next: the same test on Turnip (does the Thor
-  flicker at that camera?) and a draw-333-only capture with the preceding depth draws.
-  `cvar_ab` now replays A a second time for a changed trace and counts it as noisy when A/A
-  changes too.
-  **Update 2026-09-29 - it is a visible glitch in the game:** on the deep Gears route near the
-  weapon pickup (320-330 s) the live PC game (Vulkan, NVIDIA) shows black triangles where the
-  window's light shaft should be, in about half of the frames; D3D12 never shows them. Traces
-  of those seconds (`scratch/gears_wedge2/pcrun/traces/`, e.g. 4D5307D5_28263) show them in
-  some Vulkan replays and not in others: the replays differ from each other from draw 270 on
-  (VS 70CE10DB85614760, Marcus, fully in front of the eye in this frame - RenderDoc post-VS: w
-  71-140, no NaN or Inf); the first resolves (626 color, 627 depth) already differ between two
-  Vulkan replays. D3D12 replays are identical run to run on the same GPU with RTV and with ROV
-  render targets, so the nondeterminism is in the Vulkan path (ours or the NVIDIA driver).
-  Excluded with `tools/pc/aa_hunt.py` (3 replays per setting, none became identical): every
-  default-on Vulkan lever (push descriptors, descriptor and sampler caches, constants arena,
-  RT update gate, direct host resolve, persistent shared-memory binding, sparse shared memory,
-  sign specialization, alpha to coverage, bulk PM4, unorm24 depth, lazy polls, request-range
-  lock hoist, lock-free valid check, mid-frame submissions, CPU cull fast paths), float24
-  depth conversion and rounding, native 2x MSAA, the not-equal depth transfer test, the FSI
-  render target path (no host render targets at all - still varies), zeroed new render
-  targets (`vulkan_clear_new_render_targets`), zeroed float-constant slots
-  (`vulkan_debug_zero_constant_slots`), storage-buffer float constants (with the arena off;
-  with the arena on `gpu_vulkan_float_constants_ssbo` loses the device - the arena's
-  UNIFORM_BUFFER_DYNAMIC set does not match), the index cache, hardware vertex fetch. The
-  translated SPIR-V clamps every a0-relative constant index to 0-255 of a 256-entry array; the
-  validation layer (sync and GPU-assisted) reports nothing. Open: whether Turnip shows it (a
-  device check at that spot of the route), then per-draw state dumps of two replays at draw
-  270. Found on the way and fixed: the load-DONT_CARE proof of
-  `gpu_edram_passes_dont_care_safe` (off by default) dropped the stencil of a depth-only clear;
-  it now requires an always-pass stencil replace of all 8 bits.
+- **Gears' black light-shaft wedges and the 13183 replay noise: an NVIDIA fault with a switch
+  case fallthrough (2026-09-29, fixed, `spirv_no_switch_fallthrough`, default on):** on the
+  deep Gears route near the weapon pickup (320-330 s) the live PC game (Vulkan, NVIDIA) showed
+  black wedges over the window's light shaft in about half of the frames; D3D12 never did. The
+  Vulkan replays of one trace differed from each other from the skinned Marcus draw on (VS
+  70CE10DB85614760, depth only; draw 270 of 4D5307D5_28263, draw 333 of 13183): long spike
+  triangles in the depth, different on every run, that cover the light volume. The proof, in
+  this order:
+  - The host state of the draw is byte-identical in two replays
+    (`vulkan_debug_dump_draw_state=270`: shader modifications, pipeline description, dynamic
+    state, system constants, the constant, vertex and index data hashes).
+  - A full barrier before every draw (`vulkan_debug_full_barrier_each_draw`) and a wait after
+    every submission change nothing.
+  - Two RenderDoc replays of ONE capture differ after the draw, with the same depth before it
+    (`rd_target_dump.py`) and the same index data and fixed-function state
+    (`rd_draw_inputs.py`). RenderDoc's own vertex run has no triangle edge over 197 px; the
+    spikes are about 750 px (`rd_postvs_triangles.py`). So the live draw gives some vertices
+    wrong positions from the same inputs.
+  - The Intel UHD 750 (Vulkan, `vulkan_device=1`) is deterministic and draws no wedge
+    (`aa_hunt.py --devices 0,1`).
+  The translated vertex shader reached the label after the bone blocks (L21) by a switch case
+  fallthrough from case 0, and by a jump through the loop from the vertices with fewer bones.
+  When the invocations of a warp take both paths, the NVIDIA compiler gives some of them wrong
+  results. The fix goes to the new case through the loop continue block, as a jump does. Then
+  the NVIDIA replays are identical (A/A noise 39,843, 22,206, 6,667 and 89 pixels on four
+  traces -> 0 on 23 traces of Gears, Banjo and Blue Dragon), the frame matches D3D12, and the
+  live game shows the shaft in 8 of 8 frames at that spot. `cvar_ab` over 59 traces of 5
+  titles: 0 changed; Intel: 0 pixels changed. The shader lab (Turnip ir3, the Thor's compiler)
+  prefers it too: 142 of 477 shaders change, instructions -2.3% (798,238 -> 780,067), waves
+  +98, registers -127; 8 shaders grow by 5-68 instructions. The 2026-09-25 reading (triangles
+  of a character behind the eye) was wrong. Also excluded on the way: every default-on Vulkan
+  lever, float24 depth, MSAA, the FSI path, zeroed render targets and constant slots, storage
+  buffer constants, the index cache, hardware vertex fetch, `gl_Position` kept in a local
+  variable, a per-vertex relative constant index. Device check owed (with the next Gears
+  session): the fps and the image at that spot. Found on the way and fixed: the load-DONT_CARE
+  proof of `gpu_edram_passes_dont_care_safe` (off by default) dropped the stencil of a
+  depth-only clear; it now requires an always-pass stencil replace of all 8 bits.
 - **Sign specialization CPU cost (2026-09-25, `trace_bench --a/--b`):** `SwizzleSigns` per
   bound texture per draw cost prep +266 us per frame on Banjo; the raw sign fields of dword 0
   (one load) leave +82 us, the rest within the bench noise; 0 changed pixels on 6 traces.
@@ -1094,8 +1092,13 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `vulkan_trace_resolve_resumes N` | per resolve: the source render target and whether the open pass had it bound, whether the next pass resumes the framebuffer, and how many of its draws sample the destination; per frame "Resolve use" lines (sampled, overwritten, DEAD) and "Resolve uses/frame" with the D/s/L pattern; with `gpu_skip_dead_resolves` the "Dead resolve probe" lines name the first read that hit each resolve |
 | `vulkan_debug_drop_resolves "i,j"` | research: skip the copy of these resolves of every frame (1-based among the copying resolves) - a dead one must leave the frame pixel-identical; the upper bound of `gpu_skip_dead_resolves` |
 | `GPU dead resolves/frame` (with `gpu_skip_dead_resolves` and `vulkan_trace_draw_outcomes_per_frame`) | resolves, dead, skipped, mispredicted and the skipped KB per frame; `frame_timeline.py` prints the means |
-| `tools/pc/aa_hunt.py` | which setting makes a Vulkan replay nondeterministic: N replays per flipped cvar, the pixels that differ between replays (a failed replay is reported, never "deterministic") |
-| `tools/renderdoc/rd_postvs_nonfinite.py` | per draw (or per index count): post-VS NaN/Inf positions, vertices behind the eye, the w range, the largest NDC x/y |
+| `tools/pc/aa_hunt.py`, `xenia_aa_hunt` | is a Vulkan replay nondeterministic, on which GPU, and which setting needs it: N replays for the baseline, per Vulkan device (`--devices 0,1`: NVIDIA, Intel) and per flipped cvar, the pixels that differ between replays (a failed replay is reported, never "deterministic"). One device at 0 where the other varies = a driver-specific fault (the Gears wedges, 2026-09-29) |
+| `vulkan_debug_dump_draw_state=N`, `vulkan_debug_full_barrier_each_draw` (cvars) | the host state of draw N in every frame as "Draw state" log lines - diff two replays to find state the CPU sets differently; and a full memory barrier with the render pass ended before every draw - a replay that still varies has no race between GPU commands |
+| `tools/renderdoc/rd_target_dump.py` | the raw depth target (every sample) after given events (`prev:<eid>` adds the draw before) to files: compare two captures, or two replays of one capture, byte by byte |
+| `tools/renderdoc/rd_draw_inputs.py` | a draw's inputs as the GPU sees them: the bound index data (hash and file), vertex buffers, and the Vulkan viewport, rasterizer, depth-stencil, input-assembly and multisample state as lines to diff |
+| `tools/renderdoc/rd_postvs_triangles.py` | a draw's post-VS positions and index list as files for a CPU rasterizer: the longest triangle edges, which triangles cover a pixel |
+| `tools/renderdoc/rd_pixel_prims.py` | pixel history of a draw at given pixels: the primitive ids and their vertices' post-VS positions |
+| `tools/renderdoc/rd_postvs_nonfinite.py` | per draw (or per index count): post-VS NaN/Inf positions, vertices behind the eye, the w range, the largest NDC x/y; an optional third input line writes every position to a file (compare two analyses or captures) |
 | `vk_validate.py --gpu-av` | GPU-assisted validation (out-of-bounds shader buffer and descriptor accesses) instead of synchronization validation |
 | `tools/thor/pending_ab.py`, `xenia_pending_ab` | the owed device A/Bs as one plan (scene, arms, why, live or relaunch); `--run ITEM` runs one with `live_ab.py` - only after the user's go |
 | `tools/pc/rt_transfers.py`, `xenia_rt_transfers` | what moves EDRAM between render targets in a traced frame: the ownership transfers grouped by destination <- source (base, pitch, MSAA, format) with the draws that caused them, the pass breaks by cause, and the 4x MSAA depth clears folded or why not. 2026-09-27: named Gears' 4x shadow clears in one replay |

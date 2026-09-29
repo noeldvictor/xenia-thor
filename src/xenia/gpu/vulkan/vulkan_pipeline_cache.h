@@ -96,6 +96,12 @@ class VulkanPipelineCache {
   bool EnsureShadersTranslated(VulkanShader::VulkanTranslation* vertex_shader,
                                VulkanShader::VulkanTranslation* pixel_shader);
   // TODO(Triang3l): Return a deferred creation handle.
+  // vulkan_debug_dump_draw_state: the bytes of the pipeline description the
+  // last ConfigurePipeline call used.
+  const void* debug_last_description(size_t& size_out) const {
+    size_out = sizeof(PipelineDescription);
+    return &debug_last_description_;
+  }
   bool ConfigurePipeline(
       VulkanShader::VulkanTranslation* vertex_shader,
       VulkanShader::VulkanTranslation* pixel_shader,
@@ -459,6 +465,9 @@ class VulkanPipelineCache {
   // Previously used pipeline, to avoid lookups if the state wasn't changed.
   const std::pair<const PipelineDescription, Pipeline>* last_pipeline_ =
       nullptr;
+  // vulkan_debug_dump_draw_state: the description the last ConfigurePipeline
+  // call used (stored only with the cvar on).
+  PipelineDescription debug_last_description_;
 
   // Shader and pipeline storage (InitializeShaderStorage).
   void StoreShader(xenos::ShaderType shader_type, uint64_t hash,

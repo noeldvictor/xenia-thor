@@ -676,6 +676,12 @@ class VulkanCommandProcessor : public CommandProcessor {
 
   void DestroyScratchBuffer();
 
+  // vulkan_debug_dump_draw_state: logs the host state of the current draw.
+  void LogDebugDrawState(
+      const VulkanShader& vertex_shader, const VulkanShader* pixel_shader,
+      SpirvShaderTranslator::Modification vertex_shader_modification,
+      SpirvShaderTranslator::Modification pixel_shader_modification,
+      const PrimitiveProcessor::ProcessingResult& primitive_processing_result);
   void UpdateDynamicState(const draw_util::ViewportInfo& viewport_info,
                           bool primitive_polygonal,
                           reg::RB_DEPTHCONTROL normalized_depth_control,

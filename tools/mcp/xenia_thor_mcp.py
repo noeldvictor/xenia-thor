@@ -1283,6 +1283,32 @@ def xenia_cvar_ab(traces: str, a: str, b: str, cvars: str = '',
 
 
 @mcp.tool()
+def xenia_aa_hunt(trace: str, flips: str = '', runs: int = 3, cvars: str = '',
+                  thor_profile: bool = False, region: str = '',
+                  devices: str = '0,1') -> str:
+    """Is a Vulkan replay nondeterministic, on which GPU, and which setting
+    needs it? (tools/pc/aa_hunt.py) Replays one trace `runs` times and returns
+    the pixels that differ between the replays: the baseline, the baseline on
+    each Vulkan device in `devices` (0 NVIDIA, 1 Intel on this PC), and one
+    row per cvar in `flips` (a row at 0 where the baseline varies names the
+    setting). A glitch that flickers in the live game reproduces here as
+    replay noise. 2026-09-29: Gears' wedges varied on NVIDIA only -> the
+    switch fallthrough fault. region "x0,y0,x1,y1" limits the count. PC only."""
+    args = [trace, '--runs', str(runs)]
+    if flips:
+        args += ['--flips', flips]
+    if cvars:
+        args += ['--cvars', cvars]
+    if thor_profile:
+        args.append('--thor-profile')
+    if region:
+        args += ['--region', region]
+    if devices:
+        args += ['--devices', devices]
+    return _run_tool_script('tools/pc/aa_hunt.py', args, timeout=3600)
+
+
+@mcp.tool()
 def xenia_rt_transfers(traces: str, cvars: str = '', thor_profile: bool = False,
                        draws: int = 3, warm: int = 0) -> str:
     """What moves EDRAM between render targets in a traced frame, and why

@@ -702,6 +702,9 @@ bool VulkanPipelineCache::ConfigurePipeline(
   // incompatible with the normal single-subpass field pipeline of the same state).
   description.bd_custom_resolve =
       bd_custom_resolve_render_pass != VK_NULL_HANDLE ? 1 : 0;
+  if (cvars::vulkan_debug_dump_draw_state >= 0) {
+    debug_last_description_ = description;
+  }
   if (last_pipeline_ && last_pipeline_->first == description) {
     pipeline_out = last_pipeline_->second.pipeline;
     pipeline_layout_out = last_pipeline_->second.pipeline_layout;

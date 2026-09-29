@@ -30,6 +30,7 @@
 #include "xenia/base/math.h"
 #include "xenia/base/mutex.h"
 #include "xenia/base/profiling.h"
+#include "xenia/base/xxhash.h"
 #include "xenia/gpu/draw_util.h"
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/registers.h"
@@ -8625,6 +8626,28 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     EndRenderPass();
   }
 
+  // vulkan_debug_full_barrier_each_draw (DIAGNOSTIC, 2026-09-29): end the
+  // render pass and make every earlier GPU command and memory write complete
+  // and visible before this draw. A replay that stays nondeterministic with it
+  // has no race between GPU commands.
+  if (cvars::vulkan_debug_full_barrier_each_draw) {
+    SubmitBarriers(true);
+    VkMemoryBarrier full_barrier = {};
+    full_barrier.sType = VK_STRUCTURE_TYPE_MEMORY_BARRIER;
+    full_barrier.srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT;
+    full_barrier.dstAccessMask =
+        VK_ACCESS_MEMORY_READ_BIT | VK_ACCESS_MEMORY_WRITE_BIT;
+    deferred_command_buffer_.CmdVkPipelineBarrier(
+        VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+        0, 1, &full_barrier, 0, nullptr, 0, nullptr);
+  }
+  if (cvars::vulkan_debug_dump_draw_state >= 0 &&
+      debug_current_draw_index_ ==
+          uint32_t(cvars::vulkan_debug_dump_draw_state)) {
+    LogDebugDrawState(*vertex_shader, pixel_shader, vertex_shader_modification,
+                      pixel_shader_modification, primitive_processing_result);
+  }
+
   // After all commands that may dispatch, copy or insert barriers, submit the
   // barriers (may end the render pass), and (re)enter the render pass before
   // drawing.
@@ -11791,6 +11814,114 @@ void VulkanCommandProcessor::EmitBdFieldCaptureDraw(
     pb.CmdVkDraw(non_indexed_vertex_count, 1, 0, 0);
   }
   ++bd_field_captured_draws_;
+}
+
+void VulkanCommandProcessor::LogDebugDrawState(
+    const VulkanShader& vertex_shader, const VulkanShader* pixel_shader,
+    SpirvShaderTranslator::Modification vertex_shader_modification,
+    SpirvShaderTranslator::Modification pixel_shader_modification,
+    const PrimitiveProcessor::ProcessingResult& primitive_processing_result) {
+  // vulkan_debug_dump_draw_state: one draw's host state as log lines that two
+  // replays can be compared with (2026-09-29, Gears' nondeterministic draw
+  // 270). Hashes where the data is large, the bytes where it is small.
+  const RegisterFile& regs = *register_file_;
+  uint32_t draw = debug_current_draw_index_;
+  auto hex = [](const void* data, size_t size) {
+    std::string out;
+    const uint8_t* bytes = static_cast<const uint8_t*>(data);
+    for (size_t i = 0; i < size; ++i) {
+      out += fmt::format("{:02X}", bytes[i]);
+    }
+    return out;
+  };
+  XELOGI("Draw state {} frame {}: vs {:016X} mod {:016X} ps {:016X} mod {:016X}",
+         draw, frame_current_, vertex_shader.ucode_data_hash(),
+         vertex_shader_modification.value,
+         pixel_shader ? pixel_shader->ucode_data_hash() : 0,
+         pixel_shader_modification.value);
+  size_t description_size = 0;
+  const void* description =
+      pipeline_cache_->debug_last_description(description_size);
+  XELOGI("Draw state {}: pipeline {}", draw, hex(description, description_size));
+  VulkanRenderTargetCache::RenderPassKey render_pass_key =
+      render_target_cache_->last_update_render_pass_key();
+  XELOGI("Draw state {}: render pass key {:08X}", draw, render_pass_key.key);
+  XELOGI(
+      "Draw state {}: viewport {} {} {} {} {} {} scissor {} {} {} {} bias {} {} "
+      "blend {} {} {} {} stencil {:X} {:X} {:X} {:X} {:X} {:X}",
+      draw, dynamic_viewport_.x, dynamic_viewport_.y, dynamic_viewport_.width,
+      dynamic_viewport_.height, dynamic_viewport_.minDepth,
+      dynamic_viewport_.maxDepth, dynamic_scissor_.offset.x,
+      dynamic_scissor_.offset.y, dynamic_scissor_.extent.width,
+      dynamic_scissor_.extent.height, dynamic_depth_bias_constant_factor_,
+      dynamic_depth_bias_slope_factor_, dynamic_blend_constants_[0],
+      dynamic_blend_constants_[1], dynamic_blend_constants_[2],
+      dynamic_blend_constants_[3], dynamic_stencil_compare_mask_front_,
+      dynamic_stencil_compare_mask_back_, dynamic_stencil_write_mask_front_,
+      dynamic_stencil_write_mask_back_, dynamic_stencil_reference_front_,
+      dynamic_stencil_reference_back_);
+  const size_t system_size = sizeof(system_constants_);
+  for (size_t offset = 0; offset < system_size; offset += 64) {
+    XELOGI("Draw state {}: system +{:03X} {}", draw, offset,
+           hex(reinterpret_cast<const uint8_t*>(&system_constants_) + offset,
+               std::min(size_t(64), system_size - offset)));
+  }
+  XELOGI(
+      "Draw state {}: float vs {:016X} ps {:016X} bool/loop {:016X} fetch "
+      "{:016X}",
+      draw,
+      XXH3_64bits(&regs[XE_GPU_REG_SHADER_CONSTANT_000_X],
+                  sizeof(uint32_t) * 4 * 256),
+      XXH3_64bits(&regs[XE_GPU_REG_SHADER_CONSTANT_256_X],
+                  sizeof(uint32_t) * 4 * 256),
+      XXH3_64bits(&regs[XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031],
+                  sizeof(uint32_t) * (8 + 32)),
+      XXH3_64bits(&regs[XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0],
+                  sizeof(uint32_t) * 6 * 32));
+  for (uint32_t i = 0; i < SpirvShaderTranslator::kConstantBufferCount; ++i) {
+    XELOGI("Draw state {}: constant buffer {} offset {:X} range {:X}", draw, i,
+           uint64_t(current_constant_buffer_infos_[i].offset),
+           uint64_t(current_constant_buffer_infos_[i].range));
+  }
+  for (const Shader::VertexBinding& binding : vertex_shader.vertex_bindings()) {
+    xenos::xe_gpu_vertex_fetch_t fetch =
+        regs.GetVertexFetch(binding.fetch_constant);
+    uint32_t address = fetch.address << 2;
+    uint32_t size = fetch.size << 2;
+    uint64_t data_hash = 0;
+    if (address < 0x20000000u && 0x20000000u - address >= size) {
+      data_hash = XXH3_64bits(memory_->TranslatePhysical(address), size);
+    }
+    XELOGI("Draw state {}: vfetch {} address {:08X} size {:X} stride {} data "
+           "{:016X}",
+           draw, binding.fetch_constant, address, size, binding.stride_words,
+           data_hash);
+  }
+  auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
+  uint32_t index_size =
+      vgt_draw_initiator.index_size == xenos::IndexFormat::kInt16 ? 2 : 4;
+  uint32_t index_count =
+      std::min(uint32_t(vgt_draw_initiator.num_indices),
+               regs.Get<reg::VGT_DMA_SIZE>().num_words);
+  uint32_t index_base = regs[XE_GPU_REG_VGT_DMA_BASE] & ~(index_size - 1);
+  uint64_t index_hash = 0;
+  if (vgt_draw_initiator.source_select == xenos::SourceSelect::kDMA &&
+      index_base < 0x20000000u &&
+      0x20000000u - index_base >= index_count * index_size) {
+    index_hash = XXH3_64bits(memory_->TranslatePhysical(index_base),
+                             index_count * index_size);
+  }
+  XELOGI(
+      "Draw state {}: indices {:08X} x{} size {} data {:016X} type {} host "
+      "count {} base {} format {} endian {} reset {} handle {:X}",
+      draw, index_base, index_count, index_size, index_hash,
+      uint32_t(primitive_processing_result.index_buffer_type),
+      primitive_processing_result.host_draw_vertex_count,
+      primitive_processing_result.guest_index_base,
+      uint32_t(primitive_processing_result.host_index_format),
+      uint32_t(primitive_processing_result.host_shader_index_endian),
+      primitive_processing_result.host_primitive_reset_enabled,
+      uint64_t(primitive_processing_result.host_index_buffer_handle));
 }
 
 void VulkanCommandProcessor::UpdateDynamicState(

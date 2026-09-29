@@ -26,6 +26,11 @@ try:
         rd_in = [x.strip() for x in f.read().split(chr(10)) if x.strip()]
     RDC = rd_in[0]
     want = int(rd_in[1]) if len(rd_in) > 1 else 0
+    # Optional line 3: a file to write every post-VS position of the matching
+    # draws to (compare two analyses of one capture: does the vertex shader
+    # give the same positions each time?).
+    dump_path = rd_in[2] if len(rd_in) > 2 else ''
+    dump_file = open(dump_path, 'wb') if dump_path else None
     import renderdoc as rd
     cap = rd.OpenCaptureFile()
     st = cap.OpenFile(RDC, "", None)
@@ -62,6 +67,8 @@ try:
                 count = min(pv.numIndices, len(data) // stride)
                 for i in range(count):
                     x, y, z, w = struct.unpack_from("<ffff", data, i * stride)
+                    if dump_file:
+                        dump_file.write(struct.pack("<Iffff", a.eventId, x, y, z, w))
                     if not all(math.isfinite(c) for c in (x, y, z, w)):
                         nonfinite += 1
                         if len(examples) < 8:
@@ -81,6 +88,8 @@ try:
             count, nonfinite, behind, wmin, wmax, big))
         for e in examples:
             log("   vertex %d: %r %r %r %r" % e)
+    if dump_file:
+        dump_file.close()
     controller.Shutdown()
     cap.Shutdown()
 except Exception as e:

@@ -1140,7 +1140,18 @@ void SpirvShaderTranslator::ProcessLabel(uint32_t cf_index) {
   new_case->addPredecessor(main_switch_header_);
   // The previous block may have already been terminated if was exece.
   if (!builder_->getBuildPoint()->isTerminated()) {
-    builder_->createBranch(new_case);
+    if (cvars::spirv_no_switch_fallthrough) {
+      // Go to the new case through the loop continue block, like a jump: the
+      // NVIDIA Vulkan compiler mishandles a fallthrough when the invocations
+      // diverge (spirv_no_switch_fallthrough).
+      main_switch_next_pc_phi_operands_.push_back(
+          builder_->makeIntConstant(int(cf_index)));
+      main_switch_next_pc_phi_operands_.push_back(
+          builder_->getBuildPoint()->getId());
+      builder_->createBranch(main_loop_continue_);
+    } else {
+      builder_->createBranch(new_case);
+    }
   }
   function.addBlock(new_case);
   builder_->setBuildPoint(new_case);
