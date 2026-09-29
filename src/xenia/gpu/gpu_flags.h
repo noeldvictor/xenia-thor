@@ -125,6 +125,7 @@ DECLARE_string(vulkan_trace_vertex_fetch_shader_filter);
 DECLARE_bool(vulkan_trace_vertex_fetch_gpu_compare);
 DECLARE_int32(vulkan_trace_pass_break_causes);
 DECLARE_int32(vulkan_trace_resolve_resumes);
+DECLARE_bool(vulkan_debug_zero_constant_slots);
 DECLARE_string(vulkan_debug_drop_resolves);
 DECLARE_uint32(gpu_skip_dead_resolves);
 DECLARE_string(vulkan_debug_barrier_before_draw_shaders);

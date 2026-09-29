@@ -611,6 +611,32 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   flicker at that camera?) and a draw-333-only capture with the preceding depth draws.
   `cvar_ab` now replays A a second time for a changed trace and counts it as noisy when A/A
   changes too.
+  **Update 2026-09-29 - it is a visible glitch in the game:** on the deep Gears route near the
+  weapon pickup (320-330 s) the live PC game (Vulkan, NVIDIA) shows black triangles where the
+  window's light shaft should be, in about half of the frames; D3D12 never shows them. Traces
+  of those seconds (`scratch/gears_wedge2/pcrun/traces/`, e.g. 4D5307D5_28263) show them in
+  some Vulkan replays and not in others: the replays differ from each other from draw 270 on
+  (VS 70CE10DB85614760, Marcus, fully in front of the eye in this frame - RenderDoc post-VS: w
+  71-140, no NaN or Inf); the first resolves (626 color, 627 depth) already differ between two
+  Vulkan replays. D3D12 replays are identical run to run on the same GPU with RTV and with ROV
+  render targets, so the nondeterminism is in the Vulkan path (ours or the NVIDIA driver).
+  Excluded with `tools/pc/aa_hunt.py` (3 replays per setting, none became identical): every
+  default-on Vulkan lever (push descriptors, descriptor and sampler caches, constants arena,
+  RT update gate, direct host resolve, persistent shared-memory binding, sparse shared memory,
+  sign specialization, alpha to coverage, bulk PM4, unorm24 depth, lazy polls, request-range
+  lock hoist, lock-free valid check, mid-frame submissions, CPU cull fast paths), float24
+  depth conversion and rounding, native 2x MSAA, the not-equal depth transfer test, the FSI
+  render target path (no host render targets at all - still varies), zeroed new render
+  targets (`vulkan_clear_new_render_targets`), zeroed float-constant slots
+  (`vulkan_debug_zero_constant_slots`), storage-buffer float constants (with the arena off;
+  with the arena on `gpu_vulkan_float_constants_ssbo` loses the device - the arena's
+  UNIFORM_BUFFER_DYNAMIC set does not match), the index cache, hardware vertex fetch. The
+  translated SPIR-V clamps every a0-relative constant index to 0-255 of a 256-entry array; the
+  validation layer (sync and GPU-assisted) reports nothing. Open: whether Turnip shows it (a
+  device check at that spot of the route), then per-draw state dumps of two replays at draw
+  270. Found on the way and fixed: the load-DONT_CARE proof of
+  `gpu_edram_passes_dont_care_safe` (off by default) dropped the stencil of a depth-only clear;
+  it now requires an always-pass stencil replace of all 8 bits.
 - **Sign specialization CPU cost (2026-09-25, `trace_bench --a/--b`):** `SwizzleSigns` per
   bound texture per draw cost prep +266 us per frame on Banjo; the raw sign fields of dword 0
   (one load) leave +82 us, the rest within the bench noise; 0 changed pixels on 6 traces.
@@ -1068,6 +1094,9 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `vulkan_trace_resolve_resumes N` | per resolve: the source render target and whether the open pass had it bound, whether the next pass resumes the framebuffer, and how many of its draws sample the destination; per frame "Resolve use" lines (sampled, overwritten, DEAD) and "Resolve uses/frame" with the D/s/L pattern; with `gpu_skip_dead_resolves` the "Dead resolve probe" lines name the first read that hit each resolve |
 | `vulkan_debug_drop_resolves "i,j"` | research: skip the copy of these resolves of every frame (1-based among the copying resolves) - a dead one must leave the frame pixel-identical; the upper bound of `gpu_skip_dead_resolves` |
 | `GPU dead resolves/frame` (with `gpu_skip_dead_resolves` and `vulkan_trace_draw_outcomes_per_frame`) | resolves, dead, skipped, mispredicted and the skipped KB per frame; `frame_timeline.py` prints the means |
+| `tools/pc/aa_hunt.py` | which setting makes a Vulkan replay nondeterministic: N replays per flipped cvar, the pixels that differ between replays (a failed replay is reported, never "deterministic") |
+| `tools/renderdoc/rd_postvs_nonfinite.py` | per draw (or per index count): post-VS NaN/Inf positions, vertices behind the eye, the w range, the largest NDC x/y |
+| `vk_validate.py --gpu-av` | GPU-assisted validation (out-of-bounds shader buffer and descriptor accesses) instead of synchronization validation |
 | `tools/thor/pending_ab.py`, `xenia_pending_ab` | the owed device A/Bs as one plan (scene, arms, why, live or relaunch); `--run ITEM` runs one with `live_ab.py` - only after the user's go |
 | `tools/pc/rt_transfers.py`, `xenia_rt_transfers` | what moves EDRAM between render targets in a traced frame: the ownership transfers grouped by destination <- source (base, pitch, MSAA, format) with the draws that caused them, the pass breaks by cause, and the 4x MSAA depth clears folded or why not. 2026-09-27: named Gears' 4x shadow clears in one replay |
 | `gpu_trace_render_target_transfers N` | the first N ownership transfers ("RT transfer" lines) and, for 4x MSAA depth draws, why `gpu_fold_msaa_depth_clears` did not fold them ("MSAA fold: rejected") |

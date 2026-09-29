@@ -259,6 +259,20 @@ class DeferredCommandBuffer {
         ranges, sizeof(VkImageSubresourceRange) * range_count);
   }
 
+  // One subresource range.
+  void CmdVkClearDepthStencilImage(
+      VkImage image, VkImageLayout image_layout,
+      const VkClearDepthStencilValue& value,
+      const VkImageSubresourceRange& range) {
+    auto& args = *reinterpret_cast<ArgsVkClearDepthStencilImage*>(
+        WriteCommand(Command::kVkClearDepthStencilImage,
+                     sizeof(ArgsVkClearDepthStencilImage)));
+    args.image = image;
+    args.image_layout = image_layout;
+    args.value = value;
+    args.range = range;
+  }
+
   VkBufferCopy* CmdCopyBufferEmplace(VkBuffer src_buffer, VkBuffer dst_buffer,
                                      uint32_t region_count) {
     const size_t header_size =
@@ -831,6 +845,7 @@ class DeferredCommandBuffer {
     kVkBindVertexBuffers,
     kVkClearAttachments,
     kVkClearColorImage,
+    kVkClearDepthStencilImage,
     kVkCopyBuffer,
     kVkCopyBufferToImage,
     kVkCopyImageToBuffer,
@@ -931,6 +946,13 @@ class DeferredCommandBuffer {
     // Followed by aligned VkClearAttachment[], VkClearRect[].
     static_assert(alignof(VkClearAttachment) <= alignof(uintmax_t));
     static_assert(alignof(VkClearRect) <= alignof(uintmax_t));
+  };
+
+  struct ArgsVkClearDepthStencilImage {
+    VkImage image;
+    VkImageLayout image_layout;
+    VkClearDepthStencilValue value;
+    VkImageSubresourceRange range;
   };
 
   struct ArgsVkClearColorImage {

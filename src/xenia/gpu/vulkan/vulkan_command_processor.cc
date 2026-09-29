@@ -7683,12 +7683,27 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
     // clears (2E372EA28CC404B7 etc. run at the scene's 2x MSAA) - device dump
     // 2026-06-30. Allowing MSAA lets the ~15 guest clears elide their tile load.
     uint32_t dc_safe_state_mask = 0;
-    // Depth/stencil: every covered sample takes an unconditional depth write,
-    // and stencil is not in use.
+    // Depth/stencil: every covered sample takes an unconditional depth write
+    // AND an unconditional stencil replace of all 8 bits - the load-DONT_CARE
+    // variant drops the stencil load too, so a depth-only clear (stencil not
+    // in use) would leave the stencil the game keeps undefined (2026-09-29;
+    // the earlier condition was "stencil not in use").
     if (normalized_depth_control.z_enable &&
         normalized_depth_control.z_write_enable &&
         normalized_depth_control.zfunc == xenos::CompareFunction::kAlways &&
-        !normalized_depth_control.stencil_enable) {
+        normalized_depth_control.stencil_enable &&
+        normalized_depth_control.stencilfunc ==
+            xenos::CompareFunction::kAlways &&
+        normalized_depth_control.stencilzpass == xenos::StencilOp::kReplace &&
+        (!normalized_depth_control.backface_enable ||
+         (normalized_depth_control.stencilfunc_bf ==
+              xenos::CompareFunction::kAlways &&
+          normalized_depth_control.stencilzpass_bf ==
+              xenos::StencilOp::kReplace)) &&
+        regs.Get<reg::RB_STENCILREFMASK>().stencilwritemask == 0xFF &&
+        (!normalized_depth_control.backface_enable ||
+         regs.Get<reg::RB_STENCILREFMASK>(XE_GPU_REG_RB_STENCILREFMASK_BF)
+                 .stencilwritemask == 0xFF)) {
       dc_safe_state_mask |= 0b1;
     }
     // Color: written by the pixel shader, full write mask, blending disabled
@@ -13114,6 +13129,9 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
         return DrawFailed(__LINE__);
       }
       uint8_t* float_constants_start = mapping;
+      if (cvars::vulkan_debug_zero_constant_slots) {
+        std::memset(mapping, 0, float_constants_size);
+      }
       for (uint32_t i = 0; i < 4; ++i) {
         uint64_t float_constant_map_entry =
             current_float_constant_map_vertex_[i];
@@ -13154,6 +13172,9 @@ bool VulkanCommandProcessor::UpdateBindings(const VulkanShader* vertex_shader,
         return DrawFailed(__LINE__);
       }
       uint8_t* float_constants_start = mapping;
+      if (cvars::vulkan_debug_zero_constant_slots) {
+        std::memset(mapping, 0, float_constants_size);
+      }
       for (uint32_t i = 0; i < 4; ++i) {
         uint64_t float_constant_map_entry =
             current_float_constant_map_pixel_[i];

@@ -141,6 +141,16 @@ DEFINE_uint32(
     "GPU");
 
 DEFINE_bool(
+    vulkan_clear_new_render_targets, false,
+    "Clear a newly created host render target image to zero (color 0, depth "
+    "0 and stencil 0 - the bits of a zeroed EDRAM, as the D3D12 EDRAM "
+    "buffer starts) before its first use, instead of leaving whatever the "
+    "GPU memory held: a pass that loads a part of it no transfer filled "
+    "reads undefined data, different from run to run (research: Gears' "
+    "trace replays varied from draw 270 on).",
+    "GPU");
+
+DEFINE_bool(
     gpu_rt_as_texture, false,
     "EDRAM-recompiler RT-as-texture: when a pixel-texture fetch samples a still-"
     "resident render target that was resolved this frame (non-converting format, "
@@ -4307,6 +4317,9 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
     image_create_info.usage |=
         VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
   }
+  if (cvars::vulkan_clear_new_render_targets) {
+    image_create_info.usage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+  }
   image_create_info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
   image_create_info.queueFamilyIndexCount = 0;
   image_create_info.pQueueFamilyIndices = nullptr;
@@ -4498,10 +4511,37 @@ RenderTargetCache::RenderTarget* VulkanRenderTargetCache::CreateRenderTarget(
   dfn.vkUpdateDescriptorSets(device, key.is_depth ? 2 : 1, descriptor_set_write,
                              0, nullptr);
 
-  return new VulkanRenderTarget(key, *this, image, memory, view_depth_color,
-                                view_depth_stencil, view_stencil,
-                                view_color_transfer_separate,
-                                descriptor_set_index_transfer_source);
+  auto* render_target = new VulkanRenderTarget(
+      key, *this, image, memory, view_depth_color, view_depth_stencil,
+      view_stencil, view_color_transfer_separate,
+      descriptor_set_index_transfer_source);
+  if (cvars::vulkan_clear_new_render_targets) {
+    // Zero it before the first use (outside a render pass).
+    command_processor_.EndRenderPass();
+    VkImageSubresourceRange range = ui::vulkan::util::InitializeSubresourceRange(
+        key.is_depth ? (VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT)
+                     : VK_IMAGE_ASPECT_COLOR_BIT);
+    command_processor_.PushImageMemoryBarrier(
+        image, range, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+        VK_PIPELINE_STAGE_TRANSFER_BIT, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+        VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+    command_processor_.SubmitBarriers(true);
+    DeferredCommandBuffer& command_buffer =
+        command_processor_.deferred_command_buffer();
+    if (key.is_depth) {
+      VkClearDepthStencilValue value = {};
+      command_buffer.CmdVkClearDepthStencilImage(
+          image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, value, range);
+    } else {
+      VkClearColorValue value = {};
+      command_buffer.CmdVkClearColorImage(
+          image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &value, 1, &range);
+    }
+    render_target->SetUsage(VK_PIPELINE_STAGE_TRANSFER_BIT,
+                            VK_ACCESS_TRANSFER_WRITE_BIT,
+                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+  }
+  return render_target;
 }
 
 bool VulkanRenderTargetCache::IsHostDepthEncodingDifferent(

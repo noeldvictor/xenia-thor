@@ -52,6 +52,9 @@ def main():
     ap.add_argument('--best-practices', action='store_true',
                     help='also the best-practices checks with the ARM tiler set (load and '
                          'store ops, clears, render pass breaks - the Adreno is a tiler too)')
+    ap.add_argument('--gpu-av', action='store_true',
+                    help='GPU-assisted validation instead of synchronization validation: '
+                         'out-of-bounds buffer and descriptor accesses made by the shaders')
     args = ap.parse_args()
     layer_dir = find_layer_dir(args.layer)
     if not layer_dir:
@@ -66,6 +69,14 @@ def main():
     # on regardless of what the app chains.
     env = dict(os.environ, VK_LAYER_PATH=layer_dir, VK_ADD_LAYER_PATH=layer_dir,
                VK_KHRONOS_VALIDATION_VALIDATE_SYNC='true')
+    if args.gpu_av:
+        # GPU-assisted validation: the layer instruments the shaders and
+        # reports out-of-bounds buffer and descriptor accesses they make - a
+        # read of undefined data that renders differently from run to run.
+        env['VK_KHRONOS_VALIDATION_VALIDATE_GPU_BASED'] = 'GPU_BASED_GPU_ASSISTED'
+        env['VK_KHRONOS_VALIDATION_GPUAV_BUFFER_ADDRESS_OOB'] = 'true'
+        env['VK_KHRONOS_VALIDATION_GPUAV_DESCRIPTOR_CHECKS'] = 'true'
+        env['VK_KHRONOS_VALIDATION_VALIDATE_SYNC'] = 'false'
     if args.best_practices:
         env['VK_KHRONOS_VALIDATION_VALIDATE_BEST_PRACTICES'] = 'true'
         env['VK_KHRONOS_VALIDATION_VALIDATE_BEST_PRACTICES_ARM'] = 'true'

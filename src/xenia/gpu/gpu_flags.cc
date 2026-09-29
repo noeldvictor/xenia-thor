@@ -955,6 +955,11 @@ DEFINE_string(vulkan_debug_drop_resolves, "",
               "leave the frame pixel-identical - the upper bound of what "
               "skipping dead resolves saves.",
               "GPU");
+DEFINE_bool(vulkan_debug_zero_constant_slots, false,
+            "Research: zero every float-constant slot before it is filled - a "
+            "shader that reads a constant its map does not list then reads 0, "
+            "not the undefined contents of the slot.",
+            "GPU");
 DEFINE_int32(vulkan_trace_resolve_resumes, 0,
              "Diagnostic: for the first N resolves, one \"Resolve resume\" "
              "line: the source render target and whether the open pass had "

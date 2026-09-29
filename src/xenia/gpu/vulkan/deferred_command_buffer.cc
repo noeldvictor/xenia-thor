@@ -155,6 +155,14 @@ void DeferredCommandBuffer::Execute(VkCommandBuffer command_buffer) {
                           alignof(VkImageSubresourceRange))));
       } break;
 
+      case Command::kVkClearDepthStencilImage: {
+        auto& args =
+            *reinterpret_cast<const ArgsVkClearDepthStencilImage*>(stream);
+        dfn.vkCmdClearDepthStencilImage(command_buffer, args.image,
+                                        args.image_layout, &args.value, 1,
+                                        &args.range);
+      } break;
+
       case Command::kVkCopyBuffer: {
         auto& args = *reinterpret_cast<const ArgsVkCopyBuffer*>(stream);
         dfn.vkCmdCopyBuffer(
