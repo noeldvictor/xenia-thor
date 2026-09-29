@@ -257,6 +257,7 @@ void SpirvShaderTranslator::Reset() {
   structured_forward_jumps_ = false;
   structured_jump_regions_.clear();
   structured_jump_else_ends_.clear();
+  structured_jump_region_ends_.clear();
 
   cf_exec_conditional_merge_ = nullptr;
   cf_instruction_predicate_merge_ = nullptr;
@@ -1146,25 +1147,7 @@ void SpirvShaderTranslator::ProcessLabel(uint32_t cf_index) {
   CloseExecConditionals();
 
   if (structured_forward_jumps_) {
-    // The regions of the jumps to this label end here (innermost first). A
-    // "then" part with an "else" part continues in the "else" part.
-    while (!structured_jump_regions_.empty() &&
-           structured_jump_regions_.back().target_address == cf_index) {
-      StructuredJumpRegion& region = structured_jump_regions_.back();
-      if (region.else_block) {
-        // The "then" part ended with the unconditional jump to the merge.
-        if (!builder_->getBuildPoint()->isTerminated()) {
-          builder_->createBranch(region.merge);
-        }
-        spv::Block* else_block = region.else_block;
-        region.target_address = region.else_end_address;
-        region.else_block = nullptr;
-        function_main_->addBlock(else_block);
-        builder_->setBuildPoint(else_block);
-        break;
-      }
-      CloseStructuredJumpRegion();
-    }
+    CloseStructuredJumpRegionsAt(cf_index);
     return;
   }
 
@@ -1192,6 +1175,39 @@ void SpirvShaderTranslator::ProcessLabel(uint32_t cf_index) {
   }
   function.addBlock(new_case);
   builder_->setBuildPoint(new_case);
+}
+
+void SpirvShaderTranslator::ProcessControlFlowInstructionBegin(
+    uint32_t cf_index) {
+  // A region retargeted to an unconditional jump ends at a control flow
+  // instruction that is not a label.
+  if (structured_forward_jumps_ && !structured_jump_regions_.empty() &&
+      structured_jump_regions_.back().target_address == cf_index) {
+    CloseExecConditionals();
+    CloseStructuredJumpRegionsAt(cf_index);
+  }
+}
+
+void SpirvShaderTranslator::CloseStructuredJumpRegionsAt(uint32_t cf_index) {
+  // The regions of the jumps to here end here (innermost first). A "then"
+  // part with an "else" part continues in the "else" part.
+  while (!structured_jump_regions_.empty() &&
+         structured_jump_regions_.back().target_address == cf_index) {
+    StructuredJumpRegion& region = structured_jump_regions_.back();
+    if (region.else_block) {
+      // The "then" part ended with the unconditional jump to the merge.
+      if (!builder_->getBuildPoint()->isTerminated()) {
+        builder_->createBranch(region.merge);
+      }
+      spv::Block* else_block = region.else_block;
+      region.target_address = region.else_end_address;
+      region.else_block = nullptr;
+      function_main_->addBlock(else_block);
+      builder_->setBuildPoint(else_block);
+      break;
+    }
+    CloseStructuredJumpRegion();
+  }
 }
 
 void SpirvShaderTranslator::ProcessExecInstructionBegin(
@@ -1457,6 +1473,10 @@ void SpirvShaderTranslator::ProcessJumpInstruction(
     CloseExecConditionals();
     EnsureBuildPointAvailable();
     if (type == ParsedExecInstruction::Type::kUnconditional) {
+      // A jump to the next instruction does nothing.
+      if (instr.target_address == instr.dword_index + 1) {
+        return;
+      }
       // The end of the "then" part of an if/else: skip the "else" part
       // (AnalyzeStructuredForwardJumps checked that the innermost region is
       // that "then" part and ends after this instruction).
@@ -1488,8 +1508,13 @@ void SpirvShaderTranslator::ProcessJumpInstruction(
         condition_id, instr.condition ? taken_block : &not_taken_block,
         instr.condition ? &not_taken_block : taken_block);
     builder_->setBuildPoint(&not_taken_block);
+    uint32_t region_end = instr.target_address;
+    auto region_end_it = structured_jump_region_ends_.find(instr.dword_index);
+    if (region_end_it != structured_jump_region_ends_.end()) {
+      region_end = region_end_it->second;
+    }
     structured_jump_regions_.push_back(
-        {instr.target_address, merge, else_block, else_end_address});
+        {region_end, merge, else_block, else_end_address});
     return;
   }
   UpdateExecConditionals(type, instr.bool_constant_index, instr.condition);
@@ -3323,6 +3348,7 @@ spv::Id SpirvShaderTranslator::LoadExecCondition(
 
 bool SpirvShaderTranslator::AnalyzeStructuredForwardJumps() {
   structured_jump_else_ends_.clear();
+  structured_jump_region_ends_.clear();
   const Shader& shader = current_shader();
   const uint32_t* ucode_dwords = shader.ucode_data().data();
   uint32_t cf_pair_index_bound = shader.cf_pair_index_bound();
@@ -3333,6 +3359,37 @@ bool SpirvShaderTranslator::AnalyzeStructuredForwardJumps() {
     bool is_else;
     bool has_else;
     uint32_t else_end;
+  };
+  // The unconditional jumps, by target, in program order.
+  std::unordered_map<uint32_t, std::vector<uint32_t>> unconditional_jumps;
+  for (uint32_t i = 0; i < cf_pair_index_bound; ++i) {
+    ucode::ControlFlowInstruction cf_ab[2];
+    ucode::UnpackControlFlowInstructions(ucode_dwords + i * 3, cf_ab);
+    for (uint32_t j = 0; j < 2; ++j) {
+      if (cf_ab[j].opcode() != ucode::ControlFlowOpcode::kCondJmp) {
+        continue;
+      }
+      ParsedJumpInstruction instr;
+      ParseControlFlowCondJmp(cf_ab[j].cond_jmp, i * 2 + j, instr);
+      if (instr.type == ParsedJumpInstruction::Type::kUnconditional) {
+        unconditional_jumps[instr.target_address].push_back(i * 2 + j);
+      }
+    }
+  }
+  // A jump from cf_index to target past the end of a region ending at
+  // region_end can end at an unconditional jump to the same target inside that
+  // region (reaching that jump is the same path), UINT32_MAX if none.
+  auto find_region_end = [&](uint32_t cf_index, uint32_t target,
+                             uint32_t region_end) {
+    auto jumps_it = unconditional_jumps.find(target);
+    if (jumps_it != unconditional_jumps.end()) {
+      for (uint32_t jump_index : jumps_it->second) {
+        if (jump_index > cf_index && jump_index <= region_end) {
+          return jump_index;
+        }
+      }
+    }
+    return UINT32_MAX;
   };
   // Innermost last; the ends never increase toward the top.
   std::vector<Region> open;
@@ -3367,27 +3424,44 @@ bool SpirvShaderTranslator::AnalyzeStructuredForwardJumps() {
             return false;
           }
           if (instr.type == ParsedJumpInstruction::Type::kUnconditional) {
+            // A jump to the next instruction does nothing.
+            if (target == cf_index + 1) {
+              break;
+            }
             // Only as the last instruction of a "then" part, to after the
-            // label that ends it, and inside the enclosing region.
+            // label that ends it, and inside the enclosing region (or to an
+            // unconditional jump to the same target inside it).
             if (open.empty()) {
               return false;
             }
             Region& then_region = open.back();
             if (then_region.is_else || then_region.has_else ||
-                then_region.end != cf_index + 1 || target <= cf_index + 1) {
+                then_region.end != cf_index + 1) {
               return false;
             }
             if (open.size() >= 2 && target > open[open.size() - 2].end) {
-              return false;
+              target = find_region_end(cf_index, target,
+                                       open[open.size() - 2].end);
+              if (target == UINT32_MAX) {
+                return false;
+              }
             }
             then_region.has_else = true;
             then_region.else_end = target;
             structured_jump_else_ends_[then_region.jump_index] = target;
             break;
           }
-          // A region that ends after the enclosing one does not nest.
+          // A region that ends after the enclosing one does not nest, unless
+          // an unconditional jump to the same target inside the enclosing
+          // region can be its end (reaching that jump is the same path).
           if (!open.empty() && target > open.back().end) {
-            return false;
+            uint32_t region_end =
+                find_region_end(cf_index, target, open.back().end);
+            if (region_end == UINT32_MAX) {
+              return false;
+            }
+            structured_jump_region_ends_[cf_index] = region_end;
+            target = region_end;
           }
           open.push_back({target, cf_index, false, false, 0});
         } break;

@@ -656,6 +656,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
   void PostTranslation() override;
 
   void ProcessLabel(uint32_t cf_index) override;
+  void ProcessControlFlowInstructionBegin(uint32_t cf_index) override;
 
   void ProcessExecInstructionBegin(const ParsedExecInstruction& instr) override;
   void ProcessExecInstructionEnd(const ParsedExecInstruction& instr) override;
@@ -814,6 +815,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
   bool AnalyzeStructuredForwardJumps();
   // Closes the innermost structured jump region (at its target label).
   void CloseStructuredJumpRegion();
+  // Closes the structured jump regions that end at the control flow
+  // instruction, or goes to the "else" part of an if/else that ends there.
+  void CloseStructuredJumpRegionsAt(uint32_t cf_index);
   // Opens or reopens the predicate check conditional for the instruction.
   // Should be called before processing a non-control-flow instruction.
   void UpdateInstructionPredication(bool predicated, bool condition);
@@ -1415,6 +1419,12 @@ class SpirvShaderTranslator : public ShaderTranslator {
   std::vector<StructuredJumpRegion> structured_jump_regions_;
   // Conditional jump CF index -> the end of its "else" part (if/else only).
   std::unordered_map<uint32_t, uint32_t> structured_jump_else_ends_;
+  // Conditional jump CF index -> where its region ends when that is not its
+  // target: a jump past the end of the enclosing region to the target of an
+  // unconditional jump inside that region goes to that unconditional jump
+  // instead (the same path - the "then" part of an if/else ending with
+  // `jmp E` and an inner `jmp E` that skips the rest of it and the "else").
+  std::unordered_map<uint32_t, uint32_t> structured_jump_region_ends_;
 
   // If the exec bool constant / predicate conditional is open, block after it
   // (not added to the function yet).

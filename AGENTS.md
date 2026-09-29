@@ -647,11 +647,19 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   and the "else" part runs to the unconditional jump's target (the compiled if/else form).
   4 titles: 117 of 126 shaders with labels are structured
   (`tools/pc/cf_census.py`: 4 crossing regions, 4 other unconditional jumps, 1 loop).
+  The same day, two more rules: an unconditional jump to the next instruction does nothing,
+  and a jump past the end of its enclosing region (a "then" part's inner `jmp E` that skips
+  the rest of it and the "else" part, or an "else" part that ends past its region) ends at
+  the unconditional `jmp E` inside that region - reaching it is the same path, so the regions
+  nest. Now 125 of 126 (only a Xenos loop is left); 19 more shaders change on the Adreno
+  compiler, -4,968 instructions, waves +16, registers -142, among them Gears' two costliest
+  vertex shaders (5EF1F63A66FBB87E -371, 88D904E2DD3C7E35 -416, each +2 waves); `cvar_ab` 0
+  of 59 traces changed; spirv-val 0 of 478 fail.
   `cvar_ab` over 59 traces of 5 titles: 0 changed; spirv-val: 0 of 478 fail. The Adreno
   compiler had already reduced most switch loops: 4 shaders change, -890 instructions (up to
   -326 in B580B862A05B91BC). The gain is small; the reason to keep it is that no driver
   compiles the switch loop for these shaders any more (the NVIDIA fault above). Next in this
-  class: crossing regions, then Xenos loops as real loops (XenosRecomp writes `for`).
+  class: Xenos loops as real loops (XenosRecomp writes `for`).
 - **Texture fetches sample with a LOD bias, not gradients (2026-09-29, the only behavior):**
   a computed-LOD fetch in a pixel shader took coarse derivatives, scaled them by 2^lod and
   sampled with `Grad` (like `SampleD` in DXBC). The Adreno compiler makes a long sequence of

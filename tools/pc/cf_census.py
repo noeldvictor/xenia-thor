@@ -5,7 +5,10 @@
 The SPIR-V translator writes a shader with jumps as nested selection
 constructs when every jump is forward and the skipped regions nest (a
 conditional jump skips to its target; an unconditional jump only ends the
-"then" part of an if/else) - XenosRecomp's flattened control flow. Any other
+"then" part of an if/else, or does nothing when it goes to the next
+instruction; a jump past the end of its enclosing region ends at an
+unconditional jump to the same target inside that region) - XenosRecomp's
+flattened control flow. Any other
 shader with labels keeps the loop with the program counter switch, which a
 driver compiler optimizes less well (NVIDIA got a fallthrough wrong,
 2026-09-29). This tool reads the ucode disassembly that --dump_shaders
@@ -50,6 +53,16 @@ def parse(text):
 def classify(text):
     instructions = parse(text)
     last = max(list(instructions) + [0])
+    unconditional_jumps = collections.defaultdict(list)
+    for index, (kind, target, is_unconditional) in sorted(instructions.items()):
+        if kind == 'jmp' and is_unconditional:
+            unconditional_jumps[target].append(index)
+
+    def region_end(index, target, end):
+        # A jump past the end of a region can end at an unconditional jump to
+        # the same target inside that region (the same path).
+        return next((j for j in unconditional_jumps[target] if index < j <= end), None)
+
     regions = []  # innermost last: dict(end, is_else, else_end)
     for index in range(last + 1):
         while regions and regions[-1]['end'] == index:
@@ -67,15 +80,21 @@ def classify(text):
         if target <= index:
             return 'backward jump'
         if unconditional:
+            if target == index + 1:
+                continue  # a jump to the next instruction does nothing
             if (not regions or regions[-1]['is_else'] or regions[-1]['else_end'] or
-                    regions[-1]['end'] != index + 1 or target <= index + 1):
+                    regions[-1]['end'] != index + 1):
                 return 'unconditional jump not at the end of a "then" part'
             if len(regions) >= 2 and target > regions[-2]['end']:
-                return 'crossing regions'
+                target = region_end(index, target, regions[-2]['end'])
+                if target is None:
+                    return 'crossing regions'
             regions[-1]['else_end'] = target
             continue
         if regions and target > regions[-1]['end']:
-            return 'crossing regions'
+            target = region_end(index, target, regions[-1]['end'])
+            if target is None:
+                return 'crossing regions'
         regions.append(dict(end=target, is_else=False, else_end=0))
     return 'structured'
 
