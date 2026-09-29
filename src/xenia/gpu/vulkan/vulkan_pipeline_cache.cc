@@ -1123,6 +1123,19 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
   }
   description_out.render_pass_key = render_pass_key;
 
+  if (cvars::gpu_specialize_bool_constants) {
+    const Shader::ConstantRegisterMap& vertex_constants =
+        vertex_shader->shader().constant_register_map();
+    for (uint32_t i = 0; i < 8; ++i) {
+      uint32_t used = vertex_constants.bool_bitmap[i];
+      if (pixel_shader) {
+        used |= pixel_shader->shader().constant_register_map().bool_bitmap[i];
+      }
+      description_out.bool_constants[i] =
+          register_file_[XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031 + i] & used;
+    }
+  }
+
   if (pixel_shader && !cvars::spirv_debug_zero_rule_finite_interpolators) {
     description_out.zero_rule_interpolators =
         vertex_shader->shader().zero_rule_infinite_interpolators() &
@@ -2731,6 +2744,42 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   assert_true(shader_stage_vertex.module != VK_NULL_HANDLE);
   shader_stage_vertex.pName = "main";
   shader_stage_vertex.pSpecializationInfo = nullptr;
+  // gpu_specialize_bool_constants: the bool constant words, SpecIds
+  // kSpecConstantBoolWordFirst + i, for the guest vertex and pixel shaders;
+  // the pixel shader's data starts with the zero rule interpolators (SpecId
+  // kSpecConstantZeroRuleInterpolators).
+  struct {
+    uint32_t zero_rule_interpolators;
+    uint32_t bool_constants[8];
+  } specialization_data;
+  specialization_data.zero_rule_interpolators =
+      description.zero_rule_interpolators;
+  std::memcpy(specialization_data.bool_constants, description.bool_constants,
+              sizeof(specialization_data.bool_constants));
+  VkSpecializationMapEntry specialization_map_entries[9];
+  specialization_map_entries[0].constantID =
+      SpirvShaderTranslator::kSpecConstantZeroRuleInterpolators;
+  specialization_map_entries[0].offset = 0;
+  specialization_map_entries[0].size = sizeof(uint32_t);
+  for (uint32_t i = 0; i < 8; ++i) {
+    VkSpecializationMapEntry& entry = specialization_map_entries[1 + i];
+    entry.constantID = SpirvShaderTranslator::kSpecConstantBoolWordFirst + i;
+    entry.offset = uint32_t(sizeof(uint32_t) * (1 + i));
+    entry.size = sizeof(uint32_t);
+  }
+  VkSpecializationInfo bool_specialization;
+  bool_specialization.mapEntryCount = 8;
+  bool_specialization.pMapEntries = specialization_map_entries + 1;
+  bool_specialization.dataSize = sizeof(specialization_data);
+  bool_specialization.pData = &specialization_data;
+  VkSpecializationInfo pixel_specialization;
+  pixel_specialization.mapEntryCount = 9;
+  pixel_specialization.pMapEntries = specialization_map_entries;
+  pixel_specialization.dataSize = sizeof(specialization_data);
+  pixel_specialization.pData = &specialization_data;
+  if (cvars::gpu_specialize_bool_constants) {
+    shader_stage_vertex.pSpecializationInfo = &bool_specialization;
+  }
   // Geometry shader.
   if (creation_arguments.geometry_shader != VK_NULL_HANDLE) {
     VkPipelineShaderStageCreateInfo& shader_stage_geometry =
@@ -2768,7 +2817,9 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   zero_rule_specialization.pMapEntries = &zero_rule_map_entry;
   zero_rule_specialization.dataSize = sizeof(uint32_t);
   zero_rule_specialization.pData = &zero_rule_interpolators;
-  if (zero_rule_interpolators) {
+  if (cvars::gpu_specialize_bool_constants) {
+    shader_stage_fragment.pSpecializationInfo = &pixel_specialization;
+  } else if (zero_rule_interpolators) {
     shader_stage_fragment.pSpecializationInfo = &zero_rule_specialization;
   }
   if (creation_arguments.pixel_shader) {

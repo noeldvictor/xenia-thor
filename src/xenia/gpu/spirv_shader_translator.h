@@ -31,6 +31,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // Zero rule hybrid: pixel shaders, the interpolators the vertex
   // shader may export an Inf or a NaN to (a uint, SpecId).
   static constexpr uint32_t kSpecConstantZeroRuleInterpolators = 0;
+  // gpu_specialize_bool_constants: the 8 uint words of the bool constants
+  // (bits 32*i to 32*i+31), SpecIds kSpecConstantBoolWordFirst + i.
+  static constexpr uint32_t kSpecConstantBoolWordFirst = 1;
 
   union Modification {
     // If anything in this is structure is changed in a way not compatible with
@@ -1404,6 +1407,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // The shader has labels and is translated with the program counter switch
   // in the main loop.
   bool main_switch_used_;
+  // gpu_specialize_bool_constants: the specialization constant of each bool
+  // constant word the shader reads, or spv::NoResult.
+  spv::Id bool_word_spec_constants_[8];
   // Labels without the switch: each forward jump opens a selection construct
   // that runs the code until its target label when the jump is not taken.
   bool structured_forward_jumps_;

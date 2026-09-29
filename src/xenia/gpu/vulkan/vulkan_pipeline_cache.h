@@ -261,6 +261,11 @@ class VulkanPipelineCache {
     // Filled only for the attachments present in the render pass object.
     PipelineRenderTarget render_targets[xenos::kMaxColorRenderTargets];
 
+    // gpu_specialize_bool_constants: the bool constants the vertex or the
+    // pixel shader reads (the other bits 0), as the specialization constants
+    // SpirvShaderTranslator::kSpecConstantBoolWordFirst + i.
+    uint32_t bool_constants[8];
+
     // Including all the padding, for a stable hash.
     PipelineDescription() { Reset(); }
     PipelineDescription(const PipelineDescription& description) {

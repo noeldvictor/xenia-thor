@@ -156,6 +156,7 @@ DECLARE_bool(vulkan_force_2101010_rgba8_fallback);
 DECLARE_bool(vulkan_force_signed_2101010_unorm_fallback);
 DECLARE_bool(spirv_no_invariant_color_output);
 DECLARE_bool(spirv_no_invariant_position_output);
+DECLARE_bool(gpu_specialize_bool_constants);
 DECLARE_bool(spirv_debug_force_fullscreen_position);
 DECLARE_int32(spirv_debug_position_probe);
 DECLARE_bool(gpu_vulkan_shared_memory_no_switch);

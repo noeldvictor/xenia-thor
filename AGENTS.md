@@ -672,6 +672,20 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   traces differ, at most 0.85% of the pixels, 0.0013% by more than 8 (Banjo's face close-up:
   9 pixels, no visible change); Gears at most 2 levels, MC2 and Blue Dragon 0. The next
   Gears device session shows the frame time.
+- **Bool constants as specialization constants (2026-09-29, lever `gpu_specialize_bool_constants`,
+  app toggle `opt_bool_specialize`, default off until a device session):** Xenos shaders branch
+  on bool constants the game sets per draw (314 of 825 shaders over 43 traces; 9.5% of the guest
+  instructions sit in `cexec b#` blocks). The Adreno guide ranks a branch on a specialization
+  constant as free and one on a uniform as costly; XenosRecomp specializes them. With the lever,
+  the translator declares one uint specialization constant per bool word the shader reads
+  (SpecIds 1-8; the zero rule mask keeps 0), the branch conditions are spec-constant
+  expressions, and `PipelineDescription::bool_constants` carries the words the two shaders read.
+  `cvar_ab` 0 of 59 traces changed; spirv-val 0 of 478 fail; the validation layer 0 errors.
+  Shader lab: -154,714 instructions and +240 waves with half the bools set, -368,098 with all
+  false - real draws lie between. Cost: pipelines per trace Gears +0, Banjo +1-2%, Blue Dragon
+  44 -> 70 (a census of shader pairs with their bool values: Banjo +21-46%, Blue Dragon +122%).
+  The device session decides (`pending_ab.py` item `bools`, Banjo's story scene). Xenos loops as real
+  loops are not worth it: 1 of 825 shaders has a loop or call.
 - **Sign specialization CPU cost (2026-09-25, `trace_bench --a/--b`):** `SwizzleSigns` per
   bound texture per draw cost prep +266 us per frame on Banjo; the raw sign fields of dword 0
   (one load) leave +82 us, the rest within the bench noise; 0 changed pixels on 6 traces.

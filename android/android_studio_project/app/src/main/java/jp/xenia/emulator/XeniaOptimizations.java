@@ -698,6 +698,24 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("vulkan_tfetch_sign_specialize")}, null));
 
         list.add(new Optimization(
+                "opt_bool_specialize",
+                "Specialize shader branches",
+                "Builds the game's shader switches into each pipeline so dead branches go away.",
+                "Xbox 360 shaders branch on bool constants that the game sets per "
+                        + "draw. Normally the translated shader tests them at run time "
+                        + "and the GPU keeps the registers for both sides. With this, "
+                        + "the values go into the pipeline as specialization constants "
+                        + "and the driver's compiler removes the side not taken (the "
+                        + "Adreno guide: free, where a uniform branch costs). Upper "
+                        + "bound on the Adreno compiler over Banjo, Gears, Blue Dragon "
+                        + "and Magna Carta 2: 22% fewer instructions, more waves. The "
+                        + "picture is identical. Cost: more pipelines to compile "
+                        + "(Blue Dragon about 60% more, Banjo a few, Gears none), so "
+                        + "more first-time hitches. Takes effect at the next launch.",
+                CATEGORY_GPU, false, false,
+                new BoolCvar[]{new BoolCvar("gpu_specialize_bool_constants")}, null));
+
+        list.add(new Optimization(
                 "opt_pipeline_cache",
                 "Persistent shader pipeline cache",
                 "Saves compiled GPU pipelines to disk so later launches skip the stutter.",

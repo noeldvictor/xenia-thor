@@ -254,6 +254,9 @@ void SpirvShaderTranslator::Reset() {
   main_switch_op_.reset();
   main_switch_next_pc_phi_operands_.clear();
   main_switch_used_ = false;
+  for (spv::Id& bool_word_spec_constant : bool_word_spec_constants_) {
+    bool_word_spec_constant = spv::NoResult;
+  }
   structured_forward_jumps_ = false;
   structured_jump_regions_.clear();
   structured_jump_else_ends_.clear();
@@ -3317,6 +3320,27 @@ void SpirvShaderTranslator::UpdateExecConditionals(
 
 spv::Id SpirvShaderTranslator::LoadExecCondition(
     ParsedExecInstruction::Type type, uint32_t bool_constant_index) {
+  if (type == ParsedExecInstruction::Type::kConditional &&
+      cvars::gpu_specialize_bool_constants) {
+    // The bool constant is known when the pipeline is made: the branch is on
+    // a specialization constant, and the driver removes the side not taken.
+    uint32_t word = (bool_constant_index >> 5) & 7;
+    spv::Id& word_spec_constant = bool_word_spec_constants_[word];
+    if (word_spec_constant == spv::NoResult) {
+      word_spec_constant = builder_->makeUintConstant(0, true);
+      builder_->addDecoration(word_spec_constant, spv::DecorationSpecId,
+                              int(kSpecConstantBoolWordFirst + word));
+      builder_->addName(word_spec_constant,
+                        fmt::format("xe_bool_constants_{}", word).c_str());
+    }
+    spv::Id masked = builder_->createSpecConstantOp(
+        spv::OpBitwiseAnd, type_uint_,
+        {word_spec_constant,
+         builder_->makeUintConstant(uint32_t(1) << (bool_constant_index & 31))},
+        {});
+    return builder_->createSpecConstantOp(spv::OpINotEqual, type_bool_,
+                                          {masked, const_uint_0_}, {});
+  }
   if (type == ParsedExecInstruction::Type::kConditional) {
     id_vector_temp_.clear();
     // Bool constants (member 0).

@@ -53,6 +53,14 @@ PLAN = [
         'heat: 20.4 -> 25.9 fps with both).'),
         arms=['base:global_lock_spin=0,rtl_critical_section_min_spin=0',
               'both:global_lock_spin=128,rtl_critical_section_min_spin=256']),
+    dict(id='bools', entry='banjo_story', relaunch=True, why=(
+        'Bool constants as specialization constants (app toggle opt_bool_specialize, '
+        'off): the driver drops the branch side not taken - shader lab -154k to '
+        '-368k Adreno instructions over 4 titles, exact on 59 traces - against more '
+        'pipelines (Blue Dragon +60%, Banjo a few, Gears none). fps and hitches '
+        'decide (no Blue Dragon scoreboard scene yet: Banjo).'),
+        arms=['off:gpu_specialize_bool_constants=false',
+              'on:gpu_specialize_bool_constants=true']),
 ]
 
 

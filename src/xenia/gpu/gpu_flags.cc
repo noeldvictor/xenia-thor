@@ -1092,6 +1092,16 @@ DEFINE_bool(vulkan_force_2101010_rgba8_fallback, false,
             "raw R8G8B8A8 host textures. This is color-incorrect and only for "
             "isolating A2B10G10R10 sampling/upload failures.",
             "GPU");
+DEFINE_bool(gpu_specialize_bool_constants, false,
+            "Build the Xenos bool constants a shader branches on into its "
+            "pipeline as specialization constants, so the driver's compiler "
+            "removes the branch and the code on the side not taken (the "
+            "Adreno guide: a branch on a specialization constant costs "
+            "nothing, a branch on a uniform does; XenosRecomp does the same). "
+            "More pipelines: one per set of bool values a shader pair is drawn "
+            "with (PC traces: Banjo +21% to +46%, Blue Dragon +122%, Gears "
+            "+0%). Read at launch; app toggle opt_bool_specialize.",
+            "GPU");
 DEFINE_bool(spirv_no_invariant_position_output, false,
             "Do not decorate the vertex-shader gl_Position / interpolator / point "
             "outputs with Invariant. If the Mesa Turnip ir3 backend mishandles an "
