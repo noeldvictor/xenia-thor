@@ -59,8 +59,9 @@ mcp = FastMCP('xenia-thor')
 
 
 def _run(cmd: list[str], timeout: int = 60) -> tuple[int, str]:
+    # stdin closed: an adb shell or a script must never read the MCP's stdio.
     proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                          encoding='utf-8', errors='replace')
+                          encoding='utf-8', errors='replace', stdin=subprocess.DEVNULL)
     return proc.returncode, (proc.stdout + proc.stderr).strip()
 
 
@@ -1063,7 +1064,7 @@ def _run_tool_script(rel_path: str, args: list, timeout: int, tail_lines: int = 
     script = os.path.join(REPO, rel_path)
     proc = subprocess.run([sys.executable, script] + [str(a) for a in args], cwd=REPO,
                           capture_output=True, text=True, encoding='utf-8', errors='replace',
-                          timeout=timeout)
+                          timeout=timeout, stdin=subprocess.DEVNULL)
     out = (proc.stdout + ('\n' + proc.stderr if proc.returncode else '')).strip().splitlines()
     return json.dumps({'exit': proc.returncode, 'script': rel_path, 'output': out[-tail_lines:]}, indent=1)
 
@@ -1766,12 +1767,16 @@ def xenia_build(mode: str = 'NativeCore') -> str:
     ApkShell (package, seconds), FullApk, Install, FullDeploy, ApkShellDeploy."""
     os.makedirs(SCRATCH, exist_ok=True)
     log = os.path.join(SCRATCH, f'build-{mode}-{_stamp()}.log')
-    cmd = ['powershell', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', BUILD_SCRIPT, '-Mode', mode]
+    cmd = ['powershell', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', BUILD_SCRIPT, '-Mode', mode]
     if mode.endswith('Deploy') or mode == 'Install':
         cmd += ['-DeviceSerial', SERIAL]
     t = time.time()
     with open(log, 'w', encoding='utf-8') as f:
-        proc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, cwd=REPO, timeout=3600)
+        # stdin closed: the child must not read the MCP's stdio pipe (the
+        # ApkShellDeploy of 2026-09-29 hung 13 minutes with an empty log; the
+        # same script from a shell installed in 2 s).
+        proc = subprocess.run(cmd, stdout=f, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                              cwd=REPO, timeout=3600)
     with open(log, encoding='utf-8', errors='replace') as f:
         text = f.read()
     hits = [l for l in text.splitlines() if re.search(r' error:|BUILD SUCCESSFUL|BUILD FAILED|What went wrong|Success|Failure', l)]
