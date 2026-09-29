@@ -44,7 +44,6 @@
 #include "xenia/ui/vulkan/vulkan_diagnostic_counters.h"
 #include "xenia/ui/vulkan/vulkan_util.h"
 
-DECLARE_bool(spirv_zero_rule_hybrid);
 DECLARE_bool(spirv_debug_zero_rule_finite_interpolators);
 
 DEFINE_bool(
@@ -1124,8 +1123,7 @@ bool VulkanPipelineCache::GetCurrentStateDescription(
   }
   description_out.render_pass_key = render_pass_key;
 
-  if (pixel_shader && cvars::spirv_zero_rule_hybrid &&
-      !cvars::spirv_debug_zero_rule_finite_interpolators) {
+  if (pixel_shader && !cvars::spirv_debug_zero_rule_finite_interpolators) {
     description_out.zero_rule_interpolators =
         vertex_shader->shader().zero_rule_infinite_interpolators() &
         pixel_shader->shader().zero_rule_interpolators_read() &
@@ -2757,7 +2755,7 @@ bool VulkanPipelineCache::EnsurePipelineCreated(
   shader_stage_fragment.module = VK_NULL_HANDLE;
   shader_stage_fragment.pName = "main";
   shader_stage_fragment.pSpecializationInfo = nullptr;
-  // spirv_zero_rule_hybrid: the pixel shader's multiplies whose operands
+  // Zero rule hybrid: the pixel shader's multiplies whose operands
   // only an interpolator may make infinite keep the test for these.
   const uint32_t zero_rule_interpolators = description.zero_rule_interpolators;
   VkSpecializationMapEntry zero_rule_map_entry;

@@ -42,24 +42,11 @@ DEFINE_bool(
     "(tools/pc/cvar_ab.py).",
     "GPU");
 
-DEFINE_bool(
-    spirv_zero_rule_hybrid, false,
-    "The Shader Model 3 zero rule (+0 times anything, Inf or NaN, is +0) "
-    "tested only where an operand can hold an Inf or a NaN from rcp, rsq, "
-    "exp, log or sqrt (Shader::GetZeroRuleExactOperation); other "
-    "multiplies are IEEE, as in DXVK's d3d9 default on Turnip. A draw whose "
-    "shader reads an Inf or NaN float constant uses the exact variant "
-    "(zero_rule_exact modification).",
-    "GPU");
 DEFINE_bool(spirv_debug_zero_rule_finite_interpolators, false,
-            "Research (not exact): spirv_zero_rule_hybrid treats interpolators "
+            "Research (not exact): the zero rule hybrid treats interpolators "
             "as finite even when the vertex shader may export an Inf or a NaN - "
             "the upper bound of a per-interpolator taint.",
             "GPU");
-DEFINE_int32(spirv_zero_rule_hybrid_stages, 3,
-             "spirv_zero_rule_hybrid: the shader stages it applies to (1 "
-             "vertex, 2 pixel, 3 both); the other stages keep every test.",
-             "GPU");
 DEFINE_bool(
     spirv_fast_zero_rule, false,
     "Research: the Shader Model 3 zero rule the way DXVK's default d3d9 "
@@ -111,7 +98,7 @@ spv::Id SpirvShaderTranslator::ZeroIfAnyOperandIsZero(spv::Id value,
   int num_components = builder_->getNumComponents(value);
   assert_true(builder_->getNumComponents(operand_0_abs) == num_components);
   assert_true(builder_->getNumComponents(operand_1_abs) == num_components);
-  // spirv_zero_rule_hybrid: only under the interpolator condition.
+  // Zero rule hybrid: only under the interpolator condition.
   auto conditioned = [&](spv::Id is_zero) -> spv::Id {
     if (zero_rule_condition_ == spv::NoResult) {
       return is_zero;
@@ -373,7 +360,7 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
       if (cvars::spirv_debug_ieee_multiply || cvars::spirv_fast_zero_rule) {
         multiplicands_different = 0;
       }
-      // spirv_zero_rule_hybrid: only the lanes that may multiply an Inf or
+      // Zero rule hybrid: only the lanes that may multiply an Inf or
       // a NaN - some of them only under the interpolator condition.
       multiplicands_different &=
           zero_rule_exact_lanes_ | zero_rule_conditional_lanes_;
@@ -448,7 +435,7 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
                   different_operands[0], different_operands[1]),
               const_float_vectors_0_[different_count - 1]);
         }
-        // spirv_zero_rule_hybrid: the conditional lanes test only under the
+        // Zero rule hybrid: the conditional lanes test only under the
         // interpolator condition (a specialization constant).
         if (multiplicands_different & zero_rule_conditional_lanes_ &
             ~zero_rule_exact_lanes_) {

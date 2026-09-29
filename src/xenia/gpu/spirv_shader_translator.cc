@@ -30,8 +30,6 @@
 #include "xenia/gpu/gpu_flags.h"
 #include "xenia/gpu/spirv_shader.h"
 
-DECLARE_bool(spirv_zero_rule_hybrid);
-DECLARE_int32(spirv_zero_rule_hybrid_stages);
 
 namespace xe {
 namespace gpu {
@@ -274,10 +272,15 @@ uint32_t SpirvShaderTranslator::GetModificationRegisterCount() const {
 void SpirvShaderTranslator::StartTranslation() {
   {
     Modification modification = GetSpirvShaderModification();
+    // The Shader Model 3 zero rule (+0 times anything, Inf or NaN, is +0) is
+    // tested only where an operand can hold an Inf or a NaN from rcp, rsq,
+    // exp, log or sqrt (Shader::GetZeroRuleExactOperation); other multiplies
+    // are IEEE, as in DXVK's d3d9 default on Turnip. A draw whose shader reads
+    // an Inf or NaN float constant uses the exact variant (zero_rule_exact
+    // modification). Pixel-exact on 59 traces of 5 titles; the Adreno
+    // compiler needs about 15% fewer instructions (vertex -24%) and makes no
+    // more pipelines (2026-09-29).
     zero_rule_hybrid_ =
-        cvars::spirv_zero_rule_hybrid &&
-        (cvars::spirv_zero_rule_hybrid_stages &
-         (is_pixel_shader() ? 0b10 : 0b01)) &&
         !(is_vertex_shader() ? modification.vertex.zero_rule_exact
                              : modification.pixel.zero_rule_exact);
     zero_rule_spec_interpolators_ = spv::NoResult;

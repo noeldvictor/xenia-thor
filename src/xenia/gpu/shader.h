@@ -931,7 +931,7 @@ class Shader {
     return uses_register_dynamic_addressing_;
   }
 
-  // Shader Model 3 zero rule, hybrid (spirv_zero_rule_hybrid): for the ALU
+  // Shader Model 3 zero rule, hybrid: for the ALU
   // instruction at a ucode instruction address, the multiplies that need the
   // exact +0 * x = +0 test - the vector operation lanes (bits 0-3, xyzw of
   // the result) and the scalar operation (bit 4). `always`: an Inf or a NaN

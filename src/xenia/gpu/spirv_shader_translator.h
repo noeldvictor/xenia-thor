@@ -28,7 +28,7 @@ namespace gpu {
 
 class SpirvShaderTranslator : public ShaderTranslator {
  public:
-  // spirv_zero_rule_hybrid: pixel shaders, the interpolators the vertex
+  // Zero rule hybrid: pixel shaders, the interpolators the vertex
   // shader may export an Inf or a NaN to (a uint, SpecId).
   static constexpr uint32_t kSpecConstantZeroRuleInterpolators = 0;
 
@@ -80,7 +80,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // cull distances. Set only with the device feature for that.
       uint32_t user_clip_plane_count : 3;
       uint32_t user_clip_plane_cull : 1;
-      // spirv_zero_rule_hybrid: a float constant the shader reads is an Inf
+      // Zero rule hybrid: a float constant the shader reads is an Inf
       // or a NaN, so every multiply keeps the exact zero test.
       uint32_t zero_rule_exact : 1;
     } vertex;
@@ -149,7 +149,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
       // ir3 flattens the conversion into about 25 instructions per component
       // that run for every fetch (tools/turnip/shader_lab.py, 2026-09-24).
       uint32_t texture_sign_conversion : 1;
-      // spirv_zero_rule_hybrid: a float constant the shader reads is an Inf
+      // Zero rule hybrid: a float constant the shader reads is an Inf
       // or a NaN, so every multiply keeps the exact zero test.
       uint32_t zero_rule_exact : 1;
     } pixel;
@@ -882,7 +882,7 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // For Shader Model 3 multiplication (+-0 or denormal * anything = +0),
   // replaces the value with +0 if the minimum of the two operands is 0. This
   // must be called with absolute values of operands - use GetAbsoluteOperand!
-  // spirv_zero_rule_hybrid and not the zero_rule_exact modification: the
+  // the zero rule hybrid and not the zero_rule_exact modification: the
   // zero test only where Shader::GetZeroRuleExactOperation.
   bool zero_rule_hybrid_ = false;
   // Of the ALU operation being translated, the multiply lanes that need the

@@ -75,7 +75,6 @@ const RENDERDOC_API_1_0_0* BdGetRenderDocApi() {
 }  // namespace
 
 DECLARE_bool(spirv_fast_zero_rule);
-DECLARE_bool(spirv_zero_rule_hybrid);
 
 namespace xe {
 namespace gpu {
@@ -341,7 +340,7 @@ namespace {
 // spirv_fast_zero_rule: a NaN float constant becomes 0 (as DXVK's d3d9 fast
 // float emulation does) and an Inf one +-2^64, so 0 times a constant stays 0
 // without a test. Not exact: Inf * 2 is Inf, 2^64 * 2 is not - Gears has a
-// +Inf vertex constant (spirv_zero_rule_hybrid scans instead).
+// +Inf vertex constant (the zero rule hybrid scans instead).
 void FlushNanFloatConstants(uint8_t* begin, uint8_t* end) {
   for (uint8_t* p = begin; p + sizeof(uint32_t) <= end; p += sizeof(uint32_t)) {
     uint32_t bits;
@@ -7230,13 +7229,13 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
         pixel_shader ? pipeline_cache_->GetCurrentPixelShaderModification(
                            *pixel_shader, interpolator_mask, ps_param_gen_pos)
                      : SpirvShaderTranslator::Modification(0);
-    if (cvars::spirv_zero_rule_hybrid) {
-      vertex_shader_modification.vertex.zero_rule_exact =
-          uint32_t(ShaderReadsNonFiniteFloatConstant(*vertex_shader));
-      if (pixel_shader) {
-        pixel_shader_modification.pixel.zero_rule_exact =
-            uint32_t(ShaderReadsNonFiniteFloatConstant(*pixel_shader));
-      }
+    // The zero rule hybrid: a shader that reads an Inf or a NaN float
+    // constant keeps every zero test.
+    vertex_shader_modification.vertex.zero_rule_exact =
+        uint32_t(ShaderReadsNonFiniteFloatConstant(*vertex_shader));
+    if (pixel_shader) {
+      pixel_shader_modification.pixel.zero_rule_exact =
+          uint32_t(ShaderReadsNonFiniteFloatConstant(*pixel_shader));
     }
     // BD input-attachment merge (4a): when this draw is the merge consumer, flag
     // its pixel shader to read the producer fetch constant as a Vulkan INPUT

@@ -574,8 +574,7 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   reach an operand, IEEE elsewhere - 52.6% of the pixel tests and 94.3% of the vertex tests
   go (about -14% pixel, -30% vertex instructions). Parallel: Azahar (3DS, the same rule)
   defaults "accurate multiplication" off on Android and it drew Froakie white on an AYN Thor.
-- **Zero rule hybrid, built (2026-09-25, `spirv_zero_rule_hybrid`, default off until a
-  device A/B):** the exact test only on the lanes that may multiply an Inf or a NaN from
+- **Zero rule hybrid (built 2026-09-25; the only behavior since 2026-09-29, no cvar):** the exact test only on the lanes that may multiply an Inf or a NaN from
   rcp, rsq(c/f), exp, log(c) or sqrt (`Shader::GetZeroRuleExactOperation`, per ucode
   instruction address). The analysis goes in program order: a write that always runs (not
   predicated, unconditional exec, no forward jump over it) replaces the taint of its
@@ -596,8 +595,11 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   pixel -11.8% with the worst mask per shader (ceiling -26.5%; one bit for all
   interpolators gave -10.2%, none at all -12.5%, not exact). `cvar_ab` on 30 traces: 29
   exact, Gears 13183 noisy (A/B 0.7% vs A/A 1.5%). Validation layer: 0 errors. Android
-  NativeCore builds. `spirv_zero_rule_hybrid_stages` (1 vertex, 2 pixel, 3 both) is the
-  per-title lever. Next: the device frame time (the user's go).
+  NativeCore builds. 2026-09-29, after the fallthrough fix removed the 13183 noise:
+  `cvar_ab` 0 of 59 traces of 5 titles changed; shader lab over 4 titles (on top of the
+  LOD-bias change) -105,579 instructions (about -15%; vertex 119,584 -> 90,400, -24%), waves
+  +44, registers -69; the same pipeline count per trace. So the cvar and the per-stage lever
+  went; the next Gears device session shows the frame time.
 - **Gears' black light-shaft wedges and the 13183 replay noise: an NVIDIA fault with a switch
   case fallthrough (2026-09-29, fixed as the only behavior, no cvar - directive 17):** on the
   deep Gears route near the weapon pickup (320-330 s) the live PC game (Vulkan, NVIDIA) showed

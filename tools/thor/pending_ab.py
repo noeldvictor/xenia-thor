@@ -53,12 +53,6 @@ PLAN = [
         'heat: 20.4 -> 25.9 fps with both).'),
         arms=['base:global_lock_spin=0,rtl_critical_section_min_spin=0',
               'both:global_lock_spin=128,rtl_critical_section_min_spin=256']),
-    dict(id='zero_rule', entry='banjo_story', relaunch=True, why=(
-        'The Shader Model 3 zero rule tested only where rcp/rsq/exp/log results '
-        'reach (shader lab: pixel -11.8%, vertex -26.6% instructions; exact on 29 '
-        'of 30 traces). Shader translation - a relaunch per arm.'),
-        arms=['base:spirv_zero_rule_hybrid=false',
-              'hybrid:spirv_zero_rule_hybrid=true']),
 ]
 
 
