@@ -83,12 +83,12 @@ def last_rows():
     return rows
 
 
-def run_entry(name, spec):
+def run_entry(name, spec, extra_cvars=()):
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
     m.xenia_launch_cvars(set='vulkan_trace_pass_timestamps=true')
     m.xenia_launch_cvars(set='vulkan_trace_draw_outcomes_per_frame=true')  # the timing line prints inside its block
-    for c in spec.get('cvars', []):
+    for c in list(spec.get('cvars', [])) + list(extra_cvars):
         m.xenia_launch_cvars(set=c)
     temps = wait_cool()
     reached = False
@@ -145,7 +145,14 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('entries', nargs='*')
     ap.add_argument('--note', default='')
+    ap.add_argument('--cvars', default='',
+                    help='extra launch cvars for this run, name=value separated by spaces '
+                         '(an A/B arm that cannot switch live, tools/thor/pending_ab.py); '
+                         'they are added to the note of the row')
     args = ap.parse_args()
+    extra = [c for c in args.cvars.split() if c]
+    if extra:
+        args.note = (args.note + ' ' if args.note else '') + 'cvars: ' + ' '.join(extra)
     names = args.entries or list(ENTRIES)
     commit = subprocess.run(['git', 'rev-parse', '--short=10', 'HEAD'], cwd=ROOT, capture_output=True,
                             text=True).stdout.strip()
@@ -153,7 +160,7 @@ def main():
     prev = last_rows()
     stamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
     for name in names:
-        row = run_entry(name, ENTRIES[name])
+        row = run_entry(name, ENTRIES[name], extra)
         row.update({'date': stamp, 'commit': commit, 'build': build, 'note': args.note})
         with open(BOARD, 'a', encoding='utf-8') as f:
             f.write(json.dumps({k: v for k, v in row.items() if k != 'shot'}) + '\n')

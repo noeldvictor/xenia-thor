@@ -962,6 +962,25 @@ Standing facts:
   depth 3 - it said depth 18).
 - Retro 2026-09-27 (3, reflex): a new gate logs why it rejects from its first build; a break
   cause read from barrier shapes is a guess until `rt_transfers` shows the transfers.
+- PC checks, 2026-09-29: Vulkan (Thor profile) against D3D12 on the 40 traces - no regression
+  (Gears 0.01-0.13%, 13183 0.62% noise; Banjo 2-4.3%, single pixels in the grass dither and
+  fine ground noise, not visible; MC2 up to 0.44%; Blue Dragon 0.00%). Shader lab: removing the
+  texture fetch exponent bias saves 1.2% of the pixel instructions (most of it sits in the
+  per-wave preamble) - not worth a modification bit. The PC profile's busy timer thread is a
+  Windows artifact (sub-millisecond `Sleep` is `Sleep(0)`; Android sleeps in `nanosleep`).
+  Gears' render thread polls in 8222F460 (eight `mr r31,r31` priority hints, a flag and a
+  5000-tick timeout) - the game waiting, as on the console. `gears2.iso` is still the
+  incomplete 1.76 GB pull.
+- Retro 2026-09-29 (1, slow): six built levers wait for a device A/B, some for three days; each
+  session would have been prepared by hand, `gpu_uma_smart_sync_pages` could not be switched
+  live (the page tracking was allocated at start only when it was on), and `live_ab`'s heat
+  stop was 46 C against the 44 C rule.
+- Retro 2026-09-29 (2, tool, exists now): `tools/thor/pending_ab.py` (MCP `xenia_pending_ab`)
+  holds the owed A/Bs as one plan - scene, arms, why, live or relaunch - and runs one item with
+  `live_ab` after the user's go; smart-sync pages switch live (tracking always on with
+  smart-sync); `live_ab` stops at 44 C; `scoreboard.py --cvars` for relaunch arms.
+- Retro 2026-09-29 (3, reflex): a new lever reads its cvar where it acts (live-switchable) and
+  gets its line in `pending_ab.py` in the same commit.
 - Retro 2026-09-27 (4, reflex, tool exists now): judge a tiler lever by render pass begins and
   resumes ("GPU pass resumes/frame", `frame_timeline` columns `passes` and `resumes`), not by
   breaks - the eager texture reload removed 3-6 breaks a frame and 0 resumes, and a live A/B of
@@ -1049,6 +1068,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `vulkan_trace_resolve_resumes N` | per resolve: the source render target and whether the open pass had it bound, whether the next pass resumes the framebuffer, and how many of its draws sample the destination; per frame "Resolve use" lines (sampled, overwritten, DEAD) and "Resolve uses/frame" with the D/s/L pattern; with `gpu_skip_dead_resolves` the "Dead resolve probe" lines name the first read that hit each resolve |
 | `vulkan_debug_drop_resolves "i,j"` | research: skip the copy of these resolves of every frame (1-based among the copying resolves) - a dead one must leave the frame pixel-identical; the upper bound of `gpu_skip_dead_resolves` |
 | `GPU dead resolves/frame` (with `gpu_skip_dead_resolves` and `vulkan_trace_draw_outcomes_per_frame`) | resolves, dead, skipped, mispredicted and the skipped KB per frame; `frame_timeline.py` prints the means |
+| `tools/thor/pending_ab.py`, `xenia_pending_ab` | the owed device A/Bs as one plan (scene, arms, why, live or relaunch); `--run ITEM` runs one with `live_ab.py` - only after the user's go |
 | `tools/pc/rt_transfers.py`, `xenia_rt_transfers` | what moves EDRAM between render targets in a traced frame: the ownership transfers grouped by destination <- source (base, pitch, MSAA, format) with the draws that caused them, the pass breaks by cause, and the 4x MSAA depth clears folded or why not. 2026-09-27: named Gears' 4x shadow clears in one replay |
 | `gpu_trace_render_target_transfers N` | the first N ownership transfers ("RT transfer" lines) and, for 4x MSAA depth draws, why `gpu_fold_msaa_depth_clears` did not fold them ("MSAA fold: rejected") |
 | `gpu_debug_log_draws` | now also RB_SURFACE_INFO (pitch, MSAA), RB_DEPTH_INFO and RB_COLOR_INFO 0 per draw; `draw_bisect` filters can use `surface`, `depthinfo`, `color0info` |

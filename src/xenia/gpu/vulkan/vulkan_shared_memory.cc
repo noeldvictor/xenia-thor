@@ -508,8 +508,10 @@ bool VulkanSharedMemory::Initialize() {
       Shutdown();
       return false;
     }
-    if (buffer_host_visible_ && cvars::gpu_uma_smart_sync &&
-        cvars::gpu_uma_smart_sync_pages) {
+    // The page use is tracked whenever smart-sync runs, so that
+    // gpu_uma_smart_sync_pages can be switched live (tools/thor/live_ab.py):
+    // a few stores per request.
+    if (buffer_host_visible_ && cvars::gpu_uma_smart_sync) {
       EnablePageGpuUseTracking();
     }
     if (buffer_host_visible_) {
@@ -1236,7 +1238,8 @@ bool VulkanSharedMemory::UploadRangesDirect(
             ? version_last_read_submission_[current_version_]
             : uma_last_read_submission_;
     // gpu_uma_smart_sync_pages: the pages being written, reads and writes.
-    const bool per_page = !double_buffer_enabled_ && IsPageGpuUseTracked();
+    const bool per_page = cvars::gpu_uma_smart_sync_pages &&
+                          !double_buffer_enabled_ && IsPageGpuUseTracked();
     if (per_page) {
       wait_submission = PageGpuUseLatest(upload_page_ranges);
     }

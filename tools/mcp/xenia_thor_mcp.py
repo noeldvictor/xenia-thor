@@ -1306,6 +1306,19 @@ def xenia_rt_transfers(traces: str, cvars: str = '', thor_profile: bool = False,
 
 
 @mcp.tool()
+def xenia_pending_ab(run: str = '', rounds: int = 2, seconds: float = 8.0) -> str:
+    """The device A/Bs that are owed, as one plan (tools/thor/pending_ab.py):
+    per item the scoreboard scene, the arms, why, and whether the arms switch
+    live in one launch (tools/thor/live_ab.py) or need a relaunch per arm.
+    run ITEM runs one item ON THE DEVICE - only after the user's go for the
+    session (5 minutes, 44 C case). Without run: the plan only, no device."""
+    args = []
+    if run:
+        args += ['--run', run, '--rounds', str(rounds), '--seconds', str(seconds)]
+    return _run_tool_script('tools/thor/pending_ab.py', args, timeout=1800)
+
+
+@mcp.tool()
 def xenia_trace_bench(traces: str, iterations: int = 30, cvars: str = '',
                       a: str = '', b: str = '', thor_profile: bool = False) -> str:
     """The command processor's CPU cost per draw on the PC (tools/pc/

@@ -40,8 +40,9 @@ def main():
     ap.add_argument('arms', nargs='+')
     ap.add_argument('--rounds', type=int, default=2)
     ap.add_argument('--seconds', type=float, default=8.0)
-    ap.add_argument('--max-case-c', type=float, default=46.0,
-                    help='stop the run when the case passes this temperature')
+    ap.add_argument('--max-case-c', type=float, default=44.0,
+                    help='stop the run when the case passes this temperature '
+                         '(the device rule: 44 C case)')
     args = ap.parse_args()
     arms = [parse_arm(a) for a in args.arms]
     spec = dict(scoreboard.ENTRIES[args.entry])
