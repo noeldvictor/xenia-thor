@@ -1309,6 +1309,23 @@ def xenia_aa_hunt(trace: str, flips: str = '', runs: int = 3, cvars: str = '',
 
 
 @mcp.tool()
+def xenia_cf_census(traces: str = '', shaders: str = '', cvars: str = '') -> str:
+    """Which guest shaders still need the program counter switch, and why
+    (tools/pc/cf_census.py): replays the traces with --dump_shaders (or reads
+    `shaders`, a dump directory) and counts, among the shaders with labels,
+    the structured ones (forward jumps as nested if/else, no loop) and the
+    reason for each other one (loop or call, backward jump, crossing regions,
+    an unconditional jump that is not the end of a "then" part), with an
+    example per reason. 2026-09-29: 117 of 126 over 4 titles. PC only."""
+    args = [t for t in traces.split() if t]
+    if shaders:
+        args += ['--shaders', shaders]
+    if cvars:
+        args += ['--cvars', cvars]
+    return _run_tool_script('tools/pc/cf_census.py', args, timeout=1800)
+
+
+@mcp.tool()
 def xenia_rt_transfers(traces: str, cvars: str = '', thor_profile: bool = False,
                        draws: int = 3, warm: int = 0) -> str:
     """What moves EDRAM between render targets in a traced frame, and why

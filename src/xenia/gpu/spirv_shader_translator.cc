@@ -255,6 +255,10 @@ void SpirvShaderTranslator::Reset() {
 
   main_switch_op_.reset();
   main_switch_next_pc_phi_operands_.clear();
+  main_switch_used_ = false;
+  structured_forward_jumps_ = false;
+  structured_jump_regions_.clear();
+  structured_jump_else_ends_.clear();
 
   cf_exec_conditional_merge_ = nullptr;
   cf_instruction_predicate_merge_ = nullptr;
@@ -837,8 +841,12 @@ void SpirvShaderTranslator::StartTranslation() {
   builder_->createBranch(main_loop_header_);
 
   // If no jumps, don't create a switch, but still create a loop so exece can
-  // break.
-  bool has_main_switch = !current_shader().label_addresses().empty();
+  // break. Neither if the jumps can be selection constructs.
+  structured_forward_jumps_ = !current_shader().label_addresses().empty() &&
+                              AnalyzeStructuredForwardJumps();
+  main_switch_used_ = !current_shader().label_addresses().empty() &&
+                      !structured_forward_jumps_;
+  bool has_main_switch = main_switch_used_;
 
   // Main loop header - based on whether it's the first iteration (entered from
   // the function or from the continuation), choose the program counter.
@@ -893,7 +901,11 @@ std::vector<uint8_t> SpirvShaderTranslator::CompleteTranslation() {
   if (!is_depth_only_fragment_shader_) {
     // Close flow control within the last switch case.
     CloseExecConditionals();
-    bool has_main_switch = !current_shader().label_addresses().empty();
+    // Jump regions with the target after the last instruction end here.
+    while (!structured_jump_regions_.empty()) {
+      CloseStructuredJumpRegion();
+    }
+    bool has_main_switch = main_switch_used_;
     // After the final exec (if it happened to be not exece, which would already
     // have a break branch), break from the switch if it exists, or from the
     // loop it doesn't.
@@ -1130,6 +1142,29 @@ void SpirvShaderTranslator::ProcessLabel(uint32_t cf_index) {
   // Close flow control within the previous switch case.
   CloseExecConditionals();
 
+  if (structured_forward_jumps_) {
+    // The regions of the jumps to this label end here (innermost first). A
+    // "then" part with an "else" part continues in the "else" part.
+    while (!structured_jump_regions_.empty() &&
+           structured_jump_regions_.back().target_address == cf_index) {
+      StructuredJumpRegion& region = structured_jump_regions_.back();
+      if (region.else_block) {
+        // The "then" part ended with the unconditional jump to the merge.
+        if (!builder_->getBuildPoint()->isTerminated()) {
+          builder_->createBranch(region.merge);
+        }
+        spv::Block* else_block = region.else_block;
+        region.target_address = region.else_end_address;
+        region.else_block = nullptr;
+        function_main_->addBlock(else_block);
+        builder_->setBuildPoint(else_block);
+        break;
+      }
+      CloseStructuredJumpRegion();
+    }
+    return;
+  }
+
   spv::Function& function = builder_->getBuildPoint()->getParent();
   // Create the next switch case.
   spv::Block* new_case = new spv::Block(builder_->getUniqueId(), function);
@@ -1168,9 +1203,8 @@ void SpirvShaderTranslator::ProcessExecInstructionEnd(
     // Break out of the main switch (if exists) and the main loop.
     CloseInstructionPredication();
     if (!builder_->getBuildPoint()->isTerminated()) {
-      builder_->createBranch(current_shader().label_addresses().empty()
-                                 ? main_loop_merge_
-                                 : main_switch_merge_);
+      builder_->createBranch(main_switch_used_ ? main_switch_merge_
+                                               : main_loop_merge_);
     }
   }
   UpdateExecConditionals(instr.type, instr.bool_constant_index,
@@ -1414,6 +1448,46 @@ void SpirvShaderTranslator::ProcessJumpInstruction(
     type = ParsedExecInstruction::Type::kPredicated;
   } else {
     type = ParsedExecInstruction::Type::kUnconditional;
+  }
+
+  if (structured_forward_jumps_) {
+    CloseExecConditionals();
+    EnsureBuildPointAvailable();
+    if (type == ParsedExecInstruction::Type::kUnconditional) {
+      // The end of the "then" part of an if/else: skip the "else" part
+      // (AnalyzeStructuredForwardJumps checked that the innermost region is
+      // that "then" part and ends after this instruction).
+      assert_false(structured_jump_regions_.empty());
+      builder_->createBranch(structured_jump_regions_.back().merge);
+      return;
+    }
+    // A forward jump skips the code until its target: open a selection
+    // construct that runs that code when the jump is not taken, closed at the
+    // target label (AnalyzeStructuredForwardJumps checked that the regions
+    // nest). With an "else" part, the taken jump goes to the "else" block.
+    spv::Id condition_id = LoadExecCondition(type, instr.bool_constant_index);
+    spv::Block* merge = new spv::Block(builder_->getUniqueId(),
+                                       builder_->getBuildPoint()->getParent());
+    spv::Block* else_block = nullptr;
+    uint32_t else_end_address = 0;
+    auto else_end_it = structured_jump_else_ends_.find(instr.dword_index);
+    if (else_end_it != structured_jump_else_ends_.end()) {
+      else_block = new spv::Block(builder_->getUniqueId(),
+                                  builder_->getBuildPoint()->getParent());
+      else_end_address = else_end_it->second;
+    }
+    spv::Block* taken_block = else_block ? else_block : merge;
+    builder_->createSelectionMerge(merge,
+                                   spv::SelectionControlDontFlattenMask);
+    spv::Block& not_taken_block = builder_->makeNewBlock();
+    // Taken when the condition equals the expected value.
+    builder_->createConditionalBranch(
+        condition_id, instr.condition ? taken_block : &not_taken_block,
+        instr.condition ? &not_taken_block : taken_block);
+    builder_->setBuildPoint(&not_taken_block);
+    structured_jump_regions_.push_back(
+        {instr.target_address, merge, else_block, else_end_address});
+    return;
   }
   UpdateExecConditionals(type, instr.bool_constant_index, instr.condition);
 
@@ -3192,7 +3266,29 @@ void SpirvShaderTranslator::UpdateExecConditionals(
   }
 
   EnsureBuildPointAvailable();
-  spv::Id condition_id;
+  spv::Id condition_id = LoadExecCondition(type, bool_constant_index);
+  if (condition_id == spv::NoResult) {
+    assert_unhandled_case(type);
+    return;
+  }
+  cf_exec_bool_constant_or_predicate_ =
+      type == ParsedExecInstruction::Type::kConditional
+          ? bool_constant_index
+          : kCfExecBoolConstantPredicate;
+  cf_exec_condition_ = condition;
+  cf_exec_conditional_merge_ = new spv::Block(
+      builder_->getUniqueId(), builder_->getBuildPoint()->getParent());
+  builder_->createSelectionMerge(cf_exec_conditional_merge_,
+                                 spv::SelectionControlDontFlattenMask);
+  spv::Block& inner_block = builder_->makeNewBlock();
+  builder_->createConditionalBranch(
+      condition_id, condition ? &inner_block : cf_exec_conditional_merge_,
+      condition ? cf_exec_conditional_merge_ : &inner_block);
+  builder_->setBuildPoint(&inner_block);
+}
+
+spv::Id SpirvShaderTranslator::LoadExecCondition(
+    ParsedExecInstruction::Type type, uint32_t bool_constant_index) {
   if (type == ParsedExecInstruction::Type::kConditional) {
     id_vector_temp_.clear();
     // Bool constants (member 0).
@@ -3208,31 +3304,109 @@ void SpirvShaderTranslator::UpdateExecConditionals(
                                  spv::StorageClassUniform,
                                  uniform_bool_loop_constants_, id_vector_temp_),
                              spv::NoPrecision);
-    condition_id = builder_->createBinOp(
+    return builder_->createBinOp(
         spv::OpINotEqual, type_bool_,
         builder_->createBinOp(
             spv::OpBitwiseAnd, type_uint_, bool_constant_scalar,
             builder_->makeUintConstant(uint32_t(1)
                                        << (bool_constant_index & 31))),
         const_uint_0_);
-    cf_exec_bool_constant_or_predicate_ = bool_constant_index;
-  } else if (type == ParsedExecInstruction::Type::kPredicated) {
-    condition_id = builder_->createLoad(var_main_predicate_, spv::NoPrecision);
-    cf_exec_bool_constant_or_predicate_ = kCfExecBoolConstantPredicate;
-  } else {
-    assert_unhandled_case(type);
-    return;
   }
-  cf_exec_condition_ = condition;
-  cf_exec_conditional_merge_ = new spv::Block(
-      builder_->getUniqueId(), builder_->getBuildPoint()->getParent());
-  builder_->createSelectionMerge(cf_exec_conditional_merge_,
-                                 spv::SelectionControlDontFlattenMask);
-  spv::Block& inner_block = builder_->makeNewBlock();
-  builder_->createConditionalBranch(
-      condition_id, condition ? &inner_block : cf_exec_conditional_merge_,
-      condition ? cf_exec_conditional_merge_ : &inner_block);
-  builder_->setBuildPoint(&inner_block);
+  if (type == ParsedExecInstruction::Type::kPredicated) {
+    return builder_->createLoad(var_main_predicate_, spv::NoPrecision);
+  }
+  return spv::NoResult;
+}
+
+bool SpirvShaderTranslator::AnalyzeStructuredForwardJumps() {
+  structured_jump_else_ends_.clear();
+  const Shader& shader = current_shader();
+  const uint32_t* ucode_dwords = shader.ucode_data().data();
+  uint32_t cf_pair_index_bound = shader.cf_pair_index_bound();
+  struct Region {
+    uint32_t end;
+    // The conditional jump that opened the region (for the "then" part).
+    uint32_t jump_index;
+    bool is_else;
+    bool has_else;
+    uint32_t else_end;
+  };
+  // Innermost last; the ends never increase toward the top.
+  std::vector<Region> open;
+  for (uint32_t i = 0; i < cf_pair_index_bound; ++i) {
+    ucode::ControlFlowInstruction cf_ab[2];
+    ucode::UnpackControlFlowInstructions(ucode_dwords + i * 3, cf_ab);
+    for (uint32_t j = 0; j < 2; ++j) {
+      uint32_t cf_index = i * 2 + j;
+      while (!open.empty() && open.back().end == cf_index) {
+        Region region = open.back();
+        open.pop_back();
+        if (region.has_else) {
+          open.push_back({region.else_end, region.jump_index, true, false, 0});
+          break;
+        }
+      }
+      if (!open.empty() && open.back().end <= cf_index) {
+        return false;
+      }
+      const ucode::ControlFlowInstruction& cf = cf_ab[j];
+      switch (cf.opcode()) {
+        case ucode::ControlFlowOpcode::kLoopStart:
+        case ucode::ControlFlowOpcode::kLoopEnd:
+        case ucode::ControlFlowOpcode::kCondCall:
+        case ucode::ControlFlowOpcode::kReturn:
+          return false;
+        case ucode::ControlFlowOpcode::kCondJmp: {
+          ParsedJumpInstruction instr;
+          ParseControlFlowCondJmp(cf.cond_jmp, cf_index, instr);
+          uint32_t target = instr.target_address;
+          if (target <= cf_index) {
+            return false;
+          }
+          if (instr.type == ParsedJumpInstruction::Type::kUnconditional) {
+            // Only as the last instruction of a "then" part, to after the
+            // label that ends it, and inside the enclosing region.
+            if (open.empty()) {
+              return false;
+            }
+            Region& then_region = open.back();
+            if (then_region.is_else || then_region.has_else ||
+                then_region.end != cf_index + 1 || target <= cf_index + 1) {
+              return false;
+            }
+            if (open.size() >= 2 && target > open[open.size() - 2].end) {
+              return false;
+            }
+            then_region.has_else = true;
+            then_region.else_end = target;
+            structured_jump_else_ends_[then_region.jump_index] = target;
+            break;
+          }
+          // A region that ends after the enclosing one does not nest.
+          if (!open.empty() && target > open.back().end) {
+            return false;
+          }
+          open.push_back({target, cf_index, false, false, 0});
+        } break;
+        default:
+          break;
+      }
+    }
+  }
+  return true;
+}
+
+void SpirvShaderTranslator::CloseStructuredJumpRegion() {
+  assert_false(structured_jump_regions_.empty());
+  assert_true(!structured_jump_regions_.back().else_block);
+  spv::Block* merge = structured_jump_regions_.back().merge;
+  structured_jump_regions_.pop_back();
+  spv::Block& inner_block = *builder_->getBuildPoint();
+  if (!inner_block.isTerminated()) {
+    builder_->createBranch(merge);
+  }
+  inner_block.getParent().addBlock(merge);
+  builder_->setBuildPoint(merge);
 }
 
 void SpirvShaderTranslator::UpdateInstructionPredication(bool predicated,

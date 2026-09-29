@@ -635,6 +635,21 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   image at that spot on Turnip. Found on the way and fixed: the load-DONT_CARE
   proof of `gpu_edram_passes_dont_care_safe` (off by default) dropped the stencil of a
   depth-only clear; it now requires an always-pass stencil replace of all 8 bits.
+- **Structured control flow for forward jumps (2026-09-29, the only behavior; from
+  XenosRecomp):** a shader with labels was always a loop with a program counter switch. Now,
+  when every jump is forward and the skipped regions nest
+  (`SpirvShaderTranslator::AnalyzeStructuredForwardJumps`), the translator writes the jumps as
+  nested selection constructs and keeps only the one-pass loop that `exece` breaks. A
+  conditional jump skips to its target. An unconditional jump is allowed only as the last
+  instruction of a conditional region: that region is then the "then" part of an if/else,
+  and the "else" part runs to the unconditional jump's target (the compiled if/else form).
+  4 titles: 117 of 126 shaders with labels are structured
+  (`tools/pc/cf_census.py`: 4 crossing regions, 4 other unconditional jumps, 1 loop).
+  `cvar_ab` over 59 traces of 5 titles: 0 changed; spirv-val: 0 of 478 fail. The Adreno
+  compiler had already reduced most switch loops: 4 shaders change, -890 instructions (up to
+  -326 in B580B862A05B91BC). The gain is small; the reason to keep it is that no driver
+  compiles the switch loop for these shaders any more (the NVIDIA fault above). Next in this
+  class: crossing regions, then Xenos loops as real loops (XenosRecomp writes `for`).
 - **Sign specialization CPU cost (2026-09-25, `trace_bench --a/--b`):** `SwizzleSigns` per
   bound texture per draw cost prep +266 us per frame on Banjo; the raw sign fields of dword 0
   (one load) leave +82 us, the rest within the bench noise; 0 changed pixels on 6 traces.
@@ -1092,6 +1107,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `vulkan_trace_resolve_resumes N` | per resolve: the source render target and whether the open pass had it bound, whether the next pass resumes the framebuffer, and how many of its draws sample the destination; per frame "Resolve use" lines (sampled, overwritten, DEAD) and "Resolve uses/frame" with the D/s/L pattern; with `gpu_skip_dead_resolves` the "Dead resolve probe" lines name the first read that hit each resolve |
 | `vulkan_debug_drop_resolves "i,j"` | research: skip the copy of these resolves of every frame (1-based among the copying resolves) - a dead one must leave the frame pixel-identical; the upper bound of `gpu_skip_dead_resolves` |
 | `GPU dead resolves/frame` (with `gpu_skip_dead_resolves` and `vulkan_trace_draw_outcomes_per_frame`) | resolves, dead, skipped, mispredicted and the skipped KB per frame; `frame_timeline.py` prints the means |
+| `tools/pc/cf_census.py`, `xenia_cf_census` | which guest shaders still need the program counter switch and why: the shaders with labels, structured (nested if/else) or the reason not (loop or call, backward jump, crossing regions, other unconditional jump), one example each |
 | `tools/pc/aa_hunt.py`, `xenia_aa_hunt` | is a Vulkan replay nondeterministic, on which GPU, and which setting needs it: N replays for the baseline, per Vulkan device (`--devices 0,1`: NVIDIA, Intel) and per flipped cvar, the pixels that differ between replays (a failed replay is reported, never "deterministic"). One device at 0 where the other varies = a driver-specific fault (the Gears wedges, 2026-09-29) |
 | `vulkan_debug_dump_draw_state=N`, `vulkan_debug_full_barrier_each_draw` (cvars) | the host state of draw N in every frame as "Draw state" log lines - diff two replays to find state the CPU sets differently; and a full memory barrier with the render pass ended before every draw - a replay that still varies has no race between GPU commands |
 | `tools/renderdoc/rd_target_dump.py` | the raw depth target (every sample) after given events (`prev:<eid>` adds the draw before) to files: compare two captures, or two replays of one capture, byte by byte |

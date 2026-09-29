@@ -799,6 +799,21 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // needed (for example, in jumps).
   void UpdateExecConditionals(ParsedExecInstruction::Type type,
                               uint32_t bool_constant_index, bool condition);
+  // The value of the bool constant, or of the predicate, that a conditional
+  // or a predicated exec or jump tests.
+  spv::Id LoadExecCondition(ParsedExecInstruction::Type type,
+                            uint32_t bool_constant_index);
+  // Whether every jump of the shader is forward, the skipped regions nest,
+  // and there are no loops and no calls: then the jumps become nested
+  // selection constructs and the shader has no program counter switch (like
+  // XenosRecomp's flattened control flow). A conditional jump skips to its
+  // target; an unconditional jump is allowed only as the last instruction of
+  // a conditional region, which then is the "then" part of an if/else whose
+  // "else" part runs from the region's target to the unconditional jump's
+  // target. Fills structured_jump_else_ends_.
+  bool AnalyzeStructuredForwardJumps();
+  // Closes the innermost structured jump region (at its target label).
+  void CloseStructuredJumpRegion();
   // Opens or reopens the predicate check conditional for the instruction.
   // Should be called before processing a non-control-flow instruction.
   void UpdateInstructionPredication(bool predicated, bool condition);
@@ -1382,6 +1397,24 @@ class SpirvShaderTranslator : public ShaderTranslator {
   std::unique_ptr<spv::Instruction> main_switch_op_;
   spv::Block* main_switch_merge_;
   std::vector<spv::Id> main_switch_next_pc_phi_operands_;
+  // The shader has labels and is translated with the program counter switch
+  // in the main loop.
+  bool main_switch_used_;
+  // Labels without the switch: each forward jump opens a selection construct
+  // that runs the code until its target label when the jump is not taken.
+  bool structured_forward_jumps_;
+  struct StructuredJumpRegion {
+    // The label where the region ends.
+    uint32_t target_address;
+    spv::Block* merge;
+    // For the "then" part of an if/else: the "else" part's first block and
+    // the label where the "else" part ends.
+    spv::Block* else_block;
+    uint32_t else_end_address;
+  };
+  std::vector<StructuredJumpRegion> structured_jump_regions_;
+  // Conditional jump CF index -> the end of its "else" part (if/else only).
+  std::unordered_map<uint32_t, uint32_t> structured_jump_else_ends_;
 
   // If the exec bool constant / predicate conditional is open, block after it
   // (not added to the function yet).
