@@ -1765,7 +1765,22 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
         // k2D.
         // 3D vectors for k3DOrStacked, kCube.
         spv::Id gradients_h = spv::NoResult, gradients_v = spv::NoResult;
-        if (use_computed_lod) {
+        // In a pixel shader, the coarse screen-space derivatives scaled by
+        // 2^lod select the same level as the implicit derivatives with a bias
+        // of lod - sample with the bias. The Adreno compiler turns a sample with
+        // gradients into a long sequence: over 4 titles, 286 of 477 shaders
+        // lost 70,481 instructions (about 9%; about 520 in a shader with a few
+        // fetches), 12,326 of them nops (2026-09-29, shader lab). The picture
+        // changes by rounding only (the host's own derivatives): 21 of 59 traces
+        // differ, at most 0.85% of the pixels, 0.0013% by more than 8. Stacked
+        // textures need the Z gradient for their filter choice and keep the
+        // gradients, as do register gradients and vertex shaders. The sum of the
+        // sampler and shader biases is clamped to maxSamplerLodBias (15 or
+        // more), which already is past the last level of any texture.
+        bool use_bias_lod = use_computed_lod && is_pixel_shader() &&
+                            !instr.attributes.use_register_gradients &&
+                            instr.dimension != xenos::FetchOpDimension::k3DOrStacked;
+        if (use_computed_lod && !use_bias_lod) {
           // TODO(Triang3l): Gradient exponent adjustment is currently not done
           // in getCompTexLOD, so not doing it here too for now. Apply the
           // gradient exponent biases from the word 4 of the fetch constant in
@@ -1956,11 +1971,15 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
 
         // Sample the texture.
         spv::ImageOperandsMask image_operands_mask =
-            use_computed_lod ? spv::ImageOperandsGradMask
-                             : spv::ImageOperandsLodMask;
+            use_bias_lod ? spv::ImageOperandsBiasMask
+            : use_computed_lod ? spv::ImageOperandsGradMask
+                               : spv::ImageOperandsLodMask;
         spv::Id sample_result_unsigned, sample_result_signed;
         if (!use_computed_lod) {
           texture_parameters.lod = lod;
+        }
+        if (use_bias_lod) {
+          texture_parameters.bias = lod;
         }
         if (instr.dimension == xenos::FetchOpDimension::k3DOrStacked) {
           // 3D (3 coordinate components, 3 gradient components, single fetch)
@@ -2232,7 +2251,7 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
               builder_->createOp(spv::OpImageRead, type_float4_, id_vector_temp_);
           sample_result_signed = sample_result_unsigned;
         } else {
-          if (use_computed_lod) {
+          if (use_computed_lod && !use_bias_lod) {
             texture_parameters.gradX = gradients_h;
             texture_parameters.gradY = gradients_v;
           }

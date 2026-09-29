@@ -1246,8 +1246,10 @@ def xenia_shader_lab(traces: str = '', cvars: str = '', label: str = 'latest',
     traces: space-separated .xtr paths to replay first with cvars (default: the
     last spirv_validate dump). baseline: an earlier label to diff against (a
     translator change measured without the device). only: comma-separated
-    shader hashes; ir: also write the NIR and ir3 assembly. Found the texture
-    sign conversion cost (2026-09-24). PC only (WSL)."""
+    shader hashes; ir: also write the NIR and ir3 assembly and print the ir3
+    opcode mix (per stage and for the costliest shaders). Found the texture
+    sign conversion cost (2026-09-24) and the gradient samples (2026-09-29).
+    PC only (WSL)."""
     args = ['--label', label, '--top', str(top)]
     if traces:
         args += ['--traces'] + [t for t in traces.split() if t]

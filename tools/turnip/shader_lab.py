@@ -32,6 +32,7 @@ import glob
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -355,7 +356,8 @@ def main():
     ap.add_argument('--label', default='latest')
     ap.add_argument('--baseline', default='')
     ap.add_argument('--top', type=int, default=15)
-    ap.add_argument('--ir', action='store_true')
+    ap.add_argument('--ir', action='store_true',
+                    help='write the NIR and ir3 assembly, and print the ir3 opcode mix')
     ap.add_argument('--relax', default='',
                     help='alu, tex or alu,tex: decorate the fragment modules\' float '
                          'results RelaxedPrecision (16-bit on the Adreno) - the upper bound '
@@ -533,8 +535,54 @@ def main():
                 print('  %-26s %+d' % (n, total))
         for name, d in sorted(diffs, key=lambda x: -abs(x[1].get('Instruction Count', 0)))[:args.top]:
             print('  %-36s %s' % (name, ' '.join('%s %+d' % (short[n], v) for n, v in d.items() if v)))
+    if ir_dir:
+        print_opcode_mix(ok, ir_dir, args.top)
     print('\nresult', os.path.relpath(result_path, ROOT))
     return 0
+
+
+IR3_OP_RE = re.compile(r'\s*(?:\([^)]*\)\s*)*([a-z][a-z0-9_]*)')
+
+
+def ir3_opcodes(path):
+    """Opcode counts of one ir3 disassembly file (the last listing of it)."""
+    counts = collections.Counter()
+    for line in open(path, errors='replace'):
+        stripped = line.strip()
+        if not stripped or stripped[0] in '@;#:' or stripped.endswith(':'):
+            continue
+        m = IR3_OP_RE.match(line)
+        if m:
+            counts[m.group(1)] += 1
+    return counts
+
+
+def print_opcode_mix(ok, ir_dir, top):
+    """With --ir: which ir3 opcodes the shaders spend their instructions on,
+    per stage and for the costliest shaders (2026-09-29: 28% sel/cmps from the
+    zero rule, and the gradient samples, in Gears' 64225B4D0B13ACD3)."""
+    for stage, exe in (('vertex', 'VS'), ('fragment', 'FS')):
+        group = [r for r in ok if r['stage'] == stage]
+        total = collections.Counter()
+        per_shader = {}
+        for r in group:
+            files = sorted(glob.glob(os.path.join(ir_dir, '%s.%s.*.txt' % (r['name'], exe))))
+            if not files:
+                continue
+            per_shader[r['name']] = ir3_opcodes(files[-1])
+            total.update(per_shader[r['name']])
+        if not total:
+            continue
+        count = sum(total.values())
+        print('\n%s ir3 opcode mix over %d shaders (%d lines): %s' % (
+            stage, len(per_shader), count,
+            ', '.join('%s %.1f%%' % (op, 100.0 * n / count) for op, n in total.most_common(14))))
+        for r in sorted(group, key=lambda r: -r['stats'].get('Instruction Count', 0))[:min(top, 5)]:
+            c = per_shader.get(r['name'])
+            if c:
+                n = sum(c.values())
+                print('  %-36s %s' % (r['name'], ', '.join(
+                    '%s %d' % (op, k) for op, k in c.most_common(10))))
 
 
 if __name__ == '__main__':

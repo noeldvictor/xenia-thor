@@ -650,6 +650,18 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   -326 in B580B862A05B91BC). The gain is small; the reason to keep it is that no driver
   compiles the switch loop for these shaders any more (the NVIDIA fault above). Next in this
   class: crossing regions, then Xenos loops as real loops (XenosRecomp writes `for`).
+- **Texture fetches sample with a LOD bias, not gradients (2026-09-29, the only behavior):**
+  a computed-LOD fetch in a pixel shader took coarse derivatives, scaled them by 2^lod and
+  sampled with `Grad` (like `SampleD` in DXBC). The Adreno compiler makes a long sequence of
+  a sample with gradients: in Gears' `64225B4D0B13ACD3` (87 guest instructions, 11 fetches)
+  there were 2,138 Adreno instructions. Now the fetch samples with the implicit LOD and
+  `Bias` = lod (1D, 2D and cube; stacked textures, register gradients and vertex shaders keep
+  the gradients). Shader lab over 4 titles: 286 of 477 shaders change, instructions -70,481
+  (about -9%, about -520 in a shader with a few fetches), nops -12,326, waves +20, registers
+  -34. The picture changes by rounding only (the host's derivatives): `cvar_ab` 21 of 59
+  traces differ, at most 0.85% of the pixels, 0.0013% by more than 8 (Banjo's face close-up:
+  9 pixels, no visible change); Gears at most 2 levels, MC2 and Blue Dragon 0. The next
+  Gears device session shows the frame time.
 - **Sign specialization CPU cost (2026-09-25, `trace_bench --a/--b`):** `SwizzleSigns` per
   bound texture per draw cost prep +266 us per frame on Banjo; the raw sign fields of dword 0
   (one load) leave +82 us, the rest within the bench noise; 0 changed pixels on 6 traces.
@@ -1093,7 +1105,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `pc_run.py` / `pc_matrix.py --thor-profile` | the Thor's whole configuration on the PC: the Android defaults and every default-on app toggle that runs on x64 (kernel handle cache and fast path, lock-free global lock check, XMA idle lock skip, timer idle sleep, readable zero page, the PPC/HIR front-end folds, the Vulkan toggles, VRS). `--android-defaults` alone missed the toggles. 2026-09-24: Banjo and MC2 run their routes clean with it |
 | `tools/pc/trace_sweep.py` | Vulkan-only glitches across titles in one call: each title on its `pc_matrix` route with the Android defaults and GPU traces at five times, then `backend_ab` on every trace; rows sorted by the share of pixels that differ from D3D12. Name the draws with `draw_bisect` |
 | `tools/pc/spirv_validate.py`, `xenia_spirv_validate` | every SPIR-V module a trace translates through spirv-val (WSL), the failures grouped by rule with an example shader. Turnip is strict: run it after a translator change |
-| `tools/turnip/shader_lab.py`, `xenia_shader_lab` | the Thor's shader compiler on the PC: host Turnip over the freedreno drm-shim (`FD_GPU_ID=740`) builds a pipeline per translated module (a generated partner stage writes or reads every varying, so linking removes nothing) and reads `VK_KHR_pipeline_executable_properties`: instructions, waves per core, registers, nops. `--baseline LABEL` diffs a translator change per shader, `--ir` writes the NIR and ir3 assembly, `--traces` replays first with `--cvars`. Build the host driver once: `wsl -d Ubuntu -- bash tools/turnip/build_host_shim.sh` |
+| `tools/turnip/shader_lab.py`, `xenia_shader_lab` | the Thor's shader compiler on the PC (with `--ir` also the ir3 opcode mix per stage and for the costliest shaders): host Turnip over the freedreno drm-shim (`FD_GPU_ID=740`) builds a pipeline per translated module (a generated partner stage writes or reads every varying, so linking removes nothing) and reads `VK_KHR_pipeline_executable_properties`: instructions, waves per core, registers, nops. `--baseline LABEL` diffs a translator change per shader, `--ir` writes the NIR and ir3 assembly, `--traces` replays first with `--cvars`. Build the host driver once: `wsl -d Ubuntu -- bash tools/turnip/build_host_shim.sh` |
 | `tools/pc/cvar_ab.py`, `xenia_cvar_ab` | a lever A/B on one trace dump: each trace replayed with `--a` and `--b` cvars, changed pixels per trace. A lever that must not change the picture shows 0 on every trace |
 | `resolve_ab.py --against vulkan` | every resolve of two Vulkan replays compared (A/A); with `--prefix` the first draw that makes a resolve vary between runs |
 | `gpu_debug_log_index_range` | per indexed draw: indices past a vertex fetch constant, Inf/NaN 32-bit float attributes, and the CPU clip positions of the vertices (not finite, w near 0; with `gpu_debug_log_draws` the index range and the vertices behind the eye) |
