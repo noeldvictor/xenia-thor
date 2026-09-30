@@ -48,6 +48,7 @@ DEFINE_uint32(
     "delays of a streak (each within 1 ms of the last) sleep N microseconds "
     "instead. 0 = unchanged. Read per call (live).",
     "Kernel");
+DECLARE_int32(thor_debug_cool);
 DEFINE_bool(ignore_thread_affinities, true,
             "Ignores game-specified thread affinities.", "Kernel");
 DEFINE_int32(
@@ -1259,6 +1260,11 @@ void XThread::SetActiveCpu(uint8_t cpu_index) {
       } else {
         mask = uint64_t(uint32_t(cvars::thor_guest_thread_affinity_mask));
       }
+      // thor_debug_cool: never the X3 prime core.
+      if (cvars::thor_debug_cool > 0) {
+        uint64_t cool_mask = mask & ~(uint64_t(1) << ThorTopology::PrimeCore());
+        mask = cool_mask ? cool_mask : ThorTopology::WorkerCoreMask();
+      }
       thread_->set_affinity_mask(mask);
     } else if (!cvars::ignore_thread_affinities && thread_ &&
                is_guest_thread()) {
@@ -1525,7 +1531,10 @@ X_STATUS XThread::Delay(uint32_t processor_mode, uint32_t alertable,
     }
   } else {
     if (timeout_ms == 0) {
-      const uint32_t backoff_us = cvars::thor_sleep0_backoff_us;
+      uint32_t backoff_us = cvars::thor_sleep0_backoff_us;
+      if (!backoff_us && cvars::thor_debug_cool > 0) {
+        backoff_us = 200;
+      }
       if (backoff_us) {
         thread_local uint64_t last_zero_delay_us = 0;
         thread_local uint32_t zero_delay_streak = 0;

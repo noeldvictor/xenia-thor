@@ -1097,12 +1097,22 @@ def xenia_live_ab(entry: str, arms: str, rounds: int = 2, seconds: float = 8.0) 
 
 
 @mcp.tool()
-def xenia_scoreboard(entries: str = '', note: str = '') -> str:
+def xenia_scoreboard(entries: str = '', note: str = '', cool: int = 0,
+                     max_case_c: float = 44.0, cvars: str = '') -> str:
     """The same device measurements after every install (tools/thor/scoreboard.py):
     per entry, presented fps, the GPU frame time, panel luma, the driver, one
     screenshot; a row in docs/scoreboard.jsonl and the change from the entry's
-    previous row. entries: space-separated (default all). Uses the device."""
+    previous row. entries: space-separated (default all). A heat guard
+    force-stops the entry at max_case_c or 300 s (the row says "stopped").
+    cool N: launch with thor_debug_cool=N (an N fps cap, no X3 prime core,
+    sleeping Sleep(0) streaks) - about half the heat at 15, the GPU frame time
+    stays valid. Uses the device: ask the user first."""
     args = [e for e in entries.split() if e] + (['--note', note] if note else [])
+    args += ['--max-case-c', str(max_case_c)]
+    if cool:
+        args += ['--cool', str(cool)]
+    if cvars:
+        args += ['--cvars', cvars]
     return _run_tool_script('tools/thor/scoreboard.py', args, timeout=3600)
 
 

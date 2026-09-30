@@ -391,6 +391,8 @@ DEFINE_uint32(
 
 DECLARE_uint32(cpu_watch_guest_write_page);
 
+DECLARE_int32(thor_debug_cool);
+
 namespace xe {
 namespace gpu {
 
@@ -918,7 +920,12 @@ bool CommandProcessor::Initialize() {
   // to a chosen core so it stays on the prime Cortex-X3 (cpu7 @3.19GHz on the AYN
   // Thor) at max DVFS instead of floating onto a 2.0GHz A510. Affinity is a hint
   // only - no guest-visible effect; default -1 leaves scheduling to the OS.
-  if (cvars::thor_gpu_thread_affinity_cpu >= 0 && worker_thread_->thread()) {
+  if (cvars::thor_debug_cool > 0 && worker_thread_->thread()) {
+    // thor_debug_cool: the mid cores, not the X3 prime core.
+    worker_thread_->thread()->set_affinity_mask(
+        ThorTopology::WorkerCoreMask());
+  } else if (cvars::thor_gpu_thread_affinity_cpu >= 0 &&
+             worker_thread_->thread()) {
     worker_thread_->thread()->set_affinity_mask(
         uint64_t(1) << uint32_t(cvars::thor_gpu_thread_affinity_cpu));
   }
@@ -927,7 +934,7 @@ bool CommandProcessor::Initialize() {
   // Thor dynamic hot-thread pin: keep whatever thread is busiest on the prime
   // core. Supersedes the static pin above for CPU/sync-bound titles where the
   // hot thread is a guest XThread, not the (fence-blocked) command worker.
-  if (cvars::thor_hot_thread_prime_core >= 0) {
+  if (cvars::thor_hot_thread_prime_core >= 0 && cvars::thor_debug_cool <= 0) {
     hot_thread_pinner()->Start(cvars::thor_hot_thread_prime_core,
                                cvars::thor_hot_thread_interval_ms);
   }
@@ -2637,6 +2644,12 @@ bool CommandProcessor::ExecutePacketType3_XE_SWAP(RingBuffer* reader,
       frame_limit_fps =
           frame_limit_fps ? std::min(frame_limit_fps, thermal_cap) : thermal_cap;
     }
+  }
+  // thor_debug_cool: a debugging session's own cap.
+  if (cvars::thor_debug_cool > 0) {
+    const uint32_t cool_cap = uint32_t(cvars::thor_debug_cool);
+    frame_limit_fps =
+        frame_limit_fps ? std::min(frame_limit_fps, cool_cap) : cool_cap;
   }
   if (frame_limit_fps) {
     uint64_t target_interval_ms = 1000ull / frame_limit_fps;

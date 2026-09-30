@@ -158,6 +158,8 @@ void aes_decrypt_buffer(const uint8_t* session_key, const uint8_t* input_buffer,
   }
 }
 
+DECLARE_int32(thor_debug_cool);
+
 namespace xe {
 namespace cpu {
 
@@ -1642,6 +1644,9 @@ void XexModule::PrecompileGuestFunctions() {
   }
   if (worker_count > 6) {
     worker_count = 6;
+  }
+  if (cvars::thor_debug_cool > 0 && worker_count > 2) {
+    worker_count = 2;  // thor_debug_cool
   }
   // Do not oversubscribe a cluster we are about to pin to: 6 workers on 3 A510s
   // just adds context switches to the same throughput.

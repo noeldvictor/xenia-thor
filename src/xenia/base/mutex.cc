@@ -23,6 +23,16 @@
 // per-acquire bookkeeping at ~7-10% of CPU (QueryHostUptimeMillis ~7% alone) -
 // pure debug instrumentation on the hottest lock in the emulator. Gate it off by
 // default; enable it only when actually diagnosing a deadlock/stall.
+DEFINE_int32(
+    thor_debug_cool, 0,
+    "DIAGNOSTIC (device debugging without overheating the Thor): N > 0 caps "
+    "the host frame rate at N fps (15 halves the CPU and GPU work of a 30 fps "
+    "title; the per-frame GPU time and CPU cost per draw stay valid), makes "
+    "guest Sleep(0) streaks sleep 200 us (unless thor_sleep0_backoff_us is "
+    "set), keeps the guest and GPU-command threads off the X3 prime core, and "
+    "limits the load-time precompile to 2 workers. 0 = off. A Gears launch "
+    "took the case from 34 C to 44.8 C in 47 s without it (2026-09-29).",
+    "Thor");
 DEFINE_bool(global_lock_owner_tracking, false,
             "Record the last global-critical-region owner (thread ids, host "
             "uptime, source) on every acquire so the deadlock/stall watchdog can "

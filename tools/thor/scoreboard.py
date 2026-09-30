@@ -12,6 +12,14 @@ bottom luma, and keeps one screenshot. One JSON row per entry is appended to
 docs/scoreboard.jsonl with the commit and the device's installed build id;
 the printout shows the change from that entry's previous row. The device
 cools to the preflight gate before each entry.
+
+Heat (AGENTS.md section 5): a guard thread reads the case temperature every
+5 s during the whole entry and force-stops the emulator at --max-case-c
+(default 44 C) or after --max-seconds (default 300); the row then says
+"stopped". --cool N launches with thor_debug_cool=N: an N fps cap, no X3
+prime core, Sleep(0) streaks sleep - about half the heat of a 30 fps title
+at 15, with a valid GPU frame time (2026-09-29: the plain Gears route took
+the case from 34 C to 44.8 C in 47 s).
 """
 import argparse
 import datetime
@@ -20,6 +28,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -83,7 +92,35 @@ def last_rows():
     return rows
 
 
-def run_entry(name, spec, extra_cvars=()):
+class HeatGuard(threading.Thread):
+    """Force-stops the emulator at the case limit or the time limit."""
+
+    def __init__(self, max_case_c, max_seconds):
+        super().__init__(daemon=True)
+        self.max_case_c = max_case_c
+        self.max_seconds = max_seconds
+        self.stop_flag = threading.Event()
+        self.stopped = ''
+        self.peak_case_c = 0.0
+
+    def run(self):
+        start = time.time()
+        while not self.stop_flag.is_set():
+            try:
+                case_c = float(json.loads(m.xenia_device_status()).get('temps', {}).get('case_c') or 0)
+            except Exception:
+                case_c = 0.0
+            self.peak_case_c = max(self.peak_case_c, case_c)
+            if case_c >= self.max_case_c or time.time() - start >= self.max_seconds:
+                self.stopped = ('case %.1f C' % case_c if case_c >= self.max_case_c
+                                else 'time %d s' % self.max_seconds)
+                print('heat guard: %s - force stop' % self.stopped, flush=True)
+                m.xenia_force_stop()
+                return
+            self.stop_flag.wait(5)
+
+
+def run_entry(name, spec, extra_cvars=(), max_case_c=44.0, max_seconds=300.0):
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
     m.xenia_launch_cvars(set='vulkan_trace_pass_timestamps=true')
@@ -91,10 +128,18 @@ def run_entry(name, spec, extra_cvars=()):
     for c in list(spec.get('cvars', [])) + list(extra_cvars):
         m.xenia_launch_cvars(set=c)
     temps = wait_cool()
+    guard = HeatGuard(max_case_c, max_seconds)
+    guard.start()
     reached = False
     if spec['kind'] == 'goto':
-        g = json.loads(m.xenia_goto(steps=spec['steps'], title=spec.get('title') or spec['path'],
-                                    launch=True, screenshot=False)).get('goto') or {}
+        try:
+            g = json.loads(m.xenia_goto(steps=spec['steps'], title=spec.get('title') or spec['path'],
+                                        launch=True, screenshot=False)).get('goto') or {}
+        except Exception as e:  # the heat guard stopped the app mid-route
+            if not guard.stopped:
+                raise
+            print('route ended: %s' % e.__class__.__name__, flush=True)
+            g = {}
         reached = bool(g.get('reached'))
     else:
         r = json.loads(m.xenia_launch(spec['path'], skip_preflight=True))
@@ -134,23 +179,32 @@ def run_entry(name, spec, extra_cvars=()):
         w, h = im.size
         top = round(ImageStat.Stat(im.crop((0, 0, w, h // 2))).mean[0], 1)
         bottom = round(ImageStat.Stat(im.crop((0, h // 2, w, h))).mean[0], 1)
+    guard.stop_flag.set()
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
     return {'entry': name, 'reached': reached, 'fps': fps, 'gpu_frame_us': gpu, 'driver': driver,
             'timing_lines': timing_lines,
-            'luma_top': top, 'luma_bottom': bottom, 'case_c': temps.get('case_c'), 'shot': shot}
+            'luma_top': top, 'luma_bottom': bottom, 'case_c': temps.get('case_c'),
+            'peak_case_c': round(guard.peak_case_c, 1), 'stopped': guard.stopped, 'shot': shot}
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('entries', nargs='*')
     ap.add_argument('--note', default='')
+    ap.add_argument('--cool', type=int, default=0,
+                    help='launch with thor_debug_cool=N (an N fps cap, no prime core, '
+                         'sleeping Sleep(0) streaks): device debugging without overheating')
+    ap.add_argument('--max-case-c', type=float, default=44.0)
+    ap.add_argument('--max-seconds', type=float, default=300.0)
     ap.add_argument('--cvars', default='',
                     help='extra launch cvars for this run, name=value separated by spaces '
                          '(an A/B arm that cannot switch live, tools/thor/pending_ab.py); '
                          'they are added to the note of the row')
     args = ap.parse_args()
     extra = [c for c in args.cvars.split() if c]
+    if args.cool:
+        extra.append('thor_debug_cool=%d' % args.cool)
     if extra:
         args.note = (args.note + ' ' if args.note else '') + 'cvars: ' + ' '.join(extra)
     names = args.entries or list(ENTRIES)
@@ -160,7 +214,7 @@ def main():
     prev = last_rows()
     stamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M')
     for name in names:
-        row = run_entry(name, ENTRIES[name], extra)
+        row = run_entry(name, ENTRIES[name], extra, args.max_case_c, args.max_seconds)
         row.update({'date': stamp, 'commit': commit, 'build': build, 'note': args.note})
         with open(BOARD, 'a', encoding='utf-8') as f:
             f.write(json.dumps({k: v for k, v in row.items() if k != 'shot'}) + '\n')
@@ -168,9 +222,10 @@ def main():
         delta = ''
         if p and p.get('fps') is not None and row['fps'] is not None:
             delta = ' (was %s fps on %s, %+.1f)' % (p['fps'], p.get('date'), row['fps'] - p['fps'])
-        print('%-12s reached=%s fps=%s%s gpu_frame_us=%s luma=%s/%s case=%sC  %s' % (
+        print('%-12s reached=%s fps=%s%s gpu_frame_us=%s luma=%s/%s case=%sC peak=%sC%s  %s' % (
             name, row['reached'], row['fps'], delta, row['gpu_frame_us'], row['luma_top'],
-            row['luma_bottom'], row['case_c'], row['shot']), flush=True)
+            row['luma_bottom'], row['case_c'], row['peak_case_c'],
+            ' STOPPED (%s)' % row['stopped'] if row['stopped'] else '', row['shot']), flush=True)
     return 0
 
 

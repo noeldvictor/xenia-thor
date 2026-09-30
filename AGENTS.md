@@ -952,6 +952,14 @@ Standing facts:
   at 44/96, none at 100 (was 47/50 and 96/100/105). The device check of the new guard is owed.
   The real answer to the heat is efficiency: today's shader work cut the Adreno instructions by
   about a quarter.
+  **Debug cool mode (`thor_debug_cool=N`, diagnostic):** an N fps cap (15 halves the CPU and
+  GPU work of a 30 fps title; the GPU frame time and the CPU cost per draw stay valid), guest
+  `Sleep(0)` streaks sleep 200 us, the guest and GPU-command threads stay off the X3 prime core
+  (the hot-thread pinner stays off), the precompile uses 2 workers. `scoreboard.py --cool 15`
+  (MCP `xenia_scoreboard cool=15`) launches with it; the scoreboard now has its own heat guard
+  (force stop at `--max-case-c`, default 44 C, or 300 s; the row records the peak and
+  "stopped"). Not a frame skip: skipping frames saves only GPU work and breaks titles that read
+  the previous frame; the cap slows the guest itself, so CPU and GPU both do less.
 
 - PPC hardware corpus: 169,117 cases in `src/xenia/cpu/ppc/testing/`. a64 failures 7,907 to 3,038 on
   2026-08-18. x64 failures 17,851 to 14,591 on 2026-08-18. One class is 94% of what is left on a64.
