@@ -1078,6 +1078,16 @@ Standing facts:
   smart-sync); `live_ab` stops at 44 C; `scoreboard.py --cvars` for relaunch arms.
 - Retro 2026-09-29 (3, reflex): a new lever reads its cvar where it acts (live-switchable) and
   gets its line in `pending_ab.py` in the same commit.
+- Retro 2026-10-01 (1, slow): two approved device sessions stood still on a sleeping panel - the
+  preflight refuses, the scoreboard's own gate waited only for the case temperature, so a wait
+  loop was written by hand each time - and the first Gears launch reached 44.8 C in 47 s with
+  no heat stop inside the scoreboard (an ad-hoc watchdog caught it).
+- Retro 2026-10-01 (2, tool, exists now): MCP `xenia_wait_ready` waits until the preflight
+  passes (panel awake, case under the gate, battery) and returns what it waited on; the
+  scoreboard's gate uses it; the scoreboard has its own heat guard and `--cool N`
+  (`thor_debug_cool`, c687a60df3).
+- Retro 2026-10-01 (3, reflex): ask the user to wake the panel in the same message as the device
+  plan, and plan a device measurement in cool mode (`--cool 15`) first.
 - Retro 2026-09-27 (4, reflex, tool exists now): judge a tiler lever by render pass begins and
   resumes ("GPU pass resumes/frame", `frame_timeline` columns `passes` and `resumes`), not by
   breaks - the eager texture reload removed 3-6 breaks a frame and 0 resumes, and a live A/B of

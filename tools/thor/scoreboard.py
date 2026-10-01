@@ -71,13 +71,11 @@ def swaps():
 
 
 def wait_cool(max_case_c=41.0):
-    t = {}
-    for _ in range(45):
-        t = json.loads(m.xenia_preflight()).get('temps', {})
-        if t.get('case_c', 99) < max_case_c:
-            break
-        time.sleep(20)
-    return t
+    # The panel too: a sleeping panel fails every launch (2026-10-01, twice).
+    r = json.loads(m.xenia_wait_ready(timeout_s=900, max_case_c=max_case_c))
+    if 'screen is asleep' in ' '.join(r.get('waited_on', [])):
+        print('waited %d s for the panel (power button)' % r.get('waited_s', 0), flush=True)
+    return r.get('temps', {})
 
 
 def last_rows():

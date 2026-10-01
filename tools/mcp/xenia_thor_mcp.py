@@ -227,6 +227,28 @@ def xenia_device_status() -> str:
 
 
 @mcp.tool()
+def xenia_wait_ready(timeout_s: int = 900, max_case_c: float = 41.0) -> str:
+    """Wait until xenia_preflight passes - panel awake, case under max_case_c,
+    battery, no other emulator - polling every 5 s up to timeout_s. Returns
+    the final preflight with waited_s, and the reasons it waited on (a
+    sleeping panel needs the user's power button: say so once, then wait).
+    2026-10-01: two approved sessions waited on a sleeping panel."""
+    start = time.time()
+    seen = []
+    while True:
+        r = json.loads(xenia_preflight(max_case_c=max_case_c))
+        for reason in r.get('reasons', []):
+            key = reason.split('(')[0].strip()
+            if key not in seen:
+                seen.append(key)
+        if r.get('ok') or time.time() - start >= timeout_s:
+            r['waited_s'] = int(time.time() - start)
+            r['waited_on'] = seen
+            return json.dumps(r, indent=1)
+        time.sleep(5)
+
+
+@mcp.tool()
 def xenia_preflight(max_temp_c: float = 55.0, min_battery: int = 30, max_case_c: float = 41.0) -> str:
     """Apply the device rules before a launch. Returns ok=false with reasons if
     the device is busy, hot, or low on battery. The device is shared with other
