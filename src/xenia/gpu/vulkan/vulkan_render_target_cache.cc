@@ -227,6 +227,7 @@ DECLARE_bool(gpu_bd_native_drop_transfers);
 DECLARE_bool(gpu_bd_native_drop_all_color_xfer);
 DECLARE_bool(gpu_bd_native_drop_all_xfer);
 
+
 namespace xe {
 namespace gpu {
 namespace vulkan {
@@ -7855,30 +7856,41 @@ VkShaderModule VulkanRenderTargetCache::GetTransferShader(
   // addition, it may be negative - in which case, the transfer is done across
   // EDRAM addressing wrapping, and xenos::kEdramTileCount must be added to it,
   // but `& (xenos::kEdramTileCount - 1)` handles that regardless of the sign.
-  spv::Id source_tile_index = builder.createBinOp(
-      spv::OpBitwiseAnd, type_uint,
-      builder.createUnaryOp(
-          spv::OpBitcast, type_uint,
-          builder.createBinOp(
-              spv::OpIAdd, type_int,
-              builder.createUnaryOp(spv::OpBitcast, type_int, dest_tile_index),
-              builder.createTriOp(
-                  spv::OpBitFieldSExtract, type_int,
-                  builder.createUnaryOp(spv::OpBitcast, type_int,
-                                        address_constant),
-                  builder.makeUintConstant(xenos::kEdramPitchTilesBits * 2),
-                  builder.makeUintConstant(xenos::kEdramBaseTilesBits + 1)))),
-      builder.makeUintConstant(xenos::kEdramTileCount - 1));
-  // Split the source 32bpp tile index into X and Y tile index within the source
-  // image.
-  spv::Id source_pitch_tiles = builder.createTriOp(
-      spv::OpBitFieldUExtract, type_uint, address_constant,
-      builder.makeUintConstant(xenos::kEdramPitchTilesBits),
-      builder.makeUintConstant(xenos::kEdramPitchTilesBits));
-  spv::Id source_tile_index_y = builder.createBinOp(
-      spv::OpUDiv, type_uint, source_tile_index, source_pitch_tiles);
-  spv::Id source_tile_index_x = builder.createBinOp(
-      spv::OpUMod, type_uint, source_tile_index, source_pitch_tiles);
+  spv::Id source_tile_index_x, source_tile_index_y;
+  if (key.same_base_and_pitch) {
+    // Same base and pitch: the destination tile is the same source tile, no
+    // division by the runtime source pitch (Gears of War, 2026-10-01: 14 of
+    // its 22 transfers a frame, the copies 93-164 Adreno instructions per
+    // sample, mostly this address math).
+    source_tile_index_x = dest_tile_index_x;
+    source_tile_index_y = dest_tile_index_y;
+  } else {
+    spv::Id source_tile_index = builder.createBinOp(
+        spv::OpBitwiseAnd, type_uint,
+        builder.createUnaryOp(
+            spv::OpBitcast, type_uint,
+            builder.createBinOp(
+                spv::OpIAdd, type_int,
+                builder.createUnaryOp(spv::OpBitcast, type_int,
+                                      dest_tile_index),
+                builder.createTriOp(
+                    spv::OpBitFieldSExtract, type_int,
+                    builder.createUnaryOp(spv::OpBitcast, type_int,
+                                          address_constant),
+                    builder.makeUintConstant(xenos::kEdramPitchTilesBits * 2),
+                    builder.makeUintConstant(xenos::kEdramBaseTilesBits + 1)))),
+        builder.makeUintConstant(xenos::kEdramTileCount - 1));
+    // Split the source 32bpp tile index into X and Y tile index within the
+    // source image.
+    spv::Id source_pitch_tiles = builder.createTriOp(
+        spv::OpBitFieldUExtract, type_uint, address_constant,
+        builder.makeUintConstant(xenos::kEdramPitchTilesBits),
+        builder.makeUintConstant(xenos::kEdramPitchTilesBits));
+    source_tile_index_y = builder.createBinOp(
+        spv::OpUDiv, type_uint, source_tile_index, source_pitch_tiles);
+    source_tile_index_x = builder.createBinOp(
+        spv::OpUMod, type_uint, source_tile_index, source_pitch_tiles);
+  }
   // Finally calculate the source texture coordinates.
   spv::Id source_pixel_x_int = builder.createUnaryOp(
       spv::OpBitcast, type_int,
@@ -7901,6 +7913,16 @@ VkShaderModule VulkanRenderTargetCache::GetTransferShader(
                   uint32_t(key.source_msaa_samples >= xenos::MsaaSamples::k2X)),
               source_tile_index_y),
           source_tile_pixel_y));
+  if (key.same_base_and_pitch &&
+      key.source_msaa_samples == key.dest_msaa_samples &&
+      source_is_64bpp == dest_is_64bpp && source_is_color == dest_is_color) {
+    // The same pixel layout as well: the source pixel is the destination
+    // pixel (the tile split above is then dead code).
+    source_pixel_x_int =
+        builder.createUnaryOp(spv::OpBitcast, type_int, dest_pixel_x);
+    source_pixel_y_int =
+        builder.createUnaryOp(spv::OpBitcast, type_int, dest_pixel_y);
+  }
 
   // Load the source.
 
@@ -11295,6 +11317,9 @@ void VulkanRenderTargetCache::PerformTransfersAndResolveClears(
               source_rt_key.msaa_samples;
           new_transfer_shader_key.source_resource_format =
               source_rt_key.resource_format;
+          new_transfer_shader_key.same_base_and_pitch =
+              uint32_t(source_rt_key.base_tiles == dest_rt_key.base_tiles &&
+                       source_rt_key.GetPitchTiles() == dest_pitch_tiles);
           bool host_depth_source_is_copy =
               host_depth_source_vulkan_rt == &dest_vulkan_rt;
           // The host depth copy buffer has only raw samples.

@@ -1111,6 +1111,13 @@ class VulkanRenderTargetCache final : public RenderTargetCache {
       xenos::MsaaSamples host_depth_source_msaa_samples
           : xenos::kMsaaSamplesBits;
       uint32_t source_resource_format : xenos::kRenderTargetFormatBits;
+      // The source and the destination start at the same EDRAM tile and have
+      // the same pitch, so a destination tile is the same source tile: the
+      // shader skips the source tile address math (a division by the runtime
+      // source pitch - tens of instructions per sample on the Adreno), and
+      // with the same MSAA, bits per pixel and color/depth class it reads the
+      // source at the destination pixel.
+      uint32_t same_base_and_pitch : 1;
 
       // Last bits because this affects the pipeline layout - after sorting,
       // only change it as fewer times as possible. Depth buffers have an
