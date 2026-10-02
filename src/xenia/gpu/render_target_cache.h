@@ -176,7 +176,10 @@ class RenderTargetCache {
                              uint32_t normalized_color_mask,
                              const Shader& vertex_shader,
                              const Shader* pixel_shader);
-  void ClearMsaaDepthClearFold() { msaa_depth_clear_fold_ = false; }
+  void ClearMsaaDepthClearFold() {
+    msaa_depth_clear_fold_ = false;
+    msaa_depth_clear_cutout_valid_ = false;
+  }
   bool msaa_depth_clear_fold() const { return msaa_depth_clear_fold_; }
   // The sample count of the render targets that Update binds.
   xenos::MsaaSamples GetUpdateMsaaSamples() const;
@@ -864,6 +867,13 @@ class RenderTargetCache {
   bool bd_perfmode_hdr_pass_ = false;
   // gpu_fold_msaa_depth_clears: the current draw goes 4x -> 1x at 2x2 scale.
   bool msaa_depth_clear_fold_ = false;
+  // gpu_fold_msaa_depth_clears, when the fold is not possible (another render
+  // target owns the range): the rectangle the 4x MSAA depth clear overwrites
+  // in every depth and stencil bit. Update passes it to the depth render
+  // target's ownership change as the cutout, so a transfer into it that the
+  // clear covers is not made (the clear overwrites everything it would copy).
+  bool msaa_depth_clear_cutout_valid_ = false;
+  Transfer::Rectangle msaa_depth_clear_cutout_ = {};
   // After an update (for simplicity, even an unsuccessful update invalidates
   // this), contains needed ownership transfer sources for each of the current
   // render targets. They are reordered so for one source, all transfers are

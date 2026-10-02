@@ -1188,7 +1188,10 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
                       (interlock_barrier_only || native_rts_independent)
                           ? nullptr
                           : &last_update_transfers_[rt_bit_index],
-                      nullptr, rt_keep_depth_bits);
+                      (rt_key.is_depth && msaa_depth_clear_cutout_valid_)
+                          ? &msaa_depth_clear_cutout_
+                          : nullptr,
+                      rt_keep_depth_bits);
       // Record with the post-claim version: if the claim itself mutated the
       // map, ownership now reflects this claim at the bumped version, while
       // any later mutation (including another slot's claim) bumps again and
@@ -1202,7 +1205,10 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
                       (interlock_barrier_only || native_rts_independent)
                           ? nullptr
                           : &last_update_transfers_[rt_bit_index],
-                      nullptr, rt_keep_depth_bits);
+                      (rt_key.is_depth && msaa_depth_clear_cutout_valid_)
+                          ? &msaa_depth_clear_cutout_
+                          : nullptr,
+                      rt_keep_depth_bits);
     }
   }
 
@@ -1915,6 +1921,7 @@ bool RenderTargetCache::SetMsaaDepthClearFold(
     uint32_t normalized_color_mask, const Shader& vertex_shader,
     const Shader* pixel_shader) {
   msaa_depth_clear_fold_ = false;
+  msaa_depth_clear_cutout_valid_ = false;
   // With gpu_trace_render_target_transfers, one line per rejected 4x MSAA
   // depth draw: the first condition that failed.
   auto reject = [&](const char* reason) {
@@ -1976,20 +1983,21 @@ bool RenderTargetCache::SetMsaaDepthClearFold(
   key_1x.msaa_samples = xenos::MsaaSamples::k1X;
   key_1x.is_depth = 1;
   key_1x.resource_format = uint32_t(rb_depth_info.depth_format);
+  std::string owner_rejection;
   auto it = ownership_ranges_.upper_bound(key_1x.base_tiles);
   if (it == ownership_ranges_.begin()) {
-    return reject("no owner");
-  }
-  --it;
-  if (it->second.end_tiles <= key_1x.base_tiles ||
-      it->second.render_target != key_1x) {
-    return reject(
-        fmt::format("the owner of the first tile is {}, not {}",
-                    it->second.end_tiles <= key_1x.base_tiles
-                        ? std::string("none")
-                        : it->second.render_target.GetDebugName(),
-                    key_1x.GetDebugName())
-            .c_str());
+    owner_rejection = "no owner";
+  } else {
+    --it;
+    if (it->second.end_tiles <= key_1x.base_tiles ||
+        it->second.render_target != key_1x) {
+      owner_rejection =
+          fmt::format("the owner of the first tile is {}, not {}",
+                      it->second.end_tiles <= key_1x.base_tiles
+                          ? std::string("none")
+                          : it->second.render_target.GetDebugName(),
+                      key_1x.GetDebugName());
+    }
   }
   int32_t x0, y0, x1, y1;
   bool pixel_aligned_flat = false;
@@ -1998,8 +2006,52 @@ bool RenderTargetCache::SetMsaaDepthClearFold(
       !pixel_aligned_flat) {
     return reject("not one pixel-aligned rectangle with one depth");
   }
-  msaa_depth_clear_fold_ = true;
-  return true;
+  if (owner_rejection.empty()) {
+    msaa_depth_clear_fold_ = true;
+    return true;
+  }
+  // Not foldable, but if the clear overwrites every depth and stencil bit of
+  // its rectangle, a transfer from the old owner into it is dead: the cutout
+  // (Gears of War, 2026-10-02: a 2_10_10_10_FLOAT color target owned the
+  // shadow region, and its copy into the 4x depth target was 5-6% of the
+  // frame's shader work on the Adreno, xenia_frame_cost).
+  auto rb_stencilrefmask = regs.Get<reg::RB_STENCILREFMASK>();
+  auto rb_stencilrefmask_bf =
+      regs.Get<reg::RB_STENCILREFMASK>(XE_GPU_REG_RB_STENCILREFMASK_BF);
+  bool overwrites_depth_stencil =
+      normalized_depth_control.z_enable &&
+      normalized_depth_control.z_write_enable &&
+      normalized_depth_control.zfunc == xenos::CompareFunction::kAlways &&
+      normalized_depth_control.stencil_enable &&
+      normalized_depth_control.stencilfunc == xenos::CompareFunction::kAlways &&
+      normalized_depth_control.stencilzpass == xenos::StencilOp::kReplace &&
+      rb_stencilrefmask.stencilwritemask == 0xFF &&
+      (!normalized_depth_control.backface_enable ||
+       (normalized_depth_control.stencilfunc_bf ==
+            xenos::CompareFunction::kAlways &&
+        normalized_depth_control.stencilzpass_bf ==
+            xenos::StencilOp::kReplace &&
+        rb_stencilrefmask_bf.stencilwritemask == 0xFF)) &&
+      !pa_su_sc_mode_cntl.cull_front && !pa_su_sc_mode_cntl.cull_back &&
+      (regs.Get<uint32_t>(XE_GPU_REG_PA_SC_AA_MASK) & 0xF) == 0xF;
+  if (overwrites_depth_stencil) {
+    draw_util::Scissor scissor;
+    draw_util::GetScissor(regs, scissor);
+    int32_t cx0 = std::max(x0, int32_t(scissor.offset[0]));
+    int32_t cy0 = std::max(y0, int32_t(scissor.offset[1]));
+    int32_t cx1 =
+        std::min(x1, int32_t(scissor.offset[0] + scissor.extent[0]));
+    int32_t cy1 =
+        std::min(y1, int32_t(scissor.offset[1] + scissor.extent[1]));
+    if (cx0 >= 0 && cy0 >= 0 && cx0 < cx1 && cy0 < cy1) {
+      msaa_depth_clear_cutout_.x_pixels = uint32_t(cx0);
+      msaa_depth_clear_cutout_.y_pixels = uint32_t(cy0);
+      msaa_depth_clear_cutout_.width_pixels = uint32_t(cx1 - cx0);
+      msaa_depth_clear_cutout_.height_pixels = uint32_t(cy1 - cy0);
+      msaa_depth_clear_cutout_valid_ = true;
+    }
+  }
+  return reject(owner_rejection.c_str());
 }
 
 xenos::MsaaSamples RenderTargetCache::GetUpdateMsaaSamples() const {
