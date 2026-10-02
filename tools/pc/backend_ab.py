@@ -25,6 +25,7 @@ import argparse
 import glob
 import os
 import subprocess
+import time
 import sys
 
 from PIL import Image, ImageChops, ImageStat
@@ -75,14 +76,31 @@ def replay(gpu, trace, out, cvars):
     os.makedirs(out, exist_ok=True)
     exe = os.path.join(BIN, 'xenia-gpu-%s-trace-dump.exe' % gpu)
     log = os.path.join(out, 'dump.log')
-    try:
-        subprocess.run([exe, '--target_trace_file=' + trace, '--trace_dump_path=' + out,
-                        '--log_file=' + log] + ['--' + c for c in cvars],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
-    except subprocess.TimeoutExpired:
-        # A replay takes well under a minute; a hang is usually an error dialog.
-        print('  %s replay hung (300 s) - killed' % gpu)
-        return None, 0
+    if os.path.exists(log):
+        os.remove(log)
+    proc = subprocess.Popen([exe, '--target_trace_file=' + trace, '--trace_dump_path=' + out,
+                             '--log_file=' + log] + ['--' + c for c in cvars],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    start = time.time()
+    while proc.poll() is None:
+        time.sleep(0.5)
+        waited = time.time() - start
+        # No log after 20 s: the exe stopped on an error dialog before logging -
+        # an unknown cvar, usually because the trace dump is older than the
+        # source (tools/pc/build_pc.py builds it; 2026-10-02 every replay of
+        # an A/B waited 300 s here).
+        if waited > 20 and not os.path.exists(log):
+            proc.kill()
+            stale = os.path.getmtime(exe) < os.path.getmtime(os.path.join(BIN, 'xenia.exe'))
+            raise SystemExit('%s trace dump wrote no log in 20 s - an unknown cvar (error dialog)?%s '
+                             'cvars: %s' % (gpu, ' The trace dump is older than xenia.exe: '
+                                            'run tools/pc/build_pc.py.' if stale else '',
+                                            ' '.join(cvars)))
+        if waited > 300:
+            # A replay takes well under a minute; a hang is usually an error dialog.
+            proc.kill()
+            print('  %s replay hung (300 s) - killed' % gpu)
+            return None, 0
     pngs = glob.glob(os.path.join(out, '*.png'))
     failed = 0
     if os.path.exists(log):
