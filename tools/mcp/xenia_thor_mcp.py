@@ -1119,6 +1119,21 @@ def xenia_live_ab(entry: str, arms: str, rounds: int = 2, seconds: float = 8.0) 
 
 
 @mcp.tool()
+def xenia_heat_probe(title: str = 'gears', cool: int = 15, seconds: int = 75,
+                     max_case_c: float = 42.0, cvars: str = '') -> str:
+    """What burns the power (tools/thor/heat_probe.py): one short launch;
+    every 15 s the case and hottest CPU/GPU zone, GPU load, charging, and the
+    threads that used the most CPU; stops at max_case_c or after seconds;
+    then the average CPU % per thread and the case slope in C/min. cool N
+    launches with thor_debug_cool=N (0 = off). Uses the device: ask first."""
+    args = [title, '--cool', str(cool), '--seconds', str(seconds),
+            '--max-case-c', str(max_case_c)]
+    if cvars:
+        args += ['--cvars', cvars]
+    return _run_tool_script('tools/thor/heat_probe.py', args, timeout=1800)
+
+
+@mcp.tool()
 def xenia_scoreboard(entries: str = '', note: str = '', cool: int = 0,
                      max_case_c: float = 44.0, cvars: str = '') -> str:
     """The same device measurements after every install (tools/thor/scoreboard.py):
