@@ -190,6 +190,10 @@ Each directive has a date. The archive holds the full text and the evidence.
 - Force-stop before and after every run. Verify with `pidof`. Disconnect wifi adb after a batch.
 - Never use `adb shell input keyevent`. It targets the foreground app, which may be another session's
   game. This happened three times. Use `--es hid nop --es hid_nop_button_sequence` instead.
+  One exception (user, 2026-10-02): `KEYCODE_WAKEUP` through MCP `xenia_wake_screen` (or
+  `tools/thor/wake_screen.py`, skill `thor-wake-screen`), only while the panel is asleep - the window
+  manager consumes it to wake the device and never passes it to an app. `xenia_wait_ready` calls it.
+  Waking the panel is not permission to use the device.
 - A pre-flight is a point-in-time check. Re-check before every interaction that writes: input, install,
   force-stop.
 - Verify a screenshot is yours: `dumpsys activity activities | grep topResumedActivity`.

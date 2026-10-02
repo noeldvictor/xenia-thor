@@ -58,8 +58,8 @@ def main():
     args = ap.parse_args()
     path = TITLES.get(args.title, args.title)
 
-    # Say at once what the wait is for: a sleeping panel needs the user's power
-    # button (2026-10-02: an approved probe waited 15 silent minutes on it).
+    # Say at once what the wait is for (2026-10-02: an approved probe waited 15
+    # silent minutes on a sleeping panel); xenia_wait_ready wakes the panel.
     first = json.loads(m.xenia_preflight())
     if not first.get('ok'):
         print('waiting (up to %d s) for: %s' % (args.wait, '; '.join(

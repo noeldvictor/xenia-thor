@@ -227,25 +227,63 @@ def xenia_device_status() -> str:
 
 
 @mcp.tool()
-def xenia_wait_ready(timeout_s: int = 900, max_case_c: float = 41.0) -> str:
+def xenia_wait_ready(timeout_s: int = 900, max_case_c: float = 41.0,
+                     wake: bool = True) -> str:
     """Wait until xenia_preflight passes - panel awake, case under max_case_c,
     battery, no other emulator - polling every 5 s up to timeout_s. Returns
-    the final preflight with waited_s, and the reasons it waited on (a
-    sleeping panel needs the user's power button: say so once, then wait).
-    2026-10-01: two approved sessions waited on a sleeping panel."""
+    the final preflight with waited_s, and the reasons it waited on. wake:
+    a sleeping panel is woken with xenia_wake_screen (at most every 30 s).
+    2026-10-01 and 2026-10-02: approved sessions waited on a sleeping panel
+    until the user said "create a skill to turn screen on yourself"."""
     start = time.time()
     seen = []
+    last_wake = 0.0
     while True:
         r = json.loads(xenia_preflight(max_case_c=max_case_c))
         for reason in r.get('reasons', []):
             key = reason.split('(')[0].strip()
             if key not in seen:
                 seen.append(key)
+        if (wake and any(x.startswith('screen is asleep') for x in r.get('reasons', []))
+                and time.time() - last_wake >= 30):
+            last_wake = time.time()
+            r['wake'] = json.loads(xenia_wake_screen())
+            continue
         if r.get('ok') or time.time() - start >= timeout_s:
             r['waited_s'] = int(time.time() - start)
             r['waited_on'] = seen
             return json.dumps(r, indent=1)
         time.sleep(5)
+
+
+def _wakefulness() -> str:
+    line = _shell('dumpsys power | grep -m1 mWakefulness=').strip()
+    return line.split('=', 1)[1].split()[0] if '=' in line else line
+
+
+@mcp.tool()
+def xenia_wake_screen() -> str:
+    """Turn the Thor's panel on (user, 2026-10-02: "create a skill to turn
+    screen on yourself"). Only when dumpsys power says the panel is not
+    awake: KEYCODE_WAKEUP (224), then wm dismiss-keyguard (a swipe lock
+    screen; a PIN lock stays), then the state again. The one exception to the
+    no-keyevent rule: Android's window manager consumes KEYCODE_WAKEUP to wake
+    the device and never passes it to the foreground app, so it cannot press
+    anything in another session's game. It does not grant device use - a
+    session still needs the user's yes. Returns before/after wakefulness."""
+    before = _wakefulness()
+    if before == 'Awake':
+        return json.dumps({'ok': True, 'before': before, 'after': before,
+                           'action': 'none (already awake)'})
+    _shell('input keyevent KEYCODE_WAKEUP')
+    time.sleep(1.0)
+    _shell('wm dismiss-keyguard')
+    time.sleep(0.5)
+    after = _wakefulness()
+    keyguard = _shell('dumpsys window | grep -m1 -E "mDreamingLockscreen|isKeyguardShowing|mShowingLockscreen"').strip()
+    return json.dumps({'ok': after == 'Awake', 'before': before, 'after': after,
+                       'action': 'KEYCODE_WAKEUP + wm dismiss-keyguard',
+                       'keyguard': keyguard})
 
 
 @mcp.tool()
@@ -277,10 +315,11 @@ def xenia_preflight(max_temp_c: float = 55.0, min_battery: int = 30, max_case_c:
     if bat['level'] is not None and bat['level'] < min_battery and not bat['charging']:
         reasons.append(f'battery {bat["level"]}% and not charging')
     # A sleeping panel looks like a render bug and slows the load (57 s instead
-    # of 15 s on 2026-09-20). The rules forbid adb keyevents, so the user wakes it.
+    # of 15 s on 2026-09-20). xenia_wake_screen turns it on (xenia_wait_ready
+    # calls it).
     wake = _shell('dumpsys power | grep -m1 mWakefulness=').strip()
     if wake and 'Awake' not in wake:
-        reasons.append(f'screen is asleep ({wake}); press the power button')
+        reasons.append(f'screen is asleep ({wake}); xenia_wake_screen turns it on')
     return json.dumps({'ok': not reasons, 'reasons': reasons, 'temps': temps,
                        'battery': bat, 'foreground': fg}, indent=2)
 
