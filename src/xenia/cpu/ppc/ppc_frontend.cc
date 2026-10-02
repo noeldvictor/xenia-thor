@@ -46,7 +46,9 @@ DEFINE_uint32(
     "cache key does not hold this value: a cached function keeps the code it "
     "was compiled with, so a profile also lists the functions with the hint "
     "in cpu_backend_llvm_skip_addrs (cpu_log_spin_hint_functions on the PC "
-    "names them). Per title: the Gears of War profile sets 200 (on the PC, "
+    "names them). Per title: the Gears of War profile sets 1000 - a Windows "
+    "sleep below 1 ms lasts about 1 ms, so 200 behaved as 1000 on the PC, and "
+    "the Thor sleeps what it is asked (on the PC, "
     "Banjo-Kazooie stopped on a dark screen twice with it, MagnaCarta 2 and "
     "Blue Dragon ran).",
     "CPU");
@@ -364,6 +366,16 @@ void LeaveGlobalLock(PPCContext* ppc_context, void* arg0, void* arg1) {
 // configured time, so a long wait polls a few thousand times a second instead
 // of millions, and a short spin (a handoff within a frame) is unchanged. The guest loop
 // itself is not changed: it still checks its flag after every round.
+// What the helper did, all threads: hints, streaks restarted (a gap of 2 ms
+// or more since the thread's previous hint) and sleeps. Logged every 2 s as
+// "Spin hint: ..." (2026-10-02: Gears' F800003C still used 47% of a core on
+// the Thor in 8222F460, which calls this helper, against 4-11% on the PC).
+static std::atomic<uint64_t> spin_hint_calls{0};
+static std::atomic<uint64_t> spin_hint_restarts{0};
+static std::atomic<uint64_t> spin_hint_sleeps{0};
+static std::atomic<uint64_t> spin_hint_slept_us{0};
+static std::atomic<uint64_t> spin_hint_last_log_us{0};
+
 void SpinHint(PPCContext* ppc_context, void* arg0, void* arg1) {
   const uint32_t sleep_us = cvars::cpu_spin_hint_backoff_us;
   if (!sleep_us) {
@@ -376,21 +388,40 @@ void SpinHint(PPCContext* ppc_context, void* arg0, void* arg1) {
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now().time_since_epoch())
           .count());
+  spin_hint_calls.fetch_add(1, std::memory_order_relaxed);
   if (now_us - last_hint_us < 2000) {
     ++streak;
   } else {
     streak = 0;
     spin_start_us = now_us;
+    spin_hint_restarts.fetch_add(1, std::memory_order_relaxed);
   }
   // Only a wait that has spun for 1 ms backs off: a short wait (a handoff
   // between threads within a frame) stays a pure spin, with no added latency.
   if (now_us - spin_start_us >= 1000 && (streak & 31) == 0) {
     xe::threading::NanoSleep(int64_t(sleep_us) * 1000);
-    now_us = uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
-                          std::chrono::steady_clock::now().time_since_epoch())
-                          .count());
+    uint64_t after_us =
+        uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+                     std::chrono::steady_clock::now().time_since_epoch())
+                     .count());
+    spin_hint_sleeps.fetch_add(1, std::memory_order_relaxed);
+    spin_hint_slept_us.fetch_add(after_us - now_us, std::memory_order_relaxed);
+    now_us = after_us;
   }
   last_hint_us = now_us;
+  uint64_t last_log_us = spin_hint_last_log_us.load(std::memory_order_relaxed);
+  if (now_us - last_log_us >= 2000000 &&
+      spin_hint_last_log_us.compare_exchange_strong(last_log_us, now_us)) {
+    uint64_t calls = spin_hint_calls.exchange(0);
+    uint64_t restarts = spin_hint_restarts.exchange(0);
+    uint64_t sleeps = spin_hint_sleeps.exchange(0);
+    uint64_t slept_us = spin_hint_slept_us.exchange(0);
+    XELOGI(
+        "Spin hint: {} hints, {} streak restarts, {} sleeps ({} us slept, {} "
+        "us each) in the last {} ms",
+        calls, restarts, sleeps, slept_us, sleeps ? slept_us / sleeps : 0,
+        last_log_us ? (now_us - last_log_us) / 1000 : 0);
+  }
 }
 
 void SyscallHandler(PPCContext* ppc_context, void* arg0, void* arg1) {

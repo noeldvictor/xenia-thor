@@ -53,6 +53,9 @@ def main():
     ap.add_argument('--max-case-c', type=float, default=42.0)
     ap.add_argument('--every', type=float, default=15.0)
     ap.add_argument('--cvars', default='')
+    ap.add_argument('--log-grep', default='',
+                    help='before the stop, print the emulator log lines that contain this '
+                         '(for example "Spin hint")')
     ap.add_argument('--wait', type=int, default=900,
                     help='seconds to wait for the preflight (panel awake, case cool)')
     args = ap.parse_args()
@@ -132,6 +135,9 @@ def main():
             stopped = 'time %d s' % args.seconds
         if stopped:
             break
+    if args.log_grep:
+        print('emulator log lines with %r:' % args.log_grep)
+        print(m.xenia_log(lines=12, grep=args.log_grep))
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
 

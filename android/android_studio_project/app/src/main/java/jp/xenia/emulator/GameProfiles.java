@@ -311,7 +311,7 @@ public final class GameProfiles {
                         + "global default-on stack (lock-free object-handle cache + "
                         + "native-object fast-path for its global-lock contention, plus "
                         + "the Turnip fence fix) supplies the speed.")
-                .add("cpu_spin_hint_backoff_us", Integer.valueOf(200),
+                .add("cpu_spin_hint_backoff_us", Integer.valueOf(1000),
                         "Gears of War's worker XThread F800003C waits by spinning on "
                         + "the PowerPC priority hint (8222F460: four rounds of eight "
                         + "or r31,r31,r31, then a flag check) and held a whole big "
@@ -320,7 +320,11 @@ public final class GameProfiles {
                         + "has lasted 1 ms sleeps 50 us every 32nd hint: on the PC "
                         + "the thread fell from a full core to about a tenth, the "
                         + "menus answered at least as fast. Gears only: Banjo "
-                        + "stopped on a dark screen twice with it on the PC.")
+                        + "stopped on a dark screen twice with it on the PC. 1000 us "
+                        + "(2026-10-02): on Windows a 200 us sleep lasts about 1070 us "
+                        + "(the timer tick), so the PC thread slept 96% of the time; "
+                        + "Android sleeps 200 us, and the thread still used 47% of a "
+                        + "Thor core in 8222F460. 1000 us gives the Thor the PC's sleep.")
                 .add("cpu_backend_llvm_skip_addrs", GEARS_SPIN_HINT_FUNCTIONS,
                         "The functions with the hint compile on the a64 backend: "
                         + "the LLVM object cache (skip_lowering) serves a function's "
