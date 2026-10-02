@@ -56,17 +56,17 @@ PLAN = [
         arms=['base:global_lock_spin=0,rtl_critical_section_min_spin=0',
               'both:global_lock_spin=128,rtl_critical_section_min_spin=256']),
     dict(id='spin', entry='gears1', relaunch=True, why=(
-        'Gears heat: its worker XThread F800003C spins on the PowerPC priority '
-        'hint (8222F460) and held a whole big core (heat_probe 2026-10-01: '
-        '98-115% of a core, case +5.8 C/min at 15 fps). The Gears profile sets '
-        'cpu_spin_hint_backoff_us=200 and lists the 18 functions with the hint in '
-        'cpu_backend_llvm_skip_addrs (the LLVM object cache served the old code '
-        'otherwise); with 8222F460 only, F800003C fell 93% -> 44-57%. First run '
-        'heat_probe.py gears (no --cool) for the case slope and the thread table; '
-        'then this item for fps. Both arms keep the skip list, so both translate '
-        'those functions fresh.'),
+        'Gears heat: its worker XThread F800003C waits in 8222F460 (32 PowerPC '
+        'priority hints, then a flag and a 5000-tick timeout, called in a loop). '
+        'Thor 2026-10-02: 47% of a core with a 200 us backoff (Android sleeps what it '
+        'is asked; Windows rounds to about 1 ms, which made the PC look fine), 36% '
+        'with 1000 us; the helper ran about 375,000 times a second. Since 8581491f1c '
+        'it sleeps by time (whenever 20 us have passed since the last sleep, once a '
+        'spin has lasted 1 ms): PC 5%. Run heat_probe.py gears --log-grep "Spin '
+        'hint" first (case slope, the thread table, the counters), then this item '
+        'for fps. Both arms keep the skip list.'),
         arms=['off:cpu_spin_hint_backoff_us=0',
-              'on:cpu_spin_hint_backoff_us=200']),
+              'on:cpu_spin_hint_backoff_us=1000']),
     dict(id='bools', entry='banjo_story', relaunch=True, why=(
         'Bool constants as specialization constants (app toggle opt_bool_specialize, '
         'off): the driver drops the branch side not taken - shader lab -154k to '
