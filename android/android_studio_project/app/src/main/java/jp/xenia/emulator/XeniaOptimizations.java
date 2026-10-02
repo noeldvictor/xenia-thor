@@ -716,6 +716,25 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("gpu_specialize_bool_constants")}, null));
 
         list.add(new Optimization(
+                "opt_fast_zero_rule",
+                "Fast shader zero rule",
+                "Clamps infinities where shaders make them instead of testing every "
+                        + "multiply for 0 x infinity.",
+                "Xbox 360 shaders follow the Direct3D 9 rule that 0 times infinity "
+                        + "is 0, where a modern GPU gives NaN. The exact way tests both "
+                        + "operands of every multiply an infinity can reach. This does "
+                        + "what DXVK does by default on this GPU's driver: the "
+                        + "reciprocal, square root, exponent and log results are "
+                        + "clamped to a very large finite number, so plain multiplies "
+                        + "give 0. A draw whose constants hold an infinity keeps the "
+                        + "exact tests. Gears of War gameplay frame: 12.6% fewer shader "
+                        + "instructions on the Adreno compiler; the picture is identical "
+                        + "on 30 traces of 4 titles. Turn it off if a title shows "
+                        + "lighting or shadow glitches. Takes effect at the next launch.",
+                CATEGORY_GPU, true, true,
+                new BoolCvar[]{new BoolCvar("spirv_fast_zero_rule")}, null));
+
+        list.add(new Optimization(
                 "opt_texture_sign_specialize",
                 "Specialize texture formats in shaders",
                 "Builds each texture's sign and gamma mode into the pipeline so the "

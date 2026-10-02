@@ -48,14 +48,19 @@ DEFINE_bool(spirv_debug_zero_rule_finite_interpolators, false,
             "the upper bound of a per-interpolator taint.",
             "GPU");
 DEFINE_bool(
-    spirv_fast_zero_rule, false,
-    "Research: the Shader Model 3 zero rule the way DXVK's default d3d9 "
-    "float emulation does it on drivers without a native legacy multiply "
-    "(Turnip): plain IEEE multiplies, and no Inf or NaN made where they come "
-    "from - exp, rsq and rcp clamped to +-FLT_MAX, log to -FLT_MAX, sqrt of a "
-    "negative 0, NaN flushed from the float constants. 0 times a finite value "
-    "is then 0 without a test on every multiply (27% of the Adreno "
-    "instructions). Not exact for Inf or NaN from textures or vertex data.",
+    spirv_fast_zero_rule, XE_ANDROID_DEFAULT(true, false),
+    "The Shader Model 3 zero rule the way DXVK's default d3d9 float emulation "
+    "does it on drivers without a native legacy multiply (Turnip): plain IEEE "
+    "multiplies, and no Inf or NaN made where they come from - exp, rsq and "
+    "rcp clamped to +-2^64, log to -2^64, sqrt of a negative 0, NaN flushed "
+    "from the float constants. 0 times a finite value is then 0 without a test "
+    "on every multiply. A draw whose shader reads an Inf or NaN float constant "
+    "keeps the exact tests (the zero_rule_exact variant). Not exact for an "
+    "Inf from rcp/rsq/exp/log that is used other than in a multiply (2^64 "
+    "instead), nor for Inf or NaN from textures or vertex data (as the "
+    "hybrid). 2026-10-02: cvar_ab 0 of 30 traces changed over 4 titles; Gears "
+    "gameplay frame -12.6% Adreno instruction-invocations (xenia_frame_cost). "
+    "App toggle opt_fast_zero_rule.",
     "GPU");
 
 namespace xe {
@@ -90,8 +95,10 @@ spv::Id SpirvShaderTranslator::ClampToFiniteForZeroRule(spv::Id value,
 spv::Id SpirvShaderTranslator::ZeroIfAnyOperandIsZero(spv::Id value,
                                                       spv::Id operand_0_abs,
                                                       spv::Id operand_1_abs) {
-  if (cvars::spirv_debug_ieee_multiply || cvars::spirv_fast_zero_rule ||
-      !zero_rule_exact_) {
+  // The fast zero rule keeps the tests in the exact variant (a draw whose
+  // shader reads an Inf or NaN float constant: zero_rule_hybrid_ is off).
+  if (cvars::spirv_debug_ieee_multiply ||
+      (cvars::spirv_fast_zero_rule && zero_rule_hybrid_) || !zero_rule_exact_) {
     return value;
   }
   EnsureBuildPointAvailable();
@@ -357,7 +364,8 @@ spv::Id SpirvShaderTranslator::ProcessVectorAluOperation(
           used_result_components &
           ~instr.vector_operands[0].GetIdenticalComponents(
               instr.vector_operands[1]);
-      if (cvars::spirv_debug_ieee_multiply || cvars::spirv_fast_zero_rule) {
+      if (cvars::spirv_debug_ieee_multiply ||
+          (cvars::spirv_fast_zero_rule && zero_rule_hybrid_)) {
         multiplicands_different = 0;
       }
       // Zero rule hybrid: only the lanes that may multiply an Inf or
