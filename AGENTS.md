@@ -1124,6 +1124,7 @@ Standing facts:
 - Retro 2026-10-02 (2, tool, exists now): `xenia_frame_cost` (invocations per draw from RenderDoc x Adreno instructions per shader: Gears 21135, EDRAM transfers 45% of the frame's shader work) and the CPU column of `guest_profile.py` (% of a core per thread).
 - Retro 2026-10-02 (3, reflex): before a GPU lever, rank the frame with `xenia_frame_cost`; before a CPU lever, read the CPU column, not the sample share.
 - Retro 2026-10-02 (4, slow, tool exists now): a 30-trace A/B ran 40 minutes and produced nothing - `build_pc.py` built only `xenia-app`, so the trace dump was a day old, the new cvar was an unknown flag there, and every replay waited 300 s on a hidden error dialog. `build_pc.py` now builds the Vulkan trace dump too, and `backend_ab.replay` (all trace tools) stops when no log appears in 20 s and names the stale exe.
+- Retro 2026-10-02 (5, slow, tool exists now): an approved heat probe waited 15 silent minutes on a sleeping panel and then gave up. `heat_probe.py` now prints the preflight reasons at once ("waiting for: screen is asleep ... press the power button") and takes `--wait`; the reflex of 2026-10-01 (ask for the panel in the same message as the device plan) was not followed - put it in the AskUserQuestion text.
 - Retro 2026-10-01 (1, slow): two approved device sessions stood still on a sleeping panel - the
   preflight refuses, the scoreboard's own gate waited only for the case temperature, so a wait
   loop was written by hand each time - and the first Gears launch reached 44.8 C in 47 s with

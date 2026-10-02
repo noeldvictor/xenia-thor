@@ -53,10 +53,18 @@ def main():
     ap.add_argument('--max-case-c', type=float, default=42.0)
     ap.add_argument('--every', type=float, default=15.0)
     ap.add_argument('--cvars', default='')
+    ap.add_argument('--wait', type=int, default=900,
+                    help='seconds to wait for the preflight (panel awake, case cool)')
     args = ap.parse_args()
     path = TITLES.get(args.title, args.title)
 
-    ready = json.loads(m.xenia_wait_ready(timeout_s=900))
+    # Say at once what the wait is for: a sleeping panel needs the user's power
+    # button (2026-10-02: an approved probe waited 15 silent minutes on it).
+    first = json.loads(m.xenia_preflight())
+    if not first.get('ok'):
+        print('waiting (up to %d s) for: %s' % (args.wait, '; '.join(
+            r.split(chr(10))[0] for r in first.get('reasons', []))), flush=True)
+    ready = json.loads(m.xenia_wait_ready(timeout_s=args.wait))
     if not ready.get('ok'):
         print('device not ready:', ready.get('reasons'))
         return 1
