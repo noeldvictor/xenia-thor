@@ -1188,9 +1188,7 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
                       (interlock_barrier_only || native_rts_independent)
                           ? nullptr
                           : &last_update_transfers_[rt_bit_index],
-                      (rt_key.is_depth && msaa_depth_clear_cutout_valid_)
-                          ? &msaa_depth_clear_cutout_
-                          : nullptr,
+                      GetOwnershipCutout(rt_key, rt_bit_index),
                       rt_keep_depth_bits);
       // Record with the post-claim version: if the claim itself mutated the
       // map, ownership now reflects this claim at the bumped version, while
@@ -1205,9 +1203,7 @@ bool RenderTargetCache::Update(bool is_rasterization_done,
                       (interlock_barrier_only || native_rts_independent)
                           ? nullptr
                           : &last_update_transfers_[rt_bit_index],
-                      (rt_key.is_depth && msaa_depth_clear_cutout_valid_)
-                          ? &msaa_depth_clear_cutout_
-                          : nullptr,
+                      GetOwnershipCutout(rt_key, rt_bit_index),
                       rt_keep_depth_bits);
     }
   }
@@ -2052,6 +2048,119 @@ bool RenderTargetCache::SetMsaaDepthClearFold(
     }
   }
   return reject(owner_rejection.c_str());
+}
+
+const RenderTargetCache::Transfer::Rectangle*
+RenderTargetCache::GetOwnershipCutout(RenderTargetKey rt_key,
+                                      uint32_t rt_bit_index) const {
+  if (rt_key.is_depth) {
+    return msaa_depth_clear_cutout_valid_ ? &msaa_depth_clear_cutout_
+                                          : nullptr;
+  }
+  return (rt_bit_index >= 1 && color_overwrite_cutout_valid_[rt_bit_index - 1])
+             ? &color_overwrite_cutout_
+             : nullptr;
+}
+
+void RenderTargetCache::SetColorOverwriteCutouts(
+    bool is_rasterization_done, reg::RB_DEPTHCONTROL normalized_depth_control,
+    uint32_t normalized_color_mask, const Shader& vertex_shader,
+    const Shader* pixel_shader) {
+  for (bool& valid : color_overwrite_cutout_valid_) {
+    valid = false;
+  }
+  // A transfer into a color render target that the draw then overwrites in
+  // every component of every sample is dead (Gears of War, 2026-10-02: about
+  // 10 of its 17 transfers a frame went into 1280x720 targets just before a
+  // full-screen pass; xenia_frame_cost).
+  if (!normalized_color_mask ||
+      GetPath() != Path::kHostRenderTargets || !is_rasterization_done ||
+      !pixel_shader || cvars::gpu_force_max_msaa_samples ||
+      cvars::gpu_bd_perfmode_hdr_2x || cvars::gpu_native_render_targets) {
+    return;
+  }
+  const RegisterFile& regs = register_file();
+  if (regs.Get<reg::RB_MODECONTROL>().edram_mode !=
+      xenos::EdramMode::kColorDepth) {
+    return;
+  }
+  // No sample may be rejected.
+  if ((normalized_depth_control.z_enable &&
+       normalized_depth_control.zfunc != xenos::CompareFunction::kAlways) ||
+      (normalized_depth_control.stencil_enable &&
+       (normalized_depth_control.stencilfunc !=
+            xenos::CompareFunction::kAlways ||
+        (normalized_depth_control.backface_enable &&
+         normalized_depth_control.stencilfunc_bf !=
+             xenos::CompareFunction::kAlways)))) {
+    return;
+  }
+  if (pixel_shader->kills_pixels() || pixel_shader->memexport_eM_written()) {
+    return;
+  }
+  auto rb_colorcontrol = regs.Get<reg::RB_COLORCONTROL>();
+  if (rb_colorcontrol.alpha_to_mask_enable ||
+      (rb_colorcontrol.alpha_test_enable &&
+       rb_colorcontrol.alpha_func != xenos::CompareFunction::kAlways)) {
+    return;
+  }
+  auto pa_su_sc_mode_cntl = regs.Get<reg::PA_SU_SC_MODE_CNTL>();
+  if (pa_su_sc_mode_cntl.cull_front || pa_su_sc_mode_cntl.cull_back ||
+      (regs.Get<uint32_t>(XE_GPU_REG_PA_SC_AA_MASK) & 0xF) != 0xF) {
+    return;
+  }
+  // The targets written in all their components, without blending.
+  uint32_t overwritten = 0;
+  for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+    uint32_t rt_mask = (normalized_color_mask >> (4 * i)) & 0xF;
+    if (!rt_mask) {
+      continue;
+    }
+    auto color_info = regs.Get<reg::RB_COLOR_INFO>(
+        reg::RB_COLOR_INFO::rt_register_indices[i]);
+    uint32_t needed =
+        (UINT32_C(1) << xenos::GetColorRenderTargetFormatComponentCount(
+             color_info.color_format)) -
+        1;
+    if ((rt_mask & needed) != needed) {
+      continue;
+    }
+    auto blend = regs.Get<reg::RB_BLENDCONTROL>(
+        reg::RB_BLENDCONTROL::rt_register_indices[i]);
+    if (blend.color_srcblend != xenos::BlendFactor::kOne ||
+        blend.color_destblend != xenos::BlendFactor::kZero ||
+        blend.color_comb_fcn != xenos::BlendOp::kAdd ||
+        blend.alpha_srcblend != xenos::BlendFactor::kOne ||
+        blend.alpha_destblend != xenos::BlendFactor::kZero ||
+        blend.alpha_comb_fcn != xenos::BlendOp::kAdd) {
+      continue;
+    }
+    overwritten |= UINT32_C(1) << i;
+  }
+  if (!overwritten) {
+    return;
+  }
+  int32_t x0, y0, x1, y1;
+  if (!draw_extent_estimator_.EstimateRectListCoverage(
+          vertex_shader, x0, y0, x1, y1, nullptr, true)) {
+    return;
+  }
+  draw_util::Scissor scissor;
+  draw_util::GetScissor(regs, scissor);
+  x0 = std::max(x0, int32_t(scissor.offset[0]));
+  y0 = std::max(y0, int32_t(scissor.offset[1]));
+  x1 = std::min(x1, int32_t(scissor.offset[0] + scissor.extent[0]));
+  y1 = std::min(y1, int32_t(scissor.offset[1] + scissor.extent[1]));
+  if (x0 < 0 || y0 < 0 || x0 >= x1 || y0 >= y1) {
+    return;
+  }
+  color_overwrite_cutout_.x_pixels = uint32_t(x0);
+  color_overwrite_cutout_.y_pixels = uint32_t(y0);
+  color_overwrite_cutout_.width_pixels = uint32_t(x1 - x0);
+  color_overwrite_cutout_.height_pixels = uint32_t(y1 - y0);
+  for (uint32_t i = 0; i < xenos::kMaxColorRenderTargets; ++i) {
+    color_overwrite_cutout_valid_[i] = (overwritten >> i) & 1;
+  }
 }
 
 xenos::MsaaSamples RenderTargetCache::GetUpdateMsaaSamples() const {

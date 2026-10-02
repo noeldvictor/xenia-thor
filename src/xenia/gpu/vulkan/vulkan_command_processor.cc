@@ -7770,6 +7770,11 @@ bool VulkanCommandProcessor::IssueDraw(xenos::PrimitiveType prim_type,
   if (msaa_depth_clear_fold_draw_) {
     ++msaa_depth_clear_folds_;
   }
+  if (!hybrid_current_draw_composite_) {
+    render_target_cache_->SetColorOverwriteCutouts(
+        is_rasterization_done, normalized_depth_control, normalized_color_mask,
+        *vertex_shader, pixel_shader);
+  }
   bool rt_update_ok;
   if (hybrid_current_draw_composite_) {
     // THE EDRAM SOLVE, hybrid form: a post-process composite renders PASS-LESS into

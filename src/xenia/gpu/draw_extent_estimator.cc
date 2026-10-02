@@ -300,7 +300,8 @@ bool DrawExtentEstimator::EstimateRectListCoverage(const Shader& vertex_shader,
                                                    int32_t& out_y0,
                                                    int32_t& out_x1,
                                                    int32_t& out_y1,
-                                                   bool* out_pixel_aligned_flat) {
+                                                   bool* out_pixel_aligned_flat,
+                                                   bool allow_quads) {
   if (out_pixel_aligned_flat) {
     *out_pixel_aligned_flat = false;
   }
@@ -309,11 +310,23 @@ bool DrawExtentEstimator::EstimateRectListCoverage(const Shader& vertex_shader,
   const RegisterFile& regs = register_file_;
 
   auto vgt_draw_initiator = regs.Get<reg::VGT_DRAW_INITIATOR>();
-  // One rectangle exactly - the guest clear idiom.
-  if (vgt_draw_initiator.prim_type != xenos::PrimitiveType::kRectangleList ||
-      vgt_draw_initiator.num_indices != 3) {
+  // One rectangle exactly - the guest clear idiom - or, with allow_quads, two
+  // triangles that form one rectangle.
+  xenos::PrimitiveType prim_type = vgt_draw_initiator.prim_type;
+  uint32_t num_indices = vgt_draw_initiator.num_indices;
+  bool rect_list =
+      prim_type == xenos::PrimitiveType::kRectangleList && num_indices == 3;
+  bool quad = allow_quads &&
+              (((prim_type == xenos::PrimitiveType::kTriangleStrip ||
+                 prim_type == xenos::PrimitiveType::kTriangleFan ||
+                 prim_type == xenos::PrimitiveType::kQuadList) &&
+                num_indices == 4) ||
+               (prim_type == xenos::PrimitiveType::kTriangleList &&
+                num_indices == 6));
+  if (!rect_list && !quad) {
     return false;
   }
+  float quad_x[6], quad_y[6];
   if (vgt_draw_initiator.source_select != xenos::SourceSelect::kDMA &&
       vgt_draw_initiator.source_select != xenos::SourceSelect::kAutoIndex) {
     return false;
@@ -464,10 +477,63 @@ bool DrawExtentEstimator::EstimateRectListCoverage(const Shader& vertex_shader,
     min_y = std::min(min_y, vertex_y);
     max_x = std::max(max_x, vertex_x);
     max_y = std::max(max_y, vertex_y);
+    if (quad && i < 6) {
+      quad_x[i] = vertex_x;
+      quad_y[i] = vertex_y;
+    }
   }
   shader_interpreter_.SetExportSink(nullptr);
   if (!valid || min_x > max_x || min_y > max_y) {
     return false;
+  }
+  if (quad) {
+    // Every vertex on a corner (corner index: bit 0 right, bit 1 bottom; the
+    // opposite corner is index ^ 3), and the triangles split the rectangle
+    // along one diagonal.
+    uint32_t corners[6];
+    for (uint32_t i = 0; i < num_indices; ++i) {
+      if ((quad_x[i] != min_x && quad_x[i] != max_x) ||
+          (quad_y[i] != min_y && quad_y[i] != max_y)) {
+        return false;
+      }
+      corners[i] = uint32_t(quad_x[i] == max_x) |
+                   (uint32_t(quad_y[i] == max_y) << 1);
+    }
+    auto distinct3 = [](uint32_t a, uint32_t b, uint32_t c) {
+      return a != b && b != c && a != c;
+    };
+    bool covers;
+    if (num_indices == 6) {
+      // Each triangle misses one corner; the two missed corners are the ends
+      // of the diagonal the triangles do not share.
+      if (!distinct3(corners[0], corners[1], corners[2]) ||
+          !distinct3(corners[3], corners[4], corners[5])) {
+        return false;
+      }
+      uint32_t missed_0 = 6 - (corners[0] + corners[1] + corners[2]);
+      uint32_t missed_1 = 6 - (corners[3] + corners[4] + corners[5]);
+      covers = missed_0 == (missed_1 ^ 3);
+    } else {
+      if (!distinct3(corners[0], corners[1], corners[2]) ||
+          corners[3] == corners[0] || corners[3] == corners[1] ||
+          corners[3] == corners[2]) {
+        return false;
+      }
+      if (prim_type == xenos::PrimitiveType::kTriangleStrip) {
+        // (v0, v1, v2) and (v1, v2, v3): v1-v2 is the diagonal.
+        covers = corners[1] == (corners[2] ^ 3);
+      } else if (prim_type == xenos::PrimitiveType::kTriangleFan) {
+        // (v0, v1, v2) and (v0, v2, v3): v0-v2 is the diagonal.
+        covers = corners[0] == (corners[2] ^ 3);
+      } else {
+        // A quad in order around its edge.
+        covers = corners[0] == (corners[2] ^ 3) &&
+                 corners[1] == (corners[3] ^ 3);
+      }
+    }
+    if (!covers) {
+      return false;
+    }
   }
 
   // To 24p8 fixed point, with the same pixel-center and window-offset handling

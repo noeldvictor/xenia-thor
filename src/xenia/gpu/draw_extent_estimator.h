@@ -51,10 +51,15 @@ class DrawExtentEstimator {
   // rectangle are on pixel edges and the three vertices have the same Z and W
   // - then the covered samples and their depth do not depend on where the
   // samples are inside the pixel (gpu_fold_msaa_depth_clears).
+  // allow_quads: also a 4-vertex triangle strip, fan or quad list, or a
+  // 6-vertex triangle list, whose vertices are exactly the corners of one
+  // axis-aligned rectangle and whose triangles cover it (split along one
+  // diagonal) - the full-screen pass idiom.
   bool EstimateRectListCoverage(const Shader& vertex_shader, int32_t& out_x0,
                                 int32_t& out_y0, int32_t& out_x1,
                                 int32_t& out_y1,
-                                bool* out_pixel_aligned_flat = nullptr);
+                                bool* out_pixel_aligned_flat = nullptr,
+                                bool allow_quads = false);
 
   // Front B cullable-triangle counter (gpu_trace_cullable_tris): replays the
   // guest VS positions on the CPU and counts how many triangles a CPU-side cull

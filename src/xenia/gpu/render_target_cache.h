@@ -176,6 +176,14 @@ class RenderTargetCache {
                              uint32_t normalized_color_mask,
                              const Shader& vertex_shader,
                              const Shader* pixel_shader);
+  // Before Update: the color render targets this draw overwrites completely
+  // inside one rectangle (every component, no blending, no sample rejected),
+  // so Update does not make the transfers into them that the rectangle covers.
+  void SetColorOverwriteCutouts(bool is_rasterization_done,
+                                reg::RB_DEPTHCONTROL normalized_depth_control,
+                                uint32_t normalized_color_mask,
+                                const Shader& vertex_shader,
+                                const Shader* pixel_shader);
   void ClearMsaaDepthClearFold() {
     msaa_depth_clear_fold_ = false;
     msaa_depth_clear_cutout_valid_ = false;
@@ -874,6 +882,14 @@ class RenderTargetCache {
   // clear covers is not made (the clear overwrites everything it would copy).
   bool msaa_depth_clear_cutout_valid_ = false;
   Transfer::Rectangle msaa_depth_clear_cutout_ = {};
+  // SetColorOverwriteCutouts: the color render targets the draw overwrites in
+  // color_overwrite_cutout_ (reset after each Update).
+  bool color_overwrite_cutout_valid_[xenos::kMaxColorRenderTargets] = {};
+  Transfer::Rectangle color_overwrite_cutout_ = {};
+  // The cutout of a render target's ownership change in Update (the depth
+  // clear fold's or a color overwrite's), or nullptr.
+  const Transfer::Rectangle* GetOwnershipCutout(RenderTargetKey rt_key,
+                                                uint32_t rt_bit_index) const;
   // After an update (for simplicity, even an unsuccessful update invalidates
   // this), contains needed ownership transfer sources for each of the current
   // render targets. They are reordered so for one source, all transfers are
