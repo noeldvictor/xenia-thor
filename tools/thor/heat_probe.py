@@ -71,6 +71,7 @@ def main():
     print('launched', launched.get('launched'), 'cvars', ' '.join(extra) or '-', flush=True)
 
     start = time.time()
+    last_swaps = scoreboard.swaps()
     previous = {}
     totals = collections.Counter()
     samples = []
@@ -79,6 +80,10 @@ def main():
         time.sleep(args.every)
         elapsed = time.time() - start
         temps, battery, threads = sample()
+        swaps_now = scoreboard.swaps()
+        fps = (round((swaps_now - last_swaps) / args.every, 1)
+               if swaps_now is not None and last_swaps is not None else None)
+        last_swaps = swaps_now
         case_c = float(temps.get('case_c') or 0)
         samples.append((elapsed, case_c))
         interval = []
@@ -96,8 +101,8 @@ def main():
         interval.sort(reverse=True)
         top = ', '.join('%s %.0f%%' % (name, 100.0 * d / (TICKS_PER_S * args.every))
                         for d, name in interval[:6])
-        print('%4.0f s case %.1f C hottest %s gpu %s charging %s | %s' % (
-            elapsed, case_c, temps.get('hottest_cpu_gpu_zone_c'), temps.get('gpu_busy'),
+        print('%4.0f s fps %s case %.1f C hottest %s gpu %s charging %s | %s' % (
+            elapsed, fps, case_c, temps.get('hottest_cpu_gpu_zone_c'), temps.get('gpu_busy'),
             battery.get('charging'), top or '(no thread data yet)'), flush=True)
         if case_c >= args.max_case_c:
             stopped = 'case %.1f C' % case_c
