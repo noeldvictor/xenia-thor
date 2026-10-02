@@ -53,6 +53,15 @@ PLAN = [
         'heat: 20.4 -> 25.9 fps with both).'),
         arms=['base:global_lock_spin=0,rtl_critical_section_min_spin=0',
               'both:global_lock_spin=128,rtl_critical_section_min_spin=256']),
+    dict(id='spin', entry='gears1', relaunch=True, why=(
+        'Gears heat: its worker XThread F800003C spins on the PowerPC priority '
+        'hint (8222F460) and held a whole big core (heat_probe 2026-10-01: '
+        '98-115% of a core, case +5.8 C/min at 15 fps). The Gears profile now '
+        'sets cpu_spin_hint_backoff_us=50 (PC: the thread at a tenth). First run '
+        'heat_probe.py gears (no --cool) for the case slope and the thread table; '
+        'then this item for fps.'),
+        arms=['off:cpu_spin_hint_backoff_us=0',
+              'on:cpu_spin_hint_backoff_us=50']),
     dict(id='bools', entry='banjo_story', relaunch=True, why=(
         'Bool constants as specialization constants (app toggle opt_bool_specialize, '
         'off): the driver drops the branch side not taken - shader lab -154k to '
