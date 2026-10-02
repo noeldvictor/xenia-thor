@@ -672,6 +672,20 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   traces differ, at most 0.85% of the pixels, 0.0013% by more than 8 (Banjo's face close-up:
   9 pixels, no visible change); Gears at most 2 levels, MC2 and Blue Dragon 0. The next
   Gears device session shows the frame time.
+- **Generic optimizers and upstream, checked for Gears cool and fast (2026-10-01):** (1) GPU:
+  `spirv-opt -O` on all 478 translated modules of 4 titles before Turnip: -205 Adreno
+  instructions (0.04%) - Turnip's NIR/ir3 already does what a generic optimizer does; the gains
+  come from what the translator emits (the zero rule, LOD bias, specialization: -25% on
+  2026-09-29). (2) CPU: edge's new dead-CR-store pass (689590ba3c) duplicates our default-off
+  `ppc_cross_block_dead_flag_elim` (removed nothing) and `ppc_cross_block_dead_gpr_elim`
+  (12,942 stores, +0.8% = noise); Gears' CPU time is lock waits and kernel time, not JIT code
+  quality, and Gears runs on the LLVM backend, so edge's A64-backend batch (448 commits since
+  08-16) helps a64 titles only. (3) Canary since 08-16: the POSIX NanoSleep and terminate-spin
+  fixes and the idle timer queue are already in (ported differently); the Linux vblank pacing
+  (44f5b4a860) is A/V sync, not power; the per-lock gettid is behind
+  `global_lock_owner_tracking` (off). Correctness ports to consider: c8f214e2a9 (keep the
+  barrier between two uploads to one texture), 1b242658e5 (lock the binding layout tables in
+  parallel shader translation).
 - **Bool constants as specialization constants (2026-09-29, lever `gpu_specialize_bool_constants`,
   app toggle `opt_bool_specialize`, default off until a device session):** Xenos shaders branch
   on bool constants the game sets per draw (314 of 825 shaders over 43 traces; 9.5% of the guest
