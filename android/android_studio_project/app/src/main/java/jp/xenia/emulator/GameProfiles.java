@@ -301,7 +301,17 @@ public final class GameProfiles {
                         + "limiter at 30 (its native ceiling) so it paces cleanly. The "
                         + "global default-on stack (lock-free object-handle cache + "
                         + "native-object fast-path for its global-lock contention, plus "
-                        + "the Turnip fence fix) supplies the speed."));
+                        + "the Turnip fence fix) supplies the speed.")
+                .add("cpu_spin_hint_backoff_us", Integer.valueOf(50),
+                        "Gears of War's worker XThread F800003C waits by spinning on "
+                        + "the PowerPC priority hint (8222F460: four rounds of eight "
+                        + "or r31,r31,r31, then a flag check) and held a whole big "
+                        + "core at full clock on the Thor even at a 15 fps cap - the "
+                        + "case heat (2026-10-01, heat_probe). With 50, a spin that "
+                        + "has lasted 1 ms sleeps 50 us every 32nd hint: on the PC "
+                        + "the thread fell from a full core to about a tenth, the "
+                        + "menus answered at least as fast. Gears only: Banjo "
+                        + "stopped on a dark screen twice with it on the PC."));
 
         // Lost Odyssey (4D5307FA): 30fps-native JRPG. KNOWN BOOT BLOCKER - it can
         // hang on a stuck LOADING screen (a file-not-found IO stall, device-observed

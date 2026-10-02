@@ -35,6 +35,8 @@ struct PPCBuiltins {
   Function* enter_global_lock;
   Function* leave_global_lock;
   Function* syscall_handler;
+  // cpu_spin_hint_backoff_us: the guest spin-wait priority hint (or rN,rN,rN).
+  Function* spin_hint;
   // Shared-function fast-path: native replacements for hot, byte-identical XDK
   // runtime kernels that recur across titles (cpu_shared_function_fastpath).
   Function* shared_memset;

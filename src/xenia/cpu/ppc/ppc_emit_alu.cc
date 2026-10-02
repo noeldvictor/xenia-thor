@@ -15,6 +15,7 @@
 #include "xenia/base/logging.h"
 #include "xenia/base/cvar.h"
 #include "xenia/cpu/ppc/ppc_context.h"
+#include "xenia/cpu/ppc/ppc_frontend.h"
 #include "xenia/cpu/ppc/ppc_hir_builder.h"
 
 DEFINE_bool(
@@ -61,6 +62,8 @@ DEFINE_bool(ppc_rlwinm_general_fastpath, true,
             "in the high word that PPC requires. Default-ON: in-game validated "
             "(Burnout race matched A/B - guest-CPU down, GPU flat).",
             "CPU");
+
+DECLARE_uint32(cpu_spin_hint_backoff_us);
 
 namespace xe {
 namespace cpu {
@@ -813,8 +816,14 @@ int InstrEmit_orx(PPCHIRBuilder& f, const InstrData& i) {
     // like Lost Odyssey and Gears). Emit a host spin hint (ARM YIELD / x86 PAUSE)
     // instead of discarding it, so the spinning core backs off and a sibling
     // thread (often the lock/condition holder) can progress. Correctness-neutral
-    // (a hint), so it stays on the default path.
-    f.Yield();
+    // (a hint), so it stays on the default path. With cpu_spin_hint_backoff_us,
+    // a host helper also sleeps briefly inside long spins (the YIELD is a no-op
+    // on the LLVM backend and on cores without SMT).
+    if (cvars::cpu_spin_hint_backoff_us) {
+      f.CallExtern(f.builtins()->spin_hint);
+    } else {
+      f.Yield();
+    }
     return 0;
   }
   Value* ra;

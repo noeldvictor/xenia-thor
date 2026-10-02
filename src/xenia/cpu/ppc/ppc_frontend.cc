@@ -10,6 +10,7 @@
 #include "xenia/cpu/ppc/ppc_frontend.h"
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <mutex>
 #include <unordered_map>
@@ -20,6 +21,7 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/mutex.h"
+#include "xenia/base/threading.h"
 #include "xenia/base/xxhash.h"
 #include "xenia/cpu/cpu_flags.h"
 #include "xenia/cpu/ppc/ppc_context.h"
@@ -28,6 +30,18 @@
 #include "xenia/cpu/ppc/ppc_translator.h"
 #include "xenia/cpu/processor.h"
 
+DEFINE_uint32(
+    cpu_spin_hint_backoff_us, 0,
+    "The guest spin-wait priority hint (or rN,rN,rN) calls a host helper that "
+    "sleeps this many microseconds on every 32nd hint once a spin has lasted "
+    "1 ms (hints within 2 ms of each other). A guest thread that waits by "
+    "spinning then stops holding a host core at full clock (Gears of War: one "
+    "thread used a whole big core on the Thor, 2026-10-01). Read when a "
+    "function is translated; 0 = the hint stays a host yield. Functions with "
+    "the hint are not kept in the LLVM object cache (extern call). Per title: "
+    "the Gears of War profile sets 50 (on the PC, Banjo-Kazooie stopped on a "
+    "dark screen twice with it, MagnaCarta 2 and Blue Dragon ran).",
+    "CPU");
 DEFINE_bool(
     cpu_lockfree_check_global_lock, true,
     "Thor CPU: make the guest mfmsr path (CheckGlobalLock) read the global-lock "
@@ -331,6 +345,46 @@ void LeaveGlobalLock(PPCContext* ppc_context, void* arg0, void* arg1) {
   global_mutex->unlock();
 }
 
+// The guest spin-wait priority hint (`or rN,rN,rN`, cpu_spin_hint_backoff_us).
+// On the Xbox 360 it gives the core's issue slots to the sibling hardware
+// thread; on the host it did nothing, so a guest thread that waits by
+// spinning held a host core at full clock: Gears of War's XThread F800003C
+// spends 93% of its time in 8222F460 (four rounds of eight `or r31,r31,r31`,
+// then a flag check) and used a whole big core on the Thor even at a 15 fps
+// cap (2026-10-01). A hint within 2 ms of the previous one on the same thread
+// continues a spin; once a spin has lasted 1 ms, every 32nd hint sleeps the
+// configured time, so a long wait polls a few thousand times a second instead
+// of millions, and a short spin (a handoff within a frame) is unchanged. The guest loop
+// itself is not changed: it still checks its flag after every round.
+void SpinHint(PPCContext* ppc_context, void* arg0, void* arg1) {
+  const uint32_t sleep_us = cvars::cpu_spin_hint_backoff_us;
+  if (!sleep_us) {
+    return;
+  }
+  thread_local uint64_t last_hint_us = 0;
+  thread_local uint64_t spin_start_us = 0;
+  thread_local uint32_t streak = 0;
+  uint64_t now_us = uint64_t(
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::steady_clock::now().time_since_epoch())
+          .count());
+  if (now_us - last_hint_us < 2000) {
+    ++streak;
+  } else {
+    streak = 0;
+    spin_start_us = now_us;
+  }
+  // Only a wait that has spun for 1 ms backs off: a short wait (a handoff
+  // between threads within a frame) stays a pure spin, with no added latency.
+  if (now_us - spin_start_us >= 1000 && (streak & 31) == 0) {
+    xe::threading::NanoSleep(int64_t(sleep_us) * 1000);
+    now_us = uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch())
+                          .count());
+  }
+  last_hint_us = now_us;
+}
+
 void SyscallHandler(PPCContext* ppc_context, void* arg0, void* arg1) {
   uint64_t syscall_number = ppc_context->r[0];
   switch (syscall_number) {
@@ -353,6 +407,8 @@ bool PPCFrontend::Initialize() {
       processor_->DefineBuiltin("LeaveGlobalLock", LeaveGlobalLock, arg0, arg1);
   builtins_.syscall_handler = processor_->DefineBuiltin(
       "SyscallHandler", SyscallHandler, nullptr, nullptr);
+  builtins_.spin_hint =
+      processor_->DefineBuiltin("SpinHint", SpinHint, nullptr, nullptr);
   // Shared-function fast-path native kernels (arg0 = Memory* for guest<->host
   // address translation; arg1 unused).
   void* mem_arg = reinterpret_cast<void*>(processor_->memory());

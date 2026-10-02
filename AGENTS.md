@@ -672,6 +672,22 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   traces differ, at most 0.85% of the pixels, 0.0013% by more than 8 (Banjo's face close-up:
   9 pixels, no visible change); Gears at most 2 levels, MC2 and Blue Dragon 0. The next
   Gears device session shows the frame time.
+- **Gears' heat source: one guest thread spins on the PowerPC priority hint (2026-10-01,
+  `tools/thor/heat_probe.py`, MCP `xenia_heat_probe`):** in cool mode (15 fps) the GPU was
+  25-30% busy and the chip under 75 C, yet the case rose 5.8 C a minute, not charging. The
+  probe named the cause: XThread F800003C at 98-115% of a core for the whole launch, every
+  other thread under 20%. On the PC (`pc_run --profile-at 70:25`) the same thread spends 93%
+  in guest 8222F460: four rounds of eight `or r31,r31,r31` (the Xenon priority hint that gives
+  the core to the sibling hardware thread), then a flag check - a worker waiting by spinning.
+  The hint was a host `yield`, a no-op on the LLVM backend and on cores without SMT. Fix
+  (`cpu_spin_hint_backoff_us`, Gears profile 50, global 0): the hint calls a host builtin
+  (`SpinHint`, an extern call, so those few functions skip the LLVM object cache and the rest
+  of the cache stays valid - a lowering change would cost a 7-minute cold compile per title);
+  once a spin has lasted 1 ms, every 32nd hint sleeps 50 us, so a short handoff stays a pure
+  spin. PC: the thread 604 -> 60 samples in 25 s (95% asleep); Gears' menus answered at
+  least as fast (two runs per arm). MagnaCarta 2 and Blue Dragon run with it; Banjo stopped
+  on a dark screen twice with it (cold driver caches confound it), so it is Gears only. The
+  device check (case slope and fps with the profile) is owed.
 - **Generic optimizers and upstream, checked for Gears cool and fast (2026-10-01):** (1) GPU:
   `spirv-opt -O` on all 478 translated modules of 4 titles before Turnip: -205 Adreno
   instructions (0.04%) - Turnip's NIR/ir3 already does what a generic optimizer does; the gains
