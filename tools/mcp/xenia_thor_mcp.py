@@ -1378,6 +1378,29 @@ def xenia_cf_census(traces: str = '', shaders: str = '', cvars: str = '') -> str
 
 
 @mcp.tool()
+def xenia_frame_cost(trace: str, cvars: str = '', top: int = 20, label: str = '',
+                     reuse: bool = False) -> str:
+    """Which shaders cost the Thor's GPU the most in a real frame
+    (tools/pc/frame_cost.py): replays the trace under RenderDoc with the Thor's
+    GPU settings (cvars add or override), reads per draw the vertex and
+    fragment invocations and both SPIR-V modules, compiles them on the Adreno
+    740 compiler (shader lab) and ranks shaders and draws by invocations x
+    instructions (vertex shaders twice: the binning pass), with texture
+    samples, guest vs EDRAM transfer shares, and the stencil-bit transfer
+    draws the Thor does not run (Turnip exports stencil) listed apart.
+    2026-10-02: Gears 21135 - transfers 45% of the frame's shader work.
+    PC only."""
+    args = [trace, '--top', top]
+    if cvars:
+        args += ['--cvars', cvars]
+    if label:
+        args += ['--label', label]
+    if reuse:
+        args.append('--reuse')
+    return _run_tool_script('tools/pc/frame_cost.py', args, timeout=5400)
+
+
+@mcp.tool()
 def xenia_timer_queue_test(ref: str = 'HEAD', tsan: bool = True) -> str:
     """The host timer queue on the Thor's code path, tested on the PC
     (tools/pc/timer_queue_test.py): compiles
