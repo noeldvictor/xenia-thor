@@ -36,6 +36,15 @@ DEFINE_bool(cpu_log_spin_hint_functions, false,
             "cpu_backend_llvm_skip_addrs on a device with the LLVM object cache.",
             "CPU");
 DEFINE_uint32(
+    cpu_spin_hint_backoff_after_us, 1000,
+    "With cpu_spin_hint_backoff_us: how long a spin (hints within 2 ms of each "
+    "other) stays a pure spin before the helper starts to sleep - the latency "
+    "a short wait keeps. Read on every hint, so it can change live. 2026-10-02: "
+    "Gears' wait loop restarts about 60 times a second, so 1000 costs about 6% "
+    "of a core in pure spin; a lower value saves that at a wake latency of up "
+    "to one sleep for waits longer than it.",
+    "CPU");
+DEFINE_uint32(
     cpu_spin_hint_backoff_us, 0,
     "The guest spin-wait priority hint (or rN,rN,rN; one call per run of "
     "consecutive hints) calls a host helper that, once a spin has lasted 1 ms "
@@ -395,13 +404,15 @@ void SpinHint(PPCContext* ppc_context, void* arg0, void* arg1) {
     last_sleep_us = now_us;
     spin_hint_restarts.fetch_add(1, std::memory_order_relaxed);
   }
-  // Only a wait that has spun for 1 ms backs off: a short wait (a handoff
-  // between threads within a frame) stays a pure spin, with no added latency.
+  // Only a wait that has spun for cpu_spin_hint_backoff_after_us (1 ms) backs
+  // off: a short wait (a handoff between threads within a frame) stays a pure
+  // spin, with no added latency.
   // Then it sleeps whenever 20 us have passed since the last sleep - by time,
   // not by hint count, so the spin between sleeps stays about 2% of the time
   // however many hints the guest loop has (on the Thor, every 32nd hint left
   // some 830 hints between sleeps, 2026-10-02).
-  if (now_us - spin_start_us >= 1000 && now_us - last_sleep_us >= 20) {
+  if (now_us - spin_start_us >= cvars::cpu_spin_hint_backoff_after_us &&
+      now_us - last_sleep_us >= 20) {
     xe::threading::NanoSleep(int64_t(sleep_us) * 1000);
     uint64_t after_us =
         uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(

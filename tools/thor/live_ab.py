@@ -6,10 +6,15 @@
 Reaches the entry's scene (tools/thor/scoreboard.py ENTRIES) once, then for
 each round and each arm: sets the arm's cvars live (/cvar POST; the other
 arms' cvars go back to the values read at the start), waits 3 s, measures
-presented fps over --seconds, GPU busy, and takes a screenshot. Two rounds
-in alternating order cancel scene drift. One launch, no relaunch per arm,
-no cool-down between arms (the outcome rules: split in one launch). Prints a
-table per arm: mean fps, gpu busy, and the screenshot paths.
+presented fps over --seconds, GPU busy, the CPU of the emulator's threads
+(the sum and the busiest three, 100% = one core) and the case temperature,
+and takes a screenshot. Two rounds in alternating order cancel scene drift.
+One launch, no relaunch per arm, no cool-down between arms (the outcome
+rules: split in one launch). Prints a table per arm: mean fps, mean CPU,
+gpu busy, and the screenshot paths.
+
+2026-10-02: the CPU columns, for the levers that cool rather than speed up
+(the spin and Sleep(0) backoffs on Gears).
 """
 import argparse
 import json
@@ -28,6 +33,31 @@ def parse_arm(spec):
     label, _, rest = spec.partition(':')
     pairs = [p.split('=', 1) for p in rest.split(',') if '=' in p]
     return label, [(k.strip(), v.strip()) for k, v in pairs]
+
+
+def thread_ticks():
+    """{host tid: (name, cpu ticks)} of the emulator's threads."""
+    try:
+        rows = json.loads(m.xenia_threads(top=64))
+    except Exception:
+        return {}
+    out = {}
+    for r in rows if isinstance(rows, list) else []:
+        tid = r.get('host_tid') or r.get('tid')
+        out[tid] = (r.get('name') or r.get('comm') or str(tid), r.get('cpu_ticks', 0))
+    return out
+
+
+def cpu_window(before, after, seconds):
+    """(total CPU %, [(name, %)] busiest first) between two thread_ticks()."""
+    rows = []
+    for tid, (name, ticks) in after.items():
+        if tid in before:
+            delta = ticks - before[tid][1]
+            if delta > 0:
+                rows.append((100.0 * delta / (100.0 * seconds), name))
+    rows.sort(reverse=True)
+    return sum(r[0] for r in rows), [(name, pct) for pct, name in rows]
 
 
 def set_cvar(name, value):
@@ -86,21 +116,27 @@ def main():
             for k, v in pairs:
                 set_cvar(k, v)
             time.sleep(3)
+            ticks0 = thread_ticks()
             s0, t0 = scoreboard.swaps(), time.time()
             time.sleep(args.seconds)
             s1, t1 = scoreboard.swaps(), time.time()
+            ticks1 = thread_ticks()
             fps = (s1 - s0) / (t1 - t0) if (s0 is not None and s1 is not None) else 0.0
             busy = m._shell('cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage').strip()
+            total_cpu, busiest = cpu_window(ticks0, ticks1, t1 - t0)
             shot = json.loads(m.xenia_screenshot('liveab-%s-%s-r%d' % (args.entry, label, rnd))).get('path')
-            results[label].append((fps, busy, shot))
-            print('  round %d %-10s fps %5.1f  gpu busy %s  %s' % (rnd, label, fps, busy, shot), flush=True)
+            results[label].append((fps, busy, shot, total_cpu))
+            print('  round %d %-10s fps %5.1f  cpu %4.0f%%  gpu busy %s  case %.1f C  | %s  %s' % (
+                rnd, label, fps, total_cpu, busy, case_c,
+                ', '.join('%s %.0f%%' % b for b in busiest[:3]), shot), flush=True)
     if not aborted:
         for n in names:
             set_cvar(n, start[n])
-    print('arm        mean fps')
+    print('arm        mean fps  mean cpu  gpu busy')
     for label, rows in results.items():
-        print('%-10s %6.1f  %s' % (label, sum(r[0] for r in rows) / max(1, len(rows)),
-                                   ' '.join(r[1] for r in rows)))
+        print('%-10s %8.1f  %7.0f%%  %s' % (
+            label, sum(r[0] for r in rows) / max(1, len(rows)),
+            sum(r[3] for r in rows) / max(1, len(rows)), ' '.join(r[1] for r in rows)))
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
     return 0
