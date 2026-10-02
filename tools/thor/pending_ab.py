@@ -43,8 +43,10 @@ PLAN = [
               'pages:gpu_uma_smart_sync_pages=true,gpu_uma_direct_upload_barrier=true',
               'pages_nobarrier:gpu_uma_smart_sync_pages=true,gpu_uma_direct_upload_barrier=false']),
     dict(id='tiler', entry='gears1', why=(
-        'Render passes: the 4x MSAA shadow-clear fold (PC: 68 -> 54 passes a frame) '
-        'and the dead-resolve skip (Gears 2 of 20 resolves a frame).'),
+        'Render passes: the 4x MSAA shadow-clear fold (PC: 68 -> 54 passes a frame; '
+        'with the dead-transfer cutout of 2026-10-02 22 -> 17 transfers, and '
+        'xenia_frame_cost 4.38 -> 3.56 G Adreno instruction-invocations a Gears '
+        'frame, -19%) and the dead-resolve skip (Gears 2 of 20 resolves a frame).'),
         arms=['base:gpu_fold_msaa_depth_clears=false,gpu_skip_dead_resolves=0',
               'fold:gpu_fold_msaa_depth_clears=true,gpu_skip_dead_resolves=0',
               'fold_dead:gpu_fold_msaa_depth_clears=true,gpu_skip_dead_resolves=8']),
