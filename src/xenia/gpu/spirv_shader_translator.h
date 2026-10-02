@@ -34,6 +34,11 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // gpu_specialize_bool_constants: the 8 uint words of the bool constants
   // (bits 32*i to 32*i+31), SpecIds kSpecConstantBoolWordFirst + i.
   static constexpr uint32_t kSpecConstantBoolWordFirst = 1;
+  // gpu_specialize_texture_signs: in a pixel shader that converts texture
+  // signs, the 8 uint words of the swizzled signs of the 32 fetch constants
+  // (8 bits each, as in the system constants), SpecIds
+  // kSpecConstantTextureSignWordFirst + i.
+  static constexpr uint32_t kSpecConstantTextureSignWordFirst = 9;
 
   union Modification {
     // If anything in this is structure is changed in a way not compatible with
@@ -1410,6 +1415,9 @@ class SpirvShaderTranslator : public ShaderTranslator {
   // gpu_specialize_bool_constants: the specialization constant of each bool
   // constant word the shader reads, or spv::NoResult.
   spv::Id bool_word_spec_constants_[8];
+  // gpu_specialize_texture_signs: the specialization constant of each swizzled
+  // texture sign word the pixel shader reads, or spv::NoResult.
+  spv::Id texture_sign_word_spec_constants_[8];
   // Labels without the switch: each forward jump opens a selection construct
   // that runs the code until its target label when the jump is not taken.
   bool structured_forward_jumps_;

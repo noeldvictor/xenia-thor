@@ -1579,11 +1579,33 @@ void SpirvShaderTranslator::ProcessTextureFetchInstruction(
       // All 32 bits containing the values for 4 fetch constants (use
       // OpBitFieldUExtract to get the signednesses for the specific components
       // of this texture).
-      spv::Id swizzled_signs_word =
-          builder_->createLoad(builder_->createAccessChain(
-                                   spv::StorageClassUniform,
-                                   uniform_system_constants_, id_vector_temp_),
-                               spv::NoPrecision);
+      spv::Id swizzled_signs_word;
+      if (is_pixel_shader() && cvars::gpu_specialize_texture_signs &&
+          IsTextureSignConversionNeeded()) {
+        // The signs are known when the pipeline is made (the bound textures'
+        // formats): a specialization constant, so the driver folds the sign
+        // compares and selects of every fetch. Mesa ir3 otherwise runs about
+        // 25 instructions per component per fetch - 40% of Gears of War's
+        // largest lighting shader (xenia_frame_cost, 2026-10-02).
+        uint32_t word = (fetch_constant_index >> 2) & 7;
+        spv::Id& word_spec_constant = texture_sign_word_spec_constants_[word];
+        if (word_spec_constant == spv::NoResult) {
+          word_spec_constant = builder_->makeUintConstant(0, true);
+          builder_->addDecoration(
+              word_spec_constant, spv::DecorationSpecId,
+              int(kSpecConstantTextureSignWordFirst + word));
+          builder_->addName(word_spec_constant,
+                            fmt::format("xe_texture_signs_{}", word).c_str());
+        }
+        swizzled_signs_word = word_spec_constant;
+      } else {
+        swizzled_signs_word =
+            builder_->createLoad(builder_->createAccessChain(
+                                     spv::StorageClassUniform,
+                                     uniform_system_constants_,
+                                     id_vector_temp_),
+                                 spv::NoPrecision);
+      }
       uint32_t swizzled_signs_word_offset = 8 * (fetch_constant_index & 3);
 
       if (var_main_debug_tfetch_last_coords_ != spv::NoResult &&

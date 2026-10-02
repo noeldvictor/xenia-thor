@@ -5,7 +5,10 @@
 # Input rd_in.txt: line 1 the .rdc path, line 2 the output directory.
 # Output: <dir>/shader_<sha1 16>.vulkan.bin.vert|frag (the shader lab's input
 # naming), <dir>/draws.tsv (eid, vertex module, fragment module, VS
-# invocations, PS invocations, indices, instances), and rd_out.txt
+# invocations, PS invocations, indices, instances, PC GPU us, and the
+# non-zero specialization constants of each stage as "id=value;..." - the
+# zero rule, bool and texture sign constants the pipeline was made with;
+# RenderDoc stores each value in 8 bytes, little-endian), and rd_out.txt
 # with the counter names and "=== DONE ===".
 # Run: tools/renderdoc/run.ps1 <abs>\rd_frame_cost.py <capture.rdc> <dir>
 import hashlib
@@ -78,20 +81,28 @@ def main():
                 modules[key] = name
         return modules[key]
 
+    def specialization(stage):
+        ids = list(stage.specializationIds or [])
+        data = bytes(stage.specializationData or b"")
+        values = [int.from_bytes(data[8 * i:8 * i + 8], "little") for i in range(len(ids))]
+        return ";".join("%d=%d" % (i, v) for i, v in zip(ids, values) if v) or "-"
+
     rows = []
     for a in draws:
         controller.SetFrameEvent(a.eventId, False)
         pipe = controller.GetPipelineState()
         vs = module(pipe, rd.ShaderStage.Vertex, "vert")
         ps = module(pipe, rd.ShaderStage.Pixel, "frag")
-        rows.append("%d\t%s\t%s\t%d\t%d\t%d\t%d\t%.1f" % (
+        vk = controller.GetVulkanPipelineState()
+        rows.append("%d\t%s\t%s\t%d\t%d\t%d\t%d\t%.1f\t%s\t%s" % (
             a.eventId, vs, ps,
             values.get((a.eventId, int(rd.GPUCounter.VSInvocations)), -1),
             values.get((a.eventId, int(rd.GPUCounter.PSInvocations)), -1),
             a.numIndices, a.numInstances,
-            1e6 * values.get((a.eventId, int(rd.GPUCounter.EventGPUDuration)), 0.0)))
+            1e6 * values.get((a.eventId, int(rd.GPUCounter.EventGPUDuration)), 0.0),
+            specialization(vk.vertexShader), specialization(vk.fragmentShader)))
     with open(os.path.join(out_dir, "draws.tsv"), "w") as f:
-        f.write("eid\tvs\tps\tvs_inv\tps_inv\tindices\tinstances\tpc_gpu_us\n")
+        f.write("eid\tvs\tps\tvs_inv\tps_inv\tindices\tinstances\tpc_gpu_us\tvs_spec\tps_spec\n")
         f.write("\n".join(rows) + "\n")
     log("draws %d, modules %d" % (len(rows), len([m for m in modules.values() if m != "-"])))
     controller.Shutdown()

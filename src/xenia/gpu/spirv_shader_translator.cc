@@ -257,6 +257,10 @@ void SpirvShaderTranslator::Reset() {
   for (spv::Id& bool_word_spec_constant : bool_word_spec_constants_) {
     bool_word_spec_constant = spv::NoResult;
   }
+  for (spv::Id& texture_sign_word_spec_constant :
+       texture_sign_word_spec_constants_) {
+    texture_sign_word_spec_constant = spv::NoResult;
+  }
   structured_forward_jumps_ = false;
   structured_jump_regions_.clear();
   structured_jump_else_ends_.clear();

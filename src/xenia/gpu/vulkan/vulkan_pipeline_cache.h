@@ -265,6 +265,11 @@ class VulkanPipelineCache {
     // pixel shader reads (the other bits 0), as the specialization constants
     // SpirvShaderTranslator::kSpecConstantBoolWordFirst + i.
     uint32_t bool_constants[8];
+    // gpu_specialize_texture_signs: for a pixel shader that converts texture
+    // signs, the swizzled signs of its bound textures (8 bits per fetch
+    // constant, the other bits 0), as the specialization constants
+    // SpirvShaderTranslator::kSpecConstantTextureSignWordFirst + i.
+    uint32_t texture_signs[8];
 
     // Including all the padding, for a stable hash.
     PipelineDescription() { Reset(); }

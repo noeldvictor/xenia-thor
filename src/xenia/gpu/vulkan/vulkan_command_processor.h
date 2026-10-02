@@ -234,6 +234,9 @@ class VulkanCommandProcessor : public CommandProcessor {
                         VkPipelineStageFlags wait_stage_mask);
 
   uint64_t GetCurrentFrame() const { return frame_current_; }
+  // The pipeline cache reads the bound textures' swizzled signs
+  // (gpu_specialize_texture_signs).
+  const VulkanTextureCache& texture_cache() const { return *texture_cache_; }
   uint64_t GetCompletedFrame() const { return frame_completed_; }
 
   // Submission must be open to insert barriers. If no pipeline stages access

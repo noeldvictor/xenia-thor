@@ -716,6 +716,25 @@ public final class XeniaOptimizations {
                 new BoolCvar[]{new BoolCvar("gpu_specialize_bool_constants")}, null));
 
         list.add(new Optimization(
+                "opt_texture_sign_specialize",
+                "Specialize texture formats in shaders",
+                "Builds each texture's sign and gamma mode into the pipeline so the "
+                        + "shader stops testing it on every fetch.",
+                "Xbox 360 textures can store unsigned, signed, biased or gamma "
+                        + "components. A shader that reads any gamma or biased texture "
+                        + "tested the mode of every component of every fetch at run "
+                        + "time - about 25 Adreno instructions per component. With this, "
+                        + "the modes of the textures the draw binds go into the pipeline "
+                        + "as specialization constants and the driver removes the tests. "
+                        + "Gears of War gameplay frame: 11.7% fewer shader instructions "
+                        + "on the Adreno compiler, its largest lighting shader 1673 -> "
+                        + "990. The picture is identical (30 traces, 4 titles); the "
+                        + "pipeline count did not change on those traces. Takes effect "
+                        + "at the next launch.",
+                CATEGORY_GPU, true, true,
+                new BoolCvar[]{new BoolCvar("gpu_specialize_texture_signs")}, null));
+
+        list.add(new Optimization(
                 "opt_pipeline_cache",
                 "Persistent shader pipeline cache",
                 "Saves compiled GPU pipelines to disk so later launches skip the stutter.",

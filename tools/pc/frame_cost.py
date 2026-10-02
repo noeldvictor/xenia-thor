@@ -18,6 +18,11 @@ ALU and sampler work the Adreno does for the frame, by shader. The PC's own
 GPU time per draw (RenderDoc) is listed but is an NVIDIA number. --reuse skips
 the capture and the RenderDoc pass when scratch/frame_cost/<label>/ has them.
 
+Each draw's specialization constants (the zero rule interpolators, bool and
+texture sign words) are baked into a copy of its modules (spirv-opt
+--set-spec-const-default-value, in WSL) before the shader lab compiles them,
+so a shader is costed as the pipeline the draw used.
+
 Transfer shaders that only write the stencil bit by bit (no output variable;
 NVIDIA has no VK_EXT_shader_stencil_export) are left out and listed apart:
 Turnip has the extension, so the Thor writes the stencil in the depth transfer
@@ -28,6 +33,7 @@ the fragment work in stencil-bit draws the Thor does not run.
 """
 import argparse
 import collections
+import hashlib
 import json
 import os
 import struct
@@ -60,6 +66,35 @@ def module_kind(path):
             return 'transfer'
         i += max(count, 1)
     return 'stencil bit'
+
+
+def to_wsl(path):
+    path = os.path.abspath(path).replace(chr(92), '/')
+    return '/mnt/%s%s' % (path[0].lower(), path[2:])
+
+
+def bake_specializations(shaders, pairs):
+    """For each (module, "id=value;...") a copy of the module with those
+    specialization constant values as the defaults (spirv-opt in WSL), named
+    <module>_S<hash>: the shader lab compiles it as the pipeline the draw used
+    (the zero rule, bool and texture sign constants fold). Returns
+    {(module, spec): variant name}."""
+    names, script = {}, []
+    for module, spec in sorted(pairs):
+        tag = hashlib.sha1(spec.encode()).hexdigest()[:8].upper()
+        variant = module.replace('.vulkan.bin.', '_S%s.vulkan.bin.' % tag)
+        names[(module, spec)] = variant
+        if not os.path.exists(os.path.join(shaders, variant)):
+            values = ' '.join(kv.replace('=', ':') for kv in spec.split(';'))
+            script.append('spirv-opt --set-spec-const-default-value="%s" %s -o %s' % (
+                values, to_wsl(os.path.join(shaders, module)),
+                to_wsl(os.path.join(shaders, variant))))
+    if script:
+        path = os.path.join(shaders, 'bake.sh')
+        open(path, 'w', newline=chr(10)).write(chr(10).join(script) + chr(10))
+        subprocess.run(['wsl', 'bash', to_wsl(path)], stdin=subprocess.DEVNULL,
+                       capture_output=True, env=dict(os.environ, MSYS_NO_PATHCONV='1'))
+    return {k: v for k, v in names.items() if os.path.exists(os.path.join(shaders, v))}
 
 
 def capture(trace, out, cvars):
@@ -120,6 +155,15 @@ def main():
     if not (args.reuse and os.path.exists(draws_tsv)):
         rdc = capture(args.trace, out, cvars)
         renderdoc_pass(rdc, shaders)
+    draw_lines = open(draws_tsv).read().splitlines()[1:]
+    pairs = set()
+    for line in draw_lines:
+        cols = line.split(chr(9))
+        if len(cols) >= 10:
+            for module, spec in ((cols[1], cols[8]), (cols[2], cols[9])):
+                if module != '-' and spec != '-':
+                    pairs.add((module, spec))
+    baked = bake_specializations(shaders, pairs) if pairs else {}
     lab = shader_lab(shaders, 'fc_' + label)
     stats = {}
     for row in lab['rows']:
@@ -151,8 +195,12 @@ def main():
     totals = collections.Counter()
     by_kind = collections.Counter()
     pc_only = collections.Counter()
-    for line in open(draws_tsv).read().splitlines()[1:]:
-        eid, vs, ps, vs_inv, ps_inv, indices, instances, pc_us = line.split('\t')
+    for line in draw_lines:
+        cols = line.split(chr(9))
+        eid, vs, ps, vs_inv, ps_inv, indices, instances, pc_us = cols[:8]
+        if len(cols) >= 10:
+            vs = baked.get((vs, cols[8]), vs)
+            ps = baked.get((ps, cols[9]), ps)
         vs_inv, ps_inv = max(int(vs_inv), 0), max(int(ps_inv), 0)
         vi, vb = instr(vs)
         pi, _ = instr(ps)

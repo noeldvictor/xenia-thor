@@ -1426,6 +1426,15 @@ DEFINE_bool(
     "do not compile in play. Off until a device session verifies it.",
     "GPU");
 DEFINE_bool(
+    gpu_specialize_texture_signs, true,
+    "A pixel shader that converts texture signs (a bound texture has an "
+    "unsigned biased or gamma component) takes the swizzled signs of its "
+    "textures as Vulkan specialization constants instead of system constants: "
+    "the driver folds the per-component sign compares and selects of every "
+    "fetch (Mesa ir3: about 25 instructions per component). A pipeline is "
+    "then made per set of texture sign modes of the shader's bindings.",
+    "GPU");
+DEFINE_bool(
     vulkan_tfetch_sign_specialize, true,
     "Translate a pixel shader without the texture fetch sign conversion "
     "(unsigned biased and gamma) when no texture it binds needs it. Mesa ir3 "
