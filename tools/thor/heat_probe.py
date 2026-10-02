@@ -82,6 +82,11 @@ def main():
     last_swaps = scoreboard.swaps()
     previous = {}
     totals = collections.Counter()
+    # Where the busiest thread is in guest code: its lr (for a leaf spin
+    # function, the return address into the caller - the bl before it names the
+    # function) and the call chain (2026-10-02: F800003C still used 47% of a
+    # core on the Thor with the PC's 18-function spin list; this names where).
+    top_where = collections.Counter()
     samples = []
     stopped = ''
     while True:
@@ -95,11 +100,13 @@ def main():
         case_c = float(temps.get('case_c') or 0)
         samples.append((elapsed, case_c))
         interval = []
+        rows_by_tid = {}
         for row in threads:
             tid = row.get('host_tid') or row.get('tid') or row.get('id')
             ticks = row.get('cpu_ticks', 0)
             # The guest thread name when the kernel knows it, else the host comm.
             name = row.get('name') or row.get('comm') or str(tid)
+            rows_by_tid[name] = row
             if tid in previous:
                 delta = ticks - previous[tid]
                 if delta > 0:
@@ -112,6 +119,13 @@ def main():
         print('%4.0f s fps %s case %.1f C hottest %s gpu %s charging %s | %s' % (
             elapsed, fps, case_c, temps.get('hottest_cpu_gpu_zone_c'), temps.get('gpu_busy'),
             battery.get('charging'), top or '(no thread data yet)'), flush=True)
+        if interval:
+            busiest = rows_by_tid.get(interval[0][1], {})
+            chain = busiest.get('chain') or []
+            chain = [c if isinstance(c, str) else json.dumps(c) for c in chain[:4]]
+            where = 'lr %s chain %s' % (busiest.get('lr', '?'), ' '.join(chain) or '-')
+            top_where[(interval[0][1], where)] += 1
+            print('       busiest %s: %s' % (interval[0][1], where), flush=True)
         if case_c >= args.max_case_c:
             stopped = 'case %.1f C' % case_c
         elif elapsed >= args.seconds:
@@ -126,6 +140,10 @@ def main():
     print('\nstopped: %s; case %.1f -> %.1f C (%+.1f C/min)' % (
         stopped, samples[0][1], samples[-1][1], slope))
     seconds = samples[-1][0] - samples[0][0] if len(samples) > 1 else args.every
+    if top_where:
+        print('where the busiest thread was (lr, guest call chain), per interval:')
+        for (name, where), n in top_where.most_common(6):
+            print('  %2d x %s: %s' % (n, name, where))
     print('average CPU per thread over the run (100% = one core):')
     for name, ticks in totals.most_common(12):
         print('  %-40s %5.0f%%' % (name, 100.0 * ticks / (TICKS_PER_S * max(seconds, 1))))
