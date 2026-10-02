@@ -680,14 +680,24 @@ The day-by-day record before this date is in `docs/worklog/2026-09-18-to-22-stat
   in guest 8222F460: four rounds of eight `or r31,r31,r31` (the Xenon priority hint that gives
   the core to the sibling hardware thread), then a flag check - a worker waiting by spinning.
   The hint was a host `yield`, a no-op on the LLVM backend and on cores without SMT. Fix
-  (`cpu_spin_hint_backoff_us`, Gears profile 50, global 0): the hint calls a host builtin
-  (`SpinHint`, an extern call, so those few functions skip the LLVM object cache and the rest
-  of the cache stays valid - a lowering change would cost a 7-minute cold compile per title);
-  once a spin has lasted 1 ms, every 32nd hint sleeps 50 us, so a short handoff stays a pure
-  spin. PC: the thread 604 -> 60 samples in 25 s (95% asleep); Gears' menus answered at
-  least as fast (two runs per arm). MagnaCarta 2 and Blue Dragon run with it; Banjo stopped
-  on a dark screen twice with it (cold driver caches confound it), so it is Gears only. The
-  device check (case slope and fps with the profile) is owed.
+  (`cpu_spin_hint_backoff_us`, Gears profile 200, global 0): the hint calls a host builtin
+  (`SpinHint`); once a spin has lasted 1 ms, every 32nd hint sleeps, so a short handoff stays
+  a pure spin. PC: the thread 604 -> 60 samples in 25 s (95% asleep); Gears' menus answered
+  at least as fast (two runs per arm). MagnaCarta 2 and Blue Dragon run with it; Banjo
+  stopped on a dark screen twice with it (cold driver caches confound it), so it is Gears
+  only. **The LLVM object cache hides a cvar that is not in its key:** with skip_lowering a
+  cached function is served by guest address and code hash before any translation, so the
+  first device probe ran the old plain hint (F800003C still 93%). The cvar is not in the key
+  because the key lives in `llvm_assembler.cc`, and any edit there discards every title's
+  cache (a 7-minute all-core compile per title). So the profile lists the functions with the
+  hint in `cpu_backend_llvm_skip_addrs` (they compile on a64 with the helper call): on the
+  PC, `cpu_log_spin_hint_functions=true` logs each one once and `pc_run` prints the list
+  (Gears: 18, menus and the first level). Thor heat_probe 2026-10-01, menus, plugged in:
+  8222F460 alone took F800003C from 93% to 44-57% of a core; with `thor_sleep0_backoff_us=200`
+  also in the profile, the main thread (Sleep(0) loops) fell from 59-109% to 11-16% and the
+  presented rate rose from 22 to 36 fps, case slope +10.2 -> +7.3 C/min. The full 18-function
+  list and its device check are owed. Fold the cvar into the cache key at the next lowering
+  change that discards the caches anyway.
 - **Generic optimizers and upstream, checked for Gears cool and fast (2026-10-01):** (1) GPU:
   `spirv-opt -O` on all 478 translated modules of 4 titles before Turnip: -205 Adreno
   instructions (0.04%) - Turnip's NIR/ir3 already does what a generic optimizer does; the gains
@@ -1230,6 +1240,7 @@ endpoint. When a tool still runs an adb command that the app could answer, move 
 | `tools/pc/pc_matrix.py` | the PC regression matrix: Banjo, Gears, Gears 2, MagnaCarta 2, Blue Dragon one after another in the Thor configuration (`--android-defaults`), a contact sheet per title and a JSON summary in `scratch/matrix/`; a crash reruns under cdb for its stack. Run it after every change set and look at the sheets |
 | `pc_run.py` sticky presses (`"45:start+"`) | pressed again every `--retry-every` s until the picture changes; later presses wait. Titles ignore presses while they load and the load time varies - fixed-time routes stuck Gears on its main menu |
 | `pc_run.py --cdb` (MCP `xenia_pc_run(cdb=True)`) | the run under cdb: first-chance faults (the write watches) pass, a crash prints its stack at the end. A crash that leaves no log line gets named in one run (2026-09-23: the texture watch double free) |
+| `pc_run.py --cvars "cpu_spin_hint_backoff_us=200 cpu_log_spin_hint_functions=true"` | the guest functions with the spin-wait priority hint, one list at the end, for a title profile's `cpu_backend_llvm_skip_addrs` (the LLVM object cache on the Thor serves cached code without the backoff; Gears: 18 functions, 2026-10-01) |
 | `pc_run.py --android-defaults` | the PC run with the Android build defaults (GPU, kernel, caches: 10 settings; not the ARM64/LLVM CPU backends, the thermal API, or `gpu_uma_direct_shared_memory`, which cannot allocate 512 MB of host-visible VRAM on a desktop GPU and exits). Prints the pipeline compile rate and flags a cold driver cache |
 | `tools/check_tools.py` | every tool script compiles and holds no control bytes (a heredoc turned a regex escape into byte 0x08 and a perf_probe verdict never fired); the stop hook runs it |
 | `tools/turnip/build.py`, `xenia_turnip_build` | one call from Windows: the WSL Turnip build, the patches applied, the zip copied to `scratch/tools/turnip/`; fails when no zip is made |

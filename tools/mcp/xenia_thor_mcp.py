@@ -1185,7 +1185,9 @@ def xenia_pc_run(iso: str, seconds: int = 120, cvars: str = '', presses: str = '
     render target changes), breaks, GPU, command processor and fence-wait
     time, flagged (WAITS-GPU found the Thor upload path's 11.5 ms stall).
     profile_at "SECONDS:DURATION": the hottest guest and host functions per
-    thread (tools/pc/guest_profile.py). PC only."""
+    thread (tools/pc/guest_profile.py). cvars "cpu_spin_hint_backoff_us=200
+    cpu_log_spin_hint_functions=true" prints the functions with the guest
+    spin hint, the list for a profile's cpu_backend_llvm_skip_addrs. PC only."""
     args = [iso, '--seconds', seconds]
     if timeline:
         args.append('--timeline')

@@ -56,12 +56,15 @@ PLAN = [
     dict(id='spin', entry='gears1', relaunch=True, why=(
         'Gears heat: its worker XThread F800003C spins on the PowerPC priority '
         'hint (8222F460) and held a whole big core (heat_probe 2026-10-01: '
-        '98-115% of a core, case +5.8 C/min at 15 fps). The Gears profile now '
-        'sets cpu_spin_hint_backoff_us=50 (PC: the thread at a tenth). First run '
+        '98-115% of a core, case +5.8 C/min at 15 fps). The Gears profile sets '
+        'cpu_spin_hint_backoff_us=200 and lists the 18 functions with the hint in '
+        'cpu_backend_llvm_skip_addrs (the LLVM object cache served the old code '
+        'otherwise); with 8222F460 only, F800003C fell 93% -> 44-57%. First run '
         'heat_probe.py gears (no --cool) for the case slope and the thread table; '
-        'then this item for fps.'),
+        'then this item for fps. Both arms keep the skip list, so both translate '
+        'those functions fresh.'),
         arms=['off:cpu_spin_hint_backoff_us=0',
-              'on:cpu_spin_hint_backoff_us=50']),
+              'on:cpu_spin_hint_backoff_us=200']),
     dict(id='bools', entry='banjo_story', relaunch=True, why=(
         'Bool constants as specialization constants (app toggle opt_bool_specialize, '
         'off): the driver drops the branch side not taken - shader lab -154k to '

@@ -10,6 +10,8 @@
 #include "xenia/cpu/ppc/ppc_emit-private.h"
 
 #include <atomic>
+#include <mutex>
+#include <unordered_set>
 
 #include "xenia/base/assert.h"
 #include "xenia/base/logging.h"
@@ -64,6 +66,7 @@ DEFINE_bool(ppc_rlwinm_general_fastpath, true,
             "CPU");
 
 DECLARE_uint32(cpu_spin_hint_backoff_us);
+DECLARE_bool(cpu_log_spin_hint_functions);
 
 namespace xe {
 namespace cpu {
@@ -821,6 +824,18 @@ int InstrEmit_orx(PPCHIRBuilder& f, const InstrData& i) {
     // on the LLVM backend and on cores without SMT).
     if (cvars::cpu_spin_hint_backoff_us) {
       f.CallExtern(f.builtins()->spin_hint);
+      // cpu_log_spin_hint_functions: the functions to list in
+      // cpu_backend_llvm_skip_addrs (the LLVM object cache serves a cached
+      // function without translating it again, so it keeps the plain hint).
+      if (cvars::cpu_log_spin_hint_functions && f.function()) {
+        static std::mutex logged_mutex;
+        static std::unordered_set<uint32_t> logged;
+        uint32_t address = f.function()->address();
+        std::lock_guard<std::mutex> lock(logged_mutex);
+        if (logged.insert(address).second) {
+          XELOGI("Spin hint function {:08X}", address);
+        }
+      }
     } else {
       f.Yield();
     }

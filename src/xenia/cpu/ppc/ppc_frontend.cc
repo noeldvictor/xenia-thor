@@ -30,6 +30,11 @@
 #include "xenia/cpu/ppc/ppc_translator.h"
 #include "xenia/cpu/processor.h"
 
+DEFINE_bool(cpu_log_spin_hint_functions, false,
+            "DIAGNOSTIC: log each guest function that gets the spin-hint helper "
+            "call (cpu_spin_hint_backoff_us), once - the list for "
+            "cpu_backend_llvm_skip_addrs on a device with the LLVM object cache.",
+            "CPU");
 DEFINE_uint32(
     cpu_spin_hint_backoff_us, 0,
     "The guest spin-wait priority hint (or rN,rN,rN) calls a host helper that "
@@ -37,10 +42,13 @@ DEFINE_uint32(
     "1 ms (hints within 2 ms of each other). A guest thread that waits by "
     "spinning then stops holding a host core at full clock (Gears of War: one "
     "thread used a whole big core on the Thor, 2026-10-01). Read when a "
-    "function is translated; 0 = the hint stays a host yield. Functions with "
-    "the hint are not kept in the LLVM object cache (extern call). Per title: "
-    "the Gears of War profile sets 50 (on the PC, Banjo-Kazooie stopped on a "
-    "dark screen twice with it, MagnaCarta 2 and Blue Dragon ran).",
+    "function is translated; 0 = the hint stays a host yield. The LLVM object "
+    "cache key does not hold this value: a cached function keeps the code it "
+    "was compiled with, so a profile also lists the functions with the hint "
+    "in cpu_backend_llvm_skip_addrs (cpu_log_spin_hint_functions on the PC "
+    "names them). Per title: the Gears of War profile sets 200 (on the PC, "
+    "Banjo-Kazooie stopped on a dark screen twice with it, MagnaCarta 2 and "
+    "Blue Dragon ran).",
     "CPU");
 DEFINE_bool(
     cpu_lockfree_check_global_lock, true,

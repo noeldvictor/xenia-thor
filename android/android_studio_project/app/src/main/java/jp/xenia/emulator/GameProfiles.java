@@ -27,6 +27,15 @@ import java.util.Map;
 public final class GameProfiles {
     private GameProfiles() {}
 
+    // Gears of War's guest functions with the spin-wait priority hint
+    // (or rN,rN,rN): the PC log of cpu_log_spin_hint_functions, menus and the
+    // first level (2026-10-01). They take the a64 backend so the hint backoff
+    // reaches them past the LLVM object cache.
+    private static final String GEARS_SPIN_HINT_FUNCTIONS =
+            "82221478,8222F460,8223B5E0,825EAA68,825EC528,82612BF0,826155E8,"
+            + "82615B98,82616480,82616768,8263F928,826C4F28,827A9470,828D1860,"
+            + "828DE568,8294F9E8,8294FBD8,8298EE48";
+
     /** A single cvar override - a tagged union of the Bundle put-types. */
     private static final class Cvar {
         final String name;
@@ -302,7 +311,7 @@ public final class GameProfiles {
                         + "global default-on stack (lock-free object-handle cache + "
                         + "native-object fast-path for its global-lock contention, plus "
                         + "the Turnip fence fix) supplies the speed.")
-                .add("cpu_spin_hint_backoff_us", Integer.valueOf(50),
+                .add("cpu_spin_hint_backoff_us", Integer.valueOf(200),
                         "Gears of War's worker XThread F800003C waits by spinning on "
                         + "the PowerPC priority hint (8222F460: four rounds of eight "
                         + "or r31,r31,r31, then a flag check) and held a whole big "
@@ -311,7 +320,27 @@ public final class GameProfiles {
                         + "has lasted 1 ms sleeps 50 us every 32nd hint: on the PC "
                         + "the thread fell from a full core to about a tenth, the "
                         + "menus answered at least as fast. Gears only: Banjo "
-                        + "stopped on a dark screen twice with it on the PC."));
+                        + "stopped on a dark screen twice with it on the PC.")
+                .add("cpu_backend_llvm_skip_addrs", GEARS_SPIN_HINT_FUNCTIONS,
+                        "The functions with the hint compile on the a64 backend: "
+                        + "the LLVM object cache (skip_lowering) serves a function's "
+                        + "cached code by guest address and code hash without "
+                        + "translating it again, so the cached 8222F460 kept the "
+                        + "plain hint and the thread still held a whole core on the "
+                        + "Thor (heat_probe 2026-10-01, F800003C 93%). The a64 "
+                        + "backend compiles it with the backoff; the rest of the "
+                        + "cache stays valid (adding the cvar to the cache key would "
+                        + "recompile every title for 7 minutes). Thor 2026-10-01: "
+                        + "8222F460 alone took F800003C from 93% to 44-61% of a "
+                        + "core; the PC log (cpu_log_spin_hint_functions) found 18 "
+                        + "functions with the hint, all listed here.")
+                .add("thor_sleep0_backoff_us", Integer.valueOf(200),
+                        "With the worker quiet, Gears' main thread was the next "
+                        + "spinner: 59-109% of a core on the Thor (heat_probe "
+                        + "2026-10-01), its waits are guest Sleep(0) streaks that "
+                        + "become sched_yield loops (70% of its kernel time in the "
+                        + "2026-09-22 profile). The 32nd and later zero delays of a "
+                        + "streak sleep 200 us; a short wait is unchanged."));
 
         // Lost Odyssey (4D5307FA): 30fps-native JRPG. KNOWN BOOT BLOCKER - it can
         // hang on a stuck LOADING screen (a file-not-found IO stall, device-observed

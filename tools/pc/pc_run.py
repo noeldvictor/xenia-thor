@@ -38,6 +38,7 @@ from PIL import Image, ImageChops, ImageStat  # noqa: E402
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 CDB = r'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
 HAZARDS = re.compile(r'hazards=(\d+)/(\d+)/(\d+)/(\d+)')
+SPIN_HINT = re.compile(r'Spin hint function ([0-9A-F]{8})')
 PIPES = re.compile(r'VulkanPipelineCache: (\d+) pipelines created, (\d+) ms in creation \(last 64: (\d+) ms')
 # XE_ANDROID_DEFAULT settings that cannot apply to the Windows build: the ARM64
 # and LLVM CPU backends (Windows runs x64), the Android thermal API, and the
@@ -325,6 +326,7 @@ def main():
     failed_draws = 0
     fail_exits = {}
     arena_overflows = 0
+    spin_hint_functions = set()
     try:
         for line in open(log, encoding='utf-8', errors='replace'):
             # The module import tables list export names ("   F 820006F8 ...
@@ -340,6 +342,9 @@ def main():
                 continue
             if 'Constants arena full' in line:
                 arena_overflows += 1
+            m_ = SPIN_HINT.search(line)
+            if m_:
+                spin_hint_functions.add(m_.group(1))
             for k in MARKERS:
                 if k in line:
                     counts[k] = counts.get(k, 0) + 1
@@ -352,6 +357,13 @@ def main():
     except OSError:
         pass
     print('log markers:', ', '.join('%s=%d' % kv for kv in sorted(counts.items())) or 'none')
+    if spin_hint_functions:
+        # cpu_log_spin_hint_functions (2026-10-01): the LLVM object cache on
+        # the Thor serves a function's cached code without translating it
+        # again, so the spin backoff reaches only the functions listed in the
+        # title profile's cpu_backend_llvm_skip_addrs. This is that list.
+        print('spin-hint functions (%d, for cpu_backend_llvm_skip_addrs): %s' % (
+            len(spin_hint_functions), ','.join(sorted(spin_hint_functions))))
     cold = False
     if pipes:
         count, total_ms, last64_ms = pipes
