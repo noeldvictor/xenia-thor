@@ -1378,6 +1378,23 @@ def xenia_cf_census(traces: str = '', shaders: str = '', cvars: str = '') -> str
 
 
 @mcp.tool()
+def xenia_timer_queue_test(ref: str = 'HEAD', tsan: bool = True) -> str:
+    """The host timer queue on the Thor's code path, tested on the PC
+    (tools/pc/timer_queue_test.py): compiles
+    src/xenia/base/threading_timer_queue.cc alone with g++ in WSL (Android cvar
+    defaults) from the working tree and from `ref`, and prints for each the
+    timer thread's idle CPU, one-shot lateness, a 2 ms recurring timer, disarm,
+    8 producers x 2000 timers, and PASS/FAIL; tsan adds a ThreadSanitizer run.
+    Windows uses native timers, so a PC run never exercises this file - every
+    guest timer on the Thor does. 2026-10-01: idle 13.5% -> 0.04% of a core
+    with the event wait. PC only."""
+    args = ['--ref', ref]
+    if not tsan:
+        args.append('--no-tsan')
+    return _run_tool_script('tools/pc/timer_queue_test.py', args, timeout=600)
+
+
+@mcp.tool()
 def xenia_rt_transfers(traces: str, cvars: str = '', thor_profile: bool = False,
                        draws: int = 3, warm: int = 0) -> str:
     """What moves EDRAM between render targets in a traced frame, and why

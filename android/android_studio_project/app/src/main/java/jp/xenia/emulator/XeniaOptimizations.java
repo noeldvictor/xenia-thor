@@ -1171,16 +1171,17 @@ public final class XeniaOptimizations {
                         + "clock-read cost on Blue Dragon, the same spinning-worker "
                         + "pathology as the audio-decoder fix. This makes the thread "
                         + "SLEEP until the next timer is actually due. Armed timers "
-                        + "still fire on time (it wakes at their exact due time); only "
-                        + "a timer queued while it sleeps waits up to 1ms. "
+                        + "still fire on time (it wakes at their exact due time), and "
+                        + "a timer queued while it sleeps wakes it at once (2026-10-01: "
+                        + "idle CPU 13.5% -> 0.04% of a core, new-timer lateness p99 "
+                        + "777 -> 135 us in the Linux timer test). "
                         + "Device-validated on Blue Dragon: renders and runs "
                         + "correctly, timer thread 2.6%->1.8% of CPU and a core no "
                         + "longer spins (cuts power/heat). Frees CPU on lock/timer-"
-                        + "heavy titles; no GPU effect. Off by default (it shifts "
-                        + "new-timer pickup by up to 1ms); enable to stack it.",
+                        + "heavy titles; no GPU effect.",
                 CATEGORY_CPU, true, false,
                 new BoolCvar[]{new BoolCvar("timer_queue_sleep_idle")},
-                new IntCvar[]{new IntCvar("timer_queue_idle_sleep_us", 1000)}));
+                null));
 
         list.add(new Optimization(
                 PREF_KEY_TRAINERS,

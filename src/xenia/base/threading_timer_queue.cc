@@ -8,7 +8,9 @@
  */
 
 #include <algorithm>
+#include <condition_variable>
 #include <forward_list>
+#include <mutex>
 
 #include "third_party/disruptorplus/include/disruptorplus/multi_threaded_claim_strategy.hpp"
 #include "third_party/disruptorplus/include/disruptorplus/ring_buffer.hpp"
@@ -29,19 +31,21 @@ DEFINE_bool(
     "__kernel_clock_gettime cost on Blue Dragon - a core burned for nothing, "
     "the same spinning-worker pathology as the XMA decoder). Existing timers "
     "still fire on time (the thread sleeps only until the soonest armed due "
-    "time); a timer queued WHILE it sleeps is picked up within "
-    "timer_queue_idle_sleep_us. Device-validated on the BD heavy field (matched "
+    "time); a timer queued while it sleeps wakes it at once (2026-10-01: an "
+    "event wait - the earlier 1 ms poll spun the disruptor's 4092 pauses "
+    "on every wake, a full PC core in the Gears profile and 0.47% of the "
+    "Blue Dragon frame on the Thor). Device-validated on the BD heavy field (matched "
     "A/B vs the lock-fix baseline): renders+runs correctly, TimerThreadMain "
     "2.63%->1.79% (-0.84pp of the frame; the spin's wait_until_published "
     "2.49%->1.48%). Default-OFF (it shifts newly-queued-timer pickup by up to "
     "the cap, a timing change; flip on after multi-title validation).",
     "CPU");
 DEFINE_int32(
-    timer_queue_idle_sleep_us, 1000,
-    "Max microseconds the timer-dispatch thread sleeps per idle iteration when "
-    "timer_queue_sleep_idle is on (bounds newly-queued-timer pickup latency; "
-    "armed timers are unaffected - they wake the thread at their exact due "
-    "time). 1000 = 1ms.",
+    timer_queue_idle_sleep_us, 100000,
+    "When timer_queue_sleep_idle is on and no timer is armed, the timer thread "
+    "sleeps at most this many microseconds before it checks again. A newly "
+    "queued timer wakes it at once and an armed timer at its due time, so this "
+    "is only a safety bound.",
     "CPU");
 
 namespace dp = disruptorplus;
@@ -95,18 +99,26 @@ class TimerQueue {
         // When timer_queue_sleep_idle is on, drain non-blocking (timeout=now)
         // and sleep at the loop tail instead of letting the spin_wait_strategy
         // busy-poll the clock until the deadline.
-        dp::sequence_t available = claim_strategy_.wait_until_published(
-            next_sequence, next_sequence - 1,
-            cvars::timer_queue_sleep_idle
-                ? clock::now()
-                : (wait_queue_.empty() ? clock::time_point::max()
-                                       : wait_queue_.front()->due_));
+        // The disruptor's timed wait spins 4092 pauses before it reads the
+        // clock, so with timer_queue_sleep_idle it runs only when QueueTimer
+        // counted a new item (queued_).
+        dp::sequence_t available = next_sequence - 1;
+        if (!cvars::timer_queue_sleep_idle) {
+          available = claim_strategy_.wait_until_published(
+              next_sequence, next_sequence - 1,
+              wait_queue_.empty() ? clock::time_point::max()
+                                  : wait_queue_.front()->due_);
+        } else if (queued_.load(std::memory_order_acquire) > consumed_count_) {
+          available = claim_strategy_.wait_until_published(
+              next_sequence, next_sequence - 1, clock::now());
+        }
 
         // Check for timeout
         if (available != next_sequence - 1) {
           std::forward_list<std::shared_ptr<WaitItem>> wait_items;
           do {
             wait_items.push_front(std::move(buffer_[next_sequence]));
+            ++consumed_count_;
           } while (next_sequence++ != available);
 
           consumed_.publish(available);
@@ -154,11 +166,12 @@ class TimerQueue {
         wait_queue_.merge(wait_items, comp);
       }
 
-      // Bounded sleep instead of busy-spinning the dispatch thread (cvar-gated).
-      // Armed timers are unaffected - we sleep only until the soonest due time,
-      // so they still fire on time; this just stops the spin_wait_strategy from
-      // polling the clock continuously while idle. A timer queued during the
-      // sleep is picked up within timer_queue_idle_sleep_us on the next wake.
+      // Sleep instead of busy-spinning the dispatch thread (cvar-gated) until
+      // the soonest armed timer is due or QueueTimer adds one (wake_cv_), so
+      // armed timers fire on time and a new one is picked up at once. The
+      // earlier version polled every 1 ms, and each wake ran the disruptor's
+      // 4092-pause spin: a full core on the PC, where a sleep under 1 ms is a
+      // yield (Gears 2026-10-01).
       if (cvars::timer_queue_sleep_idle &&
           !shutdown_.load(std::memory_order_relaxed)) {
         const auto now = clock::now();
@@ -169,9 +182,11 @@ class TimerQueue {
                 ? now + cap
                 : (std::min)(wait_queue_.front()->due_, now + cap);
         if (sleep_until > now) {
-          xe::threading::Sleep(
-              std::chrono::duration_cast<std::chrono::microseconds>(sleep_until -
-                                                                    now));
+          std::unique_lock<std::mutex> lock(wake_mutex_);
+          wake_cv_.wait_until(lock, sleep_until, [this] {
+            return queued_.load(std::memory_order_acquire) > consumed_count_ ||
+                   shutdown_.load(std::memory_order_relaxed);
+          });
         }
       }
     }
@@ -187,6 +202,14 @@ class TimerQueue {
     auto sequence = claim_strategy_.claim_one();
     buffer_[sequence] = std::move(wait_item);
     claim_strategy_.publish(sequence);
+
+    // Wake the dispatch thread if it sleeps (timer_queue_sleep_idle). Taking
+    // the mutex orders this with its predicate check, so the wake is not lost.
+    queued_.fetch_add(1, std::memory_order_release);
+    if (cvars::timer_queue_sleep_idle) {
+      { std::lock_guard<std::mutex> lock(wake_mutex_); }
+      wake_cv_.notify_one();
+    }
 
     return wait_item_weak;
   }
@@ -204,6 +227,13 @@ class TimerQueue {
   // This is a _sorted_ (ascending due_) list of active timers managed by a
   // dedicated thread
   std::forward_list<std::shared_ptr<WaitItem>> wait_queue_;
+  // Items QueueTimer published and items the dispatch thread consumed: with
+  // timer_queue_sleep_idle the dispatch thread checks the ring only when
+  // they differ, and sleeps on wake_cv_ otherwise.
+  std::atomic<uint64_t> queued_{0};
+  uint64_t consumed_count_ = 0;
+  std::mutex wake_mutex_;
+  std::condition_variable wake_cv_;
   std::atomic_bool shutdown_;
   std::thread dispatch_thread_;
 };

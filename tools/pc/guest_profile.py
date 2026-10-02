@@ -126,8 +126,9 @@ def jit_map(log_path):
 
 
 def sample(pid, seconds):
-    """{thread id: [rip, ...]} and {thread id: name}."""
-    handles, names, last = {}, {}, {}
+    """{thread id: [rip, ...]}, {thread id: name}, rounds and {thread id: CPU
+    % of one core over the window}."""
+    handles, names, last, first = {}, {}, {}, {}
     samples = collections.defaultdict(list)
     context = ctypes.create_string_buffer(CONTEXT_SIZE + 16)
     base = (ctypes.addressof(context) + 15) & ~15
@@ -143,6 +144,7 @@ def sample(pid, seconds):
                 handles[tid] = h
                 names[tid] = thread_name(h) or ('tid %d' % tid)
                 last[tid] = cpu_time(h)
+                first[tid] = (last[tid], time.time())
                 continue
             h = handles[tid]
             t = cpu_time(h)
@@ -156,9 +158,15 @@ def sample(pid, seconds):
                 samples[tid].append(ctypes.c_uint64.from_address(base + RIP_OFFSET).value)
             kernel32.ResumeThread(h)
         rounds += 1
-    for h in handles.values():
+    cpu = {}
+    now = time.time()
+    for tid, h in handles.items():
+        t = cpu_time(h)
+        t0, start = first.get(tid, (None, now))
+        if t is not None and t0 is not None and now > start:
+            cpu[tid] = 100.0 * (t - t0) * 1e-7 / (now - start)
         kernel32.CloseHandle(h)
-    return samples, names, rounds
+    return samples, names, rounds, cpu
 
 
 def symbolizer(pid):
@@ -191,7 +199,7 @@ def main():
     ap.add_argument('--json', default='')
     args = ap.parse_args()
 
-    samples, names, rounds = sample(args.pid, args.seconds)
+    samples, names, rounds, cpu = sample(args.pid, args.seconds)
     spans = jit_map(args.log)
     starts = [s[0] for s in spans]
     host_name = symbolizer(args.pid)
@@ -205,7 +213,14 @@ def main():
     total = sum(len(v) for v in samples.values())
     print('%d samples in %d rounds over %.0f s, %d JIT functions mapped' % (
         total, rounds, args.seconds, len(spans)))
-    per_thread = sorted(samples.items(), key=lambda kv: -len(kv[1]))
+    # The sample share counts the rounds a thread ran in, not how long it ran:
+    # the timer thread wakes every millisecond and had 38% of Gears' samples
+    # (2026-10-01). The CPU column (GetThreadTimes over the window, 100% = one
+    # core) is the cost; the samples say where it went.
+    print('CPU per thread (100%% = one core): %s' % ', '.join(
+        '%s %.0f%%' % (names[tid], c) for tid, c in sorted(cpu.items(), key=lambda kv: -kv[1])
+        if c >= 1.0))
+    per_thread = sorted(samples.items(), key=lambda kv: -cpu.get(kv[0], 0.0))
     result = {'samples': total, 'threads': []}
     guest_all = collections.Counter()
     host_all = collections.Counter()
@@ -219,12 +234,14 @@ def main():
         guest_all.update(guest)
         host_all.update(host)
         share = 100.0 * len(rips) / total
-        print('\n%5.1f%%  %s: %d samples, %.0f%% guest code' % (
-            share, names[tid], len(rips), 100.0 * sum(guest.values()) / len(rips)))
+        print('\n%5.1f%%  %s: CPU %.0f%% of a core, %d samples, %.0f%% guest code' % (
+            share, names[tid], cpu.get(tid, 0.0), len(rips),
+            100.0 * sum(guest.values()) / len(rips)))
         for where, n in (guest + host).most_common(8):
             print('        %5.1f%%  %s%s' % (100.0 * n / len(rips),
                                            'guest ' if where in guest else '', where))
         result['threads'].append({'name': names[tid], 'samples': len(rips),
+                                  'cpu_percent': round(cpu.get(tid, 0.0), 1),
                                   'guest': guest.most_common(args.top),
                                   'host': host.most_common(args.top)})
     print('\nhottest guest functions (all threads):')
