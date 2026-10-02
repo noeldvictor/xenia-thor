@@ -823,6 +823,16 @@ int InstrEmit_orx(PPCHIRBuilder& f, const InstrData& i) {
     // a host helper also sleeps briefly inside long spins (the YIELD is a no-op
     // on the LLVM backend and on cores without SMT).
     if (cvars::cpu_spin_hint_backoff_us) {
+      // One helper call per run of consecutive hints (the XDK primitive pads
+      // with eight in a row): every call is a host call, and on the Thor about
+      // 375,000 a second were the spin's own cost (2026-10-02). A loop that
+      // branches back to the first hint of the run calls it every pass.
+      thread_local uint32_t previous_hint_address = 0;
+      bool continues_run = i.address == previous_hint_address + 4;
+      previous_hint_address = i.address;
+      if (continues_run) {
+        return 0;
+      }
       f.CallExtern(f.builtins()->spin_hint);
       // cpu_log_spin_hint_functions: the functions to list in
       // cpu_backend_llvm_skip_addrs (the LLVM object cache serves a cached

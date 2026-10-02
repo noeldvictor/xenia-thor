@@ -37,9 +37,10 @@ DEFINE_bool(cpu_log_spin_hint_functions, false,
             "CPU");
 DEFINE_uint32(
     cpu_spin_hint_backoff_us, 0,
-    "The guest spin-wait priority hint (or rN,rN,rN) calls a host helper that "
-    "sleeps this many microseconds on every 32nd hint once a spin has lasted "
-    "1 ms (hints within 2 ms of each other). A guest thread that waits by "
+    "The guest spin-wait priority hint (or rN,rN,rN; one call per run of "
+    "consecutive hints) calls a host helper that, once a spin has lasted 1 ms "
+    "(hints within 2 ms of each other), sleeps this many microseconds whenever "
+    "20 us have passed since its last sleep. A guest thread that waits by "
     "spinning then stops holding a host core at full clock (Gears of War: one "
     "thread used a whole big core on the Thor, 2026-10-01). Read when a "
     "function is translated; 0 = the hint stays a host yield. The LLVM object "
@@ -383,22 +384,24 @@ void SpinHint(PPCContext* ppc_context, void* arg0, void* arg1) {
   }
   thread_local uint64_t last_hint_us = 0;
   thread_local uint64_t spin_start_us = 0;
-  thread_local uint32_t streak = 0;
+  thread_local uint64_t last_sleep_us = 0;
   uint64_t now_us = uint64_t(
       std::chrono::duration_cast<std::chrono::microseconds>(
           std::chrono::steady_clock::now().time_since_epoch())
           .count());
   spin_hint_calls.fetch_add(1, std::memory_order_relaxed);
-  if (now_us - last_hint_us < 2000) {
-    ++streak;
-  } else {
-    streak = 0;
+  if (now_us - last_hint_us >= 2000) {
     spin_start_us = now_us;
+    last_sleep_us = now_us;
     spin_hint_restarts.fetch_add(1, std::memory_order_relaxed);
   }
   // Only a wait that has spun for 1 ms backs off: a short wait (a handoff
   // between threads within a frame) stays a pure spin, with no added latency.
-  if (now_us - spin_start_us >= 1000 && (streak & 31) == 0) {
+  // Then it sleeps whenever 20 us have passed since the last sleep - by time,
+  // not by hint count, so the spin between sleeps stays about 2% of the time
+  // however many hints the guest loop has (on the Thor, every 32nd hint left
+  // some 830 hints between sleeps, 2026-10-02).
+  if (now_us - spin_start_us >= 1000 && now_us - last_sleep_us >= 20) {
     xe::threading::NanoSleep(int64_t(sleep_us) * 1000);
     uint64_t after_us =
         uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
@@ -407,6 +410,7 @@ void SpinHint(PPCContext* ppc_context, void* arg0, void* arg1) {
     spin_hint_sleeps.fetch_add(1, std::memory_order_relaxed);
     spin_hint_slept_us.fetch_add(after_us - now_us, std::memory_order_relaxed);
     now_us = after_us;
+    last_sleep_us = after_us;
   }
   last_hint_us = now_us;
   uint64_t last_log_us = spin_hint_last_log_us.load(std::memory_order_relaxed);
