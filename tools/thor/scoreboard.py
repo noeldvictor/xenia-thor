@@ -50,6 +50,10 @@ ENTRIES = {
     # Title -> menus -> the prison cell. The title (red, "PRESS START") comes
     # later on the device than on the PC, so the route waits for it instead
     # of pressing on a clock (2026-09-22: timed presses left it at the title).
+    # The Gears menus 35 s after launch: where XThread F800003C spins (heat_probe
+    # 2026-10-02) - a scene for the CPU levers that the case can reach before
+    # its 42-44 C stop (the cell route takes over 3 minutes).
+    'gears_menu': dict(kind='timed', path=GEARS, at=35, presses=[]),
     'gears1': dict(kind='goto', path=GEARS,
                    steps='name:title;until:red>0.2;timeout:400;press:START;settle:12000'
                          '|name:m1;press:A;settle:12000|name:m2;press:A;settle:12000'

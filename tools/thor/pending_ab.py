@@ -55,7 +55,7 @@ PLAN = [
         'heat: 20.4 -> 25.9 fps with both).'),
         arms=['base:global_lock_spin=0,rtl_critical_section_min_spin=0',
               'both:global_lock_spin=128,rtl_critical_section_min_spin=256']),
-    dict(id='spin', entry='gears1', relaunch=True, why=(
+    dict(id='spin', entry='gears_menu', why=(
         'Gears heat: its worker XThread F800003C waits in 8222F460 (32 PowerPC '
         'priority hints, then a flag and a 5000-tick timeout, called in a loop). '
         'Thor 2026-10-02: 47% of a core with a 200 us backoff (Android sleeps what it '
@@ -65,8 +65,9 @@ PLAN = [
         'spin has lasted 1 ms): PC 5%. Run heat_probe.py gears --log-grep "Spin '
         'hint" first (case slope, the thread table, the counters), then this item '
         'for fps. Both arms keep the skip list.'),
-        arms=['off:cpu_spin_hint_backoff_us=0',
-              'on:cpu_spin_hint_backoff_us=1000']),
+        arms=['base:cpu_spin_hint_backoff_after_us=1000,thor_sleep0_backoff_us=200',
+              'after250:cpu_spin_hint_backoff_after_us=250,thor_sleep0_backoff_us=200',
+              'sleep1000:cpu_spin_hint_backoff_after_us=1000,thor_sleep0_backoff_us=1000']),
     dict(id='bools', entry='banjo_story', relaunch=True, why=(
         'Bool constants as specialization constants (app toggle opt_bool_specialize, '
         'off): the driver drops the branch side not taken - shader lab -154k to '
