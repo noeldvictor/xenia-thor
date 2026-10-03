@@ -259,17 +259,19 @@ Sweep marks. Start the next upstream sweep from these. The triage of 2026-09-18 
 
 | source | last mark | date | new commits at 2026-09-18 |
 |---|---|---|---|
-| edge/edge | `f6184518b4` | 2026-09-20 | 21 new since `1689b263d3`: the user-mode series, 3 fixes queued; see `docs/research/20260920-upstream-sweep-arm64-adreno.md` |
-| canary/canary_experimental | `aee0871dd7` | 2026-09-16 | triaged 950 since the fork base; 52 kept |
+| edge/edge | `0788c561e3` | 2026-10-03 (sweep; earlier mark `f6184518b4` 2026-09-20) | 21 new since `1689b263d3`: the user-mode series, 3 fixes queued; see `docs/research/20260920-upstream-sweep-arm64-adreno.md` |
+| canary/canary_experimental | `6260a87b85` | 2026-10-03 (sweep; earlier mark `aee0871dd7` 2026-09-16) | triaged 950 since the fork base; 52 kept |
 | xendroid/main, author rfandango | `0b1120187` | 2026-08-16 | 0 new on main; `feat/vrs` 2 kept |
 | canary open pull requests | 60 open on 2026-09-18 | | 16 kept |
 | Mesa Turnip (Banners-Turnip) | bundled `26.3.0-20260807-r11`; newest `20260919` | | 167 driver commits between them; update and measure |
 | forks: wunkolo, xeniamac, arm64fork | tips of 2026-03-19, 2025-08-25, 2026-06-29 | | 7 kept across all |
 
+Sweep 2026-10-03 (none of these applies as a patch; port the idea): canary `44f5b4a860` (Linux vblank heartbeat on a deadline - Android pacing), `6579cc2a4c` (negative host viewport origin), `e1f4a0d009` (tiling window offsets in EDRAM bases, 19 files), `6260a87b85` (wide 1D texture fetch), `c3cd8617b1` (point-sampled fetch snapping), `3e9d62ffc4` (PM4_WAIT_IB_PFD_COMPLETE), `3390fc219b` (mulsc round-toward-zero cvar), `692cd59cfe` (VIZ_QUERY occlusion surveys and conditional rendering, about 800 lines - only if a title issues VIZ_QUERY); edge A64 batch 09-23..10-01 (`b416d19675` cheaper extern calls - the spin helper on a64, `fc0ed6e81d` FPCR tracking, `7a97888962` vector liveness at CALL_EXTERN); edge 10-02 kernel/XAM/user-mode series (no speed effect). xendroid, xenia-project: nothing new.
+
 Sweep recipe:
 
 ```
-git fetch canary edge xendroid upstream
+git fetch --multiple canary edge xendroid upstream   # without --multiple, git reads edge, xendroid, upstream as branches of canary
 git log --format='%h %ad %s' --date=short --no-merges <edge-mark>..edge/edge
 git log --format='%h %ad %s' --date=short --no-merges --author=rfandango <xendroid-mark>..xendroid/main
 git log --format='%h %ad %s' --date=short master..canary/canary_experimental
