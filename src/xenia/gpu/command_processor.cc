@@ -393,6 +393,7 @@ DECLARE_uint32(cpu_watch_guest_write_page);
 
 DECLARE_int32(thor_debug_cool);
 
+DEFINE_int32(gpu_trace_viz_queries, 0, "DIAGNOSTIC: log the first N PM4_VIZ_QUERY begins and ends and the first N draws conditional on a VIZ query - whether a title uses the occlusion surveys canary implemented in 692cd59cfe (our handler reports every query visible).", "GPU");
 namespace xe {
 namespace gpu {
 
@@ -3112,6 +3113,14 @@ bool CommandProcessor::ExecutePacketType3Draw(RingBuffer* reader,
   // uint32_t viz_id = viz_query_condition & 0x3F;
   // when true, render conditionally based on query result
   // uint32_t viz_use = viz_query_condition & 0x100;
+  if (cvars::gpu_trace_viz_queries && viz_query_condition) {
+    static int32_t traced = 0;
+    if (traced < cvars::gpu_trace_viz_queries) {
+      ++traced;
+      XELOGI("VIZ conditional draw: id {:02X} use {}", viz_query_condition & 0x3F,
+             (viz_query_condition >> 8) & 1);
+    }
+  }
 
   assert_not_zero(count_remaining);
   if (!count_remaining) {
@@ -3685,6 +3694,13 @@ bool CommandProcessor::ExecutePacketType3_VIZ_QUERY(RingBuffer* reader,
 
   uint32_t id = dword0 & 0x3F;
   uint32_t end = dword0 & 0x100;
+  if (cvars::gpu_trace_viz_queries) {
+    static int32_t traced = 0;
+    if (traced < cvars::gpu_trace_viz_queries) {
+      ++traced;
+      XELOGI("VIZ query {} id {:02X}", end ? "end" : "begin", id);
+    }
+  }
   if (!end) {
     // begin a new viz query @ id
     // On hardware this clears the internal state of the scan converter (which
