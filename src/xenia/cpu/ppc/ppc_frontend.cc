@@ -21,6 +21,7 @@
 #include "xenia/base/cvar.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/mutex.h"
+#include "xenia/base/platform.h"
 #include "xenia/base/threading.h"
 #include "xenia/base/xxhash.h"
 #include "xenia/cpu/cpu_flags.h"
@@ -35,6 +36,25 @@ DEFINE_bool(cpu_log_spin_hint_functions, false,
             "call (cpu_spin_hint_backoff_us), once - the list for "
             "cpu_backend_llvm_skip_addrs on a device with the LLVM object cache.",
             "CPU");
+DEFINE_bool(
+    cpu_spin_hint_wfe, false,
+    "ARM64: once a spin passes cpu_spin_hint_backoff_after_us, the helper "
+    "waits with WFE (sevl; wfe; wfe - the core idles until an event: the "
+    "kernel's 10 kHz event stream, evtstrm, or another core's store) instead "
+    "of sleeping, and sleeps only after the spin has lasted "
+    "cpu_spin_hint_wfe_until_us. A wait then costs at most about 100 us of "
+    "latency and no system call, where a sleep costs about 1 ms (Thor "
+    "2026-10-02: sleeping after 250 us instead of 1000 us cut Gears' spinning "
+    "thread from 53% to 34% of a core but its menus from 29.7 to 19.9 fps - "
+    "the waits are on the frame's path). The thread still counts as running "
+    "in the CPU tables; the case temperature and the battery current show the "
+    "power. Read on every hint, so it can change live.",
+    "CPU");
+DEFINE_uint32(
+    cpu_spin_hint_wfe_until_us, 4000,
+    "With cpu_spin_hint_wfe: how long a spin uses WFE waits before it sleeps "
+    "(cpu_spin_hint_backoff_us) - a long wait still gives the core away.",
+    "CPU");
 DEFINE_uint32(
     cpu_spin_hint_backoff_after_us, 1000,
     "With cpu_spin_hint_backoff_us: how long a spin (hints within 2 ms of each "
@@ -385,6 +405,7 @@ static std::atomic<uint64_t> spin_hint_restarts{0};
 static std::atomic<uint64_t> spin_hint_sleeps{0};
 static std::atomic<uint64_t> spin_hint_slept_us{0};
 static std::atomic<uint64_t> spin_hint_last_log_us{0};
+static std::atomic<uint64_t> spin_hint_wfes{0};
 
 void SpinHint(PPCContext* ppc_context, void* arg0, void* arg1) {
   const uint32_t sleep_us = cvars::cpu_spin_hint_backoff_us;
@@ -411,6 +432,21 @@ void SpinHint(PPCContext* ppc_context, void* arg0, void* arg1) {
   // not by hint count, so the spin between sleeps stays about 2% of the time
   // however many hints the guest loop has (on the Thor, every 32nd hint left
   // some 830 hints between sleeps, 2026-10-02).
+#if XE_ARCH_ARM64
+  if (cvars::cpu_spin_hint_wfe &&
+      now_us - spin_start_us >= cvars::cpu_spin_hint_backoff_after_us &&
+      now_us - spin_start_us < cvars::cpu_spin_hint_wfe_until_us &&
+      now_us - last_sleep_us >= 20) {
+    // sevl sets the local event that the first wfe consumes, so the second
+    // one waits for a new event (at most the event stream period).
+    __asm__ volatile("sevl\n\twfe\n\twfe" ::: "memory");
+    spin_hint_wfes.fetch_add(1, std::memory_order_relaxed);
+    now_us = uint64_t(std::chrono::duration_cast<std::chrono::microseconds>(
+                          std::chrono::steady_clock::now().time_since_epoch())
+                          .count());
+    last_sleep_us = now_us;
+  } else
+#endif  // XE_ARCH_ARM64
   if (now_us - spin_start_us >= cvars::cpu_spin_hint_backoff_after_us &&
       now_us - last_sleep_us >= 20) {
     xe::threading::NanoSleep(int64_t(sleep_us) * 1000);
@@ -431,10 +467,11 @@ void SpinHint(PPCContext* ppc_context, void* arg0, void* arg1) {
     uint64_t restarts = spin_hint_restarts.exchange(0);
     uint64_t sleeps = spin_hint_sleeps.exchange(0);
     uint64_t slept_us = spin_hint_slept_us.exchange(0);
+    uint64_t wfes = spin_hint_wfes.exchange(0);
     XELOGI(
         "Spin hint: {} hints, {} streak restarts, {} sleeps ({} us slept, {} "
-        "us each) in the last {} ms",
-        calls, restarts, sleeps, slept_us, sleeps ? slept_us / sleeps : 0,
+        "us each), {} WFE waits in the last {} ms",
+        calls, restarts, sleeps, slept_us, sleeps ? slept_us / sleeps : 0, wfes,
         last_log_us ? (now_us - last_log_us) / 1000 : 0);
   }
 }

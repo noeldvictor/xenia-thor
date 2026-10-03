@@ -60,6 +60,16 @@ def cpu_window(before, after, seconds):
     return sum(r[0] for r in rows), [(name, pct) for pct, name in rows]
 
 
+def battery_ma():
+    """Battery current in mA (Android reports uA; the sign says charging or
+    discharging), or None."""
+    raw = m._shell('cat /sys/class/power_supply/battery/current_now').strip()
+    try:
+        return int(raw) / 1000.0
+    except ValueError:
+        return None
+
+
 def set_cvar(name, value):
     return m._api('/cvar?name=%s&value=%s' % (name, value), 'POST').get('applied')
 
@@ -118,25 +128,35 @@ def main():
             time.sleep(3)
             ticks0 = thread_ticks()
             s0, t0 = scoreboard.swaps(), time.time()
-            time.sleep(args.seconds)
+            # The battery current every second of the window: the power the
+            # CPU tables cannot show (a thread in WFE counts as running).
+            currents = []
+            while time.time() - t0 < args.seconds:
+                ma = battery_ma()
+                if ma is not None:
+                    currents.append(ma)
+                time.sleep(1.0)
             s1, t1 = scoreboard.swaps(), time.time()
             ticks1 = thread_ticks()
+            current = sum(currents) / len(currents) if currents else float('nan')
             fps = (s1 - s0) / (t1 - t0) if (s0 is not None and s1 is not None) else 0.0
             busy = m._shell('cat /sys/class/kgsl/kgsl-3d0/gpu_busy_percentage').strip()
             total_cpu, busiest = cpu_window(ticks0, ticks1, t1 - t0)
             shot = json.loads(m.xenia_screenshot('liveab-%s-%s-r%d' % (args.entry, label, rnd))).get('path')
-            results[label].append((fps, busy, shot, total_cpu))
-            print('  round %d %-10s fps %5.1f  cpu %4.0f%%  gpu busy %s  case %.1f C  | %s  %s' % (
-                rnd, label, fps, total_cpu, busy, case_c,
+            results[label].append((fps, busy, shot, total_cpu, current))
+            print('  round %d %-10s fps %5.1f  cpu %4.0f%%  gpu busy %s  case %.1f C  battery %.0f mA'
+                  '  | %s  %s' % (
+                rnd, label, fps, total_cpu, busy, case_c, current,
                 ', '.join('%s %.0f%%' % b for b in busiest[:3]), shot), flush=True)
     if not aborted:
         for n in names:
             set_cvar(n, start[n])
-    print('arm        mean fps  mean cpu  gpu busy')
+    print('arm        mean fps  mean cpu  battery mA  gpu busy')
     for label, rows in results.items():
-        print('%-10s %8.1f  %7.0f%%  %s' % (
+        print('%-10s %8.1f  %7.0f%%  %10.0f  %s' % (
             label, sum(r[0] for r in rows) / max(1, len(rows)),
-            sum(r[3] for r in rows) / max(1, len(rows)), ' '.join(r[1] for r in rows)))
+            sum(r[3] for r in rows) / max(1, len(rows)),
+            sum(r[4] for r in rows) / max(1, len(rows)), ' '.join(r[1] for r in rows)))
     m.xenia_force_stop()
     m.xenia_launch_cvars(clear=True)
     return 0
