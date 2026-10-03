@@ -65,9 +65,11 @@ PLAN = [
         'spin has lasted 1 ms): PC 5%. Run heat_probe.py gears --log-grep "Spin '
         'hint" first (case slope, the thread table, the counters), then this item '
         'for fps. Both arms keep the skip list.'),
-        arms=['base:cpu_spin_hint_backoff_after_us=1000,thor_sleep0_backoff_us=200',
-              'after250:cpu_spin_hint_backoff_after_us=250,thor_sleep0_backoff_us=200',
-              'sleep1000:cpu_spin_hint_backoff_after_us=1000,thor_sleep0_backoff_us=1000']),
+        # 2026-10-02 run: after250 cut F800003C 53% -> 34% but fps 29.7 -> 19.9;
+        # the WFE wait (at most about 100 us, no sleep) is the next arm.
+        arms=['base:cpu_spin_hint_wfe=false,thor_sleep0_backoff_us=200',
+              'wfe:cpu_spin_hint_wfe=true,thor_sleep0_backoff_us=200',
+              'sleep1000:cpu_spin_hint_wfe=false,thor_sleep0_backoff_us=1000']),
     dict(id='bools', entry='banjo_story', relaunch=True, why=(
         'Bool constants as specialization constants (app toggle opt_bool_specialize, '
         'off): the driver drops the branch side not taken - shader lab -154k to '
