@@ -53,7 +53,7 @@ def main():
     ap.add_argument('--max-case-c', type=float, default=42.0)
     ap.add_argument('--every', type=float, default=15.0)
     ap.add_argument('--cvars', default='')
-    ap.add_argument('--log-grep', default='',
+    ap.add_argument('--log-grep', default='Spin hint',
                     help='before the stop, print the emulator log lines that contain this '
                          '(for example "Spin hint")')
     ap.add_argument('--wait', type=int, default=900,

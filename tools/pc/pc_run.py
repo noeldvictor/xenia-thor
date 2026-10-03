@@ -357,6 +357,17 @@ def main():
     except OSError:
         pass
     print('log markers:', ', '.join('%s=%d' % kv for kv in sorted(counts.items())) or 'none')
+    # The spin helper's counters (cpu_spin_hint_backoff_us): the sleep length
+    # is the number to compare with the Thor - Windows stretches a sleep below
+    # 1 ms to about 1 ms, so a backoff that looks fine here can spin on the
+    # Thor (2026-10-02: 1,070 us each here for 200 us asked).
+    try:
+        spin_lines = [l.strip() for l in open(log, encoding='utf-8', errors='replace')
+                      if 'Spin hint:' in l]
+    except OSError:
+        spin_lines = []
+    if spin_lines:
+        print('spin helper (last 2 s): ' + spin_lines[-1].split('Spin hint:', 1)[1].strip())
     if spin_hint_functions:
         # cpu_log_spin_hint_functions (2026-10-01): the LLVM object cache on
         # the Thor serves a function's cached code without translating it

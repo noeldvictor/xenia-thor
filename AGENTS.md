@@ -1125,6 +1125,9 @@ Standing facts:
   smart-sync); `live_ab` stops at 44 C; `scoreboard.py --cvars` for relaunch arms.
 - Retro 2026-09-29 (3, reflex): a new lever reads its cvar where it acts (live-switchable) and
   gets its line in `pending_ab.py` in the same commit.
+- Retro 2026-10-03 (1, slow): the PC said the Gears spin was fixed (F800003C 4-11%) while the Thor stayed at 47%; two device runs went to learning that Windows stretches a sleep below 1 ms to about 1 ms (1,070 us for 200 asked), so the PC hid the spin.
+- Retro 2026-10-03 (2, tool, exists now): the spin helper logs its counters every 2 s (hints, streak restarts, sleeps and the microseconds each, WFE waits); `pc_run` prints the last line, `heat_probe` prints them by default before the stop and names the busiest thread's guest lr and chain; `live_ab` gives CPU per thread and the battery current per arm.
+- Retro 2026-10-03 (3, reflex): for any fix that sleeps or waits, compare the sleep length ("us each") on the PC and the Thor before trusting a PC CPU number; judge a cooling lever by fps and power together - sleeping sooner cooled Gears' thread and cost a third of the frame rate.
 - Retro 2026-10-02 (1, slow): the Gears heat was blamed on CPU spinners for a day while the GPU was 56-60% busy at 35 fps; nothing said which shaders the Adreno spends a real frame on - the shader lab ranked shaders by their own instruction count, not by how many times a frame they run, and the PC profiler's sample share made the 1 kHz timer thread look like the heaviest thread.
 - Retro 2026-10-02 (2, tool, exists now): `xenia_frame_cost` (invocations per draw from RenderDoc x Adreno instructions per shader: Gears 21135, EDRAM transfers 45% of the frame's shader work) and the CPU column of `guest_profile.py` (% of a core per thread).
 - Retro 2026-10-02 (3, reflex): before a GPU lever, rank the frame with `xenia_frame_cost`; before a CPU lever, read the CPU column, not the sample share.
