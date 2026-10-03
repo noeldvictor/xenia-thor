@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "xenia/base/mapped_memory.h"
+#include "xenia/vfs/devices/disc_image_source.h"
 #include "xenia/vfs/entry.h"
 
 namespace xe {
@@ -24,20 +25,21 @@ class DiscImageDevice;
 class DiscImageEntry : public Entry {
  public:
   DiscImageEntry(Device* device, Entry* parent, const std::string_view path,
-                 MappedMemory* mmap);
+                 DiscImageSource* source);
   ~DiscImageEntry() override;
 
   static std::unique_ptr<DiscImageEntry> Create(Device* device, Entry* parent,
                                                 const std::string_view name,
-                                                MappedMemory* mmap);
+                                                DiscImageSource* source);
 
-  MappedMemory* mmap() const { return mmap_; }
+  DiscImageSource* source() const { return source_; }
   size_t data_offset() const { return data_offset_; }
   size_t data_size() const { return data_size_; }
 
   X_STATUS Open(uint32_t desired_access, File** out_file) override;
 
-  bool can_map() const override { return true; }
+  // Only an image in memory (an ISO) can be mapped; a CHD is read.
+  bool can_map() const override { return source_->mapped() != nullptr; }
   std::unique_ptr<MappedMemory> OpenMapped(MappedMemory::Mode mode,
                                            size_t offset,
                                            size_t length) override;
@@ -47,7 +49,7 @@ class DiscImageEntry : public Entry {
 
   bool DeleteEntryInternal(Entry* entry) override;
 
-  MappedMemory* mmap_;
+  DiscImageSource* source_;
   size_t data_offset_;
   size_t data_size_;
 };

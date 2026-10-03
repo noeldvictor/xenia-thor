@@ -16,9 +16,10 @@ namespace xe {
 namespace vfs {
 
 DiscImageEntry::DiscImageEntry(Device* device, Entry* parent,
-                               const std::string_view path, MappedMemory* mmap)
+                               const std::string_view path,
+                               DiscImageSource* source)
     : Entry(device, parent, path),
-      mmap_(mmap),
+      source_(source),
       data_offset_(0),
       data_size_(0) {}
 
@@ -26,9 +27,9 @@ DiscImageEntry::~DiscImageEntry() = default;
 
 std::unique_ptr<DiscImageEntry> DiscImageEntry::Create(
     Device* device, Entry* parent, const std::string_view name,
-    MappedMemory* mmap) {
+    DiscImageSource* source) {
   auto path = xe::utf8::join_guest_paths(parent->path(), name);
-  auto entry = std::make_unique<DiscImageEntry>(device, parent, path, mmap);
+  auto entry = std::make_unique<DiscImageEntry>(device, parent, path, source);
   return std::move(entry);
 }
 
@@ -44,9 +45,13 @@ std::unique_ptr<MappedMemory> DiscImageEntry::OpenMapped(
     return nullptr;
   }
 
+  MappedMemory* mapped = source_->mapped();
+  if (!mapped) {
+    return nullptr;
+  }
   size_t real_offset = data_offset_ + offset;
   size_t real_length = length ? std::min(length, data_size_) : data_size_;
-  return mmap_->Slice(real_offset, real_length);
+  return mapped->Slice(real_offset, real_length);
 }
 
 bool DiscImageEntry::DeleteEntryInternal(Entry* entry) { return false; }

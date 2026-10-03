@@ -38,6 +38,7 @@ project("xenia-gpu-d3d12-trace-viewer")
     "xenia-ui",
     "xenia-ui-d3d12",
     "xenia-vfs",
+    "libchdr",
   })
   links({
     "aes_128",
@@ -89,6 +90,7 @@ project("xenia-gpu-d3d12-trace-dump")
     "xenia-ui",
     "xenia-ui-d3d12",
     "xenia-vfs",
+    "libchdr",
   })
   links({
     "aes_128",

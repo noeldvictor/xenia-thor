@@ -7,9 +7,13 @@ project("xenia-vfs")
   kind("StaticLib")
   language("C++")
   links({
+    "libchdr",
     "xenia-base",
   })
   defines({
+  })
+  includedirs({
+    project_root.."/third_party/libchdr/include",
   })
   recursive_platform_files()
   removefiles({"vfs_dump.cc"})
@@ -22,6 +26,7 @@ project("xenia-vfs-dump")
     "fmt",
     "xenia-base",
     "xenia-vfs",
+    "libchdr",
   })
   defines({})
 

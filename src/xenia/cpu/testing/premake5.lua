@@ -23,6 +23,7 @@ test_suite("xenia-cpu-tests", project_root, ".", {
         "xenia-apu",
         "xenia-hid",
         "xenia-vfs",
+        "libchdr",
         "pugixml",
         "aes_128",
         "mspack",

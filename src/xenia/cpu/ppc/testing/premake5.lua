@@ -20,6 +20,7 @@ project("xenia-cpu-ppc-tests")
     "xenia-apu",
     "xenia-hid",
     "xenia-vfs",
+    "libchdr",
     "aes_128",
     -- The merged kernel's video/UI shims reference GPU + ImGui symbols.
     "xenia-gpu",

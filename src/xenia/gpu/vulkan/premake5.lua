@@ -42,6 +42,7 @@ project("xenia-gpu-vulkan-trace-viewer")
     "xenia-ui",
     "xenia-ui-vulkan",
     "xenia-vfs",
+    "libchdr",
   })
   links({
     "aes_128",
@@ -105,6 +106,7 @@ project("xenia-gpu-vulkan-trace-dump")
     "xenia-ui",
     "xenia-ui-vulkan",
     "xenia-vfs",
+    "libchdr",
   })
   links({
     "aes_128",

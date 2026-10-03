@@ -9,6 +9,9 @@
 
 #include "xenia/vfs/devices/disc_image_device.h"
 
+#include <cstring>
+#include <vector>
+
 #include "xenia/base/literals.h"
 #include "xenia/base/logging.h"
 #include "xenia/base/math.h"
@@ -31,27 +34,17 @@ DiscImageDevice::DiscImageDevice(const std::string_view mount_path,
 DiscImageDevice::~DiscImageDevice() = default;
 
 bool DiscImageDevice::Initialize() {
-#if XE_PLATFORM_ANDROID
-  const std::string host_path_utf8 = xe::path_to_utf8(host_path_);
-  if (xe::filesystem::IsAndroidContentUri(host_path_utf8)) {
-    mmap_ = MappedMemory::OpenForAndroidContentUri(host_path_utf8,
-                                                   MappedMemory::Mode::kRead);
-  } else {
-    mmap_ = MappedMemory::Open(host_path_, MappedMemory::Mode::kRead);
-  }
-#else
-  mmap_ = MappedMemory::Open(host_path_, MappedMemory::Mode::kRead);
-#endif  // XE_PLATFORM_ANDROID
-  if (!mmap_) {
-    XELOGE("Disc image could not be mapped");
+  // An ISO is mapped; a CHD (by its signature) is decompressed on demand.
+  source_ = DiscImageSource::Open(host_path_);
+  if (!source_) {
+    XELOGE("Disc image could not be opened");
     return false;
   } else {
     XELOGFS("DiscImageDevice::Initialize");
   }
 
   ParseState state = {0};
-  state.ptr = mmap_->data();
-  state.size = mmap_->size();
+  state.size = size_t(source_->size());
   auto result = Verify(&state);
   if (result != Error::kSuccess) {
     XELOGE("Failed to verify disc image header: {}",
@@ -59,7 +52,7 @@ bool DiscImageDevice::Initialize() {
     return false;
   }
 
-  result = ReadAllEntries(&state, state.ptr + state.root_offset);
+  result = ReadAllEntries(&state);
   if (result != Error::kSuccess) {
     XELOGE("Failed to read all GDFX entries: {}", static_cast<int32_t>(result));
     return false;
@@ -82,32 +75,42 @@ Entry* DiscImageDevice::ResolvePath(const std::string_view path) {
 }
 
 DiscImageDevice::Error DiscImageDevice::Verify(ParseState* state) {
-  // Use shared GDFX utility to find the game partition.
-  auto partition = GdfxFindPartition(state->ptr, state->size);
-  if (!partition) {
-    return Error::kErrorFileMismatch;
+  // The game partition starts at one of the known offsets; its volume
+  // descriptor (magic, root sector and size) is at sector 32. The same test
+  // as GdfxFindPartition, through reads: a CHD is not in memory.
+  for (size_t offset : kGdfxLikelyOffsets) {
+    size_t sector32_offset = offset + (32 * kGdfxSectorSize);
+    uint8_t descriptor[28];
+    if (!source_->Read(sector32_offset, descriptor, sizeof(descriptor)) ||
+        std::memcmp(descriptor, kGdfxMagic, kGdfxMagicSize)) {
+      continue;
+    }
+    uint32_t root_sector = xe::load<uint32_t>(descriptor + 20);
+    uint32_t root_size = xe::load<uint32_t>(descriptor + 24);
+    if (root_size < 13 || root_size > 32 * 1024 * 1024) {
+      continue;
+    }
+    state->game_offset = offset;
+    state->root_sector = root_sector;
+    state->root_size = root_size;
+    state->root_offset =
+        state->game_offset + (state->root_sector * kGdfxSectorSize);
+    return Error::kSuccess;
   }
-
-  state->game_offset = partition->game_offset;
-  state->root_sector = partition->root_sector;
-  state->root_size = partition->root_size;
-  state->root_offset =
-      state->game_offset + (state->root_sector * kGdfxSectorSize);
-
-  return Error::kSuccess;
+  return Error::kErrorFileMismatch;
 }
 
-bool DiscImageDevice::VerifyMagic(ParseState* state, size_t offset) {
-  return GdfxVerifyMagic(state->ptr, state->size, offset);
-}
-
-DiscImageDevice::Error DiscImageDevice::ReadAllEntries(
-    ParseState* state, const uint8_t* root_buffer) {
-  auto root_entry = new DiscImageEntry(this, nullptr, "", mmap_.get());
+DiscImageDevice::Error DiscImageDevice::ReadAllEntries(ParseState* state) {
+  auto root_entry = new DiscImageEntry(this, nullptr, "", source_.get());
   root_entry->attributes_ = kFileAttributeDirectory;
   root_entry_ = std::unique_ptr<Entry>(root_entry);
 
-  if (!ReadEntry(state, root_buffer, 0, root_entry)) {
+  std::vector<uint8_t> root_buffer(state->root_size);
+  if (!source_->Read(state->root_offset, root_buffer.data(),
+                     root_buffer.size())) {
+    return Error::kErrorReadError;
+  }
+  if (!ReadEntry(state, root_buffer.data(), 0, root_entry)) {
     return Error::kErrorOutOfMemory;
   }
 
@@ -140,7 +143,7 @@ bool DiscImageDevice::ReadEntry(ParseState* state, const uint8_t* buffer,
     name = ansi_name;
   }
 
-  auto entry = DiscImageEntry::Create(this, parent, name, mmap_.get());
+  auto entry = DiscImageEntry::Create(this, parent, name, source_.get());
   entry->attributes_ = attributes | kFileAttributeReadOnly;
   entry->size_ = length;
   entry->allocation_size_ = xe::round_up(length, bytes_per_sector());
@@ -161,9 +164,12 @@ bool DiscImageDevice::ReadEntry(ParseState* state, const uint8_t* buffer,
         return false;
       }
       // Read child list.
-      uint8_t* folder_ptr =
-          state->ptr + state->game_offset + (sector * kGdfxSectorSize);
-      if (!ReadEntry(state, folder_ptr, 0, entry.get())) {
+      std::vector<uint8_t> folder(length);
+      if (!source_->Read(state->game_offset + (sector * kGdfxSectorSize),
+                         folder.data(), folder.size())) {
+        return false;
+      }
+      if (!ReadEntry(state, folder.data(), 0, entry.get())) {
         return false;
       }
     }

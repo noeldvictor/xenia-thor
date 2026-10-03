@@ -20,6 +20,7 @@ project("xenia-app")
     "xenia-ui",
     "xenia-ui-vulkan",
     "xenia-vfs",
+    "libchdr",
   })
   links({
     "aes_128",

@@ -16,6 +16,7 @@
 #include "xenia/base/mapped_memory.h"
 #include "xenia/base/memory.h"  // fourcc_t / make_fourcc
 #include "xenia/vfs/device.h"
+#include "xenia/vfs/devices/disc_image_source.h"
 
 namespace xe {
 namespace vfs {
@@ -39,7 +40,7 @@ class DiscImageDevice : public Device {
   uint32_t component_name_max_length() const override { return 255; }
 
   uint32_t total_allocation_units() const override {
-    return uint32_t(mmap_->size() / sectors_per_allocation_unit() /
+    return uint32_t(source_->size() / sectors_per_allocation_unit() /
                     bytes_per_sector());
   }
   uint32_t available_allocation_units() const override { return 0; }
@@ -58,10 +59,10 @@ class DiscImageDevice : public Device {
   std::string name_;
   std::filesystem::path host_path_;
   std::unique_ptr<Entry> root_entry_;
-  std::unique_ptr<MappedMemory> mmap_;
+  // The ISO mapped, or a CHD decompressed on demand.
+  std::unique_ptr<DiscImageSource> source_;
 
   typedef struct {
-    uint8_t* ptr;
     size_t size;         // Size (bytes) of total image.
     size_t game_offset;  // Offset (bytes) of game partition.
     size_t root_sector;  // Offset (sector) of root.
@@ -70,8 +71,7 @@ class DiscImageDevice : public Device {
   } ParseState;
 
   Error Verify(ParseState* state);
-  bool VerifyMagic(ParseState* state, size_t offset);
-  Error ReadAllEntries(ParseState* state, const uint8_t* root_buffer);
+  Error ReadAllEntries(ParseState* state);
   bool ReadEntry(ParseState* state, const uint8_t* buffer,
                  uint16_t entry_ordinal, DiscImageEntry* parent);
 };

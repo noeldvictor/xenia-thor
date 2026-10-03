@@ -30,7 +30,8 @@ X_STATUS DiscImageFile::ReadSync(std::span<uint8_t> buffer, size_t byte_offset,
     return X_STATUS_END_OF_FILE;
   }
 
-  if (entry_->data_offset() >= entry_->mmap()->size()) {
+  DiscImageSource* source = entry_->source();
+  if (entry_->data_offset() >= source->size()) {
     xe::FatalError("This ISO image is corrupted and cannot be played.");
     return X_STATUS_END_OF_FILE;
   }
@@ -38,7 +39,10 @@ X_STATUS DiscImageFile::ReadSync(std::span<uint8_t> buffer, size_t byte_offset,
   size_t real_offset = entry_->data_offset() + byte_offset;
   size_t real_length =
       std::min(buffer.size(), entry_->data_size() - byte_offset);
-  std::memcpy(buffer.data(), entry_->mmap()->data() + real_offset, real_length);
+  if (!source->Read(real_offset, buffer.data(), real_length)) {
+    // A CHD hunk that does not decode (the image is damaged).
+    return X_STATUS_UNSUCCESSFUL;
+  }
   // The disc is a 2,048-byte-sector medium and its driver serves unbuffered
   // reads (FILE_NO_INTERMEDIATE_BUFFERING: sector-aligned offset and length)
   // in whole sectors: a read that crosses the logical end of the file returns
@@ -58,13 +62,15 @@ X_STATUS DiscImageFile::ReadSync(std::span<uint8_t> buffer, size_t byte_offset,
     if (rounded > real_length) {
       size_t tail = rounded - real_length;
       size_t image_avail =
-          entry_->mmap()->size() > real_offset + real_length
-              ? entry_->mmap()->size() - (real_offset + real_length)
+          source->size() > real_offset + real_length
+              ? size_t(source->size() - (real_offset + real_length))
               : 0;
       size_t from_image = std::min(tail, image_avail);
-      std::memcpy(buffer.data() + real_length,
-                  entry_->mmap()->data() + real_offset + real_length,
-                  from_image);
+      if (from_image &&
+          !source->Read(real_offset + real_length,
+                        buffer.data() + real_length, from_image)) {
+        from_image = 0;
+      }
       std::memset(buffer.data() + real_length + from_image, 0,
                   tail - from_image);
       real_length = rounded;

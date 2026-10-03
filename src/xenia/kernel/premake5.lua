@@ -15,6 +15,7 @@ project("xenia-kernel")
     "xenia-cpu",
     "xenia-hid",
     "xenia-vfs",
+    "libchdr",
   })
   defines({
   })

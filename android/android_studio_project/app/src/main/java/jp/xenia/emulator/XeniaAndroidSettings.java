@@ -171,6 +171,7 @@ public final class XeniaAndroidSettings {
     };
     private static final String[] GAME_LIBRARY_EXTENSIONS = {
         ".iso",
+        ".chd",  // chdman createdvd; the native disc image device reads it
         ".xex",
         ".m3u",
     };
